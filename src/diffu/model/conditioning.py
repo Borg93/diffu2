@@ -7,8 +7,6 @@
 
 from __future__ import annotations
 
-import warnings
-
 import torch
 import torch.nn as nn
 from transformers import AutoImageProcessor, AutoModel
@@ -94,21 +92,18 @@ class AttentionPool(nn.Module):
 
 
 class StyleEncoder(nn.Module):
-    """DINOv3 ViT-L (frozen) + Perceiver resampler + attention-pool. Falls back to DINOv2-w-registers."""
+    """DINOv3 ViT-L (frozen) + Perceiver resampler + attention-pool."""
 
     def __init__(self, cfg: ConditioningConfig, dim: int) -> None:
         super().__init__()
         try:
             self.proc = AutoImageProcessor.from_pretrained(cfg.style_encoder)
             self.enc = AutoModel.from_pretrained(cfg.style_encoder)
-        except Exception as exc:  # noqa: BLE001 - DINOv3 is gated; HF raises varied (non-OSError) types
-            warnings.warn(
-                f"Falling back to {cfg.style_encoder_fallback!r} (could not load "
-                f"{cfg.style_encoder!r}: {exc}).",
-                stacklevel=2,
-            )
-            self.proc = AutoImageProcessor.from_pretrained(cfg.style_encoder_fallback)
-            self.enc = AutoModel.from_pretrained(cfg.style_encoder_fallback)
+        except Exception as exc:  # noqa: BLE001 - HF raises varied (non-OSError) types for gated repos
+            raise RuntimeError(
+                f"could not load the style encoder {cfg.style_encoder!r}. DINOv3 is gated: accept its licence "
+                "on the Hub and run `hf auth login`."
+            ) from exc
         self.enc.requires_grad_(False)
         self.resampler = PerceiverResampler(self.enc.config.hidden_size, dim, cfg.style_tokens)
         self.pool = AttentionPool(dim)  # learned-query pool for the AdaLN vector (trained; see train.py)

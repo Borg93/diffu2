@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
     from .latent_cache import LatentCache
 
-# DINOv2/v3 image normalization (ImageNet stats) for the style reference crop.
+# DINOv3 image normalization (ImageNet stats) for the style reference crop.
 _IMAGENET_MEAN = (0.485, 0.456, 0.406)
 _IMAGENET_STD = (0.229, 0.224, 0.225)
 

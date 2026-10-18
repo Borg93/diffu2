@@ -434,8 +434,7 @@ dropped** so the spatial map survives; 1×1 conv `512→1024`; `F.interpolate(si
 height→1 and resamples width→`w_tokens`; `flatten(2).transpose(1,2)` → `[B, w_tokens, 1024]`. Token *j* ⟷
 latent column *j*.
 
-**Style encoder.** DINOv3 ViT-L/16 frozen (`facebook/dinov3-vitl16-pretrain-lvd1689m`; DINOv2-with-
-registers is the Apache fallback). Crop `[B,3,224,224] → last_hidden_state [B,196,1024]`. Perceiver
+**Style encoder.** DINOv3 ViT-L/16 frozen (`facebook/dinov3-vitl16-pretrain-lvd1689m`). Crop `[B,3,224,224] → last_hidden_state [B,196,1024]`. Perceiver
 resampler (64 learned latents query the patches, 2 blocks/8 heads) → `[B,64,1024]`. AttentionPool (1
 learned query) → `[B,1024]` pooled AdaLN vector. `fill_ratio` scalar (text-width ÷ canvas-width) →
 `MLP(1→1024→1024)` → added into the pooled vector. **Flags:** `style_in_context` (config default `True` =

@@ -50,7 +50,7 @@ class BackboneConfig(BaseModel):
 
 
 class ConditioningConfig(BaseModel):
-    # Content = Unifont glyph encoder. Style = DINOv3 (+DINOv2 fallback).
+    # Content = Unifont glyph encoder. Style = DINOv3.
     # Max characters per line. The glyph encoder pads only to the batch's longest text (capped here),
     # so raising this to 128/256 for long lines is cheap for short lines. NOTE: the deeper limit on
     # very long lines is canvas width (data.max_line_width) + having training data at that width +
@@ -75,7 +75,6 @@ class ConditioningConfig(BaseModel):
     glyph_concat: bool = False
     glyph_concat_channels: int = 16
     style_encoder: str = "facebook/dinov3-vitl16-pretrain-lvd1689m"
-    style_encoder_fallback: str = "facebook/dinov2-with-registers-large"  # Apache-2.0, ungated
     style_tokens: int = 64
     # Inject style ONLY as the global pooled AdaLN vector, NOT as the K attendable
     # style tokens in joint attention. The K spatial tokens can carry the reference image's GLYPH SHAPES,

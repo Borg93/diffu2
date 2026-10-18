@@ -24,8 +24,8 @@ Check the GPUs are visible:
 uv run python -c "import torch; print(torch.__version__, torch.cuda.device_count())"   # -> 2.14.1+cu130 3
 ```
 
-> **DINOv3 is gated.** Either `hf auth login` (after accepting the model license) or do nothing —
-> `StyleEncoder` auto-falls back to the ungated `facebook/dinov2-with-registers-large`.
+> **DINOv3 is gated.** Accept the model licence on the Hub and run `hf auth login`; without it the
+> `StyleEncoder` refuses to load (there is no fallback encoder).
 
 ## 2. Smoke test (no dataset needed)
 Runs a few real training steps on synthetic data — verifies the full model + the GPU path before you

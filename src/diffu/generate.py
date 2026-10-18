@@ -24,7 +24,7 @@ from .config import Config
 from .model import Diffu
 from .model.conditioning import GlyphLineRenderer
 
-# DINOv2/v3 expect ImageNet-normalized 224x224 input (matches data/dataset.py style refs).
+# DINOv3 expects ImageNet-normalized 224x224 input (matches data/dataset.py style refs).
 _IMAGENET_MEAN = [0.485, 0.456, 0.406]
 _IMAGENET_STD = [0.229, 0.224, 0.225]
 

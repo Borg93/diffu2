@@ -14,8 +14,7 @@ the studio and eval ruler use.
 The release repo/dir holds ``config.json`` + ``model.safetensors`` (see ``scripts/export_release.py``).
 ``style`` is any single-line crop of the target writer's hand (PIL image or path); it is ImageNet-
 normalised to the DINO input the model was trained on. The model was trained with the DINOv3 style
-encoder, so inference needs it too (gated — accept the licence on the Hub). Substituting DINOv2 feeds the
-backbone a different style embedding than it was trained on and degrades output.
+encoder, so inference needs it too (gated — accept the licence on the Hub).
 """
 
 from __future__ import annotations
@@ -30,7 +29,7 @@ from .config import Config
 from .generate import assert_conditioner_loaded, generate_line, load_checkpoint, load_ref_line
 from .model import Diffu
 
-# DINOv2/v3 expect ImageNet-normalised 224x224 input (matches diffu.generate.load_style / training).
+# DINOv3 expects ImageNet-normalised 224x224 input (matches diffu.generate.load_style / training).
 _IMAGENET_MEAN = [0.485, 0.456, 0.406]
 _IMAGENET_STD = [0.229, 0.224, 0.225]
 

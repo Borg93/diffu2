@@ -7,7 +7,7 @@ and the multi-GPU path before you have data:
     make smoke-1gpu      # GPU 0, single process
     make smoke-2gpu      # GPU 0 + 1, accelerate --multi_gpu
 
-First run downloads the VAE (Qwen-Image) and the style encoder (DINOv3 → DINOv2 fallback) from the
+First run downloads the VAE (Qwen-Image) and the style encoder (DINOv3, gated: accept its licence) from the
 Hub; subsequent runs are cached.
 """
 

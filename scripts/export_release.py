@@ -86,7 +86,7 @@ overhead dominates. bf16 + compile is the recommended serving config.
 
 - The **`diffu` package** (the modeling code this pipeline wraps).
 - **DINOv3 access (gated):** trained with `{cfg.cond.style_encoder}` — accept its licence on the Hub
-  (free). Don't substitute DINOv2: different style embedding than the backbone was trained on.
+  (free).
 - **Qwen-Image VAE** (`{cfg.vae.pretrained}`, Apache-2.0) — pulled automatically.
 - CUDA GPU recommended (~6 GB VRAM / line in float32, less in bf16).
 
