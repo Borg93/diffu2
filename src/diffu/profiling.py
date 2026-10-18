@@ -176,7 +176,9 @@ def profile_callable(
     if trace_path is not None:
         prof.export_chrome_trace(trace_path)  # Kineto chrome trace for HTA / the profile-model skill
         if with_stack:  # attribute self-CPU time (the cast/launch storm) to the Python line that issued it
-            table = prof.key_averages(group_by_stack_n=12).table(sort_by="self_cpu_time_total", row_limit=40)
+            # include_python_functions: torch 2.14 drops Python-function events from key_averages by default.
+            averages = prof.key_averages(group_by_stack_n=12, include_python_functions=True)
+            table = averages.table(sort_by="self_cpu_time_total", row_limit=40)
             with open(trace_path + ".stacks.txt", "w") as fh:
                 fh.write(table)
     return _build_report(prof)
