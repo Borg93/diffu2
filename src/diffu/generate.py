@@ -195,15 +195,44 @@ def load_checkpoint(model: Diffu, ckpt: str) -> None:
     else:
         state = torch.load(ckpt, map_location="cpu", weights_only=True)
     own = model.state_dict()
+    widened = _widen_input_channels(state, own)
     mismatched = [k for k, v in state.items() if k in own and v.shape != own[k].shape]
     for k in mismatched:
         del state[k]
     missing, unexpected = model.load_state_dict(state, strict=False)
+    if widened:
+        print(f"widened {widened}: old input channels kept, new ones zero-initialised")
     if missing or unexpected or mismatched:
         print(
             f"loaded with {len(missing)} missing / {len(unexpected)} unexpected / "
             f"{len(mismatched)} shape-mismatched keys (expected for frozen enc + resized seq len)"
         )
+
+
+_INPUT_PROJ = "backbone.transformer.pos_embed.proj.weight"
+
+
+def _widen_input_channels(state: dict[str, torch.Tensor], own: dict[str, torch.Tensor]) -> list[str]:
+    """Warm-start a backbone that READS more input channels than the checkpoint (``style_mode="canvas"``
+    adds the reference channels, ``glyph_concat`` the glyph latent): copy the trained patch-embed weights
+    into the leading channels and zero the new ones, so the model starts out exactly as the checkpoint
+    (the extra input contributes nothing) and learns to use it — the SD-inpainting / ControlNet recipe —
+    instead of re-initialising the whole input layer at random.
+    """
+    old, new = state.get(_INPUT_PROJ), own.get(_INPUT_PROJ)
+    if old is None or new is None or old.shape == new.shape:
+        return []
+    if (
+        old.dim() != 4
+        or old.shape[0] != new.shape[0]
+        or old.shape[2:] != new.shape[2:]
+        or old.shape[1] > new.shape[1]
+    ):
+        return []
+    weight = torch.zeros(new.shape, dtype=old.dtype)
+    weight[:, : old.shape[1]] = old
+    state[_INPUT_PROJ] = weight
+    return [_INPUT_PROJ]
 
 
 def assert_conditioner_loaded(model: Diffu, ckpt: str) -> None:
@@ -367,7 +396,9 @@ def main() -> None:
     ap.add_argument(
         "--attention-backend", default=None, help="diffusers attention kernel (e.g. _native_cudnn, flash_hub)"
     )
-    ap.add_argument("--lora", default=None, help="LoRA adapter dir or Hub id to load onto the base checkpoint")
+    ap.add_argument(
+        "--lora", default=None, help="LoRA adapter dir or Hub id to load onto the base checkpoint"
+    )
     ap.add_argument("--lora-scale", type=float, default=1.0, help="how strongly to apply the LoRA (0..1+)")
     ap.set_defaults(glyph_line=True, style_in_context=False)
     args = ap.parse_args()

@@ -260,3 +260,24 @@ def test_canvas_repa_aligns_only_the_target_tokens(fake_vae, monkeypatch: pytest
         return_losses=True,
     )
     assert torch.isfinite(out["repa"]) and torch.isfinite(out["flow"])
+
+
+def test_warm_start_widens_the_input_layer_with_zeroed_new_channels(
+    fake_vae, monkeypatch: pytest.MonkeyPatch
+):
+    from safetensors.torch import save_file
+
+    from diffu.generate import load_checkpoint
+
+    monkeypatch.setattr("diffu.model.diffu.StyleEncoder", FakeDino)  # the legacy model's DINO, offline
+    legacy = _model(_cfg(canvas=False, glyph_pad=False))
+    canvas = _model(_cfg())
+    key = "backbone.transformer.pos_embed.proj.weight"
+    assert legacy.state_dict()[key].shape[1] == C and canvas.state_dict()[key].shape[1] == 2 * C
+    with tempfile.TemporaryDirectory() as tmp:
+        path = f"{tmp}/legacy.safetensors"
+        save_file({k: v.contiguous() for k, v in legacy.state_dict().items()}, path)
+        load_checkpoint(canvas, path)
+    widened = canvas.state_dict()[key]
+    torch.testing.assert_close(widened[:, :C], legacy.state_dict()[key])
+    assert widened[:, C:].abs().sum() == 0  # the reference channels start silent
