@@ -1,0 +1,19 @@
+# Keep Ray's working_dir package small: exclude data/model/venv dirs — actors use INSTALLED packages +
+# absolute paths, so none of this needs to ride to the workers. (Ray packages the cwd on ray.init().)
+.venv/
+.git/
+checkpoints/
+data_out_lejonet*/
+synth_lines/
+synth_lines_lance*/
+synth_pages*/
+feature_samples/
+samples_*/
+audit_out/
+assets/paper*/
+gt_study_samples/
+table_demo/
+tests_data/
+*.db
+*.log
+packages/diffu-studio/frontend/

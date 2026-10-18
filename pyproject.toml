@@ -1,0 +1,122 @@
+[project]
+name = "diffu"
+version = "0.1.0"
+description = "Diffu — diffusers-first Swedish handwriting line-image generator (MMDiT + rectified flow + 16-ch VAE + classic CFG guidance) for HTR augmentation."
+readme = "README.md"
+requires-python = ">=3.12,<3.14"  # 3.13 is newest usable; 3.14 crashes pydantic (a core dep):
+# its typing._eval_type change breaks `from __future__ import annotations` models — verified on
+# latest pydantic+pydantic-core. Lift the <3.14 cap once pydantic ships a 3.14-compatible release.
+license = "Apache-2.0"
+authors = [{ name = "Gabriel Borg" }]
+
+# Runtime deps. torch/torchvision are pulled from the CUDA 13.0 wheel index (see [tool.uv] below)
+# so they work on the RTX PRO 6000 Blackwell box; everything else is from PyPI.
+dependencies = [
+    "torch>=2.12.1",        # cu130 wheels (driver 580 / CUDA 13.0, Blackwell sm_120)
+    "torchvision>=0.27.1",  # pairs with torch 2.12.1 (cu130)
+    "diffusers>=0.38",
+    "transformers>=5.12.1",
+    "accelerate>=1.14",
+    "safetensors>=0.4",
+    "peft==0.19.1",         # LoRA/adapters — Stage-3 fine-tuning (diffu-train --lora) + inference load (pinned)
+    "pydantic>=2",
+    "pillow>=11.3",
+    "numpy>=1.26",
+    "tqdm>=4.66",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.6",
+    "pyrefly>=0.2",
+    "pytest>=8",
+]
+hf = [
+    "datasets>=3.0",        # train straight off a Hub dataset (diffu-train --hf-dataset Teklia/IAM-line)
+]
+track = [
+    "nvidia-ml-py>=13.610.43",
+    "trackio",          # opt-in live training dashboard (diffu-train --track); lazy-imported
+]
+viz = [
+    "torchview",        # static shape-annotated model graphs (needs graphviz `dot` on PATH)
+    "torchvista",       # interactive traced model graph (scripts/visualize_model.py)
+]
+
+[project.scripts]
+diffu-data = "diffu.data.prepare:main"     # PAGE/ALTO XML -> training triples + writer-disjoint split
+diffu-ingest = "diffu.data.ingest:main"    # pre-cropped lines (folders or CSV/JSONL) -> manifest + split
+diffu-train = "diffu.train:main"           # Stage-1 flow-matching training loop
+diffu-smoke = "diffu.smoketest:main"       # synthetic-data forward/backward smoke (no dataset needed)
+diffu-vae-gate = "diffu.vae_gate:main"     # Stage-0: does the VAE preserve å ä ö? (recon-CER gate)
+diffu-generate = "diffu.generate:main"     # generate line images from text + a style reference
+diffu-eval = "diffu.eval:main"             # HTR Character Error Rate over a line manifest
+diffu-htr-train = "diffu.htr_train:main"   # fine-tune a TrOCR recognizer (the CER A/B training half)
+diffu-cache-latents = "diffu.data.latent_cache:main"  # pre-encode lines to a VAE latent cache (diffu-train --cache-latents)
+diffu-synth = "diffu.synth:main"           # bulk-generate a synthetic line manifest from a checkpoint (HTR A/B)
+# The interactive Gradio demo moved to its own workspace member: `uv run diffu-studio` (packages/diffu-studio).
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/diffu"]
+
+# ---------------------------------------------------------------------------
+# uv: pull torch/torchvision from the CUDA 13.0 wheel index. RTX PRO 6000
+# Blackwell (sm_120) on driver 580 / CUDA 13.0 -> cu130 wheels (torch 2.12.1;
+# cu128 tops out at torch 2.11). `explicit = true` means ONLY torch/torchvision
+# use this index — everything else stays on PyPI.
+# ---------------------------------------------------------------------------
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu130" }
+torchvision = { index = "pytorch-cu130" }
+diffu-page = { workspace = true }
+diffu-runner = { workspace = true }
+diffu-studio = { workspace = true }
+
+# uv workspace: each package under packages/ is a member with its OWN pyproject + deps (diffu-page pulls
+# opencv, diffu-runner pulls ray). NOTE: `[tool.uv.workspace]` alone does NOT install members on `uv sync`
+# — uv syncs only the ROOT package + its groups. So the members are listed in the `workspace` dependency
+# group below, which is in `default-groups`, so a bare `uv sync` builds the WHOLE workspace (heavy ray/opencv
+# deps included) instead of pruning them.
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[dependency-groups]
+workspace = ["diffu-page", "diffu-runner", "diffu-studio"]  # ALL members, so bare `uv sync` builds them all
+
+[tool.uv]
+default-groups = ["workspace"]
+# CUDA wheels are Linux-only; lock for Linux so resolution doesn't try (and fail) to find
+# cu130 macOS/Windows wheels. The training box is Linux.
+environments = ["sys_platform == 'linux'"]
+
+# ---------------------------------------------------------------------------
+# ruff: lint + format. (Type-checking is pyrefly — see pyrefly.toml.)
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]  # long lines are mostly comments/docstrings; format handles code width
+
+[tool.ruff.lint.isort]
+known-first-party = ["diffu"]
+
+[tool.ruff.lint.flake8-bugbear]
+# typer requires its Option/Argument calls in parameter defaults — exempt them from B008.
+extend-immutable-calls = ["typer.Option", "typer.Argument"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

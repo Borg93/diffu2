@@ -1,0 +1,80 @@
+[project]
+name = "diffu-page"
+version = "0.1.0"
+description = "Full-page document synthesis from Diffu-generated lines — segmentation/HTR training data."
+readme = "README.md"
+requires-python = ">=3.12,<3.14"  # matches the workspace; 3.14 crashes pydantic (see root pyproject).
+license = "Apache-2.0"
+authors = [{ name = "Gabriel Borg" }]
+
+# Page-synthesis deps live HERE, in the member — NOT in the main `diffu` package. `diffu` itself is a
+# workspace member (the line generator); torch is pulled in only lazily by DiffuRenderer, so the
+# layout/compositor run with just OpenCV. Headless OpenCV = server data-gen (no GUI/Qt); cv5-ready cv2
+# API. cv5 has no working wheel yet — compile it with scripts/build_opencv5.sh to override the wheel.
+dependencies = [
+    "diffu",
+    "opencv-python-headless>=4.13",
+    "numpy>=1.26",
+    "pillow>=11",     # render/htr/upscale use PIL directly — declare it, don't ride diffu's transitive dep
+    "pydantic>=2",
+    "typer>=0.12",
+    "rich>=13",
+    "pyyaml>=6",
+]
+
+[project.optional-dependencies]
+# PiD 4× upscaler (diffu_page.upscale). A pinned git dep + the utility tail PiD's inference code imports
+# eagerly (PiD's own pyproject declares no deps). Optional so base page-compositor users don't pull ~9 GB
+# of extra model deps — install with `diffu-page[upscale]` (the studio + the Ray page runner do).
+upscale = [
+    "pid",
+    "hydra-core>=1.3",
+    "omegaconf>=2.3",
+    "attrs>=23",
+    "einops>=0.8",
+    "loguru>=0.7",
+    "termcolor>=2",
+    "fvcore>=0.1.5",
+    "iopath>=0.1.10",
+    "wandb>=0.19",
+    "imageio>=2.34",
+    "pandas>=2",
+    "sentencepiece>=0.2",
+    "boto3>=1.34",
+]
+
+[project.scripts]
+diffu-page = "diffu_page.cli:main"   # synthesize full document pages from generated lines
+diffu-htr = "diffu_page.htr:main"    # run the Riksarkivet HTRFlow pipeline end-to-end on a page (+ CER)
+diffu-paper-crops = "diffu_page.paper:main"  # extract blank-paper background crops from real scans
+
+# diffu-htr's heavy deps (htrflow + transformers 5.x) are deliberately NOT declared as a workspace dep:
+# htrflow would be pulled into the shared uv.lock and risk conflicting with the training torch stack. Run
+# it in a DEDICATED env (the recogniser is gated to Riksarkivet → cached locally, run HF_HUB_OFFLINE=1):
+#   uv venv /tmp/htr_env && uv pip install --python /tmp/htr_env/bin/python \
+#     opencv-python-headless 'git+https://github.com/AI-Riksarkivet/htrflow.git' transformers==5.12.1
+#   PYTHONPATH=packages/diffu-page/src HF_HUB_OFFLINE=1 /tmp/htr_env/bin/python -m diffu_page.htr page_samples/
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/diffu_page"]
+
+[tool.uv.sources]
+diffu = { workspace = true }   # resolve the main package from this repo's workspace, not PyPI
+pid = { git = "https://github.com/nv-tlabs/PiD.git", rev = "b5e5eaec7a8aae8b82445c4d3bee75dc6486f144" }
+
+[tool.ty.terminal]
+error-on-warning = true
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "xmlschema>=4.3.2",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

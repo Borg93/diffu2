@@ -1,0 +1,53 @@
+[project]
+name = "diffu-runner"
+version = "0.1.0"
+description = "Ray-Data pipeline that runs Diffu at scale to forge synthetic HTR datasets (generate + gate)."
+readme = "README.md"
+requires-python = ">=3.12,<3.14"  # matches the workspace
+license = "Apache-2.0"
+authors = [{ name = "Gabriel Borg" }]
+
+# The pipeline stages are Ray actors: a DiffuActor (line generation) and a TrOCRActor (CER read-back gate),
+# both wrapping the `diffu` package. Ray is the HEAVY, OPTIONAL dep isolated in THIS member so training /
+# page-composition users never pull it. Full-page generation (the compositor) is the `page` extra.
+dependencies = [
+    "diffu",
+    "ray[data]==2.56.0",  # PINNED — the cluster/actor API is version-sensitive; match the deployed Ray
+    "pylance>=0.18",  # Lance shards: fast random access for training loaders (parquet is slow random-access)
+    # `ray[data]==2.56.0`'s OWN bundled `Dataset.write_lance()` calls pylance's `write_fragments(...,
+    # storage_options_provider=...)`, a kwarg not shipped by any released pylance (8.0.0 is latest and
+    # lacks it) — reliably TypeErrors at the write stage. The dedicated `lance-ray` package writes correctly
+    # against the SAME installed pylance (verified: wrote+read back a real Ray Dataset with no error), and
+    # writes distributed via Ray tasks rather than funneling every batch through the driver. Use its
+    # `write_lance` instead of `Dataset.write_lance()`.
+    "lance-ray>=0.4.2",
+    "numpy>=1.26",
+    "pillow>=10",
+    "pydantic>=2",
+    "typer>=0.12",
+    "rich>=13",
+]
+
+# The full-PAGE path needs the compositor; `[upscale]` also pulls PiD so the pipeline's final
+# actor can 4×-super-resolve each kept page (opt-in via PageConfig.upscale). The pid dep + its tail
+# are declared once in diffu-page — the runner and the studio share that single source of truth.
+[project.optional-dependencies]
+page = ["diffu-page[upscale]"]
+
+# Workspace members must be sourced from the workspace (not PyPI); mirrors how diffu-page depends on diffu.
+[tool.uv.sources]
+diffu = { workspace = true }
+diffu-page = { workspace = true }
+
+[project.scripts]
+# NOTE: must point at the Typer `app` object, not the bare `main` function — `app()` is what actually runs
+# Click's argv parsing; pointing at `main` calls it with zero args, so every option silently falls back to
+# its raw `typer.Option(...)` sentinel default instead of the parsed CLI value.
+diffu-runner = "diffu_runner.cli:app"  # forge a synthetic HTR line dataset at scale (generate + CER gate)
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/diffu_runner"]
