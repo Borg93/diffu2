@@ -21,7 +21,7 @@ make install        # uv sync  (add `make install-dev` for ruff / pyrefly / pyte
 ```
 Check the GPUs are visible:
 ```bash
-uv run python -c "import torch; print(torch.__version__, torch.cuda.device_count())"   # -> 2.12.1+cu130 3
+uv run python -c "import torch; print(torch.__version__, torch.cuda.device_count())"   # -> 2.14.1+cu130 3
 ```
 
 > **DINOv3 is gated.** Either `hf auth login` (after accepting the model license) or do nothing —

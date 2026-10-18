@@ -10,7 +10,7 @@ built on 2026 components, sampled with **classifier-free guidance**.
 
 ```bash
 git clone https://github.com/AI-Riksarkivet/diffu.git && cd diffu
-make install          # uv sync — runtime deps; torch 2.12.1 comes from the CUDA 13.0 (cu130) wheel index
+make install          # uv sync — runtime deps; torch 2.14.1 comes from the CUDA 13.0 (cu130) wheel index
 make smoke-1gpu       # sanity: a few training steps on synthetic data, GPU 1 (no dataset needed)
 make smoke-2gpu       # same, across GPU 1 + 2 (exercises the multi-GPU path)
 

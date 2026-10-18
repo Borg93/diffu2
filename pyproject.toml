@@ -12,13 +12,13 @@ authors = [{ name = "Gabriel Borg" }]
 # Runtime deps. torch/torchvision are pulled from the CUDA 13.0 wheel index (see [tool.uv] below)
 # so they work on the RTX PRO 6000 Blackwell box; everything else is from PyPI.
 dependencies = [
-    "torch>=2.12.1",        # cu130 wheels (driver 580 / CUDA 13.0, Blackwell sm_120)
-    "torchvision>=0.27.1",  # pairs with torch 2.12.1 (cu130)
+    "torch>=2.14.1",        # cu130 wheels (driver 580 / CUDA 13.0, Blackwell sm_120)
+    "torchvision>=0.29.1",  # pairs with torch 2.14.1 (cu130)
     "diffusers>=0.41",     # 0.41: sage_blackwell_hub backend; set_attention_backend reaches our RoPE processor
-    "transformers>=5.12.1",
+    "transformers>=5.20.1",
     "accelerate>=1.15",
     "safetensors>=0.4",
-    "peft==0.19.1",         # LoRA/adapters — Stage-3 fine-tuning (diffu-train --lora) + inference load (pinned)
+    "peft==0.21.2",         # LoRA/adapters — Stage-3 fine-tuning (diffu-train --lora) + inference load (pinned)
     "pydantic>=2",
     "pillow>=11.3",
     "numpy>=1.26",
@@ -65,7 +65,7 @@ packages = ["src/diffu"]
 
 # ---------------------------------------------------------------------------
 # uv: pull torch/torchvision from the CUDA 13.0 wheel index. RTX PRO 6000
-# Blackwell (sm_120) on driver 580 / CUDA 13.0 -> cu130 wheels (torch 2.12.1;
+# Blackwell (sm_120) on driver 580 / CUDA 13.0 -> cu130 wheels (torch 2.14.1;
 # cu128 tops out at torch 2.11). `explicit = true` means ONLY torch/torchvision
 # use this index — everything else stays on PyPI.
 # ---------------------------------------------------------------------------
