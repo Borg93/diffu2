@@ -467,6 +467,7 @@ class Diffu(nn.Module):
         glyph_latent = self.glyph_latent(texts, dev, (h, w)) if self.glyph_latent else None
         scheduler = FlowMatchEulerDiscreteScheduler()
         scheduler.set_timesteps(num_steps, device=dev)
+        scheduler.set_begin_index(0)  # known start: skips the step-index lookup's device->host sync
         # Sample in the MODEL dtype (bf16 inference works end-to-end); the scheduler upcasts to fp32
         # internally for precision and returns fp32, so restore the dtype at each model/VAE boundary.
         dtype = next(self.parameters()).dtype

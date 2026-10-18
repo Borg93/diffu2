@@ -96,11 +96,20 @@ class Backbone(nn.Module):
         Non-reentrant checkpointing keeps the checkpointed blocks' outputs attached to the autograd
         graph during the forward pass, so REPA's forward-hook capture of a mid-block hidden state can
         still backprop into the backbone (reentrant checkpointing detaches it -> REPA would train only
-        its projection head). diffusers 0.38 defaults to non-reentrant for torch>=1.11, so the plain
+        its projection head). diffusers (0.38+) defaults to non-reentrant for torch>=1.11, so the plain
         call already gives us what REPA needs. (The previous ``gradient_checkpointing_kwargs=`` form
         was never a diffusers arg — it is a HF Transformers arg — so that try-branch always raised.)
         """
         self.transformer.enable_gradient_checkpointing()
+
+    def set_attention_backend(self, backend: str) -> None:
+        """Route attention through a diffusers kernel backend (``RoPEJointAttnProcessor`` dispatches).
+
+        E.g. ``"_native_cudnn"``, ``"flash"`` / ``"flash_hub"`` (FlashAttention, local install / Hub kernel),
+        ``"sage_blackwell_hub"``. Benchmark on the target GPU: support varies by architecture, and the Sage
+        kernels are inference-only (no backward). Call before :meth:`compile_blocks`.
+        """
+        self.transformer.set_attention_backend(backend)
 
     def compile_blocks(self) -> None:
         """Regionally ``torch.compile`` the repeated ``JointTransformerBlock`` (shared by train + inference).

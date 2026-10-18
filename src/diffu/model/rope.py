@@ -12,7 +12,7 @@ Two pieces live here:
     Each axis (row index, col index) gets ``head_dim // 2`` rotary channels; the two axes are
     concatenated to a full ``head_dim``. This is exactly how diffusers' ``FluxPosEmbed`` composes a
     multi-axis rotary, so we reuse its public helpers verbatim.
-  * :class:`RoPEJointAttnProcessor` — a faithful copy of diffusers 0.38.0 ``JointAttnProcessor2_0``
+  * :class:`RoPEJointAttnProcessor` — a faithful copy of diffusers 0.41.0 ``JointAttnProcessor2_0``
     that additionally rotates the image Q/K with 2D-RoPE. By default the TEXT (content + style) tokens
     stay position-free. With the line-glyph path (``content_rotary_emb`` + ``n_content`` threaded in),
     the FIRST ``n_content`` text tokens (the column-aligned glyph-line tokens) are rotated with a
@@ -24,7 +24,7 @@ Two pieces live here:
 from __future__ import annotations
 
 import torch
-import torch.nn.functional as F
+from diffusers.models.attention_dispatch import dispatch_attention_fn
 from diffusers.models.embeddings import apply_rotary_emb, get_1d_rotary_pos_embed
 
 
@@ -68,12 +68,20 @@ def build_2d_rope(
 class RoPEJointAttnProcessor:
     """SD3 joint-attention processor that rotates the IMAGE Q/K with 2D RoPE.
 
-    A faithful copy of diffusers 0.38.0 ``JointAttnProcessor2_0.__call__`` semantics (our config has
+    A faithful copy of diffusers 0.41.0 ``JointAttnProcessor2_0.__call__`` semantics (our config has
     ``norm_q``/``norm_k``/``norm_added_*`` = None and no ``attn2`` path) with one addition: if an
     ``image_rotary_emb`` is supplied (threaded in via ``joint_attention_kwargs``), it is applied to the
     image-token query and key — BEFORE the text query/key are concatenated, so only image tokens are
     rotated and the text tokens stay position-free.
+
+    Unlike the stock SD3 processor, the attention itself goes through diffusers' ``dispatch_attention_fn``,
+    so ``transformer.set_attention_backend(...)`` (cuDNN / FlashAttention / Sage kernels) applies to it —
+    ``set_attention_backend`` only touches processors exposing these two attributes. ``None`` = the native
+    ``scaled_dot_product_attention`` default, identical to the previous direct call.
     """
+
+    _attention_backend = None
+    _parallel_config = None
 
     def __call__(
         self,
@@ -141,8 +149,17 @@ class RoPEJointAttnProcessor:
             key = torch.cat([key, enc_k], dim=2)
             value = torch.cat([value, enc_v], dim=2)
 
-        hidden_states = F.scaled_dot_product_attention(query, key, value, dropout_p=0.0, is_causal=False)
-        hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
+        # dispatch_attention_fn takes [B, S, H, D]; the transposes are views, not copies.
+        hidden_states = dispatch_attention_fn(
+            query.transpose(1, 2),
+            key.transpose(1, 2),
+            value.transpose(1, 2),
+            dropout_p=0.0,
+            is_causal=False,
+            backend=self._attention_backend,
+            parallel_config=self._parallel_config,
+        )
+        hidden_states = hidden_states.reshape(batch_size, -1, attn.heads * head_dim)
         hidden_states = hidden_states.to(query.dtype)
 
         if encoder_hidden_states is not None:

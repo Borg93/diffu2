@@ -251,6 +251,7 @@ def generate(
     compile_model: bool = False,
     lora: str | None = None,
     lora_scale: float = 1.0,
+    attention_backend: str | None = None,
     style_text: str = "",
     style_cfg_scale: float = 0.0,
 ) -> list[Image.Image]:
@@ -274,6 +275,8 @@ def generate(
         from .lora import load_lora
 
         load_lora(model, lora, scale=lora_scale)
+    if attention_backend:  # before compile: the backend is traced into the compiled graph
+        model.backbone.set_attention_backend(attention_backend)
     if compile_model:
         # Fuse the per-block glue (−70% kernel launches, §0e). compile_blocks is dynamic=True — ONE
         # compile covers the variable widths — but the cold-start cost still only pays off over MANY
@@ -361,6 +364,9 @@ def main() -> None:
         default=0.0,
         help="--style-canvas: style guidance (needs a model trained with --ref-dropout); 0=off",
     )
+    ap.add_argument(
+        "--attention-backend", default=None, help="diffusers attention kernel (e.g. _native_cudnn, flash_hub)"
+    )
     ap.add_argument("--lora", default=None, help="LoRA adapter dir or Hub id to load onto the base checkpoint")
     ap.add_argument("--lora-scale", type=float, default=1.0, help="how strongly to apply the LoRA (0..1+)")
     ap.set_defaults(glyph_line=True, style_in_context=False)
@@ -388,6 +394,7 @@ def main() -> None:
         lora_scale=args.lora_scale,
         style_text=args.style_text,
         style_cfg_scale=args.style_cfg_scale,
+        attention_backend=args.attention_backend,
     )
 
     out = Path(args.out)

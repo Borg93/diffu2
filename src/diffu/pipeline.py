@@ -55,6 +55,7 @@ class DiffuPipeline:
         compile_backbone: bool = False,
         lora: str | None = None,
         lora_scale: float = 1.0,
+        attention_backend: str | None = None,
     ) -> DiffuPipeline:
         """Build from a local dir OR a Hub repo id, each holding ``config.json`` + ``weights_name``.
 
@@ -78,6 +79,8 @@ class DiffuPipeline:
             from .lora import load_lora
 
             load_lora(model, lora, scale=lora_scale)
+        if attention_backend:  # a diffusers kernel backend, e.g. "_native_cudnn" / "sage_blackwell_hub"
+            model.backbone.set_attention_backend(attention_backend)
         if compile_backbone:
             model.backbone.compile_blocks()  # regional compile — same fusion as the training win
         return cls(model, cfg, device=device, dtype=dtype)

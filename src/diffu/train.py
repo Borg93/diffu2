@@ -251,7 +251,9 @@ def save_samples(
     return path, gen_pils, gen_cfg_pils, list(texts), real_pils, w, list(style_texts)
 
 
-def _setup_model(cfg: Config, *, grad_checkpoint: bool, compile_model: bool) -> Diffu:
+def _setup_model(
+    cfg: Config, *, grad_checkpoint: bool, compile_model: bool, attention_backend: str | None = None
+) -> Diffu:
     """Build the model and freeze everything Stage-1 flow matching never touches.
 
     The VAE (encode is no_grad, decode unused) is frozen so DDP's reducer doesn't wait on gradients
@@ -260,6 +262,8 @@ def _setup_model(cfg: Config, *, grad_checkpoint: bool, compile_model: bool) -> 
     model = Diffu(cfg)
     if grad_checkpoint:
         model.backbone.enable_optimizations()  # gradient checkpointing (off = ~20% faster on big VRAM)
+    if attention_backend:
+        model.backbone.set_attention_backend(attention_backend)  # before compile: it is traced into the graph
     if compile_model:
         model.backbone.compile_blocks()  # regional torch.compile (see Backbone.compile_blocks)
     model.vae.requires_grad_(False)
@@ -431,6 +435,7 @@ def train(
     lora_dropout: float = 0.0,
     lora_targets: tuple[str, ...] | None = None,
     run_config: dict[str, Any] | None = None,
+    attention_backend: str | None = None,
 ) -> Diffu:
     """Run the Stage-1 flow-matching training loop.
 
@@ -484,6 +489,7 @@ def train(
         cfg,
         grad_checkpoint=grad_checkpoint,
         compile_model=compile_model and not lora,  # LoRA must be injected BEFORE the backbone is compiled
+        attention_backend=attention_backend,
     )
     if init_from is not None:  # warm-start from prior weights (strict=False) instead of random init
         from .generate import load_checkpoint
@@ -576,6 +582,7 @@ def train(
         "style_in_context": cfg.cond.style_in_context,
         "style_mode": cfg.cond.style_mode,
         "glyph_pad": cfg.cond.glyph_pad,
+        "attention_backend": attention_backend,
         "white_pad_prob": cfg.data.white_pad_prob,
         "white_pad_max_frac": cfg.data.white_pad_max_frac,
         "line_height": cfg.data.line_height,
@@ -985,6 +992,12 @@ def main() -> None:
         "--max-ref-width", type=int, default=None, help="--style-canvas: cap on the reference width (px)"
     )
     ap.add_argument(
+        "--attention-backend",
+        default=None,
+        help="diffusers attention kernel, e.g. _native_cudnn / flash / flash_hub (default: torch SDPA). "
+        "Needs a backward kernel for training (not sage*); benchmark on your GPU",
+    )
+    ap.add_argument(
         "--ink-focal", action="store_true", help="up-weight the loss on ink regions vs white paper"
     )
     ap.add_argument(
@@ -1223,6 +1236,7 @@ def main() -> None:
         lora_rank=args.lora_rank,
         lora_alpha=args.lora_alpha,
         lora_dropout=args.lora_dropout,
+        attention_backend=args.attention_backend,
         run_config={
             "batch_size": args.batch_size,
             "num_workers": args.num_workers,
