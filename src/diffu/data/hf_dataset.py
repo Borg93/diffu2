@@ -12,6 +12,7 @@ so training on a random peer matches — never the target's own image, which wou
 from __future__ import annotations
 
 import random
+import warnings
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
@@ -52,6 +53,7 @@ class HFLineDataset:
         text_col: str | None = None,
         writer_col: str | None = None,
         max_rows: int | None = None,
+        ref_lines: bool = False,
     ) -> None:
         from datasets import load_dataset
 
@@ -62,10 +64,17 @@ class HFLineDataset:
             ds = ds.select(range(max_rows))
         self.ds: Any = ds
         self.height, self.max_width, self.style_size = height, max_width, style_size
+        self.ref_lines = ref_lines  # also return the reference at line height (style_mode="canvas")
         cols = list(ds.column_names)
         self.image_col = image_col or _pick(cols, ["image", "img", "pixel_values"])
         self.text_col = text_col or _pick(cols, ["text", "transcription", "label", "sentence", "gt"])
         self.writer_col = writer_col or _pick(cols, ["writer", "writer_id", "author", "form"], required=False)
+        if ref_lines and self.writer_col is None:
+            warnings.warn(
+                f"{name} has no writer column: each style reference is a RANDOM other line (usually another "
+                "writer), so the model cannot learn to copy a hand from it. Use a dataset with writer ids.",
+                stacklevel=2,
+            )
         # Style-peer index: group by writer when the column exists, else draw a random other line.
         self.by_writer: defaultdict[str, list[int]] = defaultdict(list)
         if self.writer_col is not None:
@@ -105,13 +114,16 @@ class HFLineDataset:
         row = self.ds[i]
         si = self._style_index(i)
         srow = self.ds[si]
-        return {
+        item: dict[str, Any] = {
             "image": self._to_line(row[self.image_col]),
             "text": str(row[self.text_col]),
             "writer_id": str(row[self.writer_col]) if self.writer_col is not None else str(i),
             "style_pixel_values": self._to_style(srow[self.image_col]),
             "style_text": str(srow[self.text_col]),
         }
+        if self.ref_lines:
+            item["style_image"] = self._to_line(srow[self.image_col])
+        return item
 
 
 def hf_to_manifest(

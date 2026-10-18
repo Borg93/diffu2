@@ -237,8 +237,10 @@ class HandwritingLineDataset:
 
     Each item is ``{'image': [3,H,W] in [-1,1], 'text': str, 'writer_id': str,
     'style_pixel_values': [3,S,S]}`` where the style reference is another line from the SAME writer
-    (ImageNet-normalized for DINO). torch/torchvision are imported lazily so the prep tools above
-    need neither. Pair with the width-bucketing ``collate_lines``.
+    (ImageNet-normalized for DINO). With ``ref_lines=True`` (``style_mode="canvas"``) the same reference
+    line is also returned at line height as ``style_image`` (``[3,H,W_ref]`` in ``[-1,1]``, plus
+    ``style_latent`` when a latent cache is attached) for the in-canvas path. torch/torchvision are
+    imported lazily so the prep tools above need neither. Pair with the width-bucketing ``collate_lines``.
     """
 
     def __init__(
@@ -248,8 +250,10 @@ class HandwritingLineDataset:
         max_width: int = 1024,
         style_size: int = 224,
         latent_cache: LatentCache | None = None,
+        ref_lines: bool = False,
     ) -> None:
         self.rows = rows
+        self.ref_lines = ref_lines
         self.height = height
         self.max_width = max_width
         self.style_size = style_size
@@ -280,15 +284,18 @@ class HandwritingLineDataset:
             img = im.convert("RGB").resize((self.style_size, self.style_size), Image.BILINEAR)
         return TF.normalize(TF.to_tensor(img), _IMAGENET_MEAN, _IMAGENET_STD)
 
-    def __getitem__(self, i: int) -> dict[str, Any]:
+    def _load_line(self, path: str) -> torch.Tensor:
         from torchvision.transforms import functional as TF
 
-        r = self.rows[i]
-        with Image.open(r["image"]) as im:
+        with Image.open(path) as im:
             img = im.convert("RGB")
         if self.max_width and img.width > self.max_width:
             img = img.resize((self.max_width, self.height), Image.LANCZOS)
-        image = TF.normalize(TF.to_tensor(img), [0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
+        return TF.normalize(TF.to_tensor(img), [0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
+
+    def __getitem__(self, i: int) -> dict[str, Any]:
+        r = self.rows[i]
+        image = self._load_line(r["image"])
         si = self._style_index(str(r["writer_id"]), i)
         style = self._load_style(self.rows[si]["image"])
         item: dict[str, Any] = {
@@ -300,6 +307,10 @@ class HandwritingLineDataset:
             # show "style wrote B, we asked A": a copy-the-style model renders B and gen_CER-vs-A spikes.
             "style_text": self.rows[si]["text"],
         }
+        if self.ref_lines:  # the same reference line at line height, for style_mode="canvas"
+            item["style_image"] = image if si == i else self._load_line(self.rows[si]["image"])
         if self.latent_cache is not None:  # precomputed x0 [C, h, w] for rows[i]; collate pads + stacks it
             item["latent"] = self.latent_cache[i]
+            if self.ref_lines:
+                item["style_latent"] = self.latent_cache[si]
         return item

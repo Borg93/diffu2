@@ -27,7 +27,7 @@ from PIL import Image
 from torchvision.transforms import functional as TF
 
 from .config import Config
-from .generate import assert_conditioner_loaded, generate_line, load_checkpoint
+from .generate import assert_conditioner_loaded, generate_line, load_checkpoint, load_ref_line
 from .model import Diffu
 
 # DINOv2/v3 expect ImageNet-normalised 224x224 input (matches diffu.generate.load_style / training).
@@ -109,8 +109,26 @@ class DiffuPipeline:
         *,
         num_steps: int = 24,
         cfg_scale: float = 5.0,
+        style_text: str = "",
+        style_cfg_scale: float = 0.0,
     ) -> Image.Image:
-        """Render ``text`` in the writer's ``style`` -> a tight line image (auto-width + ink-crop)."""
+        """Render ``text`` in the writer's ``style`` -> a tight line image (auto-width + ink-crop).
+
+        ``style_text`` / ``style_cfg_scale`` apply to canvas-mode (``style_mode="canvas"``) models only:
+        the reference's transcription and the style-guidance scale.
+        """
+        if self.model.canvas:
+            ref = load_ref_line(style, self.cfg, text=style_text)
+            return generate_line(
+                self.model,
+                text,
+                None,
+                cfg=self.cfg,
+                num_steps=num_steps,
+                cfg_scale=cfg_scale,
+                ref=ref,
+                style_cfg_scale=style_cfg_scale,
+            )
         style_tensor = self._preprocess_style(style)
         return generate_line(
             self.model, text, style_tensor, cfg=self.cfg, num_steps=num_steps, cfg_scale=cfg_scale

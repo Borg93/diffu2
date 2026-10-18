@@ -47,14 +47,15 @@ if TYPE_CHECKING:
 def trainable_parameters(model: Diffu) -> list[torch.nn.Parameter]:
     """Parameters trained in Stage 1 (flow matching).
 
-    Trained: SD3 backbone, DINOv3 style resampler, Unifont content encoder.
+    Trained: SD3 backbone, DINOv3 style resampler (``style_mode="dino"`` only), Unifont content encoder.
     Frozen in Stage 1: the whole VAE — the Stage-1 forward never decodes, so it cannot receive a
     gradient here (and including it would trip DDP's unused-parameter check on multi-GPU). VAE
     decoder fine-tuning is Stage 0 (`diffu-vae-gate`).
     """
     params = list(model.backbone.parameters())
-    params += list(model.style.resampler.parameters())
-    params += list(model.style.pool.parameters())  # learned-query style attention-pool
+    if model.style is not None and not model.canvas:  # canvas mode: DINO is only REPA's frozen target
+        params += list(model.style.resampler.parameters())
+        params += list(model.style.pool.parameters())  # learned-query style attention-pool
     params += list(model.glyph_content.parameters())
     if model.glyph_latent is not None:  # glyph_concat conv "glyph block"
         params += list(model.glyph_latent.parameters())
@@ -63,6 +64,22 @@ def trainable_parameters(model: Diffu) -> list[torch.nn.Parameter]:
     if model.repa_proj is not None:  # REPA alignment head (when cfg.aux.repa)
         params += list(model.repa_proj.parameters())
     return [p for p in params if p.requires_grad]
+
+
+_REF_BATCH_KEYS = ("ref_images", "ref_latents", "ref_texts", "ref_widths")
+
+
+def model_inputs(batch: dict[str, Any], device: torch.device | None = None) -> dict[str, Any]:
+    """The optional model kwargs a batch carries: ``text_widths`` (glyph_pad) + the canvas reference.
+
+    Moves tensors to ``device`` when given (the val/sample batches are not accelerate-prepared).
+    """
+    out: dict[str, Any] = {"text_widths": batch.get("widths")}
+    for key in _REF_BATCH_KEYS:
+        value = batch.get(key)
+        if value is not None:
+            out[key] = value.to(device) if device is not None and isinstance(value, torch.Tensor) else value
+    return out
 
 
 @torch.no_grad()
@@ -79,7 +96,12 @@ def evaluate_val_loss(model: Diffu, val_loader: DataLoader, device: torch.device
         for i, batch in enumerate(val_loader):
             if i >= max_batches:
                 break
-            loss = model(batch["images"].to(device), batch["texts"], batch["style_pixel_values"].to(device))
+            loss = model(
+                batch["images"].to(device),
+                batch["texts"],
+                batch["style_pixel_values"].to(device),
+                **model_inputs(batch, device),
+            )
             total += loss.item()
             seen += 1
     finally:
@@ -186,6 +208,12 @@ def save_samples(
     real = batch["images"][:n]
     w = real.shape[-1]
     latent_hw = (cfg.data.line_height // cfg.vae.downscale_factor, w // cfg.vae.downscale_factor)
+    # glyph_pad widths + the canvas reference, sliced to the n samples (cached ref latents are train-only).
+    gen_kwargs = {
+        k: v[:n] for k, v in model_inputs(batch, device).items() if v is not None and k != "ref_latents"
+    }
+    if "ref_texts" in gen_kwargs:  # caption the sheet with what the in-canvas reference actually says
+        style_texts = list(gen_kwargs["ref_texts"])
 
     # Sampling runs in eval mode; the try/finally guarantees train mode is restored even if a sampling
     # step raises. Otherwise the shared module is left in eval() and the next training steps silently
@@ -194,14 +222,19 @@ def save_samples(
     try:
         # The VISUAL grid is unguided: high guidance over-saturates an undertrained model's output to
         # pure white, hiding the real (on-manifold) generation. Raw output shows true progress.
-        gen = model.generate(texts, style, latent_hw=latent_hw, num_steps=cfg.flow.sample_steps)
+        gen = model.generate(texts, style, latent_hw=latent_hw, num_steps=cfg.flow.sample_steps, **gen_kwargs)
         gen_pils = [to_pil(gen[i]) for i in range(n)]
         # The CFG variant is for MEASUREMENT only (gen_CER with guidance), not the grid — same texts/style
         # so the two CER numbers are directly comparable at this step.
         gen_cfg_pils: list[PILImage] | None = None
         if cfg_eval_scale > 0.0:
             gen_cfg = model.generate(
-                texts, style, latent_hw=latent_hw, num_steps=cfg.flow.sample_steps, cfg_scale=cfg_eval_scale
+                texts,
+                style,
+                latent_hw=latent_hw,
+                num_steps=cfg.flow.sample_steps,
+                cfg_scale=cfg_eval_scale,
+                **gen_kwargs,
             )
             gen_cfg_pils = [to_pil(gen_cfg[i]) for i in range(n)]
     finally:
@@ -276,7 +309,13 @@ def _run_profile(
         except StopIteration:  # small datasets: re-iterate so we always have profile_steps batches
             batches = iter(dataloader)
             batch = next(batches)
-        loss = model(batch["images"], batch["texts"], batch["style_pixel_values"], cond_dropout=cond_dropout)
+        loss = model(
+            batch["images"],
+            batch["texts"],
+            batch["style_pixel_values"],
+            cond_dropout=cond_dropout,
+            **model_inputs(batch),
+        )
         accel.backward(loss)
         for p in params:
             p.grad = None
@@ -377,6 +416,7 @@ def train(
     min_lr: float = 1e-6,
     cond_dropout: float = 0.0,
     text_dropout: float = 0.0,
+    ref_dropout: float = 0.0,
     init_from: str | None = None,
     resume_from: str | None = None,
     val_loader: DataLoader | None = None,
@@ -522,6 +562,7 @@ def train(
         "min_lr": min_lr,
         "cond_dropout": cond_dropout,
         "text_dropout": text_dropout,
+        "ref_dropout": ref_dropout,
         "use_ema": use_ema,
         "grad_checkpoint": grad_checkpoint,
         "repa": cfg.aux.repa,
@@ -533,6 +574,8 @@ def train(
         "glyph_line": cfg.cond.glyph_line,
         "glyph_concat": cfg.cond.glyph_concat,
         "style_in_context": cfg.cond.style_in_context,
+        "style_mode": cfg.cond.style_mode,
+        "glyph_pad": cfg.cond.glyph_pad,
         "white_pad_prob": cfg.data.white_pad_prob,
         "white_pad_max_frac": cfg.data.white_pad_max_frac,
         "line_height": cfg.data.line_height,
@@ -585,8 +628,10 @@ def train(
                     latents=batch.get("latents"),  # cached x0 (--cache-latents); None -> live vae.encode
                     cond_dropout=cond_dropout,
                     text_dropout=text_dropout,
+                    ref_dropout=ref_dropout,
                     return_losses=True,
                     repa_weight=repa_w,
+                    **model_inputs(batch),
                 )
                 loss = out["loss"]
                 accel.backward(loss)
@@ -791,7 +836,11 @@ def build_dataloader(
 
     rows = load_manifest(os.path.join(data_dir, f"{split}.jsonl"))
     ds = HandwritingLineDataset(
-        rows, height=cfg.data.line_height, max_width=cfg.data.max_line_width, latent_cache=latent_cache
+        rows,
+        height=cfg.data.line_height,
+        max_width=cfg.data.max_line_width,
+        latent_cache=latent_cache,
+        ref_lines=cfg.cond.style_mode == "canvas",
     )
     world = PartialState().num_processes
     if strict and len(ds) < batch_size * world:
@@ -809,6 +858,7 @@ def build_dataloader(
         # batched latents correctly (no-op when latent_cache is None → the standard image-only batch).
         white_latent_col=latent_cache.white_column if latent_cache is not None else None,
         downscale=cfg.vae.downscale_factor,
+        max_ref_width=cfg.data.max_ref_width,
     )
     if bucket_width and shuffle:
         # Group similar-width lines per batch -> ~54% padding-FLOPs reclaimed + stable shapes (lets
@@ -913,6 +963,28 @@ def main() -> None:
         help="drop ONLY the text/content prob, KEEP style (text-only CFG, DiffInk drop_text); 0=off",
     )
     ap.add_argument(
+        "--ref-dropout",
+        type=float,
+        default=0.0,
+        help="--style-canvas: drop ONLY the reference (pixels + its text), KEEP the target text — trains the "
+        "mode style guidance contrasts against (DiffInk uses 0.2); 0=off",
+    )
+    ap.add_argument(
+        "--style-canvas",
+        action="store_true",
+        help="in-context style: the reference line's clean latent sits left of the target on one canvas "
+        "(no DINO style encoder); needs --glyph-line",
+    )
+    ap.add_argument(
+        "--glyph-pad",
+        action="store_true",
+        help="place each line's glyph tokens over its own ink extent and pad the rest blank, instead of "
+        "stretching them over the canvas; needs --glyph-line",
+    )
+    ap.add_argument(
+        "--max-ref-width", type=int, default=None, help="--style-canvas: cap on the reference width (px)"
+    )
+    ap.add_argument(
         "--ink-focal", action="store_true", help="up-weight the loss on ink regions vs white paper"
     )
     ap.add_argument(
@@ -1013,6 +1085,11 @@ def main() -> None:
     cfg.cond.glyph_line = args.glyph_line
     cfg.cond.glyph_concat = args.glyph_concat
     cfg.cond.style_in_context = args.style_in_context
+    cfg.cond.glyph_pad = args.glyph_pad
+    if args.style_canvas:
+        cfg.cond.style_mode = "canvas"
+    if args.max_ref_width is not None:
+        cfg.data.max_ref_width = args.max_ref_width
     if args.max_chars is not None:
         cfg.cond.max_chars = args.max_chars
     if args.logit_normal_mean is not None:
@@ -1032,6 +1109,7 @@ def main() -> None:
             max_width=cfg.data.max_line_width,
             white_pad_prob=args.white_pad_prob,
             white_pad_max_frac=cfg.data.white_pad_max_frac,
+            max_ref_width=cfg.data.max_ref_width,
         )
         train_ds = HFLineDataset(
             args.hf_dataset,
@@ -1039,6 +1117,7 @@ def main() -> None:
             height=cfg.data.line_height,
             max_width=cfg.data.max_line_width,
             max_rows=args.hf_max_rows,
+            ref_lines=cfg.cond.style_mode == "canvas",
         )
         dataloader = DataLoader(
             train_ds,
@@ -1059,12 +1138,15 @@ def main() -> None:
                     height=cfg.data.line_height,
                     max_width=cfg.data.max_line_width,
                     max_rows=64,
+                    ref_lines=cfg.cond.style_mode == "canvas",
                 )
                 val_loader = DataLoader(
                     val_ds,
                     batch_size=args.batch_size,
                     shuffle=False,
-                    collate_fn=partial(collate_lines, max_width=cfg.data.max_line_width),
+                    collate_fn=partial(
+                        collate_lines, max_width=cfg.data.max_line_width, max_ref_width=cfg.data.max_ref_width
+                    ),
                     num_workers=args.num_workers,
                     drop_last=False,
                 )
@@ -1129,6 +1211,7 @@ def main() -> None:
         weight_decay=args.weight_decay,
         cond_dropout=args.cond_dropout,
         text_dropout=args.text_dropout,
+        ref_dropout=args.ref_dropout,
         init_from=args.init_from,
         resume_from=args.resume,
         val_loader=val_loader,

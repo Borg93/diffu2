@@ -7,12 +7,18 @@ rectified flow + 16-ch VAE + glyph/DINOv3 conditioning + classic CFG.
   VAE      : Qwen-Image 16-ch (model/vae.py, diffusers)          [validated in Stage 0]
   Scheduler: diffusers FlowMatchEulerDiscreteScheduler           [sampling]
   Content  : Unifont glyph encoder (model/content_encoder.py)    [custom — no diffusers equivalent]
-  Style    : DINOv3 + Perceiver resampler (model/conditioning.py)
-  Guidance : classic classifier-free guidance (CFG) — text-following at sampling
+  Style    : cfg.cond.style_mode
+               "dino"   — DINOv3 + Perceiver resampler (model/conditioning.py)        [legacy]
+               "canvas" — the reference line's clean latent LEFT of the target on one canvas,
+                          as an extra input channel; the model continues the line   [in-context]
+  Guidance : classifier-free guidance — text scale (+ a separate style scale in canvas mode)
 
 Conditioning fed to SD3:
-  encoder_hidden_states = concat(content tokens, style tokens)   [B, L+K, context_dim]
-  pooled_projections    = pooled style vector                    [B, context_dim]
+  dino   : encoder_hidden_states = concat(content tokens, style tokens)   [B, L+K, context_dim]
+           pooled_projections    = pooled style vector                    [B, context_dim]
+  canvas : hidden_states         = concat(noisy canvas, clean-ref cond)    [B, 2C, h, w_ref+w]
+           encoder_hidden_states = glyph tokens of (ref text | target text), column-aligned to the canvas
+           pooled_projections    = fill-ratio embedding (no style vector)
 
 The diffusers wiring (SD3 timestep scale + FlowMatch step) is verified by the `diffu-smoke` synthetic forward/backward check
 (one training forward + one generate on a GPU).
@@ -20,12 +26,14 @@ The diffusers wiring (SD3 timestep scale + FlowMatch step) is verified by the `d
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterator
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from diffusers import FlowMatchEulerDiscreteScheduler
+from pydantic import BaseModel, ConfigDict
 
 from ..config import Config
 from ..flow import flow_loss, interpolate, repa_loss, sample_timesteps
@@ -38,6 +46,21 @@ from .vae import VAEWrapper
 # target image, so we re-normalize the [-1,1] target into the DINO convention before encoding it.
 _IMAGENET_MEAN = (0.485, 0.456, 0.406)
 _IMAGENET_STD = (0.229, 0.224, 0.225)
+
+
+class CanvasRef(BaseModel):
+    """The style reference for ``style_mode="canvas"``: its clean latent + what it says.
+
+    ``latent`` is the normalized VAE latent ``[B, C, h, w_ref]`` placed left of the target. ``texts`` are
+    the reference transcriptions ("" = unknown: its glyph tokens are zeroed). ``widths_px`` is each
+    reference's real ink width in pixels (for ``glyph_pad``); ``None`` stretches the glyphs over the region.
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    latent: torch.Tensor
+    texts: list[str]
+    widths_px: list[int] | None = None
 
 
 class Diffu(nn.Module):
@@ -57,7 +80,20 @@ class Diffu(nn.Module):
             if cfg.cond.glyph_line
             else GlyphContentEncoder(cfg.cond, out_dim=ctx)
         )
-        self.style = StyleEncoder(cfg.cond, dim=ctx)  # DINOv3 -> tokens + pooled
+        self.canvas = cfg.cond.style_mode == "canvas"
+        self.glyph_pad = cfg.cond.glyph_pad
+        if (self.canvas or self.glyph_pad) and not cfg.cond.glyph_line:
+            raise ValueError(
+                "style_mode='canvas' and glyph_pad need the column-aligned glyph_line content path"
+            )
+        if self.canvas and cfg.cond.glyph_concat:
+            raise ValueError(
+                "style_mode='canvas' does not support glyph_concat (its glyph latent spans one text)"
+            )
+        # DINOv3: the style encoder in "dino" mode; in "canvas" mode only REPA's frozen target features need it.
+        self.style: StyleEncoder | None = (
+            StyleEncoder(cfg.cond, dim=ctx) if not self.canvas or cfg.aux.repa else None
+        )
         self.style_in_context = cfg.cond.style_in_context  # False = pooled-only (no copyable style tokens)
         # glyph_concat: a spatial glyph latent channel-concatenated onto the noisy latent (fuse content
         # into the input). Backbone reads C+Cg channels, still predicts C velocity channels.
@@ -67,6 +103,8 @@ class Diffu(nn.Module):
             else None
         )
         extra = cfg.cond.glyph_concat_channels if cfg.cond.glyph_concat else 0
+        if self.canvas:  # + the clean-reference conditioning channels (zeros over the target columns)
+            extra += self.C
         self.backbone = Backbone(
             cfg.backbone, in_channels=self.C + extra, context_dim=ctx, pooled_dim=ctx, out_channels=self.C
         )
@@ -87,26 +125,49 @@ class Diffu(nn.Module):
 
         # REPA (optional): align a mid-block DiT hidden state to DINO features of the target image.
         # 3-layer SiLU MLP projector (REPA best-practice; a single Linear under-fits the DiT->DINO map).
-        dino_dim = self.style.enc.config.hidden_size
         self.repa_proj = (
             nn.Sequential(
                 nn.Linear(cfg.backbone.dim, cfg.backbone.dim),
                 nn.SiLU(),
                 nn.Linear(cfg.backbone.dim, cfg.backbone.dim),
                 nn.SiLU(),
-                nn.Linear(cfg.backbone.dim, dino_dim),
+                nn.Linear(cfg.backbone.dim, self.style.enc.config.hidden_size),
             )
-            if cfg.aux.repa
+            if cfg.aux.repa and self.style is not None
             else None
         )
+
+    def _token_extents(self, widths_px: list[int] | torch.Tensor | None) -> list[int] | None:
+        """Pixel ink widths -> patch-column extents for ``glyph_pad`` (``None`` = stretch, the legacy path)."""
+        if not self.glyph_pad or widths_px is None:
+            return None
+        unit = self.cfg.vae.downscale_factor * self.backbone.patch
+        return [math.ceil(int(w) / unit) for w in widths_px]
+
+    def _content(
+        self,
+        texts: list[str],
+        device: torch.device,
+        w_tokens: int | None,
+        widths_px: list[int] | torch.Tensor | None,
+    ) -> torch.Tensor:
+        if not self.glyph_line:
+            return self.glyph_content(texts, device)  # [B, L, ctx]
+        if w_tokens is None:
+            raise ValueError("glyph_line content path needs w_tokens (the image patch-column count)")
+        return self.glyph_content(
+            texts, device, w_tokens, self._token_extents(widths_px)
+        )  # [B, w_tokens, ctx]
 
     def _conditioning(
         self,
         texts: list[str],
-        style_pixel_values: torch.Tensor,
+        style_pixel_values: torch.Tensor | None,
         device: torch.device,
         fill_ratio: torch.Tensor | None = None,
         w_tokens: int | None = None,
+        text_widths: list[int] | torch.Tensor | None = None,
+        ref: CanvasRef | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, int]:
         """Build joint context + pooled AdaLN vector. Returns ``(context, pooled, n_content)``.
 
@@ -115,35 +176,72 @@ class Diffu(nn.Module):
         ``fill_ratio`` is given and the MLP is enabled, its embedding is added to ``pooled``. In
         ``glyph_line`` mode ``w_tokens`` (the image patch-column count) is required and the content path
         emits exactly ``w_tokens`` column-aligned tokens.
+
+        Canvas mode: the content is ``concat(ref glyph tokens, target glyph tokens)`` — one token per canvas
+        column — and there are no style tokens; ``pooled`` carries only the fill-ratio embedding.
         """
-        if self.glyph_line:
-            if w_tokens is None:
-                raise ValueError("glyph_line content path needs w_tokens (the image patch-column count)")
-            content = self.glyph_content(texts, device, w_tokens)  # [B, w_tokens, ctx]
+        content = self._content(texts, device, w_tokens, text_widths)
+        if self.canvas:
+            if ref is None:
+                raise ValueError("style_mode='canvas' needs a reference line (ref_images or ref_latents)")
+            ref_tokens = ref.latent.shape[-1] // self.backbone.patch
+            ref_content = self._content(ref.texts, device, ref_tokens, ref.widths_px)
+            has_text = torch.tensor([bool(t) for t in ref.texts], device=device, dtype=ref_content.dtype)
+            content = torch.cat([ref_content * has_text.view(-1, 1, 1), content], dim=1)
+            pooled = content.new_zeros(content.shape[0], self.cfg.backbone.context_dim)
+            style_tokens = None
         else:
-            content = self.glyph_content(texts, device)  # [B, L, ctx]
-        style_tokens, style_pooled = self.style(style_pixel_values)  # [B, K, ctx], [B, ctx]
+            if self.style is None or style_pixel_values is None:
+                raise ValueError("style_mode='dino' needs style_pixel_values")
+            style_tokens, pooled = self.style(style_pixel_values)  # [B, K, ctx], [B, ctx]
         if self.fill_ratio_mlp is not None and fill_ratio is not None:
-            fr = fill_ratio.to(style_pooled.dtype).view(-1, 1)  # [B, 1]
-            style_pooled = style_pooled + self.fill_ratio_mlp(fr)
+            fr = fill_ratio.to(pooled.dtype).view(-1, 1)  # [B, 1]
+            pooled = pooled + self.fill_ratio_mlp(fr)
         # Keep the copyable spatial style tokens OUT of joint attention when style_in_context=False, so
         # content must come from the text/glyph path instead of being copied off the reference image.
         # (With the tokens in context the model copies the ref's glyphs and ignores the text instruction.)
-        context = torch.cat([content, style_tokens], dim=1) if self.style_in_context else content
-        return context, style_pooled, content.shape[1]
+        if style_tokens is not None and self.style_in_context:
+            return torch.cat([content, style_tokens], dim=1), pooled, content.shape[1]
+        return content, pooled, content.shape[1]
+
+    def _canvas_ref(
+        self,
+        ref_images: torch.Tensor | None,
+        ref_latents: torch.Tensor | None,
+        ref_texts: list[str] | None,
+        ref_widths: list[int] | torch.Tensor | None,
+        batch: int,
+    ) -> CanvasRef | None:
+        """Bundle the canvas-mode reference (encoding ``ref_images`` unless a cached latent is given)."""
+        if not self.canvas:
+            return None
+        if ref_latents is None:
+            if ref_images is None:
+                raise ValueError("style_mode='canvas' needs ref_images (or cached ref_latents)")
+            ref_latents = self.vae.encode(ref_images)
+        widths = None if ref_widths is None else [int(w) for w in ref_widths]
+        return CanvasRef(
+            latent=ref_latents, texts=list(ref_texts) if ref_texts else [""] * batch, widths_px=widths
+        )
 
     # --- training ---------------------------------------------------------
     def forward(
         self,
         images: torch.Tensor,
         texts: list[str],
-        style_pixel_values: torch.Tensor,
+        style_pixel_values: torch.Tensor | None = None,
         *,
         latents: torch.Tensor | None = None,
         return_losses: bool = False,
         cond_dropout: float = 0.0,
         text_dropout: float = 0.0,
+        ref_dropout: float = 0.0,
         repa_weight: float | None = None,
+        text_widths: list[int] | torch.Tensor | None = None,
+        ref_images: torch.Tensor | None = None,
+        ref_latents: torch.Tensor | None = None,
+        ref_texts: list[str] | None = None,
+        ref_widths: list[int] | torch.Tensor | None = None,
     ) -> torch.Tensor | dict[str, torch.Tensor]:
         """Stage-1 flow loss (+ optional REPA).
 
@@ -158,13 +256,21 @@ class Diffu(nn.Module):
         default) encodes ``images`` live, exactly as before. REPA / ink-focal / fill-ratio still read
         the raw ``images``, so the caller passes both.
 
-        images ``[B,3,H,W]`` in ``[-1,1]``; texts ``list[str]``; style_pixel_values DINO-preprocessed.
+        images ``[B,3,H,W]`` in ``[-1,1]``; texts ``list[str]``; style_pixel_values DINO-preprocessed
+        (``style_mode="dino"`` only). ``text_widths`` are the target lines' real ink widths in px (for
+        ``glyph_pad``). Canvas mode reads ``ref_images`` ``[B,3,H,W_ref]`` (or cached ``ref_latents``) +
+        ``ref_texts`` / ``ref_widths``; ``ref_dropout`` drops the reference alone (the style-CFG mode).
         """
         x0 = self.vae.encode(images) if latents is None else latents  # [B, C, h, w] (normalized)
         b = x0.shape[0]
+        ref = self._canvas_ref(ref_images, ref_latents, ref_texts, ref_widths, b)
+        # Canvas mode: noise the whole [ref | target] canvas; the clean reference rides in a conditioning
+        # channel and the loss is taken on the target columns only (F5-TTS / DiffInk infilling).
+        ref_cols = ref.latent.shape[-1] if ref is not None else 0
+        canvas_x0 = torch.cat([ref.latent.to(x0.dtype), x0], dim=-1) if ref is not None else x0
         t = sample_timesteps(b, x0.device, self.cfg.flow.logit_normal_mean, self.cfg.flow.logit_normal_std)
-        eps = torch.randn_like(x0)
-        x_t, target_v = interpolate(x0, eps, t)
+        eps = torch.randn_like(canvas_x0)
+        x_t, target_v = interpolate(canvas_x0, eps, t)
         # Fill-ratio (train signal): computed from the SAME natural-text-width / canvas-width formula
         # used at inference (_fill_ratio_from_texts), so train and inference feed the model an
         # identically-distributed scalar (no train/inference skew). canvas width = the target image's
@@ -173,11 +279,14 @@ class Diffu(nn.Module):
         w_t = x0.shape[-1] // self.backbone.patch  # image patch-column count (line-glyph token count)
         fill_ratio = self._fill_ratio_from_texts(texts, images.shape[-1])
         context, pooled, n_content = self._conditioning(
-            texts, style_pixel_values, x0.device, fill_ratio, w_tokens=w_t
+            texts, style_pixel_values, x0.device, fill_ratio, w_tokens=w_t, text_widths=text_widths, ref=ref
         )
         nc = n_content if self.glyph_line else None  # content-token RoPE only in line-glyph mode
         glyph_latent = (
             self.glyph_latent(texts, x0.device, (x0.shape[-2], x0.shape[-1])) if self.glyph_latent else None
+        )
+        ref_cond = (
+            torch.cat([ref.latent.to(x0.dtype), torch.zeros_like(x0)], dim=-1) if ref is not None else None
         )
         if cond_dropout > 0.0 and self.training:  # CFG: learn an unconditional mode on dropped samples
             keep = (torch.rand(b, device=x0.device) >= cond_dropout).to(context.dtype)
@@ -185,6 +294,8 @@ class Diffu(nn.Module):
             pooled = pooled * keep.view(b, 1)
             if glyph_latent is not None:  # drop the concat content together with the rest (true uncond)
                 glyph_latent = glyph_latent * keep.to(glyph_latent.dtype).view(b, 1, 1, 1)
+            if ref_cond is not None:
+                ref_cond = ref_cond * keep.to(ref_cond.dtype).view(b, 1, 1, 1)
         if (
             text_dropout > 0.0 and self.training
         ):  # TEXT-only CFG (DiffInk drop_text): drop CONTENT, KEEP style
@@ -193,11 +304,18 @@ class Diffu(nn.Module):
             context = torch.cat([content_part, context[:, n_content:]], dim=1)  # style tokens untouched
             if glyph_latent is not None:  # the concat glyph IS content -> drop it too
                 glyph_latent = glyph_latent * keep_t.to(glyph_latent.dtype).view(b, 1, 1, 1)
+        if ref_cond is not None and ref_dropout > 0.0 and self.training:
+            # STYLE-only drop (DiffInk drop_cond): the reference pixels AND its transcription go, the target
+            # text stays -> the "text, no style" mode that style guidance contrasts against at sampling.
+            keep_r = (torch.rand(b, device=x0.device) >= ref_dropout).to(context.dtype)
+            n_ref = ref_cols // self.backbone.patch
+            context = torch.cat([context[:, :n_ref] * keep_r.view(b, 1, 1), context[:, n_ref:]], dim=1)
+            ref_cond = ref_cond * keep_r.to(ref_cond.dtype).view(b, 1, 1, 1)
         # NOTE: combine --text-dropout with --cond-dropout for the DiffInk-style mixture — each sample
         # randomly ends up {nothing, text-only, both} dropped (style is NEVER dropped alone, which is
-        # what we want: the failure is "text ignored," not "style ignored").
+        # what we want: the failure is "text ignored," not "style ignored"). Canvas mode adds --ref-dropout.
         # Channel-concat the glyph latent onto the noisy latent (content present at every cell).
-        model_in = torch.cat([x_t, glyph_latent], dim=1) if glyph_latent is not None else x_t
+        model_in = torch.cat([x_t, *(c for c in (glyph_latent, ref_cond) if c is not None)], dim=1)
 
         # ink-focal weighting: up-weight the loss on sparse ink cells so the ~90% white-paper
         # background doesn't dominate the velocity MSE and starve letter learning.
@@ -222,16 +340,19 @@ class Diffu(nn.Module):
                     "non-reentrant checkpointing — check your diffusers/torch version (or run --no-repa)."
                 )
             h_t, w_t = x0.shape[-2] // self.backbone.patch, x0.shape[-1] // self.backbone.patch
+            if ref_cols:  # keep only the target columns of the row-major canvas tokens
+                cw_t = x_t.shape[-1] // self.backbone.patch
+                hidden = hidden.reshape(b, h_t, cw_t, -1)[:, :, cw_t - w_t :, :].reshape(b, h_t * w_t, -1)
             proj = self.repa_proj(hidden)  # [B, N, dino_dim]
             target = self._dino_target(images, (h_t, w_t))  # [B, N, dino_dim]
-            flow = flow_loss(v_pred, target_v, weight=ink_weight)
+            flow = flow_loss(v_pred[..., ref_cols:], target_v[..., ref_cols:], weight=ink_weight)
             repa: torch.Tensor | None = repa_w * repa_loss(proj, target)
             loss = flow + repa
         else:
             v_pred = self.backbone(
                 model_in, t * 1000.0, context, pooled, n_content=nc
             )  # SD3 timestep scale ~[0,1000]
-            flow = flow_loss(v_pred, target_v, weight=ink_weight)
+            flow = flow_loss(v_pred[..., ref_cols:], target_v[..., ref_cols:], weight=ink_weight)
             repa = None
             loss = flow
 
@@ -288,6 +409,8 @@ class Diffu(nn.Module):
         x = F.interpolate(x, size=(224, 224), mode="bilinear", align_corners=False)
         mean = x.new_tensor(_IMAGENET_MEAN).view(1, 3, 1, 1)
         std = x.new_tensor(_IMAGENET_STD).view(1, 3, 1, 1)
+        if self.style is None:
+            raise RuntimeError("REPA needs the DINO encoder (self.style), which was not built")
         feats = self.style._features((x - mean) / std)  # [B, P_total, D] (prefix CLS/registers + patches)
         patch = getattr(self.style.enc.config, "patch_size", 16)
         side = 224 // patch
@@ -312,15 +435,24 @@ class Diffu(nn.Module):
     def _denoise_latents(
         self,
         texts: list[str],
-        style_pixel_values: torch.Tensor,
+        style_pixel_values: torch.Tensor | None,
         latent_hw: tuple[int, int],
         num_steps: int,
         cfg_scale: float = 0.0,
+        *,
+        style_cfg_scale: float = 0.0,
+        text_widths: list[int] | torch.Tensor | None = None,
+        ref: CanvasRef | None = None,
     ) -> Iterator[torch.Tensor]:
         """Flow sampling with optional guidance. Yields the latent x0 estimate ``x_t - sigma·v`` each step,
         then the final latent. ``cfg_scale>0`` = classic classifier-free guidance (text-following): a second
         backbone pass with the content tokens + concat glyph dropped (style/pooled kept), combined as
-        ``v = v_uncond + cfg_scale·(v_cond − v_uncond)`` — the lever that uses the trained cond/text-dropout."""
+        ``v = v_uncond + cfg_scale·(v_cond − v_uncond)`` — the lever that uses the trained cond/text-dropout.
+
+        Canvas mode samples the whole ``[ref | target]`` canvas with the clean reference in the conditioning
+        channel and yields only the TARGET columns. ``style_cfg_scale>0`` adds style guidance (needs a model
+        trained with ``ref_dropout``): ``v = v_null + cfg·(v_text − v_null) + style·(v_full − v_text)`` where
+        ``v_text`` keeps the text but drops the reference and ``v_null`` drops both."""
         h, w = latent_hw
         b = len(texts)
         dev = next(self.parameters()).device
@@ -328,7 +460,7 @@ class Diffu(nn.Module):
         # Inference fill-ratio: natural text width / canvas width (canvas px = latent w × VAE downscale).
         fill_ratio = self._fill_ratio_from_texts(texts, w * self.cfg.vae.downscale_factor)
         context, pooled, n_content = self._conditioning(
-            texts, style_pixel_values, dev, fill_ratio, w_tokens=w_t
+            texts, style_pixel_values, dev, fill_ratio, w_tokens=w_t, text_widths=text_widths, ref=ref
         )
         nc = n_content if self.glyph_line else None  # content-token RoPE only in line-glyph mode
         # Glyph latent is constant across denoising steps — compute once, concat each step.
@@ -338,57 +470,121 @@ class Diffu(nn.Module):
         # Sample in the MODEL dtype (bf16 inference works end-to-end); the scheduler upcasts to fp32
         # internally for precision and returns fp32, so restore the dtype at each model/VAE boundary.
         dtype = next(self.parameters()).dtype
-        x = torch.randn(b, self.C, h, w, device=dev, dtype=dtype)
-        # classic CFG (text-following): drop content tokens + concat glyph, keep style. context/null_ctx/
-        # pooled are step-invariant, so build the (cond ++ uncond) context batch ONCE outside the loop.
-        cfg_ctx: tuple[torch.Tensor, torch.Tensor] | None = None
-        if cfg_scale > 0.0:
-            null_ctx = context.clone()
-            null_ctx[:, :n_content] = 0.0
-            cfg_ctx = (torch.cat([context, null_ctx], dim=0), torch.cat([pooled, pooled], dim=0))
+        ref_cols = ref.latent.shape[-1] if ref is not None else 0
+        x = torch.randn(b, self.C, h, ref_cols + w, device=dev, dtype=dtype)
+        ref_cond = (
+            torch.cat([ref.latent.to(dtype), torch.zeros(b, self.C, h, w, device=dev, dtype=dtype)], dim=-1)
+            if ref is not None
+            else None
+        )
+        # Guidance variants, each (context, glyph_latent, ref_cond); index 0 is the fully conditioned pass.
+        # All are step-invariant and run as ONE k·B backbone forward per step: RoPE and SDPA are per-sample,
+        # so concatenating along the batch is numerically identical and better fills the GPU.
+        no_text = context.clone()
+        no_text[:, :n_content] = 0.0
+        no_ref = context.clone()
+        no_ref[:, : ref_cols // self.backbone.patch] = 0.0
+        zero_glyph = torch.zeros_like(glyph_latent) if glyph_latent is not None else None
+        zero_ref = torch.zeros_like(ref_cond) if ref_cond is not None else None
+        variants = [(context, glyph_latent, ref_cond)]
+        if style_cfg_scale > 0.0 and ref is not None:
+            variants += [(no_ref, glyph_latent, zero_ref), (no_text, zero_glyph, zero_ref)]  # text-only, null
+        elif cfg_scale > 0.0:
+            variants.append((no_text, zero_glyph, ref_cond))  # classic: drop text, keep style
+        k = len(variants)
+        ctx_k = torch.cat([v[0] for v in variants], dim=0)
+        pooled_k = pooled.repeat(k, 1)
+        extras_k = [torch.cat([v[i] for v in variants], dim=0) for i in (1, 2) if variants[0][i] is not None]
         for i, t in enumerate(scheduler.timesteps):
-            model_in = torch.cat([x, glyph_latent], dim=1) if glyph_latent is not None else x
-            if cfg_ctx is not None:
-                # ONE 2B forward (cond ++ uncond) instead of two sequential backbone passes: RoPE and SDPA are
-                # per-sample, so concatenating along the batch is numerically identical and better fills the GPU.
-                ctx2, pooled2 = cfg_ctx
-                null_in = (
-                    torch.cat([x, torch.zeros_like(glyph_latent)], dim=1) if glyph_latent is not None else x
-                )
-                cat_in = torch.cat([model_in, null_in], dim=0)
-                out = self.backbone(cat_in, t.expand(2 * b), ctx2, pooled2, n_content=nc)
-                v_cond, v_uncond = out.chunk(2, dim=0)
-                v = v_uncond + cfg_scale * (v_cond - v_uncond)
+            model_in = torch.cat([x.repeat(k, 1, 1, 1), *extras_k], dim=1)
+            out = self.backbone(model_in, t.expand(k * b), ctx_k, pooled_k, n_content=nc).chunk(k, dim=0)
+            if k == 3:
+                v_full, v_text, v_null = out
+                v = v_null + cfg_scale * (v_text - v_null) + style_cfg_scale * (v_full - v_text)
+            elif k == 2:
+                v = out[1] + cfg_scale * (out[0] - out[1])
             else:
-                v = self.backbone(model_in, t.expand(b), context, pooled, n_content=nc)
-            yield (x - scheduler.sigmas[i] * v).to(dtype)  # x0 estimate (clean-image guess) at this step
+                v = out[0]
+            yield (x - scheduler.sigmas[i] * v)[..., ref_cols:].to(dtype)  # target x0 estimate at this step
             x = scheduler.step(v, t, x).prev_sample.to(dtype)
-        yield x  # the final denoised latent
+        yield x[..., ref_cols:]  # the final denoised target latent
+
+    def _prepare_ref(
+        self,
+        ref_images: torch.Tensor | None,
+        ref_texts: list[str] | None,
+        ref_widths: list[int] | torch.Tensor | None,
+        batch: int,
+    ) -> CanvasRef | None:
+        if not self.canvas:
+            return None
+        if ref_images is not None and ref_images.shape[0] == 1 and batch > 1:
+            ref_images = ref_images.expand(batch, -1, -1, -1)
+        if ref_texts is not None and len(ref_texts) == 1 and batch > 1:
+            ref_texts = ref_texts * batch
+        if ref_widths is not None and len(ref_widths) == 1 and batch > 1:
+            ref_widths = [int(ref_widths[0])] * batch
+        return self._canvas_ref(ref_images, None, ref_texts, ref_widths, batch)
 
     @torch.inference_mode()
     def generate(
         self,
         texts: list[str],
-        style_pixel_values: torch.Tensor,
+        style_pixel_values: torch.Tensor | None,
         latent_hw: tuple[int, int],
         num_steps: int = 24,
         cfg_scale: float = 0.0,
+        *,
+        style_cfg_scale: float = 0.0,
+        text_widths: list[int] | torch.Tensor | None = None,
+        ref_images: torch.Tensor | None = None,
+        ref_texts: list[str] | None = None,
+        ref_widths: list[int] | torch.Tensor | None = None,
     ) -> torch.Tensor:
-        """latent_hw = (h, w) of the target latent grid (w derived from the glyph-line width)."""
-        *_, latent = self._denoise_latents(texts, style_pixel_values, latent_hw, num_steps, cfg_scale)
+        """latent_hw = (h, w) of the target latent grid (w derived from the glyph-line width).
+
+        Canvas mode: ``ref_images`` ``[B or 1, 3, H, W_ref]`` in ``[-1, 1]`` (W_ref a multiple of 16) +
+        ``ref_texts``; ``style_pixel_values`` is unused. Returns only the generated target line."""
+        ref = self._prepare_ref(ref_images, ref_texts, ref_widths, len(texts))
+        *_, latent = self._denoise_latents(
+            texts,
+            style_pixel_values,
+            latent_hw,
+            num_steps,
+            cfg_scale,
+            style_cfg_scale=style_cfg_scale,
+            text_widths=text_widths,
+            ref=ref,
+        )
         return self.vae.decode(latent)  # [B, 3, H, W] in [-1, 1] — only the final latent is decoded
 
     @torch.inference_mode()
     def denoise_steps(
         self,
         texts: list[str],
-        style_pixel_values: torch.Tensor,
+        style_pixel_values: torch.Tensor | None,
         latent_hw: tuple[int, int],
         num_steps: int = 24,
         cfg_scale: float = 0.0,
+        *,
+        style_cfg_scale: float = 0.0,
+        text_widths: list[int] | torch.Tensor | None = None,
+        ref_images: torch.Tensor | None = None,
+        ref_texts: list[str] | None = None,
+        ref_widths: list[int] | torch.Tensor | None = None,
     ) -> Iterator[torch.Tensor]:
         """Streaming variant for the demo: yields the decoded image ``[B, 3, H, W]`` at each denoising step
         (the x0 estimate, blurry → sharp) and finally the true final decode. One VAE decode per yield —
         that's the cost of watching it denoise live."""
-        for latent in self._denoise_latents(texts, style_pixel_values, latent_hw, num_steps, cfg_scale):
+        ref = self._prepare_ref(ref_images, ref_texts, ref_widths, len(texts))
+        for latent in self._denoise_latents(
+            texts,
+            style_pixel_values,
+            latent_hw,
+            num_steps,
+            cfg_scale,
+            style_cfg_scale=style_cfg_scale,
+            text_widths=text_widths,
+            ref=ref,
+        ):
             yield self.vae.decode(latent)

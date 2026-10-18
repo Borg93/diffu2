@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -80,6 +82,18 @@ class ConditioningConfig(BaseModel):
     # so the model copies them and ignores the text (hold the style ref, swap the text -> output unchanged).
     # Pooled-only forces content to come from the text/glyph path. True = legacy (style tokens in context).
     style_in_context: bool = True
+    # glyph_pad: place each line's glyph strip over ITS OWN extent (the real line width at train time, an
+    # estimate at inference) and leave the remaining columns blank, instead of stretching the strip over the
+    # whole canvas. Glyph column j then lands on the image column where that letter is actually written, and
+    # the glyph extent doubles as a length control (blank columns = "write nothing here"). Needs glyph_line.
+    glyph_pad: bool = False
+    # style_mode: how the writer reference reaches the model.
+    #   "dino"   — legacy: frozen DINOv3 features of a 224x224-squashed crop -> resampler/pooled vector.
+    #   "canvas" — in-context (F5-TTS / DiffInk / Eruku style): the reference line's clean VAE latent sits
+    #              LEFT of the target on one canvas, fed as an extra conditioning channel, with its own
+    #              transcription in the glyph tokens. The model continues the line in the same hand; the loss
+    #              covers only the target columns. No style encoder. Needs glyph_line.
+    style_mode: Literal["dino", "canvas"] = "dino"
 
 
 class FlowConfig(BaseModel):
@@ -126,6 +140,9 @@ class DataConfig(BaseModel):
     # cfg.data.white_pad_max_frac from config, but takes white_pad_prob as a parameter.
     white_pad_prob: float = 0.0  # per-line probability of applying the right-white-pad augmentation
     white_pad_max_frac: float = 0.5  # max extra width as a fraction of the line's natural width
+    # style_mode="canvas": widest reference line placed left of the target. A wider reference is cropped and
+    # its transcription dropped (the text would no longer match the pixels). The canvas is ref + target wide.
+    max_ref_width: int = 1024
 
 
 class Config(BaseModel):

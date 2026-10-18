@@ -46,6 +46,31 @@ img.save("out.png")
 - CLI equivalent: `diffu-generate --text "…" --style ref.png --ckpt <weights> [--compile]`.
 - Publish a new checkpoint: `uv run python scripts/export_release.py --ckpt <step_dir> --repo <you>/<name> --push`.
 
+## In-canvas style + padded glyphs (new, opt-in)
+
+Two flags fix why the released model ignores the style reference. Both need `--glyph-line`; old
+checkpoints and commands are unchanged.
+
+- `--style-canvas`: no style encoder. The reference line's clean latent sits **left of the target on one
+  canvas** (an extra input channel), with its transcription in the glyph tokens; the model continues the
+  line in the same hand, and the loss covers only the target columns (F5-TTS / DiffInk / Eruku infilling).
+  `--ref-dropout 0.2` trains the "no reference" mode so sampling can use a separate `--style-cfg-scale`.
+- `--glyph-pad`: glyph tokens cover each line's **real ink width**, the rest of the canvas stays blank,
+  instead of being stretched over the whole canvas — glyph column j lands where letter j is written, and
+  the extent works as a length control.
+
+```bash
+diffu-train --data-dir data_out --glyph-line --glyph-pad --style-canvas \
+    --text-dropout 0.1 --ref-dropout 0.2 --cond-dropout 0.05
+diffu-generate --ckpt <weights> --glyph-pad --style-canvas --line-height 128 \
+    --style ref_line.png --style-text "what the ref line says" --text "Göteborgs poliskammare" \
+    --cfg-scale 5 --style-cfg-scale 2
+```
+
+The reference must be the **same writer** as the target: lines from the same page (the `writer_id`
+default) are fine. `Teklia/IAM-line` has **no writer column**, so its references are random other
+writers — use an IAM source with writer ids to test style there.
+
 ## Architecture at a glance
 
 | Part | Diffu |

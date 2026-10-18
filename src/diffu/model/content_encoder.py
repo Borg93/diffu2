@@ -197,7 +197,15 @@ class GlyphLineContentEncoder(nn.Module):
         glyphs = [self.renderer.render_char(c) for c in chars]  # each [1, S, S]
         return torch.cat(glyphs, dim=-1)  # [1, S, S*len]
 
-    def forward(self, texts: list[str], device: torch.device, w_tokens: int) -> torch.Tensor:
+    def forward(
+        self, texts: list[str], device: torch.device, w_tokens: int, extents: list[int] | None = None
+    ) -> torch.Tensor:
+        """Column-aligned content tokens ``[B, w_tokens, out_dim]``.
+
+        ``extents=None`` stretches each line's glyph features over all ``w_tokens`` columns (legacy). With
+        ``extents`` (``cfg.cond.glyph_pad``), line ``i`` is resampled onto its first ``extents[i]`` columns —
+        where its ink actually is — and the remaining columns are blank (zero) tokens.
+        """
         lines = [self._render_line(t) for t in texts]  # each [1, S, W_i]
         s = lines[0].shape[-2]
         w = max(line.shape[-1] for line in lines)
@@ -208,9 +216,22 @@ class GlyphLineContentEncoder(nn.Module):
         fmap = self.cnn(
             batch.to(device, dtype=dtype, memory_format=torch.channels_last)
         )  # [B, out_dim, h', w']
-        # Pool height -> 1 and resample width -> w_tokens, so token j ↔ image patch-column j.
-        fmap = F.interpolate(fmap, size=(1, max(w_tokens, 1)), mode="bilinear", align_corners=False)
-        return fmap.flatten(2).transpose(1, 2)  # [B, w_tokens, out_dim]
+        w_tokens = max(w_tokens, 1)
+        if extents is None:
+            # Pool height -> 1 and resample width -> w_tokens, so token j ↔ image patch-column j.
+            fmap = F.interpolate(fmap, size=(1, w_tokens), mode="bilinear", align_corners=False)
+            return fmap.flatten(2).transpose(1, 2)  # [B, w_tokens, out_dim]
+        if len(extents) != len(texts):
+            raise ValueError(f"got {len(extents)} extents for {len(texts)} texts")
+        out = fmap.new_zeros(len(texts), fmap.shape[1], 1, w_tokens)
+        fw = fmap.shape[-1]
+        for i, (line, extent) in enumerate(zip(lines, extents, strict=True)):
+            valid = max(1, round(fw * line.shape[-1] / w))  # this line's own feature columns (drop batch pad)
+            cols = min(max(int(extent), 1), w_tokens)
+            out[i, :, :, :cols] = F.interpolate(
+                fmap[i : i + 1, :, :, :valid], size=(1, cols), mode="bilinear", align_corners=False
+            )[0]
+        return out.flatten(2).transpose(1, 2)  # [B, w_tokens, out_dim]
 
 
 class GlyphLatentEncoder(nn.Module):

@@ -5,7 +5,9 @@ Wraps ``Diffu.generate`` (CFG-guided flow sampling) as the ``diffu-generate`` CL
     diffu-generate --text "Smörgåsbord" --style ref_line.png --out smorgas.png --ckpt run/final/model.safetensors
 
 Without ``--ckpt`` it runs an untrained model (plumbing smoke only). The style reference is any line
-crop of the target hand; it is ImageNet-normalized to the DINO input the model expects.
+crop of the target hand; it is ImageNet-normalized to the DINO input the model expects — or, for a
+``--style-canvas`` checkpoint, placed at line height left of the generated line (give its transcription
+with ``--style-text`` so the model can match letters to strokes).
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from pathlib import Path
 
 import torch
 from PIL import Image
+from pydantic import BaseModel, ConfigDict
 from torchvision.transforms import functional as TF
 
 from .config import Config
@@ -46,6 +49,46 @@ def load_style(path: str, size: int = 224) -> torch.Tensor:
 
 def _round_up(value: int, multiple: int) -> int:
     return ((value + multiple - 1) // multiple) * multiple
+
+
+class RefLine(BaseModel):
+    """A canvas-mode style reference: the line at model height, white-padded to a multiple of 16."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    image: torch.Tensor  # [1, 3, H, W16] in [-1, 1]
+    width: int  # real ink width in px (before the padding)
+    text: str = ""  # its transcription ("" = unknown)
+
+
+def load_ref_line(source: str | Path | Image.Image, cfg: Config, text: str = "") -> RefLine:
+    """A reference line crop -> :class:`RefLine` at ``cfg.data.line_height`` (aspect kept, capped width).
+
+    A crop wider than ``cfg.data.max_ref_width`` is cut and its transcription dropped, as in training.
+    """
+    if isinstance(source, Image.Image):
+        img = source.convert("RGB")
+    else:
+        with Image.open(source) as handle:
+            img = handle.convert("RGB")
+    height = cfg.data.line_height
+    width = min(cfg.data.max_line_width, max(16, round(img.width * height / max(img.height, 1))))
+    img = img.resize((width, height), Image.Resampling.LANCZOS)
+    if width > cfg.data.max_ref_width:
+        img, width, text = img.crop((0, 0, cfg.data.max_ref_width, height)), cfg.data.max_ref_width, ""
+    tensor = TF.normalize(TF.to_tensor(img), [0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
+    tensor = torch.nn.functional.pad(tensor, (0, _round_up(width, 16) - width), value=1.0)
+    return RefLine(image=tensor.unsqueeze(0), width=width, text=text)
+
+
+def ref_text_width(ref: RefLine, text: str, renderer: GlyphLineRenderer) -> int:
+    """Expected ink width (px) of ``text`` in the reference's hand: its px-per-char × len(text).
+
+    Falls back to the glyph renderer's natural width when the reference has no transcription.
+    """
+    if not ref.text.strip():
+        return renderer.natural_width(text)
+    return max(16, round(len(text) * ref.width / len(ref.text)))
 
 
 def to_pil(image: torch.Tensor) -> Image.Image:
@@ -80,15 +123,20 @@ def ink_crop(img: Image.Image, margin: int = 8) -> Image.Image:
     return img.crop((0, 0, crop_w, img.height))
 
 
+_CANVAS_SLACK = 1.15  # canvas-mode canvas = expected ink width × this (room for a longer hand; ink-cropped)
+
+
 @torch.inference_mode()
 def generate_line(
     model: Diffu,
     text: str,
-    style: torch.Tensor,
+    style: torch.Tensor | None,
     *,
     cfg: Config,
     num_steps: int = 24,
     cfg_scale: float = 0.0,
+    ref: RefLine | None = None,
+    style_cfg_scale: float = 0.0,
 ) -> Image.Image:
     """Turn one text + style ref into a line image at the CANONICAL geometry (auto-width + ink-crop).
 
@@ -96,12 +144,38 @@ def generate_line(
     app) and the eval ruler (``scripts/eval_cer.py``) produce identical images and the measured CER is
     the CER of what actually ships. ``style`` is a preprocessed ``[1, 3, S, S]`` reference tensor;
     ``model`` is an already-built, loaded :class:`Diffu`.
+
+    Canvas-mode models take ``ref`` instead (``style`` unused): the canvas is sized from the reference's
+    own px-per-char, which also sets the glyph extent when the model was trained with ``glyph_pad``.
     """
-    canvas_w = natural_width(model.guidance_renderer, text, cfg)
     latent_h = cfg.data.line_height // cfg.vae.downscale_factor
-    latent_w = canvas_w // cfg.vae.downscale_factor
+    if not model.canvas:
+        canvas_w = natural_width(model.guidance_renderer, text, cfg)
+        img = model.generate(
+            [text],
+            style,
+            latent_hw=(latent_h, canvas_w // cfg.vae.downscale_factor),
+            num_steps=num_steps,
+            cfg_scale=cfg_scale,
+        )[0]
+        return ink_crop(to_pil(img))
+    if ref is None:
+        raise ValueError("this checkpoint uses style_mode='canvas': pass ref=load_ref_line(...)")
+    ink_w = min(cfg.data.max_line_width, ref_text_width(ref, text, model.guidance_renderer))
+    canvas_w = min(cfg.data.max_line_width, _round_up(round(ink_w * _CANVAS_SLACK), 16))
+    dev = next(model.parameters()).device
+    dtype = next(model.parameters()).dtype
     img = model.generate(
-        [text], style, latent_hw=(latent_h, latent_w), num_steps=num_steps, cfg_scale=cfg_scale
+        [text],
+        None,
+        latent_hw=(latent_h, canvas_w // cfg.vae.downscale_factor),
+        num_steps=num_steps,
+        cfg_scale=cfg_scale,
+        style_cfg_scale=style_cfg_scale,
+        text_widths=[ink_w],
+        ref_images=ref.image.to(device=dev, dtype=dtype),
+        ref_texts=[ref.text],
+        ref_widths=[ref.width],
     )[0]
     return ink_crop(to_pil(img))
 
@@ -177,6 +251,8 @@ def generate(
     compile_model: bool = False,
     lora: str | None = None,
     lora_scale: float = 1.0,
+    style_text: str = "",
+    style_cfg_scale: float = 0.0,
 ) -> list[Image.Image]:
     """Generate one line image per text in the given writer's style.
 
@@ -203,6 +279,22 @@ def generate(
         # compile covers the variable widths — but the cold-start cost still only pays off over MANY
         # lines (batch / served / page rendering), not a one-shot generation.
         model.backbone.compile_blocks()
+
+    if model.canvas:  # in-context reference: always the canonical per-text geometry
+        ref = load_ref_line(style_path, cfg, text=style_text)
+        return [
+            generate_line(
+                model,
+                text,
+                None,
+                cfg=cfg,
+                num_steps=num_steps,
+                cfg_scale=cfg_scale,
+                ref=ref,
+                style_cfg_scale=style_cfg_scale,
+            )
+            for text in texts
+        ]
 
     style1 = load_style(style_path).unsqueeze(0).to(device)  # [1, 3, S, S]
     latent_h = cfg.data.line_height // cfg.vae.downscale_factor
@@ -258,6 +350,17 @@ def main() -> None:
     ap.add_argument("--line-height", type=int, default=64, help="crop height the checkpoint trained at")
     ap.add_argument("--no-glyph-line", dest="glyph_line", action="store_false")
     ap.add_argument("--style-tokens", dest="style_in_context", action="store_true")
+    ap.add_argument(
+        "--style-canvas", action="store_true", help="the checkpoint was trained with --style-canvas"
+    )
+    ap.add_argument("--glyph-pad", action="store_true", help="the checkpoint was trained with --glyph-pad")
+    ap.add_argument("--style-text", default="", help="--style-canvas: transcription of the --style line")
+    ap.add_argument(
+        "--style-cfg-scale",
+        type=float,
+        default=0.0,
+        help="--style-canvas: style guidance (needs a model trained with --ref-dropout); 0=off",
+    )
     ap.add_argument("--lora", default=None, help="LoRA adapter dir or Hub id to load onto the base checkpoint")
     ap.add_argument("--lora-scale", type=float, default=1.0, help="how strongly to apply the LoRA (0..1+)")
     ap.set_defaults(glyph_line=True, style_in_context=False)
@@ -266,6 +369,9 @@ def main() -> None:
     cfg = Config()
     cfg.cond.glyph_line = args.glyph_line
     cfg.cond.style_in_context = args.style_in_context
+    cfg.cond.glyph_pad = args.glyph_pad
+    if args.style_canvas:
+        cfg.cond.style_mode = "canvas"
     cfg.data.line_height = args.line_height
 
     imgs = generate(
@@ -280,6 +386,8 @@ def main() -> None:
         compile_model=args.compile,
         lora=args.lora,
         lora_scale=args.lora_scale,
+        style_text=args.style_text,
+        style_cfg_scale=args.style_cfg_scale,
     )
 
     out = Path(args.out)
