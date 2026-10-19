@@ -12,14 +12,47 @@ from collections.abc import Callable
 
 import torch
 import torch.nn as nn
-from diffusers import AutoencoderKL
+import torch.nn.functional as F
+from diffusers import AutoencoderKL, AutoencoderKLQwenImage
+from diffusers.models.autoencoders.autoencoder_kl_qwenimage import QwenImageCausalConv3d, QwenImageUpsample
+from diffusers.models.autoencoders.vae import DiagonalGaussianDistribution
 
 from ..config import VAEConfig
 
-try:  # Qwen-Image uses a dedicated VAE class in recent diffusers
-    from diffusers import AutoencoderKLQwenImage
-except ImportError:  # older diffusers / not installed locally
-    AutoencoderKLQwenImage = None
+
+class _SingleFrameCausalConv3d(QwenImageCausalConv3d):
+    """A causal 3D conv that runs a single frame as the 2D conv it amounts to.
+
+    For T=1 the causal conv pads time with ``k_t - 1`` zero frames in front, so only the LAST temporal
+    kernel slice ever touches real data — the full conv3d spends ``k_t``x (3x) the FLOPs multiplying zeros.
+    This runs ``conv2d`` with that slice instead: same weights and state-dict keys, rounding-level identical
+    output, gradients reach the same (only non-zero-grad) slice. Anything else uses the stock path.
+    """
+
+    def forward(self, x: torch.Tensor, cache_x: torch.Tensor | None = None) -> torch.Tensor:
+        k_t = self.kernel_size[0]
+        if (
+            cache_x is None
+            and x.shape[2] == 1
+            and self._padding[4] == k_t - 1
+            and self.stride[0] == 1
+            and self.dilation[0] == 1
+        ):
+            frame = F.pad(x.squeeze(2), self._padding[:4])  # (w_left, w_right, h_top, h_bottom)
+            out = F.conv2d(
+                frame, self.weight[:, :, -1], self.bias, self.stride[1:], 0, self.dilation[1:], self.groups
+            )
+            return out.unsqueeze(2)
+        return super().forward(x, cache_x)
+
+
+class _NativeDtypeUpsample(QwenImageUpsample):
+    """``QwenImageUpsample`` without its fp32 round trip for nearest modes (a pure copy: bit-identical)."""
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.mode in ("nearest", "nearest-exact"):
+            return nn.Upsample.forward(self, x)
+        return super().forward(x)
 
 
 def _load_vae(pretrained: str, subfolder: str) -> AutoencoderKL:
@@ -39,9 +72,7 @@ def _load_vae(pretrained: str, subfolder: str) -> AutoencoderKL:
         return AutoencoderKL.from_pretrained(pretrained, subfolder=subfolder)
     except (OSError, ValueError, KeyError):
         # Class/config mismatch (Qwen is a Wan/video-derived VAE) or a load error -> retry.
-        if AutoencoderKLQwenImage is not None:
-            return AutoencoderKLQwenImage.from_pretrained(pretrained, subfolder=subfolder)
-        raise
+        return AutoencoderKLQwenImage.from_pretrained(pretrained, subfolder=subfolder)
 
 
 class VAEWrapper(nn.Module):
@@ -66,6 +97,13 @@ class VAEWrapper(nn.Module):
             self.scaling = getattr(c, "scaling_factor", 1.0)
             self.shift = getattr(c, "shift_factor", None) or 0.0
 
+        if self.video_vae:
+            for module in self.vae.modules():  # same parameters, faster single-frame forwards
+                if type(module) is QwenImageCausalConv3d:
+                    module.__class__ = _SingleFrameCausalConv3d
+                elif type(module) is QwenImageUpsample:
+                    module.__class__ = _NativeDtypeUpsample
+
         self.vae.requires_grad_(False)
         if cfg.finetune_decoder_only:
             self.vae.decoder.requires_grad_(True)
@@ -78,8 +116,24 @@ class VAEWrapper(nn.Module):
         from .backbone import configure_compile
 
         configure_compile(mode)
-        self.vae.encode = torch.compile(self.vae.encode, fullgraph=True, dynamic=True, mode=mode)
-        self.vae.decode = torch.compile(self.vae.decode, fullgraph=True, dynamic=True, mode=mode)
+        self.vae.encoder.compile(
+            fullgraph=True, dynamic=True, mode=mode
+        )  # in place: state-dict keys unchanged
+        self.vae.decoder.compile(fullgraph=True, dynamic=True, mode=mode)
+
+    def _direct_single_frame(self) -> bool:
+        """Images are one frame: call the encoder/decoder directly instead of diffusers' frame loop.
+
+        ``AutoencoderKLQwenImage._encode/_decode`` loop over frame chunks with a per-conv frame cache (a full
+        activation ``.clone()`` per cached conv). With one frame every cached conv sees no previous frame, so
+        the direct call is bit-identical and skips the clones. Slicing / tiling keep the stock path.
+        """
+        return self.video_vae and not (
+            getattr(self.vae, "use_slicing", False) or getattr(self.vae, "use_tiling", False)
+        )
+
+    def _single_frame_encode(self, x: torch.Tensor) -> DiagonalGaussianDistribution:
+        return DiagonalGaussianDistribution(self.vae.quant_conv(self.vae.encoder(x)))
 
     def _normalize(self, z: torch.Tensor) -> torch.Tensor:
         if self._per_channel:
@@ -108,7 +162,7 @@ class VAEWrapper(nn.Module):
         """
         if self.video_vae:
             x = x.unsqueeze(2)  # [B, 3, 1, H, W]
-        dist = self.vae.encode(x).latent_dist
+        dist = self._single_frame_encode(x) if self._direct_single_frame() else self.vae.encode(x).latent_dist
         z = dist.sample() if sample else dist.mode()
         if self.video_vae:
             z = z.squeeze(2)  # back to 4D [B, C, h, w]
@@ -119,7 +173,10 @@ class VAEWrapper(nn.Module):
         z = self._denormalize(z)
         if self.video_vae:
             z = z.unsqueeze(2)  # [B, C, 1, h, w]
-        img = self.vae.decode(z).sample
+        if self._direct_single_frame():
+            img = self.vae.decoder(self.vae.post_quant_conv(z)).clamp(-1.0, 1.0)
+        else:
+            img = self.vae.decode(z).sample
         if self.video_vae:
             img = img.squeeze(2)  # back to [B, 3, H, W]
         return img
