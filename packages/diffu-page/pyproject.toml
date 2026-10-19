@@ -71,7 +71,7 @@ error-on-warning = true
 
 [dependency-groups]
 dev = [
-    "pytest>=8",
+    "pytest>=9.1.1",
     "xmlschema>=4.3.2",
 ]
 

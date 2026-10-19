@@ -38,7 +38,7 @@ diffu = { workspace = true }
 diffu-page = { workspace = true }
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = ["pytest>=9.1.1"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
