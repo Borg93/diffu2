@@ -96,20 +96,19 @@ class Backbone(nn.Module):
                 pos_embed_type=None,
             )
             self.transformer.set_attn_processor(RoPEJointAttnProcessor())
-            # Memoized 2D-RoPE freqs keyed by (h_tokens, w_tokens, device, dtype) — see forward().
-            self._rope_cache: dict[
-                tuple[int, int, torch.device, torch.dtype], tuple[torch.Tensor, torch.Tensor]
-            ] = {}
+            # Memoized 2D-RoPE freqs keyed by (h_tokens, w_tokens, device) — see forward().
+            self._rope_cache: dict[tuple[int, int, torch.device], tuple[torch.Tensor, torch.Tensor]] = {}
 
-    def _rope(
-        self, h_t: int, w_t: int, device: torch.device, dtype: torch.dtype
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Memoized 2D-RoPE (cos, sin) for an ``h_t x w_t`` grid (constants, so caching is bit-identical)."""
-        key = (h_t, w_t, device, dtype)
+    def _rope(self, h_t: int, w_t: int, device: torch.device) -> tuple[torch.Tensor, torch.Tensor]:
+        """Memoized 2D-RoPE (cos, sin) for an ``h_t x w_t`` grid (constants, so caching is bit-identical).
+
+        Kept in fp32 whatever the model dtype: ``apply_rotary_emb`` computes in fp32 anyway, and fp32 tables
+        make bf16 inference rotate exactly like (fp32-weight) training instead of with bf16-rounded angles.
+        """
+        key = (h_t, w_t, device)
         cached = self._rope_cache.get(key)
         if cached is None:
-            cos, sin = build_2d_rope(h_t, w_t, self.head_dim, device, self.theta)
-            cached = (cos.to(dtype), sin.to(dtype))
+            cached = build_2d_rope(h_t, w_t, self.head_dim, device, self.theta)
             self._rope_cache[key] = cached
         return cached
 
@@ -160,6 +159,11 @@ class Backbone(nn.Module):
         only; one graph per line width, so keep widths bucketed).
         """
         configure_compile(mode)
+        # Compiled, the per-call Q/K/V weight concat fuses into the bf16 weight cast autocast does anyway, so
+        # the one-GEMM projection is free; eager it would add a weight copy per call, so it stays off there.
+        for processor in self.transformer.attn_processors.values():
+            if isinstance(processor, RoPEJointAttnProcessor):
+                processor.concat_qkv = True
         # SD3 ships `_repeated_blocks` empty, so populate it or compile_repeated_blocks() is a no-op.
         self.transformer._repeated_blocks = ["JointTransformerBlock"]
         # fullgraph=True so a graph break in the custom RoPE processor (apply_rotary_emb on a slice + cat,
@@ -177,19 +181,16 @@ class Backbone(nn.Module):
         joint_attention_kwargs: dict[str, object] | None = None
         if self.rope:
             # The 2D-RoPE (cos, sin) are deterministic constants of the token grid (arange-derived,
-            # non-differentiable), so memoize them per (grid, device, dtype): under width-bucketing only a
+            # non-differentiable), so memoize them per (grid, device): under width-bucketing only a
             # handful of grids occur, so this rebuilds arange/get_1d_rotary/cat at most once per bucket
-            # instead of every step. Bit-identical to rebuilding. (apply_rotary_emb upcasts internally; the
-            # dtype cast is just a clean device/dtype match, cached alongside.)
+            # instead of every step. Bit-identical to rebuilding.
             h_t = latent.shape[-2] // self.patch
             w_t = latent.shape[-1] // self.patch
-            joint_attention_kwargs = {"image_rotary_emb": self._rope(h_t, w_t, latent.device, latent.dtype)}
+            joint_attention_kwargs = {"image_rotary_emb": self._rope(h_t, w_t, latent.device)}
             if n_content:
                 # Shared-column RoPE for the line-glyph content tokens: 1 row × n_content columns, so
                 # content token j carries the SAME column frequency as image patches in column j (MSRoPE-style).
-                joint_attention_kwargs["content_rotary_emb"] = self._rope(
-                    1, n_content, latent.device, latent.dtype
-                )
+                joint_attention_kwargs["content_rotary_emb"] = self._rope(1, n_content, latent.device)
                 joint_attention_kwargs["n_content"] = n_content
         return self.transformer(
             hidden_states=latent,

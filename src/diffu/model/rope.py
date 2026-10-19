@@ -24,6 +24,8 @@ Two pieces live here:
 from __future__ import annotations
 
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 from diffusers.models.attention_dispatch import dispatch_attention_fn
 from diffusers.models.embeddings import apply_rotary_emb, get_1d_rotary_pos_embed
 
@@ -82,6 +84,21 @@ class RoPEJointAttnProcessor:
 
     _attention_backend = None
     _parallel_config = None
+    # One GEMM per stream by concatenating the Q/K/V weights per call (set by Backbone.compile_blocks): the
+    # training-time counterpart of Backbone.fuse_qkv_projections, with the same parameters / checkpoints.
+    concat_qkv = False
+
+    def _qkv(self, x: torch.Tensor, q: nn.Module, k: nn.Module, v: nn.Module) -> tuple[torch.Tensor, ...]:
+        """Q, K, V of ``x``: one matmul over the concatenated weights when they are plain Linears (a LoRA-
+        wrapped projection is not, so it keeps three); gradients flow back into each original weight."""
+        layers = (q, k, v)
+        if self.concat_qkv and all(type(layer) is nn.Linear for layer in layers):
+            biases = [layer.bias for layer in layers]
+            if all(b is None for b in biases) or all(b is not None for b in biases):
+                weight = torch.cat([layer.weight for layer in layers])
+                bias = None if biases[0] is None else torch.cat(biases)
+                return F.linear(x, weight, bias).chunk(3, dim=-1)
+        return q(x), k(x), v(x)
 
     def __call__(
         self,
@@ -103,9 +120,7 @@ class RoPEJointAttnProcessor:
         if fused:
             query, key, value = attn.to_qkv(hidden_states).chunk(3, dim=-1)
         else:
-            query = attn.to_q(hidden_states)
-            key = attn.to_k(hidden_states)
-            value = attn.to_v(hidden_states)
+            query, key, value = self._qkv(hidden_states, attn.to_q, attn.to_k, attn.to_v)
 
         inner_dim = key.shape[-1]
         head_dim = inner_dim // attn.heads
@@ -114,10 +129,13 @@ class RoPEJointAttnProcessor:
         key = key.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
         value = value.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
 
+        # diffusers' RMSNorm returns fp32 when its weight is fp32 (training: fp32 master weights under bf16
+        # autocast), which would carry fp32 Q/K through RoPE, the concat and into attention. Cast back to the
+        # activation dtype (V's): a no-op in bf16 inference, and training then matches inference numerics.
         if attn.norm_q is not None:
-            query = attn.norm_q(query)
+            query = attn.norm_q(query).to(value.dtype)
         if attn.norm_k is not None:
-            key = attn.norm_k(key)
+            key = attn.norm_k(key).to(value.dtype)
 
         # 2D RoPE on the IMAGE tokens only (before the text tokens are concatenated below).
         if image_rotary_emb is not None:
@@ -129,18 +147,18 @@ class RoPEJointAttnProcessor:
             if fused:
                 enc_q, enc_k, enc_v = attn.to_added_qkv(encoder_hidden_states).chunk(3, dim=-1)
             else:
-                enc_q = attn.add_q_proj(encoder_hidden_states)
-                enc_k = attn.add_k_proj(encoder_hidden_states)
-                enc_v = attn.add_v_proj(encoder_hidden_states)
+                enc_q, enc_k, enc_v = self._qkv(
+                    encoder_hidden_states, attn.add_q_proj, attn.add_k_proj, attn.add_v_proj
+                )
 
             enc_q = enc_q.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
             enc_k = enc_k.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
             enc_v = enc_v.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
 
             if attn.norm_added_q is not None:
-                enc_q = attn.norm_added_q(enc_q)
+                enc_q = attn.norm_added_q(enc_q).to(enc_v.dtype)
             if attn.norm_added_k is not None:
-                enc_k = attn.norm_added_k(enc_k)
+                enc_k = attn.norm_added_k(enc_k).to(enc_v.dtype)
 
             # Shared-column RoPE on the first n_content (glyph-line) text tokens only; style stays
             # position-free. Split/rotate/concat (not in-place) to keep autograd intact.
@@ -167,7 +185,7 @@ class RoPEJointAttnProcessor:
             parallel_config=self._parallel_config,
         )
         hidden_states = hidden_states.reshape(batch_size, -1, attn.heads * head_dim)
-        hidden_states = hidden_states.to(query.dtype)
+        hidden_states = hidden_states.to(value.dtype)  # the activation dtype (query.dtype could be fp32)
 
         if encoder_hidden_states is not None:
             # image tokens are the first residual.shape[1]; the rest are text

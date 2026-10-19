@@ -24,7 +24,7 @@ of THIS model are genuine exportability risks and are why every step below is wr
      ``context.shape[1] == n_content``. We assert that and fall back otherwise.
 
   2. The custom 2D-RoPE path (:class:`diffu.model.rope.RoPEJointAttnProcessor`) memoizes ``(cos, sin)`` in
-     ``Backbone._rope_cache`` keyed by the python ints ``(h_t, w_t, device, dtype)`` and builds them with
+     ``Backbone._rope_cache`` keyed by the python ints ``(h_t, w_t, device)`` and builds them with
      ``arange(w_t)``. Under a DYNAMIC width, ``w_t`` becomes a ``SymInt`` and that dict lookup /
      arange-on-symint is exactly the kind of data-dependent control flow ``torch.export`` can refuse to
      trace cleanly (guard on a symbolic hash, or a graph break). If the dynamic-width export raises, we
