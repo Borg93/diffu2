@@ -32,7 +32,7 @@ from accelerate.utils import DataLoaderConfiguration, DistributedDataParallelKwa
 from diffusers.training_utils import EMAModel
 from torch.utils.data import DataLoader
 
-from .config import Config, flux2_preset
+from .config import Config
 from .data.collate import collate_lines
 from .data.dataset import HandwritingLineDataset, load_manifest
 from .model import Diffu
@@ -581,7 +581,6 @@ def train(
         "glyph_concat": cfg.cond.glyph_concat,
         "style_in_context": cfg.cond.style_in_context,
         "style_mode": cfg.cond.style_mode,
-        "backbone_arch": cfg.backbone.arch,
         "glyph_pad": cfg.cond.glyph_pad,
         "attention_backend": attention_backend,
         "white_pad_prob": cfg.data.white_pad_prob,
@@ -993,13 +992,6 @@ def main() -> None:
         "--max-ref-width", type=int, default=None, help="--style-canvas: cap on the reference width (px)"
     )
     ap.add_argument(
-        "--backbone",
-        choices=("sd3", "flux2"),
-        default="sd3",
-        help="sd3 = SD3.5 MMDiT (all dual-stream); flux2 = FLUX.2-style (dual then single-stream blocks, fused "
-        "projections, cached canvas reference) at the same ~900M size (config.flux2_preset)",
-    )
-    ap.add_argument(
         "--attention-backend",
         default=None,
         help="diffusers attention kernel, e.g. _native_cudnn / flash / flash_hub (default: torch SDPA). "
@@ -1107,8 +1099,6 @@ def main() -> None:
     cfg.cond.glyph_concat = args.glyph_concat
     cfg.cond.style_in_context = args.style_in_context
     cfg.cond.glyph_pad = args.glyph_pad
-    if args.backbone == "flux2":
-        cfg.backbone = flux2_preset(cfg.backbone)
     if args.style_canvas:
         cfg.cond.style_mode = "canvas"
     if args.max_ref_width is not None:

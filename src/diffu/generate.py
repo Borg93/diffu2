@@ -20,7 +20,7 @@ from PIL import Image
 from pydantic import BaseModel, ConfigDict
 from torchvision.transforms import functional as TF
 
-from .config import Config, flux2_preset
+from .config import Config
 from .model import Diffu
 from .model.conditioning import GlyphLineRenderer
 
@@ -386,7 +386,6 @@ def main() -> None:
         "--style-canvas", action="store_true", help="the checkpoint was trained with --style-canvas"
     )
     ap.add_argument("--glyph-pad", action="store_true", help="the checkpoint was trained with --glyph-pad")
-    ap.add_argument("--backbone", choices=("sd3", "flux2"), default="sd3", help="the checkpoint's --backbone")
     ap.add_argument("--style-text", default="", help="--style-canvas: transcription of the --style line")
     ap.add_argument(
         "--style-cfg-scale",
@@ -408,8 +407,6 @@ def main() -> None:
     cfg.cond.glyph_line = args.glyph_line
     cfg.cond.style_in_context = args.style_in_context
     cfg.cond.glyph_pad = args.glyph_pad
-    if args.backbone == "flux2":
-        cfg.backbone = flux2_preset(cfg.backbone)
     if args.style_canvas:
         cfg.cond.style_mode = "canvas"
     cfg.data.line_height = args.line_height
