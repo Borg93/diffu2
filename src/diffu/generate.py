@@ -412,7 +412,10 @@ def main() -> None:
     )
     ap.add_argument("--compile-vae", action="store_true", help="torch.compile the VAE decode")
     ap.add_argument(
-        "--no-fuse-qkv", dest="fuse_qkv", action="store_false", help="keep separate Q/K/V matmuls (default: fused)"
+        "--no-fuse-qkv",
+        dest="fuse_qkv",
+        action="store_false",
+        help="keep separate Q/K/V matmuls (default: fused)",
     )
     ap.add_argument(
         "--lora", default=None, help="LoRA adapter dir or Hub id to load onto the base checkpoint"

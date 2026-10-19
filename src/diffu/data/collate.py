@@ -36,7 +36,8 @@ def collate_lines(
     white_pad_prob: float = 0.0,
     white_pad_max_frac: float = 0.5,
     rng: random.Random | None = None,
-    white_latent_col: Any | None = None,  # torch.Tensor [C, h, 1]; typed Any to keep this module torch-free at import
+    white_latent_col: Any
+    | None = None,  # torch.Tensor [C, h, 1]; typed Any to keep this module torch-free at import
     downscale: int = 8,
     max_ref_width: int = 1024,
 ) -> dict[str, Any]:
@@ -131,7 +132,9 @@ def _collate_refs(
 
     refs = [b["style_image"] for b in batch]
     texts = [str(b.get("style_text", "")) for b in batch]
-    ref_w = min(_round_up(max_ref_width, width_multiple), _round_up(max(r.shape[-1] for r in refs), width_multiple))
+    ref_w = min(
+        _round_up(max_ref_width, width_multiple), _round_up(max(r.shape[-1] for r in refs), width_multiple)
+    )
     padded, widths = [], []
     for i, r in enumerate(refs):
         if r.shape[-1] > ref_w:

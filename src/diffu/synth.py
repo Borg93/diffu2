@@ -87,10 +87,7 @@ def generate_synth_manifest(
     written = 0
     with open(path, "w", encoding="utf-8") as mf:
         for k in range(n):
-            if texts is not None:
-                text = texts[k].strip()
-            else:
-                text = str(ds[order[k % len(order)]][text_col]).strip()
+            text = texts[k].strip() if texts is not None else str(ds[order[k % len(order)]][text_col]).strip()
             if not text:
                 continue
             style = style_of(rng.randrange(len(ds)))  # a random writer's hand (foreign line)
@@ -99,10 +96,14 @@ def generate_synth_manifest(
             # is what garbled the earlier synth manifests and sank the HTR A/B. See _WIDTH_BIAS.
             latent_w = natural_width(model.guidance_renderer, text, cfg) // cfg.vae.downscale_factor
             with torch.inference_mode():
-                out = model.generate([text], style, latent_hw=(latent_h, latent_w), num_steps=num_steps, cfg_scale=cfg_scale)
+                out = model.generate(
+                    [text], style, latent_hw=(latent_h, latent_w), num_steps=num_steps, cfg_scale=cfg_scale
+                )
             png = os.path.join(lines_dir, f"{k:07d}.png")
             ink_crop(to_pil(out[0])).save(png)  # trim the blank tail, matching generate_line
-            mf.write(json.dumps({"image": png, "text": text, "writer_id": f"synth_{k}"}, ensure_ascii=False) + "\n")
+            mf.write(
+                json.dumps({"image": png, "text": text, "writer_id": f"synth_{k}"}, ensure_ascii=False) + "\n"
+            )
             written += 1
             if k % 200 == 0:
                 print(f"  synth {k}/{n}", flush=True)
@@ -111,23 +112,39 @@ def generate_synth_manifest(
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Bulk-generate a synthetic line manifest from a Diffu checkpoint.")
+    ap = argparse.ArgumentParser(
+        description="Bulk-generate a synthetic line manifest from a Diffu checkpoint."
+    )
     ap.add_argument("--ckpt", required=True, help="base model weights (.safetensors)")
     ap.add_argument("--lora", default=None, help="optional LoRA adapter dir/Hub id to load onto the base")
-    ap.add_argument("--hf-dataset", required=True, help="source of texts + writer styles (e.g. Teklia/IAM-line)")
+    ap.add_argument(
+        "--hf-dataset", required=True, help="source of texts + writer styles (e.g. Teklia/IAM-line)"
+    )
     ap.add_argument("--split", default="train")
     ap.add_argument("--n", type=int, default=4000, help="number of synthetic lines to generate")
     ap.add_argument("--out", required=True, help="output dir (writes lines/*.png + train.jsonl)")
     ap.add_argument("--line-height", type=int, default=128)
     ap.add_argument("--cfg-scale", type=float, default=5.0)
     ap.add_argument("--steps", type=int, default=24)
-    ap.add_argument("--seed", type=int, default=0, help="shuffles text/style order; vary to generate a fresh, disjoint batch")
-    ap.add_argument("--texts", default=None, help="render this newline-delimited text file (targeted synth) instead of sampling --hf-dataset; --n is ignored")
+    ap.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="shuffles text/style order; vary to generate a fresh, disjoint batch",
+    )
+    ap.add_argument(
+        "--texts",
+        default=None,
+        help="render this newline-delimited text file (targeted synth) instead of sampling --hf-dataset; --n is ignored",
+    )
     ap.add_argument("--no-compile", dest="compile", action="store_false")
     ap.set_defaults(compile=True)
     args = ap.parse_args()
 
-    texts = [line.rstrip("\n") for line in open(args.texts, encoding="utf-8")] if args.texts else None
+    texts = None
+    if args.texts:
+        with open(args.texts, encoding="utf-8") as f:
+            texts = [line.rstrip("\n") for line in f]
     generate_synth_manifest(
         args.ckpt,
         args.out,

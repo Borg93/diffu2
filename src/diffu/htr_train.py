@@ -104,7 +104,9 @@ def train_htr(
 
                 trackio.init(project=self._project, name=self._run, config=self._config)
 
-        def on_log(self, args: Any, state: Any, control: Any, logs: dict[str, Any] | None = None, **kw: Any) -> None:
+        def on_log(
+            self, args: Any, state: Any, control: Any, logs: dict[str, Any] | None = None, **kw: Any
+        ) -> None:
             if state.is_world_process_zero and logs:
                 import trackio
 
@@ -136,7 +138,12 @@ def train_htr(
                 r=lora_rank,
                 lora_alpha=2 * lora_rank,
                 lora_dropout=0.05,
-                target_modules=["q_proj", "k_proj", "v_proj", "out_proj"],  # TrOCR decoder attention projections
+                target_modules=[
+                    "q_proj",
+                    "k_proj",
+                    "v_proj",
+                    "out_proj",
+                ],  # TrOCR decoder attention projections
             ),
         )
         model.print_trainable_parameters()
@@ -209,10 +216,19 @@ def main() -> None:
     ap.add_argument("--batch-size", type=int, default=8)
     ap.add_argument("--lr", type=float, default=5e-5)
     ap.add_argument("--max-samples", type=int, default=None)
-    ap.add_argument("--lora", action="store_true", help="LoRA-adapt the recognizer (decoder attention) instead of full FT")
+    ap.add_argument(
+        "--lora", action="store_true", help="LoRA-adapt the recognizer (decoder attention) instead of full FT"
+    )
     ap.add_argument("--lora-rank", type=int, default=16, help="LoRA rank when --lora")
-    ap.add_argument("--seed", type=int, default=42, help="training seed (vary across runs for CER error bars)")
-    ap.add_argument("--max-steps", type=int, default=None, help="cap optimizer steps (>0 overrides --epochs; step-matches arms)")
+    ap.add_argument(
+        "--seed", type=int, default=42, help="training seed (vary across runs for CER error bars)"
+    )
+    ap.add_argument(
+        "--max-steps",
+        type=int,
+        default=None,
+        help="cap optimizer steps (>0 overrides --epochs; step-matches arms)",
+    )
     ap.add_argument("--track", action="store_true", help="log loss/CER to trackio (project 'diffu-htr')")
     args = ap.parse_args()
 

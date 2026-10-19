@@ -518,7 +518,10 @@ def train(
             model.backbone.compile_blocks(compile_mode)  # compile now that the adapter is in place
         if accel.is_main_process:
             base = "random init — pass --init-from for a real adapter" if init_from is None else init_from
-            print(f"LoRA rank={lora_rank}: {n_lora / 1e6:.3f}M trainable adapter params (base frozen: {base})", flush=True)
+            print(
+                f"LoRA rank={lora_rank}: {n_lora / 1e6:.3f}M trainable adapter params (base frozen: {base})",
+                flush=True,
+            )
 
     # LoRA trains only the (requires_grad) adapter tensors; a full run trains the Stage-1 parameter set.
     params = [p for p in model.parameters() if p.requires_grad] if lora else trainable_parameters(model)
@@ -700,7 +703,11 @@ def train(
                     print(f"step {step}/{steps}  {msg}  {imgs_per_s:.0f} img/s", flush=True)
                     if tracker is not None:
                         lr_now = lr_scheduler.get_last_lr()[0]  # step= -> real-step x-axis
-                        metrics: dict[str, float] = {"loss": loss_val, "lr": lr_now, "images_per_s": imgs_per_s}
+                        metrics: dict[str, float] = {
+                            "loss": loss_val,
+                            "lr": lr_now,
+                            "images_per_s": imgs_per_s,
+                        }
                         if flow_val is not None:  # flow_loss is what val_loss is comparable to
                             metrics["flow_loss"] = flow_val
                         if repa_val is not None:
@@ -1096,7 +1103,9 @@ def main() -> None:
         "a base checkpoint). Saves a few-MB adapter, not a full 17 GB state.",
     )
     ap.add_argument("--lora-rank", type=int, default=16, help="LoRA rank r (adapter capacity)")
-    ap.add_argument("--lora-alpha", type=int, default=32, help="LoRA alpha (scaling; effective scale = alpha/r)")
+    ap.add_argument(
+        "--lora-alpha", type=int, default=32, help="LoRA alpha (scaling; effective scale = alpha/r)"
+    )
     ap.add_argument("--lora-dropout", type=float, default=0.0, help="LoRA dropout")
     # --- Train straight off a Hugging Face dataset (image + text) instead of a local manifest.
     ap.add_argument(
@@ -1106,8 +1115,12 @@ def main() -> None:
         "needs `uv sync --extra hf`",
     )
     ap.add_argument("--hf-split", default="train", help="HF dataset split to train on")
-    ap.add_argument("--hf-val-split", default="validation", help="HF split for the held-out val loader ('' to skip)")
-    ap.add_argument("--hf-max-rows", type=int, default=None, help="cap the HF train split to N rows (smoke/dev)")
+    ap.add_argument(
+        "--hf-val-split", default="validation", help="HF split for the held-out val loader ('' to skip)"
+    )
+    ap.add_argument(
+        "--hf-max-rows", type=int, default=None, help="cap the HF train split to N rows (smoke/dev)"
+    )
     ap.add_argument(
         "--htr-recognizer-eval",
         default=None,
@@ -1205,13 +1218,17 @@ def main() -> None:
             from .data.latent_cache import build_latent_cache, open_cache
 
             if args.white_pad_prob > 0.0:
-                raise SystemExit("--cache-latents needs --white-pad-prob 0 (the augmentation invalidates the cache)")
+                raise SystemExit(
+                    "--cache-latents needs --white-pad-prob 0 (the augmentation invalidates the cache)"
+                )
             state = PartialState()
             try:
                 train_latent_cache = open_cache(cfg, args.data_dir, "train")
             except (FileNotFoundError, ValueError):
                 if state.is_main_process:
-                    print("--cache-latents: building the VAE latent cache (train split, one-time)…", flush=True)
+                    print(
+                        "--cache-latents: building the VAE latent cache (train split, one-time)…", flush=True
+                    )
                     build_latent_cache(cfg, args.data_dir, "train")
                 state.wait_for_everyone()  # non-main ranks wait for the build before opening
                 train_latent_cache = open_cache(cfg, args.data_dir, "train")

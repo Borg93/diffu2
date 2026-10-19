@@ -28,7 +28,14 @@ ADAPTER_NAME = "default"
 # standard, well-tested LoRA surface for MMDiT. The custom 2D-RoPE processor reads these same nn.Linears
 # (verified: LoRA grads flow through them), so rotary attention is adapted too.
 DEFAULT_TARGETS: tuple[str, ...] = (
-    "to_q", "to_k", "to_v", "to_out.0", "add_q_proj", "add_k_proj", "add_v_proj", "to_add_out",
+    "to_q",
+    "to_k",
+    "to_v",
+    "to_out.0",
+    "add_q_proj",
+    "add_k_proj",
+    "add_v_proj",
+    "to_add_out",
 )
 
 

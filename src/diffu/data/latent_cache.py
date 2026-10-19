@@ -42,7 +42,9 @@ if TYPE_CHECKING:
 _DAT = "{split}.latents.f16.dat"
 _WIDTHS = "{split}.latents.widths.npy"
 _META = "{split}.latents.meta.json"
-_WHITE = "{split}.latents.white.npy"  # [C, h, 1] encoder steady-state white-paper latent (batch right-pad value)
+_WHITE = (
+    "{split}.latents.white.npy"  # [C, h, 1] encoder steady-state white-paper latent (batch right-pad value)
+)
 
 
 class LatentCacheMeta(BaseModel):
