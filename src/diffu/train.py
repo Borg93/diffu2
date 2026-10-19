@@ -1,7 +1,7 @@
 """Training loop + entrypoint for Diffu (diffusers-first, Stage-1 flow matching).
 
 Modern optimizations baked in: bf16 mixed precision (accelerate), gradient checkpointing
-(diffusers), and EMA weights (diffusers EMAModel, one-pass update: diffu.ema). torch.compile optional (bucket line widths
+(diffusers), and EMA weights (diffusers EMAModel). torch.compile optional (bucket line widths
 to limit recompiles). FlashAttention comes for free via SD3's SDPA attention. Single- and
 multi-GPU via `accelerate launch` (see the Makefile `train-1gpu` / `train-2gpu` targets).
 
@@ -29,12 +29,12 @@ from typing import TYPE_CHECKING, Any
 import torch
 from accelerate import Accelerator
 from accelerate.utils import DataLoaderConfiguration, DistributedDataParallelKwargs, set_seed
+from diffusers.training_utils import EMAModel
 from torch.utils.data import DataLoader
 
 from .config import Config
 from .data.collate import collate_lines
 from .data.dataset import HandwritingLineDataset, load_manifest
-from .ema import LerpEMAModel
 from .model import Diffu
 
 if TYPE_CHECKING:
@@ -548,7 +548,7 @@ def train(
     # foreach=True: vectorized (_foreach_) EMA update over the whole param list in one shot vs a Python
     # per-tensor loop. use_ema_warmup: low decay early, ramp to 0.9999. (foreach isn't serialized in the EMA
     # state_dict, so toggling it is resume-compatible with existing checkpoints.)
-    ema = LerpEMAModel(params, use_ema_warmup=True, foreach=True) if use_ema else None
+    ema = EMAModel(params, use_ema_warmup=True, foreach=True) if use_ema else None
     if ema is not None:
         accel.register_for_checkpointing(ema)
     # Full resume: load model + optimizer + LR scheduler + EMA + RNG from an `accelerate` step_N checkpoint
