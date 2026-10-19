@@ -67,6 +67,19 @@ diffu-generate --ckpt <weights> --glyph-pad --style-canvas --line-height 128 \
     --cfg-scale 5 --style-cfg-scale 2
 ```
 
+### FLUX.2-style backbone (`--backbone flux2`, for a full retrain)
+
+`--backbone flux2` swaps the SD3.5 MMDiT (24 dual-stream blocks, width 1024) for the FLUX.2 / Klein block
+design via diffusers' `Flux2Transformer2DModel`, built at the **same ~900M size and depth 24**: width 1536,
+12 heads of 128, 4 dual-stream + 20 single-stream blocks with fused parallel attention+MLP projections and
+one shared modulation (`config.flux2_preset`). Fewer, wider matrix multiplies → more tensor-core work per
+kernel. Everything else (VAE, glyph encoder, data, training loop) is unchanged.
+
+With `--style-canvas` the reference becomes **clean tokens with a K/V cache**: trained at t=0 attending only
+to itself, so sampling computes the reference once on the first step and reuses it for every later step —
+bit-identical to recomputing it (tested). Pass the same `--backbone flux2` to `diffu-generate`. Compare the
+two designs with `scripts/bench_attention.py --backbone sd3|flux2 [--canvas] [--compile]`.
+
 The reference must be the **same writer** as the target: lines from the same page (the `writer_id`
 default) are fine. `Teklia/IAM-line` has **no writer column**, so its references are random other
 writers — use an IAM source with writer ids to test style there.

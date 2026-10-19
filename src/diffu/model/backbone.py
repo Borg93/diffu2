@@ -12,6 +12,9 @@ Output: predicted velocity [B, C, h, w].
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
+
 import torch
 import torch.nn as nn
 from diffusers import SD3Transformer2DModel
@@ -19,6 +22,21 @@ from diffusers.models.embeddings import PatchEmbed
 
 from ..config import BackboneConfig
 from .rope import RoPEJointAttnProcessor, build_2d_rope
+
+
+def configure_compile() -> None:
+    """Process-global Dynamo settings for the regional, dynamic-width block compile (both backbones)."""
+    import torch._dynamo
+    import torch.fx.experimental._config as fx_config
+
+    # use_duck_shape=False keeps the line width a free symbol, so a width that coincidentally equals
+    # batch/heads/h_t doesn't trigger a recompile. Process-global; set once per entrypoint.
+    fx_config.use_duck_shape = False
+    # Variable widths + the last block's context_pre_only=True guard trigger several recompiles; the
+    # default recompile_limit (8) is too low and Dynamo ABORTS. Raise it (bucketing keeps the real count
+    # to ~num_buckets; dynamic=True keeps most widths on one symbolic shape).
+    torch._dynamo.config.recompile_limit = 256
+    torch._dynamo.config.accumulated_recompile_limit = 2048
 
 
 class Backbone(nn.Module):
@@ -102,6 +120,18 @@ class Backbone(nn.Module):
         """
         self.transformer.enable_gradient_checkpointing()
 
+    def repa_target(
+        self, layer: int, n_text: int, n_ref: int
+    ) -> tuple[nn.Module, Callable[[Any], torch.Tensor]]:
+        """The block whose output REPA aligns, and how to pull the image tokens out of it (``(text, image)``).
+
+        ``n_text`` / ``n_ref`` exist for the flux2 backbone's interface; SD3 keeps a canvas reference in the
+        image grid itself, which the caller slices by column.
+        """
+        blocks = self.transformer.transformer_blocks
+        block = blocks[max(0, min(layer, len(blocks) - 1))]
+        return block, lambda out: out[1] if isinstance(out, tuple | list) and len(out) > 1 else out
+
     def set_attention_backend(self, backend: str) -> None:
         """Route attention through a diffusers kernel backend (``RoPEJointAttnProcessor`` dispatches).
 
@@ -121,17 +151,7 @@ class Backbone(nn.Module):
         only a handful of shapes occur and recompiles stay bounded. Measured: −70% kernel launches, ~1.9×
         train throughput (docs/PERF_AUDIT.md §0e).
         """
-        import torch._dynamo
-        import torch.fx.experimental._config as fx_config
-
-        # use_duck_shape=False keeps the line width a free symbol, so a width that coincidentally equals
-        # batch/heads/h_t doesn't trigger a recompile. Process-global; set once per entrypoint.
-        fx_config.use_duck_shape = False
-        # Variable widths + the last block's context_pre_only=True guard trigger several recompiles; the
-        # default recompile_limit (8) is too low and Dynamo ABORTS. Raise it (bucketing keeps the real count
-        # to ~num_buckets; dynamic=True keeps most widths on one symbolic shape).
-        torch._dynamo.config.recompile_limit = 256
-        torch._dynamo.config.accumulated_recompile_limit = 2048
+        configure_compile()
         # SD3 ships `_repeated_blocks` empty, so populate it or compile_repeated_blocks() is a no-op.
         self.transformer._repeated_blocks = ["JointTransformerBlock"]
         # fullgraph=True so a graph break in the custom RoPE processor (apply_rotary_emb on a slice + cat,

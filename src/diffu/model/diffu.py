@@ -3,7 +3,8 @@
 Diffu is a 2026 model for Swedish handwritten line-image generation: MMDiT backbone +
 rectified flow + 16-ch VAE + glyph/DINOv3 conditioning + classic CFG.
 
-  Backbone : diffusers SD3 MMDiT (model/backbone.py)             [not hand-rolled]
+  Backbone : diffusers SD3 MMDiT (model/backbone.py) or, with cfg.backbone.arch="flux2", the
+             FLUX.2-style Flux2Transformer2DModel (model/backbone_flux2.py)   [not hand-rolled]
   VAE      : Qwen-Image 16-ch (model/vae.py, diffusers)          [validated in Stage 0]
   Scheduler: diffusers FlowMatchEulerDiscreteScheduler           [sampling]
   Content  : Unifont glyph encoder (model/content_encoder.py)    [custom — no diffusers equivalent]
@@ -38,6 +39,7 @@ from pydantic import BaseModel, ConfigDict
 from ..config import Config
 from ..flow import flow_loss, interpolate, repa_loss, sample_timesteps
 from .backbone import Backbone
+from .backbone_flux2 import Flux2Backbone
 from .conditioning import GlyphLineRenderer, StyleEncoder
 from .content_encoder import GlyphContentEncoder, GlyphLatentEncoder, GlyphLineContentEncoder
 from .vae import VAEWrapper
@@ -103,9 +105,13 @@ class Diffu(nn.Module):
             else None
         )
         extra = cfg.cond.glyph_concat_channels if cfg.cond.glyph_concat else 0
-        if self.canvas:  # + the clean-reference conditioning channels (zeros over the target columns)
+        # Canvas reference: on flux2 it is its own clean tokens with cached K/V (no extra channels); on sd3 it
+        # shares the image grid and rides in conditioning channels (zeros over the target columns).
+        self.ref_tokens = self.canvas and cfg.backbone.arch == "flux2"
+        if self.canvas and not self.ref_tokens:
             extra += self.C
-        self.backbone = Backbone(
+        backbone_cls = Flux2Backbone if cfg.backbone.arch == "flux2" else Backbone
+        self.backbone: Backbone | Flux2Backbone = backbone_cls(
             cfg.backbone, in_channels=self.C + extra, context_dim=ctx, pooled_dim=ctx, out_channels=self.C
         )
         self.guidance_renderer = GlyphLineRenderer(
@@ -264,10 +270,12 @@ class Diffu(nn.Module):
         x0 = self.vae.encode(images) if latents is None else latents  # [B, C, h, w] (normalized)
         b = x0.shape[0]
         ref = self._canvas_ref(ref_images, ref_latents, ref_texts, ref_widths, b)
-        # Canvas mode: noise the whole [ref | target] canvas; the clean reference rides in a conditioning
-        # channel and the loss is taken on the target columns only (F5-TTS / DiffInk infilling).
-        ref_cols = ref.latent.shape[-1] if ref is not None else 0
-        canvas_x0 = torch.cat([ref.latent.to(x0.dtype), x0], dim=-1) if ref is not None else x0
+        # Canvas mode, sd3: noise the whole [ref | target] canvas; the clean reference rides in a conditioning
+        # channel and the loss is taken on the target columns only (F5-TTS / DiffInk infilling). flux2: only
+        # the target is noised; the clean reference goes in as separate (cacheable) tokens.
+        in_grid = ref is not None and not self.ref_tokens
+        ref_cols = ref.latent.shape[-1] if in_grid else 0
+        canvas_x0 = torch.cat([ref.latent.to(x0.dtype), x0], dim=-1) if in_grid else x0
         t = sample_timesteps(b, x0.device, self.cfg.flow.logit_normal_mean, self.cfg.flow.logit_normal_std)
         eps = torch.randn_like(canvas_x0)
         x_t, target_v = interpolate(canvas_x0, eps, t)
@@ -285,9 +293,8 @@ class Diffu(nn.Module):
         glyph_latent = (
             self.glyph_latent(texts, x0.device, (x0.shape[-2], x0.shape[-1])) if self.glyph_latent else None
         )
-        ref_cond = (
-            torch.cat([ref.latent.to(x0.dtype), torch.zeros_like(x0)], dim=-1) if ref is not None else None
-        )
+        ref_cond = torch.cat([ref.latent.to(x0.dtype), torch.zeros_like(x0)], dim=-1) if in_grid else None
+        ref_latent = ref.latent.to(x0.dtype) if ref is not None and self.ref_tokens else None
         if cond_dropout > 0.0 and self.training:  # CFG: learn an unconditional mode on dropped samples
             keep = (torch.rand(b, device=x0.device) >= cond_dropout).to(context.dtype)
             context = context * keep.view(b, 1, 1)
@@ -296,6 +303,8 @@ class Diffu(nn.Module):
                 glyph_latent = glyph_latent * keep.to(glyph_latent.dtype).view(b, 1, 1, 1)
             if ref_cond is not None:
                 ref_cond = ref_cond * keep.to(ref_cond.dtype).view(b, 1, 1, 1)
+            if ref_latent is not None:
+                ref_latent = ref_latent * keep.to(ref_latent.dtype).view(b, 1, 1, 1)
         if (
             text_dropout > 0.0 and self.training
         ):  # TEXT-only CFG (DiffInk drop_text): drop CONTENT, KEEP style
@@ -304,13 +313,16 @@ class Diffu(nn.Module):
             context = torch.cat([content_part, context[:, n_content:]], dim=1)  # style tokens untouched
             if glyph_latent is not None:  # the concat glyph IS content -> drop it too
                 glyph_latent = glyph_latent * keep_t.to(glyph_latent.dtype).view(b, 1, 1, 1)
-        if ref_cond is not None and ref_dropout > 0.0 and self.training:
+        if ref is not None and ref_dropout > 0.0 and self.training:
             # STYLE-only drop (DiffInk drop_cond): the reference pixels AND its transcription go, the target
             # text stays -> the "text, no style" mode that style guidance contrasts against at sampling.
             keep_r = (torch.rand(b, device=x0.device) >= ref_dropout).to(context.dtype)
-            n_ref = ref_cols // self.backbone.patch
+            n_ref = ref.latent.shape[-1] // self.backbone.patch  # the reference's glyph-token columns
             context = torch.cat([context[:, :n_ref] * keep_r.view(b, 1, 1), context[:, n_ref:]], dim=1)
-            ref_cond = ref_cond * keep_r.to(ref_cond.dtype).view(b, 1, 1, 1)
+            if ref_cond is not None:
+                ref_cond = ref_cond * keep_r.to(ref_cond.dtype).view(b, 1, 1, 1)
+            if ref_latent is not None:
+                ref_latent = ref_latent * keep_r.to(ref_latent.dtype).view(b, 1, 1, 1)
         # NOTE: combine --text-dropout with --cond-dropout for the DiffInk-style mixture — each sample
         # randomly ends up {nothing, text-only, both} dropped (style is NEVER dropped alone, which is
         # what we want: the failure is "text ignored," not "style ignored"). Canvas mode adds --ref-dropout.
@@ -330,8 +342,8 @@ class Diffu(nn.Module):
             # latent grid so token i aligns with the same spatial location — the spatial correspondence
             # is the whole point, and mean-pooling both sides (the old code) threw it away.
             v_pred, hidden = self._backbone_with_hidden(
-                model_in, t * 1000.0, context, pooled, n_content=nc
-            )  # [B,N,dim]
+                model_in, t * 1000.0, context, pooled, n_content=nc, ref_latent=ref_latent
+            )  # [B,N,dim] — target image tokens (flux2 reference tokens already removed)
             if not hidden.requires_grad:
                 raise RuntimeError(
                     "REPA: the captured DiT hidden state is detached from the autograd graph, so the "
@@ -349,8 +361,8 @@ class Diffu(nn.Module):
             repa: torch.Tensor | None = repa_w * repa_loss(proj, target)
             loss = flow + repa
         else:
-            v_pred = self.backbone(
-                model_in, t * 1000.0, context, pooled, n_content=nc
+            v_pred = self._run_backbone(
+                model_in, t * 1000.0, context, pooled, nc, ref_latent
             )  # SD3 timestep scale ~[0,1000]
             flow = flow_loss(v_pred[..., ref_cols:], target_v[..., ref_cols:], weight=ink_weight)
             repa = None
@@ -373,6 +385,24 @@ class Diffu(nn.Module):
         ink_latent = F.interpolate(ink, size=tuple(latent_hw), mode="area")  # [B,1,h,w] ink fraction
         return 1.0 + (self.cfg.aux.diacritic_class_weight - 1.0) * ink_latent
 
+    def _run_backbone(
+        self,
+        latent: torch.Tensor,
+        timestep: torch.Tensor,
+        context: torch.Tensor,
+        pooled: torch.Tensor,
+        n_content: int | None,
+        ref_latent: torch.Tensor | None,
+    ) -> torch.Tensor:
+        """One backbone pass; a flux2 reference goes in as clean tokens (its K/V cache is discarded)."""
+        if ref_latent is None:
+            return self.backbone(latent, timestep, context, pooled, n_content=n_content)
+        if not isinstance(self.backbone, Flux2Backbone):
+            raise TypeError("reference tokens need the flux2 backbone")
+        return self.backbone.forward_with_ref(
+            latent, timestep, context, pooled, ref_latent, n_content=n_content
+        )[0]
+
     def _backbone_with_hidden(
         self,
         latent: torch.Tensor,
@@ -380,18 +410,23 @@ class Diffu(nn.Module):
         context: torch.Tensor,
         pooled: torch.Tensor,
         n_content: int | None = None,
+        ref_latent: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Run the backbone, tapping the REPA-layer block's image hidden states via a forward hook."""
         captured: dict[str, torch.Tensor] = {}
+        p = self.backbone.patch
+        n_ref = (ref_latent.shape[-2] // p) * (ref_latent.shape[-1] // p) if ref_latent is not None else 0
+        n_text = context.shape[1] + (
+            1 if isinstance(self.backbone, Flux2Backbone) else 0
+        )  # + the pooled token
+        block, extract = self.backbone.repa_target(self.cfg.aux.repa_layer, n_text, n_ref)
 
         def _hook(_module, _inputs, output):
-            captured["h"] = output[1] if isinstance(output, tuple | list) and len(output) > 1 else output
+            captured["h"] = extract(output)
 
-        blocks = self.backbone.transformer.transformer_blocks
-        layer = max(0, min(self.cfg.aux.repa_layer, len(blocks) - 1))
-        handle = blocks[layer].register_forward_hook(_hook)
+        handle = block.register_forward_hook(_hook)
         try:
-            v_pred = self.backbone(latent, timestep, context, pooled, n_content=n_content)
+            v_pred = self._run_backbone(latent, timestep, context, pooled, n_content, ref_latent)
         finally:
             handle.remove()
         return v_pred, captured["h"]  # [B, C, h, w], [B, N, dim]
@@ -471,41 +506,64 @@ class Diffu(nn.Module):
         # Sample in the MODEL dtype (bf16 inference works end-to-end); the scheduler upcasts to fp32
         # internally for precision and returns fp32, so restore the dtype at each model/VAE boundary.
         dtype = next(self.parameters()).dtype
-        ref_cols = ref.latent.shape[-1] if ref is not None else 0
+        in_grid = ref is not None and not self.ref_tokens  # sd3 canvas: the reference shares the image grid
+        ref_cols = ref.latent.shape[-1] if in_grid else 0
         x = torch.randn(b, self.C, h, ref_cols + w, device=dev, dtype=dtype)
         ref_cond = (
             torch.cat([ref.latent.to(dtype), torch.zeros(b, self.C, h, w, device=dev, dtype=dtype)], dim=-1)
-            if ref is not None
+            if in_grid
             else None
         )
-        # Guidance variants, each (context, glyph_latent, ref_cond); index 0 is the fully conditioned pass.
-        # All are step-invariant and run as ONE k·B backbone forward per step: RoPE and SDPA are per-sample,
-        # so concatenating along the batch is numerically identical and better fills the GPU.
+        ref_tok = ref.latent.to(dtype) if ref is not None and self.ref_tokens else None
+        # Guidance variants, each (context, glyph_latent, ref_cond, ref_tok); index 0 is the fully conditioned
+        # pass. All are step-invariant and run as ONE k·B backbone forward per step: RoPE and SDPA are
+        # per-sample, so concatenating along the batch is numerically identical and better fills the GPU.
         no_text = context.clone()
         no_text[:, :n_content] = 0.0
         no_ref = context.clone()
-        no_ref[:, : ref_cols // self.backbone.patch] = 0.0
+        if ref is not None:
+            no_ref[:, : ref.latent.shape[-1] // self.backbone.patch] = 0.0
         zero_glyph = torch.zeros_like(glyph_latent) if glyph_latent is not None else None
         zero_ref = torch.zeros_like(ref_cond) if ref_cond is not None else None
-        variants = [(context, glyph_latent, ref_cond)]
-        if style_cfg_scale > 0.0 and ref is not None:
-            variants += [(no_ref, glyph_latent, zero_ref), (no_text, zero_glyph, zero_ref)]  # text-only, null
+        zero_tok = torch.zeros_like(ref_tok) if ref_tok is not None else None
+        variants = [(context, glyph_latent, ref_cond, ref_tok)]
+        if style_cfg_scale > 0.0 and ref is not None:  # text-only, null
+            variants += [
+                (no_ref, glyph_latent, zero_ref, zero_tok),
+                (no_text, zero_glyph, zero_ref, zero_tok),
+            ]
         elif cfg_scale > 0.0:
-            variants.append((no_text, zero_glyph, ref_cond))  # classic: drop text, keep style
+            variants.append((no_text, zero_glyph, ref_cond, ref_tok))  # classic: drop text, keep style
         k = len(variants)
         ctx_k = torch.cat([v[0] for v in variants], dim=0)
         pooled_k = pooled.repeat(k, 1)
         extras_k = [torch.cat([v[i] for v in variants], dim=0) for i in (1, 2) if variants[0][i] is not None]
+        ref_tok_k = torch.cat([v[3] for v in variants], dim=0) if ref_tok is not None else None
+        cache = None  # flux2: the reference K/V, computed on the first step and reused unchanged afterwards
         for i, t in enumerate(scheduler.timesteps):
             model_in = torch.cat([x.repeat(k, 1, 1, 1), *extras_k], dim=1)
-            out = self.backbone(model_in, t.expand(k * b), ctx_k, pooled_k, n_content=nc).chunk(k, dim=0)
+            timestep = t.expand(k * b)
+            if ref_tok_k is None:
+                out = self.backbone(model_in, timestep, ctx_k, pooled_k, n_content=nc)
+            elif not isinstance(self.backbone, Flux2Backbone):
+                raise TypeError("reference tokens need the flux2 backbone")
+            elif cache is None:
+                out, cache = self.backbone.forward_with_ref(
+                    model_in, timestep, ctx_k, pooled_k, ref_tok_k, n_content=nc
+                )
+            else:
+                ref_patch_cols = ref_tok_k.shape[-1] // self.backbone.patch
+                out = self.backbone.forward_cached(
+                    model_in, timestep, ctx_k, pooled_k, cache, ref_patch_cols, n_content=nc
+                )
+            chunks = out.chunk(k, dim=0)
             if k == 3:
-                v_full, v_text, v_null = out
+                v_full, v_text, v_null = chunks
                 v = v_null + cfg_scale * (v_text - v_null) + style_cfg_scale * (v_full - v_text)
             elif k == 2:
-                v = out[1] + cfg_scale * (out[0] - out[1])
+                v = chunks[1] + cfg_scale * (chunks[0] - chunks[1])
             else:
-                v = out[0]
+                v = chunks[0]
             yield (x - scheduler.sigmas[i] * v)[..., ref_cols:].to(dtype)  # target x0 estimate at this step
             x = scheduler.step(v, t, x).prev_sample.to(dtype)
         yield x[..., ref_cols:]  # the final denoised target latent

@@ -11,27 +11,11 @@ from functools import partial
 import pytest
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+from conftest import C
 from torch.utils.data import DataLoader
 
 from diffu.config import Config
 from diffu.data.collate import collate_lines
-
-C = 16  # latent channels of the real (and fake) VAE
-
-
-class FakeVAE(nn.Module):
-    """f8 stand-in for the Qwen VAE: average-pool to a C-channel latent, nearest-upsample back."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.anchor = nn.Parameter(torch.zeros(1))  # gives the module a device/dtype
-
-    def encode(self, x: torch.Tensor, *, sample: bool = True) -> torch.Tensor:
-        return F.avg_pool2d(x.mean(1, keepdim=True), 8).expand(-1, C, -1, -1).contiguous()
-
-    def decode(self, z: torch.Tensor) -> torch.Tensor:
-        return F.interpolate(z[:, :3], scale_factor=8, mode="nearest")
 
 
 def _cfg(*, canvas: bool = True, glyph_pad: bool = True) -> Config:
@@ -48,11 +32,6 @@ def _cfg(*, canvas: bool = True, glyph_pad: bool = True) -> Config:
     cfg.data.max_ref_width = 128
     cfg.flow.sample_steps = 2
     return cfg
-
-
-@pytest.fixture
-def fake_vae(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("diffu.model.diffu.VAEWrapper", lambda _cfg: FakeVAE())
 
 
 def _model(cfg: Config):

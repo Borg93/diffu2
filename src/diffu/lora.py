@@ -28,8 +28,29 @@ ADAPTER_NAME = "default"
 # standard, well-tested LoRA surface for MMDiT. The custom 2D-RoPE processor reads these same nn.Linears
 # (verified: LoRA grads flow through them), so rotary attention is adapted too.
 DEFAULT_TARGETS: tuple[str, ...] = (
-    "to_q", "to_k", "to_v", "to_out.0", "add_q_proj", "add_k_proj", "add_v_proj", "to_add_out",
+    "to_q",
+    "to_k",
+    "to_v",
+    "to_out.0",
+    "add_q_proj",
+    "add_k_proj",
+    "add_v_proj",
+    "to_add_out",
 )
+# flux2 backbone: the dual-stream attention projections above + each single-stream block's fused input
+# projection and its output Linear. A regex, because a bare "to_out" suffix would also hit the dual-stream
+# blocks' to_out ModuleList (not a Linear).
+FLUX2_TARGETS = (
+    r".*\.(to_q|to_k|to_v|to_out\.0|add_q_proj|add_k_proj|add_v_proj|to_add_out|to_qkv_mlp_proj)"
+    r"|.*single_transformer_blocks\.\d+\.attn\.to_out"
+)
+
+
+def default_targets(model: Diffu) -> list[str] | str:
+    """The LoRA target modules for this model's backbone architecture."""
+    from .model.backbone_flux2 import Flux2Backbone
+
+    return FLUX2_TARGETS if isinstance(model.backbone, Flux2Backbone) else list(DEFAULT_TARGETS)
 
 
 def add_lora(
@@ -53,7 +74,7 @@ def add_lora(
         r=rank,
         lora_alpha=alpha,
         lora_dropout=dropout,
-        target_modules=list(targets or DEFAULT_TARGETS),
+        target_modules=list(targets) if targets else default_targets(model),
         init_lora_weights=True,
     )
     model.backbone.transformer.add_adapter(cfg, adapter_name=adapter_name)

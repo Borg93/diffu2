@@ -22,7 +22,15 @@ class VAEConfig(BaseModel):
 
 
 class BackboneConfig(BaseModel):
-    # Backbone = diffusers SD3 MMDiT (SD3Transformer2DModel, model/backbone.py) — not hand-rolled.
+    # arch: which diffusers transformer the backbone is (both trained from scratch at this size):
+    #   "sd3"   — SD3.5 MMDiT (SD3Transformer2DModel, model/backbone.py): every block dual-stream.
+    #   "flux2" — FLUX.2 / Klein design (Flux2Transformer2DModel, model/backbone_flux2.py): `num_layers`
+    #             dual-stream then `num_single_layers` single-stream blocks with fused parallel attention+MLP
+    #             and one shared modulation -> fewer, wider GEMMs. Its canvas reference is cached K/V tokens.
+    #             Size-matched preset (~903M, depth 24, like the 900M SD3 default): use flux2_preset().
+    arch: Literal["sd3", "flux2"] = "sd3"
+    num_single_layers: int = 0  # flux2 only: single-stream blocks after the num_layers dual-stream ones
+    mlp_ratio: float = 3.0  # flux2 only: MLP hidden = mlp_ratio x dim
     dim: int = 1024
     num_layers: int = 24
     heads: int = 16
@@ -47,6 +55,14 @@ class BackboneConfig(BaseModel):
     qk_norm: str | None = "rms_norm"
     dual_attention_layers: tuple[int, ...] = ()
     fill_ratio_cond: bool = True  # add a text-extent/canvas-width scalar to the pooled AdaLN vector
+
+
+def flux2_preset(cfg: BackboneConfig) -> BackboneConfig:
+    """The FLUX.2-style backbone at the SD3 default's size: width 1536, 12 heads of 128, 4 dual + 20 single
+    blocks = ~903M parameters at depth 24 (SD3 default: ~900M, width 1024, 16 heads of 64, depth 24)."""
+    return cfg.model_copy(
+        update={"arch": "flux2", "dim": 1536, "heads": 12, "num_layers": 4, "num_single_layers": 20}
+    )
 
 
 class ConditioningConfig(BaseModel):
