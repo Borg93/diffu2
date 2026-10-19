@@ -106,24 +106,19 @@ class PageActor:
 
             self.bank = LineBank(cfg.bank)
             return
-        import torch
         from diffu_page.render import BatchedDiffuRenderer
-        from safetensors import safe_open
 
-        from diffu.config import Config
         from diffu.recognizer import load_recognizer
 
-        dcfg = Config()
-        dcfg.cond.glyph_line = True
-        dcfg.cond.style_in_context = False
-        dcfg.data.line_height = 128
-        with safe_open(cfg.ckpt, framework="pt") as h:
-            dcfg.backbone.qk_norm = "rms_norm" if any(".norm_q." in k for k in h.keys()) else None  # noqa: SIM118
-        dcfg.cond.use_unifont = dcfg.backbone.qk_norm is not None
-        torch.set_float32_matmul_precision("high")
+        # no cfg: the renderer reads the checkpoint's config.json (else the released 128px arch) and loads
+        # through diffu.generate.build_model (TF32, conditioner guard, LoRA before compile)
         self.renderer = BatchedDiffuRenderer(
-            cfg.ckpt, cfg=dcfg, num_steps=cfg.num_steps, cfg_scale=cfg.cfg_scale, device="cuda",
-            lora=cfg.lora, lora_scale=cfg.lora_scale,
+            cfg.ckpt,
+            num_steps=cfg.num_steps,
+            cfg_scale=cfg.cfg_scale,
+            device="cuda",
+            lora=cfg.lora,
+            lora_scale=cfg.lora_scale,
         )
         self.proc, self.rec = load_recognizer(cfg.recognizer, "cuda")
 

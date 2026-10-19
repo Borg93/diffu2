@@ -16,14 +16,13 @@ import json
 import os
 import random
 
-import torch
-
-from .config import Config
-from .generate import ink_crop, load_checkpoint, natural_width, to_pil
-from .model import Diffu
+from .config import Config, add_arch_args, apply_arch_args
+from .data.hf_dataset import _IMAGE_COLS, _TEXT_COLS, _load, _pick
+from .generate import build_model, generate_line, load_config, load_ref_line, load_style
 
 
 def generate_synth_manifest(
+    cfg: Config,
     ckpt: str,
     out_dir: str,
     *,
@@ -31,10 +30,8 @@ def generate_synth_manifest(
     split: str = "train",
     n: int = 4000,
     lora: str | None = None,
-    line_height: int = 128,
     cfg_scale: float = 5.0,
-    num_steps: int = 24,
-    device: str | None = None,
+    num_steps: int | None = None,
     compile_model: bool = True,
     seed: int = 0,
     texts: list[str] | None = None,
@@ -43,33 +40,14 @@ def generate_synth_manifest(
 
     ``texts`` (optional): render this explicit list of transcriptions instead of sampling the dataset —
     the hook for TARGETED synthesis (error-driven augmentation), where the caller has already chosen which
-    hard content to over-generate. Styles are still sampled from the dataset. ``n`` defaults to ``len(texts)``.
+    hard content to over-generate; ``n`` is then ``len(texts)``. Styles are still sampled from the dataset.
+    Each line is rendered at the deploy geometry (``generate_line``: auto width + ink-crop).
     """
-    from datasets import load_dataset
-    from PIL import Image
-    from torchvision.transforms import functional as TF
-
-    device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-    torch.set_float32_matmul_precision("high")
-    # Match the released base architecture (glyph-line content, pooled-only style).
-    cfg = Config()
-    cfg.cond.glyph_line = True
-    cfg.cond.style_in_context = False
-    cfg.data.line_height = line_height
-
-    model = Diffu(cfg).to(device).eval()
-    load_checkpoint(model, ckpt)
-    if lora:
-        from .lora import load_lora
-
-        load_lora(model, lora)
-    if compile_model:
-        model.backbone.compile_blocks()
-
-    ds = load_dataset(hf_dataset, split=split)
-    text_col = "text" if "text" in ds.column_names else ds.column_names[-1]
-    img_col = "image" if "image" in ds.column_names else ds.column_names[0]
-    latent_h = line_height // cfg.vae.downscale_factor
+    model = build_model(cfg, ckpt, lora=lora, compile_backbone=compile_model)
+    device = next(model.parameters()).device
+    ds = _load(hf_dataset, split, None)
+    cols = list(ds.column_names)
+    text_col, img_col = _pick(cols, _TEXT_COLS), _pick(cols, _IMAGE_COLS)
     lines_dir = os.path.join(out_dir, "lines")
     os.makedirs(lines_dir, exist_ok=True)
     rng = random.Random(seed)
@@ -78,11 +56,6 @@ def generate_synth_manifest(
     if texts is not None:  # targeted mode: render the caller's text list (styles still sampled from ds)
         n = len(texts)
 
-    def style_of(i: int) -> torch.Tensor:
-        im = ds[i][img_col].convert("RGB").resize((224, 224), Image.BILINEAR)
-        t = TF.normalize(TF.to_tensor(im), [0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-        return t.unsqueeze(0).to(device)
-
     path = os.path.join(out_dir, "train.jsonl")
     written = 0
     with open(path, "w", encoding="utf-8") as mf:
@@ -90,17 +63,15 @@ def generate_synth_manifest(
             text = texts[k].strip() if texts is not None else str(ds[order[k % len(order)]][text_col]).strip()
             if not text:
                 continue
-            style = style_of(rng.randrange(len(ds)))  # a random writer's hand (foreign line)
-            # Use the SAME biased+capped width as the deploy path (generate.py:natural_width). The raw
-            # guidance_renderer.natural_width is ~2x too wide at 128px -> the model fills by looping, which
-            # is what garbled the earlier synth manifests and sank the HTR A/B. See _WIDTH_BIAS.
-            latent_w = natural_width(model.guidance_renderer, text, cfg) // cfg.vae.downscale_factor
-            with torch.inference_mode():
-                out = model.generate(
-                    [text], style, latent_hw=(latent_h, latent_w), num_steps=num_steps, cfg_scale=cfg_scale
-                )
+            row = ds[rng.randrange(len(ds))]  # a random writer's hand (foreign line)
+            if model.canvas:
+                ref = load_ref_line(row[img_col], model.cfg, text=str(row[text_col]))
+                img = generate_line(model, text, None, num_steps=num_steps, cfg_scale=cfg_scale, ref=ref)
+            else:
+                style = load_style(row[img_col]).unsqueeze(0).to(device)
+                img = generate_line(model, text, style, num_steps=num_steps, cfg_scale=cfg_scale)
             png = os.path.join(lines_dir, f"{k:07d}.png")
-            ink_crop(to_pil(out[0])).save(png)  # trim the blank tail, matching generate_line
+            img.save(png)
             mf.write(
                 json.dumps({"image": png, "text": text, "writer_id": f"synth_{k}"}, ensure_ascii=False) + "\n"
             )
@@ -123,9 +94,8 @@ def main() -> None:
     ap.add_argument("--split", default="train")
     ap.add_argument("--n", type=int, default=4000, help="number of synthetic lines to generate")
     ap.add_argument("--out", required=True, help="output dir (writes lines/*.png + train.jsonl)")
-    ap.add_argument("--line-height", type=int, default=128)
     ap.add_argument("--cfg-scale", type=float, default=5.0)
-    ap.add_argument("--steps", type=int, default=24)
+    ap.add_argument("--steps", type=int, default=None, help="denoising steps (default: the config's 24)")
     ap.add_argument(
         "--seed",
         type=int,
@@ -135,10 +105,11 @@ def main() -> None:
     ap.add_argument(
         "--texts",
         default=None,
-        help="render this newline-delimited text file (targeted synth) instead of sampling --hf-dataset; --n is ignored",
+        help="render this newline-delimited text file (targeted synth) instead of sampling --hf-dataset; "
+        "--n is ignored",
     )
     ap.add_argument("--no-compile", dest="compile", action="store_false")
-    ap.set_defaults(compile=True)
+    add_arch_args(ap)
     args = ap.parse_args()
 
     texts = None
@@ -146,13 +117,13 @@ def main() -> None:
         with open(args.texts, encoding="utf-8") as f:
             texts = [line.rstrip("\n") for line in f]
     generate_synth_manifest(
+        apply_arch_args(load_config(args.ckpt), args),
         args.ckpt,
         args.out,
         hf_dataset=args.hf_dataset,
         split=args.split,
         n=args.n,
         lora=args.lora,
-        line_height=args.line_height,
         cfg_scale=args.cfg_scale,
         num_steps=args.steps,
         seed=args.seed,

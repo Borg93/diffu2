@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import os
 
+from diffu.config import DataConfig
 from diffu_studio.device import configure_memory
 
 
@@ -31,16 +32,12 @@ def _parse_args() -> argparse.Namespace:
     )
     ap.add_argument("--no-recognizer", action="store_true", help="disable the TrOCR read-back panel")
     ap.add_argument(
-        "--no-glyph-line", dest="glyph_line", action="store_false", help="checkpoint has per-char glyphs"
+        "--line-height",
+        type=int,
+        default=DataConfig().line_height,
+        help="crop height a checkpoint WITHOUT config.json was trained at (default 128; old runs: 64); else "
+        "config.json's",
     )
-    ap.add_argument(
-        "--style-tokens", dest="style_in_context", action="store_true", help="checkpoint uses style tokens"
-    )
-    ap.add_argument("--glyph-concat", action="store_true", help="checkpoint channel-concats a glyph latent")
-    ap.add_argument(
-        "--line-height", type=int, default=64, help="crop height the checkpoint was trained at (64 or 128)"
-    )
-    ap.set_defaults(glyph_line=True, style_in_context=False)
     return ap.parse_args()
 
 
@@ -83,12 +80,7 @@ def main() -> None:
         from diffu_studio.upscale import prefetch_weights
 
         prefetch_weights()
-    arch = ArchConfig(
-        glyph_line=args.glyph_line,
-        style_in_context=args.style_in_context,
-        glyph_concat=args.glyph_concat,
-        line_height=args.line_height,
-    )
+    arch = ArchConfig(line_height=args.line_height)
     recognizer_name = None if args.no_recognizer else (args.recognizer or Config().aux.htr_recognizer_eval)
     engine = StudioEngine(device=device, ckpt_root=args.ckpt_root, arch=arch, recognizer_name=recognizer_name)
 

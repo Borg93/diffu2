@@ -7,7 +7,7 @@ the VAE preserves å ä ö well enough to train on. The single most important ch
 Reuses ``VAEWrapper.reconstruction_cer_gate`` + the eval ``HTRRecognizer``.
 
     diffu-vae-gate --manifest data_out/val.jsonl --n 500       # on YOUR real lines
-    diffu-vae-gate --synthetic --n 16 --save-dir vae_check      # self-test, no data needed
+    diffu-vae-gate --synthetic --save-dir vae_check             # self-test on 6 sample words, no data
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from torchvision.transforms import functional as TF
 
 from .config import Config
 from .data.dataset import load_manifest
-from .eval import HTRRecognizer
+from .eval import STANDARD_HTR, HTRRecognizer
 from .model.vae import VAEWrapper
 
 _SAMPLE_WORDS = ("Göteborg", "Smörgåsbord", "Råå församling", "Ängelholm", "väderöarna", "Åsa köper öl")
@@ -51,7 +51,7 @@ def load_real_lines(manifest: str, n: int, cfg: Config) -> tuple[torch.Tensor, l
 
 
 def render_synthetic(
-    words: tuple[str, ...], height: int = 64, font: str | None = None
+    words: tuple[str, ...], height: int, font: str | None = None
 ) -> tuple[torch.Tensor, list[str]]:
     """Render sample Swedish words to ``[B,3,H,W]`` in ``[-1,1]`` (a data-free gate self-test)."""
     size = int(height * 0.6)
@@ -80,7 +80,7 @@ def main() -> None:
     src.add_argument("--manifest", help="jsonl of {image, text} real lines")
     src.add_argument("--synthetic", action="store_true", help="render sample words instead (no data needed)")
     ap.add_argument("--n", type=int, default=16, help="number of lines to test")
-    ap.add_argument("--htr", default="Riksarkivet/trocr-large-handwritten-hist-swe-3-char")
+    ap.add_argument("--htr", default=STANDARD_HTR, help="HF TrOCR id (default: the standard recognizer)")
     ap.add_argument("--font", default=None, help="TTF for --synthetic (default: PIL built-in)")
     ap.add_argument("--save-dir", default=None, help="write original-vs-recon PNG pairs here")
     ap.add_argument("--batch-size", type=int, default=8, help="VAE round-trip chunk size (bounds GPU memory)")

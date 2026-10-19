@@ -85,7 +85,7 @@ def test_resolve_weights_prefers_ema(tmp_path):
     assert resolve_weights(str(d)).endswith("ema_model.safetensors")
 
 
-def test_load_model_wraps_arch_mismatch_as_checkpoint_mismatch(monkeypatch):
+def test_load_model_wraps_arch_mismatch_as_checkpoint_mismatch(monkeypatch, tmp_path):
     # Stand in for the heavy model build; only the guard's behaviour is under test.
     class _FakeModel:
         def to(self, *_args, **_kwargs):
@@ -97,12 +97,14 @@ def test_load_model_wraps_arch_mismatch_as_checkpoint_mismatch(monkeypatch):
     def _raise(_model, _ckpt):
         raise RuntimeError("145/147 conditioner weights absent")
 
-    monkeypatch.setattr("diffu.model.Diffu", lambda _cfg: _FakeModel())
+    # build_model (the loader under load_model) resolves all three in diffu.generate's namespace
+    monkeypatch.setattr("diffu.generate.Diffu", lambda _cfg: _FakeModel())
     monkeypatch.setattr("diffu.generate.load_checkpoint", lambda _m, _p: None)
     monkeypatch.setattr("diffu.generate.assert_conditioner_loaded", _raise)
 
+    # in tmp_path: load_model reads a config.json next to the weights, so keep any stray one out of reach
     with pytest.raises(CheckpointMismatch, match="conditioner"):
-        ckpt_mod.load_model("does-not-matter.safetensors", ArchConfig(), resolve_device("cpu"))
+        ckpt_mod.load_model(str(tmp_path / "model.safetensors"), ArchConfig(), resolve_device("cpu"))
 
 
 def _placeholder_cache(width=640, height=480):

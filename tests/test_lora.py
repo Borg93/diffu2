@@ -22,8 +22,8 @@ class _Wrap(nn.Module):
 
 
 def _tiny() -> _Wrap:
-    cfg = BackboneConfig(dim=32, num_layers=2, heads=2, sample_size=8, context_dim=16)
-    return _Wrap(Backbone(cfg, in_channels=16, context_dim=16, pooled_dim=16, out_channels=16))
+    cfg = BackboneConfig(dim=32, num_layers=2, heads=2, context_dim=16)
+    return _Wrap(Backbone(cfg, in_channels=16, out_channels=16))
 
 
 def test_add_lora_freezes_base_trains_only_adapter() -> None:

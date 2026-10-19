@@ -1,5 +1,12 @@
 # Diffu — Where We Stand (snapshot 2026-07-13)
 
+> **Note (2026-10-19):** a dated snapshot, kept as written. The current state and next steps are in
+> [`HANDOFF.md`](HANDOFF.md). Since this snapshot: `Gabriel/diffu_sd35_128` is no longer on the Hub (its
+> `step_120000` checkpoint stayed on the old box); every checkpoint now carries a `config.json` that all
+> loaders read, which retires the `--line-height` footgun below; `--no-style-tokens` and `glyph_concat` were
+> removed (pooled-only style and the glyph-line encoder are the only options now); the one-off experiment
+> scripts were removed (git history at `c53d30e`).
+
 ## TL;DR (current)
 - **Released:** `exp_sd35_128/step_120000` (128 px; glyph-line content + pooled style + SD3.5 qk-norm +
   the CFG-null fix) → [`Gabriel/diffu_sd35_128`](https://huggingface.co/Gabriel/diffu_sd35_128)
@@ -103,7 +110,8 @@ A current-state snapshot distinct from the running history in `scratchpad/PROGRE
 ## 4. Structural limitations (need a rerun to fix)
 - **Style/content entanglement.** Style = raw DINOv3 features of the reference → they carry the ref's
   *glyph shapes*. Tokens-on ⇒ model copies the reference's text; tokens-off (`--no-style-tokens`, current)
-  ⇒ no style at all. No content-decoupled style encoder exists.
+  ⇒ no style at all. No content-decoupled style encoder exists. *(2026-10-19: `--no-style-tokens` removed —
+  pooled-only is the only dino mode; `--style-canvas` is the new in-context attempt.)*
 - **Background mismatch.** `writer_id` is actually the *page id* → the style ref always shares the target's
   paper, so the model never learns to separate hand from paper; and the crop masks the background to white,
   erasing the paper the goal wants.
@@ -134,6 +142,8 @@ A current-state snapshot distinct from the running history in `scratchpad/PROGRE
 - **Breadcrumb stubs (kept by choice — document intended work):** `style_shots`, `length_aware_shift`,
   `timestep_dist`, `extra_chars`, `cer_filter_threshold`.
 - **Keep (not dead):** discriminators, `glyph_concat`, resampler, glyph content encoder, RoPE, all scripts.
+  *(2026-10-19: `glyph_concat`, the per-character content encoder, `rope=False` and the one-off experiment
+  scripts were removed; in git history at `c53d30e`.)*
 
 ## 8. Forward plan (final, 2026-06-25)
 
@@ -156,5 +166,6 @@ fields), `ARCHITECTURE.md` + interactive `architecture.html`, and a best-practic
 - **REPA fixes:** *terminate REPA early* (~30–40% of steps), add a *timestep shift* (s≈√(C·H·W/4096)), 3-layer
   SiLU projector, EMA warmup; **CFG as a low-scale interval** (`t∈[0.3,0.7]`, scale ~1.5–2), re-swept after REPA.
 - Style stays pooled (`--no-style-tokens`); content-decoupled style + REPA-E are *post-pilot* bets.
+  *(2026-10-19: the flag is gone; pooled is the only dino mode.)*
 
 **Blocked on you:** the 3 data facts — languages/scripts · HTR-vs-OCR split · image+text pair format.

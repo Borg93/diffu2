@@ -17,8 +17,12 @@ import torch
 from PIL import Image
 from pydantic import BaseModel
 
+from .config import AuxLossConfig
 from .data.dataset import load_manifest
 from .model.metrics import cer
+from .recognizer import trim_to_ink
+
+STANDARD_HTR = AuxLossConfig().htr_recognizer_eval  # the char-level historical-Swedish TrOCR
 
 Recognizer = Callable[[Sequence[Image.Image]], list[str]]
 
@@ -50,7 +54,7 @@ class HTRRecognizer:
 
     def __init__(
         self,
-        model_id: str = "Riksarkivet/trocr-large-handwritten-hist-swe-3-char",
+        model_id: str = STANDARD_HTR,
         device: str | None = None,
         batch_size: int = 16,
     ) -> None:
@@ -67,8 +71,6 @@ class HTRRecognizer:
 
     @torch.no_grad()
     def __call__(self, images: Sequence[Image.Image] | torch.Tensor) -> list[str]:
-        from .recognizer import trim_to_ink
-
         pils = _tensor_to_pils(images) if isinstance(images, torch.Tensor) else list(images)
         preds: list[str] = []
         for start in range(0, len(pils), self.batch_size):
@@ -79,15 +81,15 @@ class HTRRecognizer:
             # interpolate_pos_encoding: the Swedish-Lion was trained at a wide aspect; this lets its
             # ViT encoder accept our variable-width line crops instead of assuming a square input.
             ids = self.model.generate(pv, max_new_tokens=64, interpolate_pos_encoding=True)
-            preds.extend(self.processor.batch_decode(ids, skip_special_tokens=True))
+            preds.extend(p.strip() for p in self.processor.batch_decode(ids, skip_special_tokens=True))
         return preds
 
 
 def _tensor_to_pils(images: torch.Tensor) -> list[Image.Image]:
-    """``[B, 3, H, W]`` in ``[-1, 1]`` -> list of PIL images."""
+    """``[B, 3, H, W]`` in ``[-1, 1]`` -> list of PIL images (``.float()``: torchvision can't convert bf16)."""
     from torchvision.transforms import functional as TF
 
-    return [TF.to_pil_image(((img.clamp(-1, 1) + 1) / 2).cpu()) for img in images]
+    return [TF.to_pil_image(((img.clamp(-1, 1) + 1) / 2).float().cpu()) for img in images]
 
 
 def evaluate_manifest(manifest_path: str, recognizer: Recognizer, *, limit: int | None = None) -> EvalResult:
@@ -113,7 +115,7 @@ def _open(path: str) -> Image.Image:
 def main() -> None:
     ap = argparse.ArgumentParser(description="HTR CER over a line manifest (the Diffu success metric).")
     ap.add_argument("--manifest", required=True, help="jsonl with {image, text} rows (e.g. val.jsonl)")
-    ap.add_argument("--htr", default="Riksarkivet/trocr-large-handwritten-hist-swe-3-char")
+    ap.add_argument("--htr", default=STANDARD_HTR, help="HF TrOCR id (default: the standard recognizer)")
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--batch-size", type=int, default=16)
     args = ap.parse_args()

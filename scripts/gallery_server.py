@@ -6,7 +6,7 @@ re-running anything. Images lazy-load via a ``/thumb`` endpoint (downscaled JPEG
 light even over a forwarded port. Stdlib only — no Flask.
 
     uv run python scripts/gallery_server.py                 # localhost:8000, manifest=data_out_lejonet
-    ssh -L 8000:localhost:8000 blackwell@dmlpai01          # then open http://localhost:8000
+    ssh -L 8000:localhost:8000 <user>@<gpu-box>            # then open http://localhost:8000
 
 The manifest is re-read automatically when it changes on disk (so a running prep job's new crops show
 up on the next page load). It also serves the static PNG galleries in ``galleries/``.
@@ -93,8 +93,10 @@ def _page(seed: int, n: int, collections: str, max_width: int) -> bytes:
         src = f"/thumb?p={quote(r['image'])}&w={max_width}"
         text = html.escape(r.get("text", ""))
         meta = html.escape(f"{r.get('collection', '')} · {r.get('volume', '')}")
-        cells.append(f'<figure><img loading="lazy" src="{src}" alt="">'
-                     f'<figcaption>{text}<span class="meta">{meta}</span></figcaption></figure>')
+        cells.append(
+            f'<figure><img loading="lazy" src="{src}" alt="">'
+            f'<figcaption>{text}<span class="meta">{meta}</span></figcaption></figure>'
+        )
     coll_val = html.escape(collections)
     bar = (
         f"<form class='bar' method='get' action='/'>"
@@ -108,12 +110,16 @@ def _page(seed: int, n: int, collections: str, max_width: int) -> bytes:
         f"<span class='sub'>{len(sample)} of {pool:,} lines · seed {seed}</span>"
         f"</form>"
     )
-    script = ("<script>function reseed(){const u=new URL(location.href);"
-              "u.searchParams.set('seed',Math.floor(Math.random()*1e9));location.href=u}</script>")
-    doc = (f"<!doctype html><html lang='sv'><head><meta charset='utf-8'>"
-           f"<meta name='viewport' content='width=device-width, initial-scale=1'>"
-           f"<title>GT-Lejonet sample (seed {seed})</title><style>{_CSS}</style></head>"
-           f"<body>{bar}<div class='grid'>{''.join(cells)}</div>{script}</body></html>")
+    script = (
+        "<script>function reseed(){const u=new URL(location.href);"
+        "u.searchParams.set('seed',Math.floor(Math.random()*1e9));location.href=u}</script>"
+    )
+    doc = (
+        f"<!doctype html><html lang='sv'><head><meta charset='utf-8'>"
+        f"<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        f"<title>GT-Lejonet sample (seed {seed})</title><style>{_CSS}</style></head>"
+        f"<body>{bar}<div class='grid'>{''.join(cells)}</div>{script}</body></html>"
+    )
     return doc.encode("utf-8")
 
 

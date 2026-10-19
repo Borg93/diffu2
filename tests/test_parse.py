@@ -1,4 +1,4 @@
-"""PAGE/ALTO XML parsing -> LineRecords (stdlib only, no torch)."""
+"""PAGE/ALTO XML parsing -> LineRecords (no torch)."""
 
 from __future__ import annotations
 

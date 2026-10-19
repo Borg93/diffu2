@@ -101,13 +101,20 @@ def build_renderer(cfg: GenConfig) -> LineRenderer | BatchedDiffuRenderer:
             )
         if cfg.fast:  # batched: faster for big runs, but a touch softer (wider canvas spreads strokes)
             return BatchedDiffuRenderer(
-                str(cfg.ckpt), num_steps=cfg.steps, cfg_scale=cfg.cfg_scale,
-                lora=cfg.lora, lora_scale=cfg.lora_scale,
+                str(cfg.ckpt),
+                num_steps=cfg.steps,
+                cfg_scale=cfg.cfg_scale,
+                lora=cfg.lora,
+                lora_scale=cfg.lora_scale,
             )
         style = cfg.style or cfg.styles[0]  # per-line path is single-style; the batched path mixes hands
         return DiffuRenderer(
-            str(cfg.ckpt), str(style), num_steps=cfg.steps, cfg_scale=cfg.cfg_scale,
-            lora=cfg.lora, lora_scale=cfg.lora_scale,
+            str(cfg.ckpt),
+            str(style),
+            num_steps=cfg.steps,
+            cfg_scale=cfg.cfg_scale,
+            lora=cfg.lora,
+            lora_scale=cfg.lora_scale,
         )
     if cfg.renderer is Renderer.eruku:
         if not cfg.style:

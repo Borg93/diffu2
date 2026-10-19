@@ -6,6 +6,16 @@
 > (the compile study) first.** §1–§5 are the original static-analysis pass, kept for reference; their ranked
 > table is still valid, with current status tracked in §0 / the note atop §2.
 
+> **Note (2026-10-19):** (1) Until 2026-10-19 the `profiling.py` report summed every profiler row with self
+> GPU time — the aten ops *and* the kernels they launched (plus the step annotations) — so it double-counted
+> GPU time. Shares below that came from `profile_step_table.txt` (the 14.6 % Tensor-Core share, `aten::copy_`
+> 20.5 %, VAE `conv3d` 13.4 %, the ~13 % VAE-encode share in §0e) are suspect; the numbers are kept as
+> recorded. Wall-clock and img/s measurements are unaffected. (2) Removed since: `--cache-latents` /
+> `data/latent_cache.py`, `diffu.quantize` + `scripts/bench_quant.py`, and `scripts/profile_tensorcore.py` — all
+> in git history at `c53d30e`. The `DIFFU_PROFILE_STACK=1` env var is now `diffu-train --profile-stack`, and
+> `--compile` now requires `--no-grad-checkpoint`. (3) Measurements on the DGX Spark (GB10) are in
+> [`HANDOFF.md`](HANDOFF.md) §3.
+
 ## 0. IMPLEMENTED & MEASURED (2026-06-29) — what shipped
 
 **The bottleneck, confirmed twice.** The original DCGM read (TENSO ~0.25) and a fresh `torch.profiler` run
@@ -14,6 +24,7 @@ agree: the Stage-1 step is **overhead / launch-bound, not math-bound**. In the p
 the frozen VAE `conv3d` (13.4%), and elementwise (mul/add/LayerNorm/RoPE). **Tensor cores are already in use**
 (bf16 cutlass kernels in the trace); 14.6% is *dilution* by overhead + small GEMMs, not TC being off. So every
 win below **removes non-math work per step — it does not change the model, the math, or the predictions.**
+*(2026-10-19: these percentages come from the old, double-counting profile report — see the note at the top.)*
 
 All items are **behavior-neutral** (bit-identical, or within-bf16 noise) unless noted; validated with ruff +
 pyrefly + a smoke run. The inference ones are identical-by-construction.
@@ -150,10 +161,12 @@ change. **REGIME SHIFT: the step is now compute-bound (94% busy)** — host-side
 caching `latent_cache.py` to skip VAE encode ~13% CUDA — needs gen_CER validation; DINO feature caching; bigger
 batch). **RECOMMENDATION: add `--compile` to the from-scratch run.** Supersedes §0b's "compile deferred". Profiler
 now exports a chrome trace + opt-in `DIFFU_PROFILE_STACK=1` with_stack attribution table (`profiling.py`).
+*(2026-10-19: `latent_cache.py` / `--cache-latents` removed — never used in a recorded run; in git history at
+`c53d30e`. `DIFFU_PROFILE_STACK=1` is now `--profile-stack`.)*
 
 ## 0f. torchao quantization VERDICT (2026-07-02) — measured LOSS at inference; ship compiled bf16
 
-CER-gated bench (`scripts/bench_quant.py`, step_280000, 6 val lines, cfg=5, Blackwell CC 12.0,
+CER-gated bench (`scripts/bench_quant.py` — removed; in git history at `c53d30e`; step_280000, 6 val lines, cfg=5, Blackwell CC 12.0,
 torchao 0.17, regional compile on all variants):
 
 | variant | ms/line | speed | CER |
@@ -167,7 +180,7 @@ torchao 0.17, regional compile on all variants):
   quant overhead dominates; int8's 0.17-default config also takes a deprecated legacy kernel path.
 - **Decision: ship compiled bf16** (~0.37 s/line vs ~1 s eager). No quantized artifacts are stored or
   published; `diffu.quantize` (int8 v2 / fp8, `set_inductor_config=False`) remains a one-line opt-in for
-  consumers on hardware where it pays.
+  consumers on hardware where it pays. *(2026-10-19: `diffu.quantize` removed; in git history at `c53d30e`.)*
 - Methodology notes (audit-driven): per-variant reseed (ΔCER measures quantization, not seeds), globals
   set once up front (torchao configs no longer flip TF32/inductor at quantize time), warmup covers every
   width before timing.
@@ -197,6 +210,9 @@ Sorted by corrected impact, then by lowest effort. All impacts are the **adversa
 > measured **1.36×** / 32.0→43.6 img/s, the encode was ~23% of the step; default path byte-identical; gate gen_CER
 > before defaulting). **Top REMAINING win is now #2 (GPU glyph atlas)**, then #4/#8 (DINOv3 feature cache — REPA is
 > now ON by default, so #8's REPA-target cache applies). NB: #1 does NOT unlock `torch.compile` (~50 shapes, not ~8 — §0a/§0b).
+> *(2026-10-19: #3's `--cache-latents` was removed — never used in a recorded run; in git history at `c53d30e`.
+> The per-character content tokens and the style tokens that #6/#7 describe no longer exist: the glyph-line
+> encoder makes one content token per patch column, and style is pooled-only.)*
 >
 > **Empirical (2026-06-29, 3000-line sample of data_out_lejonet):** width p50=556 / p90=881 / max=2500 px →
 > **random-batch padding waste @B32 = 54.5%** of width-FLOPs vs **1.3% bucketed** → width bucketing roughly
@@ -224,7 +240,7 @@ Sorted by corrected impact, then by lowest effort. All impacts are the **adversa
 
 1. **Add width to the manifest + bucketed `batch_sampler`** (#1) — biggest single win: removes 20-40% wasted VAE+DiT pad FLOPs *and* stabilizes shapes so compile/pos-embed reuse pay off. Foundation for #6.
 2. **GPU glyph atlas** (#2) — removes the per-step PIL stall + H2D copy on the forward's critical path; this is the most direct hit on the SMACT-high/TENSO-low overhead signature.
-3. **Offline VAE latent cache** (#3) — gated behind a `--cache-latents` flag (disable it the moment image augmentation is added). Run the pre-encode sweep once, then every step skips the frozen encoder.
+3. **Offline VAE latent cache** (#3) — gated behind a `--cache-latents` flag (disable it the moment image augmentation is added). Run the pre-encode sweep once, then every step skips the frozen encoder. *(Implemented 2026-07-15, removed 2026-10-19.)*
 4. **`torch.compile` with `dynamic` width** (#6) — only meaningful *after* #1 buckets the widths; otherwise it thrashes. Mark width dynamic, leave batch/channels/height/seq static.
 5. **TF32 one-liner** (#5) — free, safe, do it in the same restart.
 6. *(Optional, large disk)* **DINOv3 feature cache** (#4) — only if the ~120 GB memmap is acceptable; key by the actually-loaded encoder.
@@ -235,7 +251,7 @@ After restart, watch for: TENSO climbing above ~0.25, images/sec up, and (if com
 ## 4. Rejected by verification (honest)
 
 - **Fused norm/activation kernels (Liger/apex) as a "shape-robust alternative to compile"** — **REJECTED (valid=false).** The load-bearing premise is wrong: the normalized feature dim is **fixed** (1024); only line **width / sequence length** varies, which eager LayerNorm already handles — it was never the recompile trigger. The benefit overlaps the existing `torch.compile` path; highest-value targets are vendored in diffusers (brittle monkeypatching); apex/Liger must support Blackwell sm_120/cu128 where wheels lag. Self-rated effort=high/risk=high, "do only if compile is ruled out." Not adopted.
-- **`--profile-steps N` torch.profiler flag (design)** — **REJECTED (already implemented).** The scaffold already shipped it: `src/diffu/profiling.py` is the shared classifier, `scripts/profile_tensorcore.py` imports it, and `train.py` has `--profile-steps` (default 0) wired through `_run_profile()`, which profiles N real dataloader steps via `accel.backward`, writes the kernel table + TENSO% to `<out_dir>/profile_step_table.txt`, and returns **before** the main loop. Remaining gaps (chrome-trace export, `profile/` subdir, `--profile-then-exit`) are cosmetic and were themselves marked optional.
+- **`--profile-steps N` torch.profiler flag (design)** — **REJECTED (already implemented).** The scaffold already shipped it: `src/diffu/profiling.py` is the shared classifier, `scripts/profile_tensorcore.py` (removed; in git history at `c53d30e`) imports it, and `train.py` has `--profile-steps` (default 0) wired through `_run_profile()`, which profiles N real dataloader steps via `accel.backward`, writes the kernel table + TENSO% to `<out_dir>/profile_step_table.txt`, and returns **before** the main loop. Remaining gaps (chrome-trace export, `profile/` subdir, `--profile-then-exit`) are cosmetic and were themselves marked optional.
 
 ### Verified non-issues (correctly scoped out, no change)
 - **SD3 attention is already on the fused SDPA/Flash path** (`JointAttnProcessor2_0` → `F.scaled_dot_product_attention`, head_dim=64, no mask, bf16) — confirmed by construction; it is **not** the cause of low TENSO. Don't chase an attention math-fallback.
@@ -253,11 +269,11 @@ Scaffolded by the prior pass — importable, CPU-safe (`torch` imported lazily; 
 - `profile_callable(step, *, warmup=2, active=3)` — runs `torch.profiler` (CPU+CUDA, `schedule(wait=0, warmup, active, repeat=1)`), syncs CUDA, returns the report.
 - `read_dcgm(fields=(1002,1004,1005))` — shells `dcgmi dmon -c 1 -e <fields>`, parses SMACT/TENSO/DRAMA defensively by header; returns `None` if `dcgmi` absent; **no GPU memory cost**.
 
-**Edited** `scripts/profile_tensorcore.py` (now imports from `diffu.profiling`, DRY) and `train.py` (`--profile-steps N`, default 0 → off; at N==0 the only delta is a guarded early-return branch that's never entered, so the training path is behaviorally unchanged).
+**Edited** `scripts/profile_tensorcore.py` (removed; in git history at `c53d30e`) (now imports from `diffu.profiling`, DRY) and `train.py` (`--profile-steps N`, default 0 → off; at N==0 the only delta is a guarded early-return branch that's never entered, so the training path is behaviorally unchanged).
 
 **Commands** (do NOT run now — training owns all GPUs; use later on a free/least-busy card):
 ```bash
-# (a) standalone synthetic-step profiler
+# (a) standalone synthetic-step profiler (scripts/profile_tensorcore.py — removed; in git history at c53d30e)
 CUDA_VISIBLE_DEVICES=1 uv run --no-sync python scripts/profile_tensorcore.py
 
 # (b) profile N REAL training steps (writes <out-dir>/profile_step_table.txt, then exits before the loop)

@@ -22,9 +22,7 @@ import json
 import os
 from collections.abc import Iterator
 
-from .dataset import char_coverage, normalize_text, write_splits
-
-_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".webp")
+from .dataset import IMAGE_EXTS, char_coverage, normalize_text, write_splits
 
 
 def writer_from_path(image_path: str, depth: int = 1) -> str:
@@ -43,7 +41,7 @@ def scan_folder(root: str, *, text_suffix: str = ".txt", writer_depth: int = 1) 
     for dirpath, _dirs, files in os.walk(root):
         for name in files:
             stem, ext = os.path.splitext(name)
-            if ext.lower() not in _IMAGE_EXTS:
+            if ext.lower() not in IMAGE_EXTS:
                 continue
             image = os.path.join(dirpath, name)
             sidecar = os.path.join(dirpath, stem + text_suffix)

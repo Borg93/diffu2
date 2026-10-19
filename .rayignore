@@ -4,6 +4,9 @@
 .git/
 checkpoints/
 data_out_lejonet*/
+data_iam/
+data_raw/
+runs/
 synth_lines/
 synth_lines_lance*/
 synth_pages*/

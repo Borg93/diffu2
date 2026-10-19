@@ -124,11 +124,11 @@
     <div class="node" data-id="text" data-c="user" style="left:1%;top:6%"><div class="lab">Text</div><div class="te">"Göteborg"</div></div>
     <div class="node" data-id="style" data-c="user" style="left:1%;top:74%"><div class="lab">Style ref</div><div class="te">handwriting crop</div></div>
     <div class="node" data-id="glyph" data-c="enc" style="left:22%;top:6%"><div class="lab">Glyph encoder</div><div class="te">Unifont32→ResNet18→[w_t,1024]</div></div>
-    <div class="node" data-id="dino" data-c="enc" style="left:22%;top:74%"><div class="lab">DINOv3 style</div><div class="te">ViT-L/16 →196→64→[1024]</div></div>
+    <div class="node" data-id="dino" data-c="enc" style="left:22%;top:74%"><div class="lab">DINOv3 style</div><div class="te">ViT-L/16 →201→64→[1024]</div></div>
     <div class="node" data-id="brain" data-c="brain" style="left:45%;top:40%"><div class="lab">MMDiT</div><div class="te">dim1024·24L·16h·~900M</div></div>
-    <div class="node" data-id="img" data-c="user" style="left:1%;top:40%"><div class="lab">Real image</div><div class="te">[B,3,64,W]</div></div>
-    <div class="node" data-id="vae" data-c="vae" style="left:22%;top:40%"><div class="lab">VAE encode</div><div class="te">Qwen16ch→[16,8,W/8]</div></div>
-    <div class="node" data-id="repa" data-c="enc" style="left:69%;top:6%"><div class="lab">DINO (REPA)</div><div class="te">align layer 8</div></div>
+    <div class="node" data-id="img" data-c="user" style="left:1%;top:40%"><div class="lab">Real image</div><div class="te">[B,3,128,W]</div></div>
+    <div class="node" data-id="vae" data-c="vae" style="left:22%;top:40%"><div class="lab">VAE encode</div><div class="te">Qwen16ch→[16,16,W/8]</div></div>
+    <div class="node" data-id="repa" data-c="enc" style="left:69%;top:6%"><div class="lab">DINO (REPA)</div><div class="te">align layer 8 · first 40%</div></div>
     <div class="node" data-id="loss" data-c="aux" style="left:69%;top:40%"><div class="lab">Loss</div><div class="te">flow + 0.5·REPA</div></div>
     <div class="node" data-id="noise" data-c="sched" style="left:22%;top:40%"><div class="lab">Pure noise</div><div class="te">t=1</div></div>
     <div class="node" data-id="cfg" data-c="sched" style="left:69%;top:40%"><div class="lab">CFG + step</div><div class="te">×24, t→0</div></div>
@@ -170,16 +170,11 @@
     <div class="figwrap"><img src="content_cnn_graph.png" alt="GlyphLineCNN graph with tensor shapes"/></div>
     <figcaption><b>Glyph-line content encoder</b> (<code>torchview</code>) — the ResNet-18 spatial trunk. Read the
     shapes top→bottom: the <em>funnel</em> <span class="m">[1,1,64,512] → [1,64,16,128] → … → [1,1024,2,16]</span>
-    is the spatial down-sampling (stem conv → maxpool → 4 BasicBlock stages). We drop avgpool/fc so the
-    <b>width survives</b> → one content token per latent column.</figcaption>
+    is the spatial down-sampling (stem conv → maxpool → 4 BasicBlock stages), traced on a 64-px dummy strip (the
+    real glyph strip is 32 px tall → 1 row). We drop avgpool/fc so the <b>width survives</b> → one content token per
+    patch column.</figcaption>
   </figure>
 
-  <figure>
-    <div class="figwrap" style="max-width:300px"><img src="glyph_latent_graph.png" alt="GlyphLatentEncoder conv block graph with shapes"/></div>
-    <figcaption><b>Glyph-latent conv block</b> (<code>torchview</code>) — the optional channel-concat path:
-    <span class="m">[1,1,32,512] → [1,32,16,256] → [1,64,8,128] → [1,16,4,64]</span>, i.e. 3× (Conv2d stride-2 → SiLU),
-    squeezing the glyph strip down to the latent grid so the stencil can be <em>stacked onto</em> the noisy latent.</figcaption>
-  </figure>
 </div></section>
 
 <!-- ───────── what's new ───────── -->
@@ -202,14 +197,14 @@
 <!-- ───────── the cast ───────── -->
 <section id="cast"><div class="wrap">
   <h2><span class="n">🧩</span> The cast + exact sizes</h2>
-  <p class="sub">Trainable ≈ the 900M backbone + small heads. Frozen ❄️ = VAE encoder, DINOv3, HTR.</p>
+  <p class="sub">Trainable ≈ the 900M backbone + small heads. Frozen ❄️ = VAE, DINOv3, HTR.</p>
   <div class="grid cards">
-    <div class="card c-vae"><span class="tag">❄️ frozen enc · 16-ch f8</span><h3>Qwen-Image VAE</h3><p class="m">[B,3,64,W] → [B,16,8,W/8]</p><p class="why"><b>Why 16-ch:</b> SD's 4-ch latent smears the strokes that separate <b>a / ä / å</b>; 16-ch + a text-tuned decoder preserves diacritics. A <b>recon-CER gate</b> refuses training if the latent drops legibility.</p></div>
+    <div class="card c-vae"><span class="tag">❄️ frozen · 16-ch f8</span><h3>Qwen-Image VAE</h3><p class="m">[B,3,128,W] → [B,16,16,W/8]</p><p class="why"><b>Why 16-ch:</b> SD's 4-ch latent smears the strokes that separate <b>a / ä / å</b>; 16-ch + a text-tuned decoder preserves diacritics. A <b>recon-CER gate</b> (<code>diffu-vae-gate</code>) checks before training that the latent keeps legibility.</p></div>
     <div class="card c-enc"><span class="tag">✅ CNN trained</span><h3>Glyph content encoder</h3><p class="m">Unifont 32px → ResNet18 → [B, w_t, 1024]</p><p class="why"><b>Why:</b> Unifont covers all Unicode → <b>any</b> glyph representable by construction. Keeps the spatial map (no avgpool) so column <em>j</em> ≈ image column <em>j</em>.</p></div>
-    <div class="card c-enc"><span class="tag">❄️ DINOv3 · ✅ pool</span><h3>Style encoder</h3><p class="m">ViT-L/16 → [B,196,1024] → resampler → [B,64,1024] → pool → [B,1024]</p><p class="why"><b>Two poolings:</b> 64 learned queries cross-attend DINO patches (variable→fixed), then 1 learned query → one vector. <b>Pooled-only</b> so it can't copy the reference's letters.</p></div>
+    <div class="card c-enc"><span class="tag">❄️ DINOv3 · ✅ pool</span><h3>Style encoder</h3><p class="m">ViT-L/16 → [B,201,1024] → resampler → [B,64,1024] → pool → [B,1024]</p><p class="why"><b>Two poolings:</b> 64 learned queries cross-attend DINO patches (variable→fixed), then 1 learned query → one vector. <b>Pooled-only</b> so it can't copy the reference's letters.</p></div>
     <div class="card c-brain"><span class="tag">✅ ~900M · trained from scratch · SD3.5</span><h3>SD3 MMDiT backbone</h3><p class="m">dim 1024 · 24 layers · 16 heads · patch 2 · SD3.5 qk_norm</p><p class="why"><b>Why a transformer + RoPE:</b> joint attention fuses text+image in one stream; relative 2D-RoPE handles <b>variable line width</b> (the absolute table was the overflow cause). <b>SD3.5 qk_norm</b> (Q/K RMSNorm) for training stability; dual-attention wired but off.</p></div>
     <div class="card c-sched"><span class="tag">no params</span><h3>Rectified flow + scheduler</h3><p class="m">x_t=(1−t)x0+t·ε · predict v=ε−x0</p><p class="why"><b>Why velocity:</b> the constant slope of the straight noise↔clean line → stable training. ~24 Euler steps at sampling.</p></div>
-    <div class="card c-aux"><span class="tag">✅ tiny · training-only</span><h3>REPA projector</h3><p class="m">Linear(1024→1024), cosine-align layer-8 to DINO</p><p class="why"><b>Why:</b> a representation head-start — the brain's mid layer is pushed to "look like" DINO's view of the target → faster convergence, finer detail.</p></div>
+    <div class="card c-aux"><span class="tag">✅ tiny · training-only</span><h3>REPA projector</h3><p class="m">3-layer SiLU MLP (1024→1024), cosine-align layer 8 to DINO; off after 40% of steps</p><p class="why"><b>Why:</b> a representation head-start — the brain's mid layer is pushed to "look like" DINO's view of the target → faster convergence, finer detail.</p></div>
   </div>
 </div></section>
 
@@ -232,12 +227,12 @@
       so the requested text shapes the ink at every layer instead of via a side channel.</p>
     </div>
     <div class="diagram"><div class="flow"><span class="cmt"># one MMDiT block, joint attention</span>
-img tokens  <span class="v">[B, 256, 1024]</span>  <span class="cmt"># up to 256, =h_t·w_t</span>
-txt tokens  <span class="v">[B, w_t+0, 1024]</span> <span class="cmt"># content (+style off)</span>
+img tokens  <span class="v">[B, 512, 1024]</span>  <span class="cmt"># =h_t·w_t: 512 at 1024 px, no cap</span>
+txt tokens  <span class="v">[B, w_t, 1024]</span>   <span class="cmt"># content only (style is pooled)</span>
    │ to_q/to_k/to_v  + add_q/k/v_proj
    ▼   reshape → <span class="k">16 heads × 64</span>
 Q,K,V  <span class="v">[B,16,seq,64]</span>
-   │ 2D-RoPE on <span class="g">image</span> Q/K only
+   │ 2D-RoPE on <span class="g">image</span> Q/K; content Q/K share the column freqs
    ▼ concat [img ; txt]
 attn = <span class="k">softmax</span>(Q·Kᵀ / <span class="g">√64</span>) · V
    ▼ split back → image stream continues
@@ -251,10 +246,10 @@ AdaLN scale/shift ← (<span class="v">pooled[1024]</span> + <span class="v">t_e
   <p class="sub">Don't make the brain learn visual structure from scratch — force a <b>mid layer (8)</b> to look
   like a frozen <b>DINO</b>'s view of the target. Faster convergence + finer detail (diacritics).</p>
   <div class="diagram"><div class="flow"><span class="g">DiT side (student)</span>                          <span class="enc" style="color:var(--enc)">DINO side (teacher, frozen ❄️)</span>
-hook block[<span class="k">8</span>] → img hidden <span class="v">[B,N,1024]</span>     target image → resize 224² → ImageNet-norm
-   │ repa_proj = Linear(1024→1024)              │ frozen DINOv3 → keep last 196 patches
-   ▼                                            ▼ reshape [B,1024,14,14]
-proj <span class="v">[B,N,1024]</span>      ◄── cosine ──►      bilinear-resample → <span class="v">[B,1024,h_t,w_t]</span>
+hook block[<span class="k">8</span>] → img hidden <span class="v">[B,N,1024]</span>     target line, native size → ImageNet-norm
+   │ repa_proj = 3-layer SiLU MLP               │ frozen DINOv3 → keep the patch tokens
+   ▼                                            ▼ reshape [B,1024,H/16,W/16]
+proj <span class="v">[B,N,1024]</span>      ◄── cosine ──►      16-px patches = the DiT grid <span class="v">[B,1024,h_t,w_t]</span>
                                                 ▼ flatten row-major
                                           target <span class="v">[B,N,1024]</span>
 
@@ -265,8 +260,8 @@ L_repa = mean( 1 − <span class="k">cos</span>( L2(proj) , L2(target) ) ) · <s
     <li><b>Training-only</b>; only the flow term is logged (val-comparable). A guard raises if the hidden state isn't differentiable (so REPA trains the backbone, not just the head).</li>
   </ul>
   <p class="ana"><b>⚠️ Best-practice gap (HASTE, "REPA Works Until It Doesn't"):</b> REPA helps early but <em>erases
-  high-frequency detail late</em> — its gradient turns against the denoiser's. We run it the whole time at 0.5;
-  the big run should <b>terminate it early</b> (~30–40% of steps). Core config (cosine, layer 8, weight 0.5,
+  high-frequency detail late</em> — its gradient turns against the denoiser's. The code <b>terminates it early</b>:
+  weight 0.5 for the first 40% of steps, then off (<code>repa_stop_frac=0.4</code>). Core config (cosine, layer 8, weight 0.5,
   DINOv3-L, per-token) is otherwise textbook-correct.</p>
 </div></section>
 
@@ -278,8 +273,9 @@ L_repa = mean( 1 − <span class="k">cos</span>( L2(proj) , L2(target) ) ) · <s
       <ul class="tight">
         <li><b>Training prereq:</b> <code>--cond/--text-dropout</code> randomly zero the conditioning, so the model learns an <b>unconditional</b> mode too.</li>
         <li><b>Each sampling step runs the brain twice:</b> normal (<span class="m">v_cond</span>) and with <b>content zeroed, style kept</b> (<span class="m">v_uncond</span>).</li>
-        <li><b>Combine:</b> <span class="m">v = v_uncond + s·(v_cond − v_uncond)</span>, <span class="m">s≈3–4</span>.</li>
+        <li><b>Combine:</b> <span class="m">v = v_uncond + s·(v_cond − v_uncond)</span>, default <span class="m">s = 5</span>.</li>
         <li><b>Why:</b> <span class="m">(v_cond − v_uncond)</span> is the direction that depends on <em>this text</em>; <span class="m">s>1</span> <b>exaggerates</b> text-following.</li>
+        <li><b>Canvas mode:</b> a second knob, style guidance (<code>--style-cfg-scale</code>), contrasts with/without the reference — trained with <code>--ref-dropout</code>.</li>
         <li><b>Cost:</b> 2× forwards/step. Best-practice: lower scale on an <b>interval</b> <span class="m">t∈[0.3,0.7]</span> once REPA-aligned (high s everywhere over-saturates to white).</li>
       </ul>
     </div>
@@ -299,7 +295,7 @@ L_repa = mean( 1 − <span class="k">cos</span>( L2(proj) , L2(target) ) ) · <s
   <h2><span class="n">↔</span> Auto-width &amp; length control — the model's biggest quirk</h2>
   <p class="sub">The model has <b>no internal length control</b> — trained only on tight crops, it learned to
   <b>fill the canvas</b>. Too wide → it <b>overflows</b> (repeats glyphs); too tight → it crams. So <em>we</em>
-  must hand it the right width: <code>width = len × 26.4 × bias</code>, then ink-crop the tail.</p>
+  must hand it the right width: <code>width = natural_width(text) × 0.45</code> (≈24 px/char at 128 px), then ink-crop the tail.</p>
   <div class="two">
     <div>
       <div class="bars">
@@ -308,14 +304,14 @@ L_repa = mean( 1 − <span class="k">cos</span>( L2(proj) , L2(target) ) ) · <s
         <div class="bar"><div class="b mid" style="height:21%"></div><div class="val">0.09</div><div class="lab">18 px/c</div></div>
         <div class="bar"><div class="b good" style="height:9%"></div><div class="val">0.037</div><div class="lab">15 px/c<br>(=corpus)</div></div>
       </div>
-      <p class="sub" style="margin-top:10px;text-align:center">CER sweep over px/char — <b>monotonic</b>: tighter is strictly better down to the corpus density (15 px/char), no cramming.</p>
+      <p class="sub" style="margin-top:10px;text-align:center">CER sweep over px/char (64 px era) — <b>monotonic</b>: tighter is strictly better down to the corpus density (15 px/char), no cramming.</p>
     </div>
     <div>
       <ul class="tight">
-        <li><b>The data:</b> real corpus density is <span class="num">~15 px/char</span> (measured <code>image_w ÷ len</code> over 2000 lines).</li>
-        <li><b>The fix:</b> a one-liner — <code>_WIDTH_BIAS = 0.55</code> (≈15 px/char) → <b>~11× CER drop</b> vs the old 30, and auto-width now "just works."</li>
+        <li><b>The data:</b> real corpus density is <span class="num">~15 px/char</span> at 64 px (measured <code>image_w ÷ len</code> over 2000 lines).</li>
+        <li><b>The fix:</b> a one-liner — <code>_WIDTH_BIAS = 0.55</code> (≈15 px/char at 64 px) → <b>~11× CER drop</b> vs the old 30. The bias is height-coupled: at 128 px it is <code>0.45</code> (≈24 px/char).</li>
         <li><b>Why overflow:</b> we removed the absolute position table (good — variable width via RoPE), but the model never learned to <em>stop</em>; the <code>fill_ratio</code> signal is too weak (buried in the pooled vector). White-pad training alone <em>didn't</em> fix it.</li>
-        <li><b>Proper fix (big run):</b> promote <code>fill_ratio</code> to its own <b>conditioning channel</b> + variable-width training → "write N chars and <b>stop</b>".</li>
+        <li><b>Length control for the next models:</b> <code>--glyph-pad</code> — glyph tokens only over the line's ink extent, blank after → "write N chars and <b>stop</b>" (implemented, not trained yet).</li>
       </ul>
     </div>
   </div>
@@ -351,10 +347,10 @@ L_repa = mean( 1 − <span class="k">cos</span>( L2(proj) , L2(target) ) ) · <s
 <section id="gaps"><div class="wrap">
   <h2><span class="n">○</span> Known gaps (teach these honestly)</h2>
   <div class="grid cards">
-    <div class="card c-brain"><h3>No length control</h3><p class="why">Fills any canvas. Fix: <code>fill_ratio</code> as its own channel + variable-width training.</p></div>
-    <div class="card c-enc"><h3>Generic style</h3><p class="why">Pooled-only to avoid copying letters. Fix: a content-decoupled style encoder.</p></div>
+    <div class="card c-brain"><h3>No length control</h3><p class="why">Fills any canvas. Fix: <code>--glyph-pad</code> (blank glyph tokens past the ink) — implemented, not trained yet.</p></div>
+    <div class="card c-enc"><h3>Generic style</h3><p class="why">Pooled-only to avoid copying letters. Next: <code>--style-canvas</code>, the reference line in context — implemented, not trained yet.</p></div>
     <div class="card c-aux"><h3>Legibility ceiling</h3><p class="why">~0.16 vs DiffBrush 0.086. Fix: the scale-up (bigger model, multilingual data).</p></div>
-    <div class="card c-vae"><h3>Scheduling refinements</h3><p class="why">REPA early-stop · timestep shift (under-noised 16-ch latent) · interval CFG. All for the big run.</p></div>
+    <div class="card c-vae"><h3>Scheduling refinements</h3><p class="why">REPA early-stop is on (40% of steps). Still open: timestep shift (under-noised 16-ch latent) · interval CFG.</p></div>
   </div>
 </div></section>
 
@@ -363,20 +359,20 @@ L_repa = mean( 1 − <span class="k">cos</span>( L2(proj) , L2(target) ) ) · <s
 <script>
 const flows={
  train:[
-  {f:"img",to:"vae",c:"--vae",t:"Encode the real line",r:"image → latent",d:"A real line is squeezed to a <em>clean latent x0</em> by the frozen VAE. All learning happens here.",m:"x0 = VAE.encode(img)   [B,3,64,W] → [B,16,8,W/8]"},
+  {f:"img",to:"vae",c:"--vae",t:"Encode the real line",r:"image → latent",d:"A real line is squeezed to a <em>clean latent x0</em> by the frozen VAE. All learning happens here.",m:"x0 = VAE.encode(img)   [B,3,128,W] → [B,16,16,W/8]"},
   {f:"vae",to:"brain",c:"--sched",t:"Fog it on a straight line",r:"x_t",d:"Mix clean + noise at a random fog level t (logit-normal, emphasizes the hard middle).",m:"t ~ logit-normal(0,1)\nx_t = (1−t)·x0 + t·ε      ε~N(0,I)"},
   {f:"glyph",to:"brain",c:"--enc",t:"Hint 1 — what to write",r:"content tokens",d:"Text → Unifont stencil → ResNet18 (keeps spatial map) → one token per latent column.",m:"tokens [B, w_t, 1024]   token j ≈ image column j"},
-  {f:"dino",to:"brain",c:"--enc",t:"Hint 2 — whose hand",r:"pooled style",d:"DINOv3 → 64 resampler tokens → 1 pooled vector (via AdaLN). Pooled so it can't copy letters.",m:"style [B,1024]  (DINO 196 → resampler 64 → pool 1)"},
+  {f:"dino",to:"brain",c:"--enc",t:"Hint 2 — whose hand",r:"pooled style",d:"DINOv3 → 64 resampler tokens → 1 pooled vector (via AdaLN). Pooled so it can't copy letters.",m:"style [B,1024]  (DINO 201 → resampler 64 → pool 1)"},
   {f:"brain",to:"loss",c:"--aux",t:"Predict v̂ → flow loss",r:"v̂ vs ε−x0",d:"The 900M MMDiT predicts the un-blur <em>velocity</em>; loss = distance to the true direction.",m:"L_flow = ‖ v̂ − (ε − x0) ‖²"},
-  {f:"repa",to:"loss",c:"--enc",t:"REPA — DINO head-start",r:"align layer 8",d:"A mid layer is cosine-aligned to frozen DINO of the target (per-token). Faster + finer detail.",m:"L = L_flow + 0.5·(1 − cos(proj, DINO_target))"}
+  {f:"repa",to:"loss",c:"--enc",t:"REPA — DINO head-start",r:"align layer 8",d:"A mid layer is cosine-aligned to frozen DINO of the target (per-token), for the first 40% of steps. Faster + finer detail.",m:"L = L_flow + 0.5·(1 − cos(proj, DINO_target))"}
  ],
  infer:[
-  {f:"noise",to:"brain",c:"--sched",t:"Start from pure noise",r:"t=1",d:"Begin with static, on a canvas sized to the text (~15 px/char — the corpus density).",m:"x = randn([B,16,8,W/8])    t = 1"},
+  {f:"noise",to:"brain",c:"--sched",t:"Start from pure noise",r:"t=1",d:"Begin with static, on a canvas sized to the text (~24 px/char at 128 px).",m:"x = randn([B,16,16,W/8])    t = 1"},
   {f:"glyph",to:"brain",c:"--enc",t:"Same two hints",r:"content + style",d:"Identical conditioners to training — that's why training transfers.",m:"content [B,w_t,1024] · style [B,1024]"},
-  {f:"brain",to:"cfg",c:"--sched",t:"Predict + CFG",r:"lean on the text",d:"Run twice (with text / content-dropped); exaggerate the text-dependent part. The legibility lever.",m:"v = v_uncond + s·(v_cond − v_uncond)   s≈3–4   (0.5→0.16)"},
+  {f:"brain",to:"cfg",c:"--sched",t:"Predict + CFG",r:"lean on the text",d:"Run twice (with text / content-dropped); exaggerate the text-dependent part. The legibility lever.",m:"v = v_uncond + s·(v_cond − v_uncond)   s = 5 (default)"},
   {f:"cfg",to:"brain",c:"--sched",t:"Step toward clean ×24",r:"t: 1→0",d:"Euler-integrate the flow ODE. ~24 steps; more = smoother, diminishing returns past ~24–40.",m:"x ← scheduler.step(v, t, x)   repeat t=1…0"},
-  {f:"brain",to:"dec",c:"--vae",t:"Decode the clean latent",r:"latent → pixels",d:"At t=0 the latent is clean; the frozen decoder renders a 64-px line.",m:"img = VAE.decode(x0)   [B,16,8,W/8] → [B,3,64,W]"},
-  {f:"dec",to:"out",c:"--user",t:"Ink-crop → the line",r:"trim tail",d:"Crop to the inked span → the requested text in the reference hand.",m:"line = ink_crop(img)   width must match text (≈15 px/char)"}
+  {f:"brain",to:"dec",c:"--vae",t:"Decode the clean latent",r:"latent → pixels",d:"At t=0 the latent is clean; the frozen decoder renders a 128-px line.",m:"img = VAE.decode(x0)   [B,16,16,W/8] → [B,3,128,W]"},
+  {f:"dec",to:"out",c:"--user",t:"Ink-crop → the line",r:"trim tail",d:"Crop to the inked span → the requested text in the reference hand.",m:"line = ink_crop(img)   width must match text (≈24 px/char at 128 px)"}
  ]
 };
 const stage=document.getElementById("stage"),svg=document.getElementById("wires"),nodes=[...stage.querySelectorAll(".node")];

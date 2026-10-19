@@ -1,11 +1,15 @@
 # Legibility via recognizer-reward + Flow-OPD — post-base finetuning (Stage 3)
 
-**Status:** live plan; scaffolding exists in `src/diffu/rl/` (reward/advantage/sde_logprob implemented +
-tested; sampler/sft are documented stubs). The principled replacement for the differentiable recog-loss we
+**Status:** plan, not implemented. The scaffolding that lived in `src/diffu/rl/` (reward/advantage/sde_logprob
+implemented + tested; sampler/sft documented stubs) was **removed on 2026-10-19** — it is in git history at
+`c53d30e`. The principled replacement for the differentiable recog-loss we
 removed. The Stage-1 gate — a base that already follows the text — is **PASSED** by the released
 [`Gabriel/diffu_sd35_128`](https://huggingface.co/Gabriel/diffu_sd35_128) (~2 % guided CER), so Stage 2 is
 unblocked — RL/distillation cannot teach a model to spell from nothing, it only sharpens a
 model that already mostly can.
+
+> **Note (2026-10-19):** `Gabriel/diffu_sd35_128` is no longer on the Hub and its `step_120000` checkpoint
+> stayed on the old training box, so a Stage 2 would start from a newly trained base.
 
 > **This note now reflects the FULL Flow-OPD repo** (`CostaliyA/Flow-OPD`, read in full: `scripts/train_sd3.py`,
 > `scripts/train_sd3_sft.py`, `scripts/train_sd3_opd_mix.py`, `flow_grpo/`, `config/`). The earlier version was

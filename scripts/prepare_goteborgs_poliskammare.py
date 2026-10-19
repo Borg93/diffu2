@@ -17,7 +17,7 @@ from pathlib import Path
 
 from huggingface_hub import snapshot_download
 
-from diffu.data.dataset import build_manifest, char_coverage, write_splits
+from diffu.data.dataset import LINE_HEIGHT, build_manifest, char_coverage, write_splits
 
 REPO_ID = "Riksarkivet/goteborgs_poliskammare_fore_1900"
 
@@ -48,10 +48,19 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Prepare the Göteborgs poliskammare dataset for Diffu.")
     ap.add_argument("--raw-dir", default="data_raw", help="where to download/extract raw images + xml")
     ap.add_argument("--out-dir", default="data_out", help="output dir for manifest + train/val/test")
-    ap.add_argument("--height", type=int, default=64)
+    ap.add_argument(
+        "--height",
+        type=int,
+        default=LINE_HEIGHT,
+        help=f"line crop height px (default {LINE_HEIGHT}, the training line height)",
+    )
     ap.add_argument("--skip-download", action="store_true", help="reuse an already-extracted --raw-dir")
-    ap.add_argument("--split-by", choices=["writer_id", "volume"], default="volume",
-                    help="split granularity (default volume: one scribe-stint stays on one side)")
+    ap.add_argument(
+        "--split-by",
+        choices=["writer_id", "volume"],
+        default="volume",
+        help="split granularity (default volume: one scribe-stint stays on one side)",
+    )
     args = ap.parse_args()
 
     raw = Path(args.raw_dir)

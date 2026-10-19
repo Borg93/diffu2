@@ -26,7 +26,7 @@ def test_len_matches_iter() -> None:
 
 
 def test_all_batches_full_with_drop_last() -> None:
-    sampler = WidthBucketBatchSampler(_widths(1000), batch_size=32, drop_last=True, seed=0)
+    sampler = WidthBucketBatchSampler(_widths(1000), batch_size=32, seed=0)
     assert all(len(b) == 32 for b in sampler)
 
 
@@ -50,3 +50,19 @@ def test_deterministic_across_ranks() -> None:
 def test_reshuffles_across_epochs() -> None:
     sampler = WidthBucketBatchSampler(_widths(), batch_size=32, seed=0)
     assert list(sampler) != list(sampler)  # composition/order varies epoch to epoch
+
+
+def test_line_widths_caches_raw_widths_and_caps_on_read(tmp_path):
+    from PIL import Image
+
+    from diffu.data.sampler import line_widths
+
+    rows = []
+    for i, w in enumerate((40, 300)):
+        path = tmp_path / f"{i}.png"
+        Image.new("RGB", (w, 8), "white").save(path)
+        rows.append({"image": str(path)})
+    cache = str(tmp_path / "train.widths.json")
+    assert line_widths(rows, max_width=100, cache_path=cache) == [40, 100]
+    assert line_widths(rows, max_width=500, cache_path=cache) == [40, 300]  # a new cap, not stale widths
+    assert line_widths(rows, cache_path=cache) == [40, 300]

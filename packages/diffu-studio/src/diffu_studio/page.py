@@ -305,9 +305,9 @@ def _page_spec(request: PageRequest) -> PageSpec:
 
 def _measure(loaded: LoadedModel, text: str, height: int) -> int:
     """Predicted rendered width of ``text`` at ``height`` — the model's content-aware natural width."""
-    from diffu.generate import natural_width
+    from diffu.generate import auto_canvas_width
 
-    width = natural_width(loaded.model.guidance_renderer, text or " ", loaded.cfg)
+    width = auto_canvas_width(loaded.model, text or " ")
     return int(width * height / loaded.cfg.data.line_height)
 
 

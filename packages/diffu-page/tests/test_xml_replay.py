@@ -50,6 +50,6 @@ def test_single_leaf_split_reorigins_rules(tmp_path: Path):
     leaf = load_xml_layout(str(xml), single_page=True)  # splits (left cluster vs right body) + re-origins
     # every carried rule is re-origined onto the (narrowed) leaf canvas — none left off-page by the split
     assert leaf.rules, "the kept leaf should still carry its in-range separator rule(s)"
-    assert all(0 <= r.x1 <= leaf.spec.width and 0 <= r.x2 <= leaf.spec.width for r in leaf.rules), (
-        [f"{r.x1}->{r.x2} on w={leaf.spec.width}" for r in leaf.rules]
-    )
+    assert all(0 <= r.x1 <= leaf.spec.width and 0 <= r.x2 <= leaf.spec.width for r in leaf.rules), [
+        f"{r.x1}->{r.x2} on w={leaf.spec.width}" for r in leaf.rules
+    ]

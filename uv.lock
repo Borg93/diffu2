@@ -491,7 +491,7 @@ requires-dist = [
     { name = "torchvision", specifier = ">=0.29.1", index = "https://download.pytorch.org/whl/cu130" },
     { name = "torchvista", marker = "extra == 'viz'" },
     { name = "tqdm", specifier = ">=4.66" },
-    { name = "trackio", marker = "extra == 'track'" },
+    { name = "trackio", marker = "extra == 'track'", specifier = ">=0.42" },
     { name = "transformers", specifier = ">=5.20.1" },
 ]
 provides-extras = ["dev", "hf", "track", "viz"]
@@ -2509,9 +2509,10 @@ wheels = [
 
 [[package]]
 name = "trackio"
-version = "0.27.0"
+version = "0.42.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "brotli" },
     { name = "gradio-client" },
     { name = "huggingface-hub" },
     { name = "numpy" },
@@ -2522,7 +2523,7 @@ dependencies = [
     { name = "uvicorn", extra = ["standard"] },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/55/a1/af5437b3c3f04a0de85f6af2fb43db69c03cdebcea0330356e13724c2c3a/trackio-0.27.0-py3-none-any.whl", hash = "sha256:2cb14d766d4798430e89d77c47b9e96af56062294ab9dcc555f5b42331aceba3", size = 1677374, upload-time = "2026-06-10T17:38:07.948Z" },
+    { url = "https://files.pythonhosted.org/packages/4d/cb/d0d37df9e1dd319eb0c2997dd4454f8685924ba647e226dd17d426d30e1e/trackio-0.42.0-py3-none-any.whl", hash = "sha256:89435d13a48966468085bfd2cdb755d36115f004a69048a57e8a100c2eb8c0a5", size = 3106052, upload-time = "2026-10-09T20:19:30.094Z" },
 ]
 
 [[package]]

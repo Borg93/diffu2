@@ -5,7 +5,7 @@ at the real backbone size and real line shapes, and checks its output against to
 A backend that is missing, unsupported on this GPU, or has no backward kernel (e.g. Sage) is reported
 as such instead of crashing the run. The verdict names the fastest backend whose output matches.
 
-    CUDA_VISIBLE_DEVICES=1 uv run --no-sync python scripts/bench_attention.py
+    CUDA_VISIBLE_DEVICES=0 uv run --no-sync python scripts/bench_attention.py
     ... --canvas                      # the --style-canvas shapes: [ref | target] canvas, 2x input channels
     ... --compile                     # time the regionally-compiled blocks (what --compile trains with)
     ... --backends native,_native_cudnn,sage_blackwell_hub
@@ -73,13 +73,7 @@ def _build(args: argparse.Namespace, device: torch.device) -> tuple[Backbone, Ba
         cfg = BackboneConfig(dim=64, num_layers=2, heads=2, context_dim=64)
     in_channels = 2 * LATENT_C if args.canvas else LATENT_C
     torch.manual_seed(0)
-    model = Backbone(
-        cfg,
-        in_channels=in_channels,
-        context_dim=cfg.context_dim,
-        pooled_dim=cfg.context_dim,
-        out_channels=LATENT_C,
-    )
+    model = Backbone(cfg, in_channels=in_channels, out_channels=LATENT_C)
     return model.to(device), cfg, in_channels
 
 
@@ -90,11 +84,10 @@ def _inputs(args: argparse.Namespace, in_channels: int, context_dim: int, device
         w *= 2  # [reference | target] on one canvas
     gen = torch.Generator(device="cpu").manual_seed(0)
     latent = torch.randn(args.batch, in_channels, h, w, generator=gen)
-    n_content = w // 2
-    context = torch.randn(args.batch, n_content, context_dim, generator=gen)
+    context = torch.randn(args.batch, w // 2, context_dim, generator=gen)  # one token per patch column
     pooled = torch.randn(args.batch, context_dim, generator=gen)
     timestep = torch.full((args.batch,), 500.0)
-    return tuple(t.to(device) for t in (latent, timestep, context, pooled)) + (n_content,)
+    return tuple(t.to(device) for t in (latent, timestep, context, pooled))
 
 
 def _bench(
@@ -110,11 +103,11 @@ def _bench(
     except Exception as exc:  # noqa: BLE001 - missing package / kernel / unsupported GPU: report, keep going
         return Result(backend=backend, note=f"unavailable: {type(exc).__name__}: {str(exc)[:80]}")
 
-    latent, timestep, context, pooled, n_content = _inputs(args, in_channels, cfg.context_dim, device)
+    latent, timestep, context, pooled = _inputs(args, in_channels, cfg.context_dim, device)
 
     def forward() -> torch.Tensor:
         with torch.autocast(device.type, dtype=dtype, enabled=device.type == "cuda"):
-            return model(latent, timestep, context, pooled, n_content=n_content)
+            return model(latent, timestep, context, pooled)
 
     result = Result(backend=backend)
     try:
@@ -199,10 +192,10 @@ def _reference_output(args: argparse.Namespace, device: torch.device) -> torch.T
     """The default-SDPA output on the benchmark batch (the correctness reference)."""
     model, cfg, in_channels = _build(args, device)
     model.eval()
-    latent, timestep, context, pooled, n_content = _inputs(args, in_channels, cfg.context_dim, device)
+    latent, timestep, context, pooled = _inputs(args, in_channels, cfg.context_dim, device)
     dtype = torch.bfloat16 if device.type == "cuda" else torch.float32
     with torch.no_grad(), torch.autocast(device.type, dtype=dtype, enabled=device.type == "cuda"):
-        return model(latent, timestep, context, pooled, n_content=n_content).float()
+        return model(latent, timestep, context, pooled).float()
 
 
 if __name__ == "__main__":

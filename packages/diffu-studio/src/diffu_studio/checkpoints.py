@@ -1,9 +1,10 @@
 """Checkpoint discovery + loading, with the architecture guard wired in.
 
 The studio must never silently generate gibberish from a checkpoint whose text-conditioner doesn't fit
-the code (the failure that cost a whole debugging session). :func:`load_model` therefore runs
-``diffu.generate.assert_conditioner_loaded`` right after loading and re-raises any mismatch as
-:class:`CheckpointMismatch`, which the UI/API turn into a clear message instead of confident nonsense.
+the code (the failure that cost a whole debugging session). :func:`load_model` therefore loads through
+``diffu.generate.build_model`` (which runs ``assert_conditioner_loaded`` right after the weights) and
+re-raises any mismatch as :class:`CheckpointMismatch`, which the UI/API turn into a clear message instead
+of confident nonsense.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict
 
+from diffu.config import DataConfig
 from diffu_studio.device import Device, torch_dtype
 
 if TYPE_CHECKING:
@@ -21,18 +23,17 @@ if TYPE_CHECKING:
 
 
 class ArchConfig(BaseModel):
-    """The architecture flags a checkpoint was TRAINED with — must match or the conditioner loads wrong.
+    """The architecture knobs for a checkpoint WITHOUT a ``config.json`` (runs that predate it).
 
-    Defaults track the current best run (``exp_sd35_fast``: ``--glyph-line --no-style-tokens``). ``qk_norm``
-    and ``use_unifont`` are NOT here: they are auto-detected per checkpoint from its weights at load time.
+    diffu-train saves the full model config as ``config.json`` next to the weights; when it is there, it is
+    the architecture and these are ignored.
     """
 
     model_config = ConfigDict(frozen=True)
 
-    glyph_line: bool = True
-    style_in_context: bool = False
-    glyph_concat: bool = False
-    line_height: int = 64  # crop height the checkpoint was trained at (64px runs; 128 for exp_sd35_128)
+    line_height: int = (
+        DataConfig().line_height
+    )  # crop height the checkpoint was trained at (old 64px runs: 64)
 
 
 class Checkpoint(BaseModel):
@@ -56,17 +57,6 @@ class LoadedModel(BaseModel):
 
 class CheckpointMismatch(RuntimeError):
     """A checkpoint's architecture doesn't fit this code — surfaced to the user, never silently ignored."""
-
-
-def infer_qk_norm(ckpt: str) -> str | None:
-    """``"rms_norm"`` if the checkpoint was trained with SD3.5 qk-norm (has ``...attn.norm_q.*``), else None."""
-    try:
-        from safetensors import safe_open
-
-        with safe_open(ckpt, framework="pt") as handle:
-            return "rms_norm" if any(".norm_q." in k for k in handle.keys()) else None  # noqa: SIM118
-    except Exception:  # noqa: BLE001 — a .pt file or unreadable header: fall back to no qk-norm
-        return None
 
 
 def discover_checkpoints(root: str = "checkpoints") -> list[Checkpoint]:
@@ -119,34 +109,36 @@ def load_model(
     lora: str | None = None,
     lora_scale: float = 1.0,
 ) -> LoadedModel:
-    """Build Diffu with ``arch`` (+ auto-detected qk-norm/unifont), load ``path``, and verify the conditioner.
+    """Build Diffu from the checkpoint's ``config.json`` (else ``arch``), load ``path``, verify the conditioner.
 
-    An optional Stage-3 ``lora`` adapter (dir or Hub id) is applied on top of the base checkpoint at
-    ``lora_scale`` — after the conditioner guard, before any compile (mirrors ``DiffuPipeline``).
-    Raises :class:`CheckpointMismatch` if the checkpoint's text-conditioner doesn't fit the code.
+    Loads through ``diffu.generate.build_model``: an optional Stage-3 ``lora`` adapter (dir or Hub id) is
+    applied on top of the base checkpoint at ``lora_scale`` — after the conditioner guard, before any compile
+    (mirrors ``DiffuPipeline``). Raises :class:`CheckpointMismatch` if the checkpoint doesn't fit the code.
     """
-    from diffu.config import Config
-    from diffu.generate import assert_conditioner_loaded, load_checkpoint
-    from diffu.model import Diffu
+    import torch
+
+    # Config/Diffu are LoadedModel's field types: pydantic resolves its deferred annotations from the frame
+    # that first instantiates it — this one — so they must be importable names here.
+    from diffu.config import Config  # noqa: F401
+    from diffu.generate import build_model, load_config
+    from diffu.model import Diffu  # noqa: F401
 
     weights = resolve_weights(path)
-    cfg = Config()
-    cfg.data.line_height = arch.line_height  # config.py default may differ from the checkpoint's train res
-    cfg.cond.glyph_line = arch.glyph_line
-    cfg.cond.style_in_context = arch.style_in_context
-    cfg.cond.glyph_concat = arch.glyph_concat
-    qk = infer_qk_norm(weights)  # the content-stencil font is keyed to the same signal (see app-era note)
-    cfg.backbone.qk_norm = qk
-    cfg.cond.use_unifont = qk is not None
-
-    model = Diffu(cfg).to(device.torch_device, dtype=torch_dtype(device)).eval()
-    load_checkpoint(model, weights)
+    cfg = load_config(weights)
+    if not (Path(weights).parent / "config.json").is_file():  # an older run: no saved config
+        cfg.data.line_height = arch.line_height  # config.py's default may differ from its train res
     try:
-        assert_conditioner_loaded(model, weights)
-    except RuntimeError as exc:
+        model = build_model(
+            cfg,
+            weights,
+            device=device.torch_device,
+            dtype=torch_dtype(device),
+            lora=lora,
+            lora_scale=lora_scale,
+        )
+    except torch.OutOfMemoryError:
+        raise  # a full GPU, not a mismatch
+    except RuntimeError as exc:  # build_model's arch guards: input channels, then the text-conditioner
         raise CheckpointMismatch(str(exc)) from exc
-    if lora:  # a Stage-3 LoRA adapter on top of the base checkpoint (guarded + verified first)
-        from diffu.lora import load_lora
-
-        load_lora(model, lora, scale=lora_scale)
-    return LoadedModel(model=model, cfg=cfg, path=weights, tag=f"SD3.{'5' if qk else '0'}")
+    tag = f"SD3.{'5' if model.cfg.backbone.qk_norm else '0'}"
+    return LoadedModel(model=model, cfg=model.cfg, path=weights, tag=tag)

@@ -1,12 +1,16 @@
 """Evolution gallery — watch a run's handwriting sharpen across checkpoints.
 
-Generates the SAME texts + writer style from every ``step_*`` checkpoint of a run (cfg=5, the
-correct trained config) and assembles both an animated GIF (frames = checkpoints) and a static grid
-PNG (rows = texts, cols = checkpoints), so you can see — with your own eyes — whether the model is
-still improving or has plateaued.
+Generates the SAME texts + writer style from every ``step_*`` checkpoint of a run (cfg=5; the architecture
+from the run's ``config.json``, arch flags override it) and assembles both an animated GIF (frames =
+checkpoints) and a static grid PNG (rows = texts, cols = checkpoints), so you can see — with your own
+eyes — whether the model is still improving or has plateaued. Each checkpoint contributes its EMA weights
+(``ema_model.safetensors``), or the raw ``model.safetensors`` of a run saved before training wrote them.
 
-    CUDA_VISIBLE_DEVICES=1 HF_HUB_OFFLINE=1 uv run python scripts/evolution_gallery.py \
-        --ckpt-dir checkpoints/exp_sd35_128 --style data_out_lejonet_128/lines/003425_015.png
+    CUDA_VISIBLE_DEVICES=0 HF_HUB_OFFLINE=1 uv run python scripts/evolution_gallery.py \
+        --ckpt-dir runs/<run> --style <a line crop of the target hand>.png
+
+A ``--style-canvas`` run places the ``--style`` line left of each generated line; give its transcription
+with ``--style-text``, else the model sees the hand but not which letters it shows.
 """
 
 from __future__ import annotations
@@ -17,9 +21,16 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from diffu.config import ConditioningConfig, Config
-from diffu.generate import generate_line, load_checkpoint, load_style
-from diffu.model import Diffu
+from diffu.config import add_arch_args, apply_arch_args
+from diffu.generate import (
+    assert_conditioner_loaded,
+    build_model,
+    generate_line,
+    load_checkpoint,
+    load_config,
+    load_ref_line,
+    load_style,
+)
 
 TEXTS = [
     "Deßes sampt och i synnerheet",
@@ -35,6 +46,14 @@ def _step(path: Path) -> int:
     if m is None:
         raise ValueError(f"no step_<N> in {path}")
     return int(m.group(1))
+
+
+def _weights(step_dir: Path) -> Path | None:
+    """A step dir's EMA weights (what inference uses), else its raw ``model.safetensors`` (older runs)."""
+    for name in ("ema_model.safetensors", "model.safetensors"):
+        if (step_dir / name).is_file():
+            return step_dir / name
+    return None
 
 
 def _fit(img: Image.Image, cell_w: int, cell_h: int) -> Image.Image:
@@ -57,24 +76,28 @@ def _frame(step: int, cells: list[Image.Image], cell_w: int, cell_h: int) -> Ima
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Animate a run's handwriting across checkpoints.")
-    ap.add_argument("--ckpt-dir", default="checkpoints/exp_sd35_128")
-    ap.add_argument("--style", default="data_out_lejonet_128/lines/003425_015.png")
+    ap.add_argument("--ckpt-dir", required=True, help="a run's out dir (holds its step_<N>/ checkpoints)")
+    ap.add_argument("--style", required=True, help="a line crop of the target hand")
+    ap.add_argument("--style-text", default="", help="--style-canvas: transcription of the --style line")
     ap.add_argument("--cfg-scale", type=float, default=5.0)
-    ap.add_argument(
-        "--line-height", type=int, default=None, help="cell height (default: Config().line_height)"
-    )
     ap.add_argument("--out", default="/tmp/evolution")
+    add_arch_args(ap)
     args = ap.parse_args()
 
-    ckpts = sorted(Path(args.ckpt_dir).glob("step_*/model.safetensors"), key=_step)
+    found = (_weights(d) for d in Path(args.ckpt_dir).glob("step_*"))
+    ckpts = sorted((w for w in found if w is not None), key=_step)
     if not ckpts:
-        raise SystemExit(f"no step_*/model.safetensors under {args.ckpt_dir}")
+        raise SystemExit(f"no step_*/ema_model.safetensors or step_*/model.safetensors under {args.ckpt_dir}")
 
-    cfg = Config(cond=ConditioningConfig(glyph_line=True, style_in_context=False))  # MATCH training
-    cell_h = args.line_height or cfg.data.line_height  # cells sized for the run's native line height
+    cfg = apply_arch_args(load_config(ckpts[-1]), args)
+    cell_h = cfg.data.line_height  # cells sized for the run's native line height
     cell_w = cell_h * 6  # ~6:1, the old 380×64 cell aspect
-    model = Diffu(cfg).to("cuda").eval()
-    style = load_style(args.style).unsqueeze(0).to("cuda")
+    # Unfused Q/K/V: every checkpoint is loaded into this one model, and a fused copy would keep the first.
+    model = build_model(cfg, fuse_qkv=False)
+    if model.canvas:
+        style, ref = None, load_ref_line(args.style, model.cfg, text=args.style_text)
+    else:
+        style, ref = load_style(args.style).unsqueeze(0).to(next(model.parameters()).device), None
 
     frames: list[Image.Image] = []
     grid_cols: list[list[Image.Image]] = []
@@ -82,9 +105,10 @@ def main() -> None:
     for cp in ckpts:
         step = _step(cp)
         load_checkpoint(model, str(cp))
+        assert_conditioner_loaded(model, str(cp))
         cells = [
             _fit(
-                generate_line(model, t, style, cfg=cfg, num_steps=24, cfg_scale=args.cfg_scale),
+                generate_line(model, t, style, num_steps=24, cfg_scale=args.cfg_scale, ref=ref),
                 cell_w,
                 cell_h,
             )

@@ -56,8 +56,6 @@ def test_plan_rejects_nonpositive_bucket() -> None:
 class _FakeModel:
     """Tags each output with (text, latent width) so the test can check per-row alignment + bucketing."""
 
-    guidance_renderer = object()  # only its identity is used (natural_width is monkeypatched)
-
     def generate(self, texts, style, latent_hw, num_steps, cfg_scale):  # noqa: ANN001 — mirrors Diffu.generate
         assert style.shape[0] == len(texts), "style rows must be sliced with the same bucket indices"
         return [f"{t}|lw={latent_hw[1]}" for t in texts]
@@ -82,14 +80,14 @@ def _stub_actor() -> DiffuActor:
 
 @pytest.fixture
 def fake_generate_env(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Stub the diffu.generate helpers __call__ imports; returns the texts natural_width saw."""
+    """Stub the diffu.generate helpers __call__ imports; returns the texts auto_canvas_width saw."""
     measured: list[str] = []
 
-    def fake_natural_width(renderer, text, cfg):  # noqa: ANN001
+    def fake_auto_canvas_width(model, text):  # noqa: ANN001
         measured.append(text)
         return 16 * len(text)  # deterministic content-proportional width
 
-    monkeypatch.setattr("diffu.generate.natural_width", fake_natural_width)
+    monkeypatch.setattr("diffu.generate.auto_canvas_width", fake_auto_canvas_width)
     monkeypatch.setattr("diffu.generate.load_style", lambda p: torch.zeros(3, 4, 4))
     monkeypatch.setattr("diffu.generate.to_pil", lambda img: img)  # fake generate yields tag strings
     monkeypatch.setattr("diffu_runner.actors._png_bytes", lambda img: img.encode())
@@ -122,6 +120,6 @@ def test_call_passes_every_input_column_through(fake_generate_env: list[str]) ->
 
 
 def test_call_measures_empty_text_as_single_space(fake_generate_env: list[str]) -> None:
-    # natural_width chokes on "" — the actor must measure a blank row as " " (the page path's convention)
+    # the actor must measure a blank row as " ", not "" (the page path's convention)
     _stub_actor()({"text": ["", "hello"], "style_path": ["s.png", "s.png"]})
     assert fake_generate_env[0] == " "

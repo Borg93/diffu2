@@ -13,12 +13,10 @@ Two pieces live here:
     concatenated to a full ``head_dim``. This is exactly how diffusers' ``FluxPosEmbed`` composes a
     multi-axis rotary, so we reuse its public helpers verbatim.
   * :class:`RoPEJointAttnProcessor` — a faithful copy of diffusers 0.41.0 ``JointAttnProcessor2_0``
-    that additionally rotates the image Q/K with 2D-RoPE. By default the TEXT (content + style) tokens
-    stay position-free. With the line-glyph path (``content_rotary_emb`` + ``n_content`` threaded in),
-    the FIRST ``n_content`` text tokens (the column-aligned glyph-line tokens) are rotated with a
-    shared-column RoPE built for ``(1 x n_content)`` — so glyph token ``j`` carries the SAME column
-    frequency as image patches in column ``j`` (Qwen-Image MSRoPE-style text<->image alignment). The
-    remaining (style) tokens stay position-free.
+    that additionally rotates the image Q/K with 2D-RoPE, and the text Q/K (Diffu's text tokens are the
+    ``n`` column-aligned glyph-line tokens) with ``content_rotary_emb``, a shared-column RoPE built for
+    ``(1 x n)``: glyph token ``j`` carries the SAME column frequency as image patches in column ``j``
+    (Qwen-Image MSRoPE-style text<->image alignment).
 """
 
 from __future__ import annotations
@@ -70,11 +68,12 @@ def build_2d_rope(
 class RoPEJointAttnProcessor:
     """SD3 joint-attention processor that rotates the IMAGE Q/K with 2D RoPE.
 
-    A faithful copy of diffusers 0.41.0 ``JointAttnProcessor2_0.__call__`` semantics (our config has
-    ``norm_q``/``norm_k``/``norm_added_*`` = None and no ``attn2`` path) with one addition: if an
-    ``image_rotary_emb`` is supplied (threaded in via ``joint_attention_kwargs``), it is applied to the
-    image-token query and key — BEFORE the text query/key are concatenated, so only image tokens are
-    rotated and the text tokens stay position-free.
+    A faithful copy of diffusers 0.41.0 ``JointAttnProcessor2_0.__call__`` semantics (incl. the
+    ``qk_norm`` RMSNorms; ``set_attn_processor`` also installs it on a dual-attention block's ``attn2``) with
+    two additions: the ``image_rotary_emb`` (threaded in via ``joint_attention_kwargs``) rotates the
+    image-token query and key BEFORE the text tokens are concatenated, and ``content_rotary_emb`` rotates the
+    text tokens with the shared-column RoPE (see the module docstring). No attention mask: Diffu has no padded
+    tokens, so passing one raises instead of being ignored.
 
     Unlike the stock SD3 processor, the attention itself goes through diffusers' ``dispatch_attention_fn``,
     so ``transformer.set_attention_backend(...)`` (cuDNN / FlashAttention / Sage kernels) applies to it —
@@ -109,9 +108,9 @@ class RoPEJointAttnProcessor:
         *,
         image_rotary_emb: tuple[torch.Tensor, torch.Tensor] | None = None,
         content_rotary_emb: tuple[torch.Tensor, torch.Tensor] | None = None,
-        n_content: int | None = None,
-        **kwargs: object,
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+        if attention_mask is not None:  # diffusers' Attention.forward always passes the argument
+            raise NotImplementedError("RoPEJointAttnProcessor does not support an attention mask")
         residual = hidden_states
         batch_size = hidden_states.shape[0]
 
@@ -142,7 +141,7 @@ class RoPEJointAttnProcessor:
             query = apply_rotary_emb(query, image_rotary_emb, sequence_dim=2)
             key = apply_rotary_emb(key, image_rotary_emb, sequence_dim=2)
 
-        # text (`context`) projections — position-free (no rotary)
+        # text (`context`) projections — the glyph tokens get the shared-column RoPE below
         if encoder_hidden_states is not None:
             if fused:
                 enc_q, enc_k, enc_v = attn.to_added_qkv(encoder_hidden_states).chunk(3, dim=-1)
@@ -160,15 +159,10 @@ class RoPEJointAttnProcessor:
             if attn.norm_added_k is not None:
                 enc_k = attn.norm_added_k(enc_k).to(enc_v.dtype)
 
-            # Shared-column RoPE on the first n_content (glyph-line) text tokens only; style stays
-            # position-free. Split/rotate/concat (not in-place) to keep autograd intact.
-            if content_rotary_emb is not None and n_content:
-                cq, sq = enc_q[:, :, :n_content], enc_q[:, :, n_content:]
-                ck, sk = enc_k[:, :, :n_content], enc_k[:, :, n_content:]
-                cq = apply_rotary_emb(cq, content_rotary_emb, sequence_dim=2)
-                ck = apply_rotary_emb(ck, content_rotary_emb, sequence_dim=2)
-                enc_q = torch.cat([cq, sq], dim=2)
-                enc_k = torch.cat([ck, sk], dim=2)
+            # Shared-column RoPE on the glyph-line text tokens.
+            if content_rotary_emb is not None:
+                enc_q = apply_rotary_emb(enc_q, content_rotary_emb, sequence_dim=2)
+                enc_k = apply_rotary_emb(enc_k, content_rotary_emb, sequence_dim=2)
 
             query = torch.cat([query, enc_q], dim=2)  # [image, text] along seq dim
             key = torch.cat([key, enc_k], dim=2)
@@ -185,7 +179,7 @@ class RoPEJointAttnProcessor:
             parallel_config=self._parallel_config,
         )
         hidden_states = hidden_states.reshape(batch_size, -1, attn.heads * head_dim)
-        hidden_states = hidden_states.to(value.dtype)  # the activation dtype (query.dtype could be fp32)
+        hidden_states = hidden_states.to(value.dtype)  # the activation dtype
 
         if encoder_hidden_states is not None:
             # image tokens are the first residual.shape[1]; the rest are text

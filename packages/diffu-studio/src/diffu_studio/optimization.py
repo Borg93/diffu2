@@ -13,23 +13,18 @@ Honesty / what can only be validated on real ZeroGPU H200 hardware
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 The ``spaces.aoti_capture / aoti_compile / aoti_apply`` helpers and the ``@spaces.GPU`` fork model only
 exist inside a live Spaces runtime, so the *export → compile → apply → speedup* path here can be
-smoke-checked locally (export a fixed-width graph) but only END-TO-END validated on the Space. Two parts
-of THIS model are genuine exportability risks and are why every step below is wrapped in a fallback:
+smoke-checked locally (export a fixed-width graph) but only END-TO-END validated on the Space.
+``Backbone.forward`` takes tensors only (the glyph-token count comes from ``context_tokens.shape[1]``, so it
+rides the dynamic width symbol), but one part of THIS model is a genuine exportability risk and is why every
+step below is wrapped in a fallback:
 
-  1. ``Backbone.forward`` takes ``n_content: int`` (a *Python int*, not a tensor). Under ``torch.export``
-     a plain int specializes to a constant → the exported graph would be frozen to ONE line width. We
-     avoid this by exporting a thin wrapper whose forward is tensors-only and derives
-     ``n_content = context_tokens.shape[1]`` INTERNALLY, so it rides the dynamic width symbol. This is
-     only valid when ``style_in_context=False`` (the released arch), where ``context == content`` and so
-     ``context.shape[1] == n_content``. We assert that and fall back otherwise.
-
-  2. The custom 2D-RoPE path (:class:`diffu.model.rope.RoPEJointAttnProcessor`) memoizes ``(cos, sin)`` in
-     ``Backbone._rope_cache`` keyed by the python ints ``(h_t, w_t, device)`` and builds them with
-     ``arange(w_t)``. Under a DYNAMIC width, ``w_t`` becomes a ``SymInt`` and that dict lookup /
-     arange-on-symint is exactly the kind of data-dependent control flow ``torch.export`` can refuse to
-     trace cleanly (guard on a symbolic hash, or a graph break). If the dynamic-width export raises, we
-     fall back — in order — to a FIXED-width AoT (still a real H200 win for the common bucket), then to
-     the eager JIT ``compile_blocks()``, then to plain eager. None of these change numerics.
+  The custom 2D-RoPE path (:class:`diffu.model.rope.RoPEJointAttnProcessor`) memoizes ``(cos, sin)`` in
+  ``Backbone._rope_cache`` keyed by the python ints ``(h_t, w_t, device)`` and builds them with
+  ``arange(w_t)``. Under a DYNAMIC width, ``w_t`` becomes a ``SymInt`` and that dict lookup /
+  arange-on-symint is exactly the kind of data-dependent control flow ``torch.export`` can refuse to
+  trace cleanly (guard on a symbolic hash, or a graph break). If the dynamic-width export raises, we
+  fall back — in order — to a FIXED-width AoT (still a real H200 win for the common bucket), then to
+  the eager JIT ``compile_blocks()``, then to plain eager. None of these change numerics.
 
 So: treat dynamic-width AoT as "attempt, measure on the Space." The fixed-width and JIT fallbacks are the
 safety net and are what guarantees the Space still boots and runs if export doesn't like the RoPE graph.
@@ -46,6 +41,7 @@ if TYPE_CHECKING:
     import torch.nn as nn
 
     from diffu.config import Config
+    from diffu.model import Diffu
     from diffu_studio.checkpoints import LoadedModel
 
 
@@ -108,18 +104,6 @@ def _compile_and_apply(loaded: LoadedModel, spaces: Any, *, cfg_scale: float, nu
     model, cfg = loaded.model, loaded.cfg
     backbone = model.backbone
 
-    # --- Guard the assumptions the tensors-only wrapper relies on ------------------------------------
-    if not model.glyph_line:
-        # Non-glyph-line: content seq length is fixed (max_chars), not width-derived, and n_content!=seq.
-        # Not the released arch; skip AoT rather than export a graph with wrong dynamic dims.
-        print("[studio] AoT skipped: backbone is not in glyph_line mode (n_content is not width-derived)")
-        return False
-    if getattr(model, "style_in_context", False):
-        # context = cat(content, style) → context.shape[1] != n_content, so we can't derive n_content
-        # from the context length. Would need to also thread the style-token count; not worth it here.
-        print("[studio] AoT skipped: style_in_context=True breaks the n_content = context.shape[1] identity")
-        return False
-
     # --- (OPTIONAL) torchao FP8 — H200 (sm_90) has hardware FP8; quantize BEFORE export so the frozen ---
     # --- graph bakes in the fp8 kernels. Gated off by default: it shifts numerics and must be CER-checked
     # --- on the Space before trusting it. Enable via DIFFU_STUDIO_FP8=1.
@@ -136,8 +120,7 @@ def _compile_and_apply(loaded: LoadedModel, spaces: Any, *, cfg_scale: float, nu
         # CFG batch when cfg_scale>0). We only need the first backbone call's shapes; num_steps is minimal.
         model.generate([_SAMPLE_TEXT], style, latent_hw=latent_hw, num_steps=num_steps, cfg_scale=cfg_scale)
 
-    # call.args = (latent, timestep, context_tokens, pooled); call.kwargs = {"n_content": <int>}
-    # We DROP n_content here: the wrapper recomputes it from context_tokens.shape[1] so it stays dynamic.
+    # call.args = (latent, timestep, context_tokens, pooled)
     latent, timestep, context_tokens, pooled = call.args[:4]
     example_args = (latent, timestep, context_tokens, pooled)
 
@@ -161,7 +144,7 @@ def _compile_and_apply(loaded: LoadedModel, spaces: Any, *, cfg_scale: float, nu
     # entries (and on timestep). It widens the export surface (more guards) so it is left OFF by default —
     # the studio's default cfg_scale=5 always takes the 2× path, so a fixed batch is the low-risk choice.
 
-    # --- Export the tensors-only wrapper (n_content derived inside) → aokit weightless AoT package -----
+    # --- Export the backbone (through a wrapper module) → aokit weightless AoT package ------------------
     import os
     from pathlib import Path
 
@@ -182,10 +165,8 @@ def _compile_and_apply(loaded: LoadedModel, spaces: Any, *, cfg_scale: float, nu
     compiled = LazyAOTIModel(pkg_dir / "root" / "package.pt2").with_weights(dict(wrapper.state_dict()))
 
     # --- Install onto the REAL backbone --------------------------------------------------------------
-    # We can't use spaces.aoti_apply(compiled, backbone) verbatim: aoti_apply swaps in a forward whose
-    # signature matches the exported graph (4 tensors), but every call site does
-    # `backbone(..., n_content=nc)` (see diffu.model.diffu._denoise_latents). So we install a thin shim
-    # that accepts + IGNORES n_content (the graph recomputes it) and delegates to the compiled callable.
+    # A thin shim instead of spaces.aoti_apply(compiled, backbone): it keeps the backbone's call signature and
+    # delegates to the compiled callable.
     _install_compiled_forward(backbone, compiled)
     backbone._aot_compiled = True  # gate flag: compile_blocks() must not ALSO run (they conflict)
 
@@ -197,12 +178,10 @@ def _compile_and_apply(loaded: LoadedModel, spaces: Any, *, cfg_scale: float, nu
 
 
 class _BackboneExportWrapper(_nn.Module):
-    """Tensors-only ``nn.Module`` view of ``Backbone.forward`` for ``torch.export`` (which requires an
-    ``nn.Module``) — recomputes ``n_content`` inside so a graph-freezing Python int becomes a value that
-    rides the dynamic width symbol. ``_backbone`` is registered as a submodule, so the exported graph
-    carries the backbone's real weights and its constant FQNs are ``_backbone.*`` — matched by installing
-    ``wrapper.state_dict()`` (see ``LazyAOTIModel.with_weights`` in ``_compile_and_apply``). Valid because
-    ``style_in_context=False`` → context == content, so ``context.shape[1] == n_content`` (asserted upstream).
+    """``nn.Module`` view of ``Backbone.forward`` for ``torch.export``. ``_backbone`` is registered as a
+    submodule, so the exported graph carries the backbone's real weights and its constant FQNs are
+    ``_backbone.*`` — matched by installing ``wrapper.state_dict()`` (see ``LazyAOTIModel.with_weights`` in
+    ``_compile_and_apply``).
     """
 
     def __init__(self, backbone: _nn.Module) -> None:
@@ -216,23 +195,14 @@ class _BackboneExportWrapper(_nn.Module):
         context_tokens: torch.Tensor,
         pooled: torch.Tensor,
     ) -> torch.Tensor:
-        n_content = context_tokens.shape[1]  # SymInt under dynamic width; == n_content when context==content
-        return self._backbone(latent, timestep, context_tokens, pooled, n_content=n_content)
+        return self._backbone(latent, timestep, context_tokens, pooled)
 
 
 def _install_compiled_forward(backbone: nn.Module, compiled: Any) -> None:
-    """Point ``backbone.forward`` at the compiled callable, keeping the ``n_content=`` call-site signature.
-
-    The AoT graph recomputes n_content from ``context_tokens.shape[1]``, so the passed-in ``n_content`` is
-    intentionally dropped.
-    """
+    """Point ``backbone.forward`` at the compiled callable."""
 
     def _compiled_forward(
-        latent: torch.Tensor,
-        timestep: torch.Tensor,
-        context_tokens: torch.Tensor,
-        pooled: torch.Tensor,
-        n_content: int | None = None,  # accepted for call-site compatibility; recomputed in the graph
+        latent: torch.Tensor, timestep: torch.Tensor, context_tokens: torch.Tensor, pooled: torch.Tensor
     ) -> torch.Tensor:
         return compiled(latent, timestep, context_tokens, pooled)
 
@@ -245,7 +215,7 @@ def _install_compiled_forward(backbone: nn.Module, compiled: Any) -> None:
 def _width_token_bounds(cfg: Config, patch: int) -> tuple[int, int]:
     """(min, max) patch-column count the studio can ask the backbone for, from the width bucketing.
 
-    Upstream (:func:`diffu.generate.natural_width`) rounds the canvas to a multiple of 16 and caps it at
+    Upstream (:func:`diffu.generate.auto_canvas_width`) rounds the canvas to a multiple of 16 and caps it at
     ``cfg.data.max_line_width``; the latent is ``canvas // vae.downscale_factor`` and the backbone patches
     that by ``patch``. The narrowest canvas a line can get is ``round_up(line_height, 16)`` (a 1-char line
     still gets a canvas at least as tall as it is wide). We widen the range by a small slack so a bucket at
@@ -259,12 +229,12 @@ def _width_token_bounds(cfg: Config, patch: int) -> tuple[int, int]:
     return w_min, w_max
 
 
-def _sample_latent_hw(model: nn.Module, cfg: Config, text: str) -> tuple[int, int]:
+def _sample_latent_hw(model: Diffu, cfg: Config, text: str) -> tuple[int, int]:
     """(h, w) latent grid for ``text`` at the studio's canonical auto-width geometry (matches line.py)."""
-    from diffu.generate import natural_width
+    from diffu.generate import auto_canvas_width
 
     ds = cfg.vae.downscale_factor
-    canvas_w = natural_width(model.guidance_renderer, text, cfg)
+    canvas_w = auto_canvas_width(model, text)
     return (cfg.data.line_height // ds, max(1, canvas_w // ds))
 
 

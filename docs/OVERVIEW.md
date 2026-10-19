@@ -21,8 +21,8 @@ create *unlimited* practice material to train **other** AI that **reads** old ha
 
 ## What the machine takes in and puts out
 
-- **You give it:** (1) some **text** to write (e.g. `Göteborg`), and (2) a **style sample** — a small
-  snippet of someone's handwriting to imitate.
+- **You give it:** (1) some **text** to write (e.g. `Göteborg`), and (2) a **style sample** — one line of
+  someone's handwriting to imitate (for the newer "canvas" mode, also what that line says).
 - **It gives back:** an image of that text, written in that handwriting style, with correct Swedish
   letters (å ä ö).
 
@@ -41,6 +41,11 @@ Everything else is just *telling it what to write and in which style*.
 
 ## Where are we now?
 
-- Current state always lives in [`STATUS.md`](STATUS.md).
-- The released model is [`Gabriel/diffu_sd35_128`](https://huggingface.co/Gabriel/diffu_sd35_128) —
-  it writes legible Swedish handwriting that a recognizer reads back at ~2–5 % character error.
+- The current state and the next steps live in [`HANDOFF.md`](HANDOFF.md). [`STATUS.md`](STATUS.md) is a
+  dated snapshot from July 2026.
+- The best model so far (`exp_sd35_128`, released in July 2026 as `Gabriel/diffu_sd35_128`) wrote legible
+  Swedish handwriting that a recognizer read back at ~2–5 % character error. It is no longer on the Hugging
+  Face Hub, so there is no model to download right now.
+- Next: training the "canvas" version, which sees the sample line itself instead of a summary of it — meant
+  to copy the hand more faithfully, and not yet trained. It starts on the English IAM handwriting set, where
+  every line has a known writer.

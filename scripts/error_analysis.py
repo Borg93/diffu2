@@ -3,11 +3,11 @@
 
 Runs a recognizer over a test manifest, then breaks the error down along the axes that tell you WHAT to
 synthesize more of: line length, character class (digit/upper/punct/...), and per-character error rate.
-Emits a human report AND a machine-readable JSON of the weak spots, which scripts/targeted_synth.py reads to
-bias generation toward the model's weaknesses.
+Emits a human report AND a machine-readable JSON of the weak spots — what to over-generate in targeted
+synthesis (``diffu-synth --texts``) to bias generation toward the model's weaknesses.
 
-    uv run python scripts/error_analysis.py --htr runs/htr_ab/htr_real --manifest runs/htr_ab/test/test.jsonl
-      -> prints report, writes runs/htr_ab/error_report.json
+    uv run python scripts/error_analysis.py --htr <trained recognizer dir> --manifest data_out/test.jsonl
+      -> prints report, writes error_report.json
 """
 
 from __future__ import annotations
@@ -65,21 +65,24 @@ def align_errors(gt: str, pred: str) -> list[tuple[str, bool]]:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Break an HTR recognizer's error down by length / char-class / char.")
+    ap = argparse.ArgumentParser(
+        description="Break an HTR recognizer's error down by length / char-class / char."
+    )
     ap.add_argument("--htr", required=True, help="trained recognizer dir")
     ap.add_argument("--manifest", required=True, help="test.jsonl {image,text}")
     ap.add_argument("--limit", type=int, default=None)
-    ap.add_argument("--out", default="runs/htr_ab/error_report.json")
+    ap.add_argument("--out", default="error_report.json")
     args = ap.parse_args()
 
-    rows = [json.loads(line) for line in open(args.manifest)]
+    with open(args.manifest, encoding="utf-8") as f:
+        rows = [json.loads(line) for line in f]
     if args.limit:
         rows = rows[: args.limit]
     rec = HTRRecognizer(model_id=args.htr, batch_size=16)
     preds = rec([_open(r["image"]) for r in rows])
     gts = [r["text"] for r in rows]
 
-    lines = [(g, p, line_cer(g, p)) for g, p in zip(gts, preds)]
+    lines = [(g, p, line_cer(g, p)) for g, p in zip(gts, preds, strict=True)]
     overall = _cer(preds, gts)
 
     # 1) CER by line length (chars)
@@ -125,30 +128,32 @@ def main() -> None:
     def avg(xs: list[float]) -> float:
         return sum(xs) / len(xs) if xs else 0.0
 
-    print(f"=== ERROR ANALYSIS: {args.htr}  (overall CER {100*overall:.2f}%, n={len(rows)}) ===")
+    print(f"=== ERROR ANALYSIS: {args.htr}  (overall CER {100 * overall:.2f}%, n={len(rows)}) ===")
     print("\n-- CER by line length --")
     for k, v in by_len.items():
-        print(f"  len {k:>7}  n={len(v):4d}  CER {100*avg(v):.2f}%")
+        print(f"  len {k:>7}  n={len(v):4d}  CER {100 * avg(v):.2f}%")
     print("\n-- CER of lines CONTAINING a class (vs overall) --")
     for k, v in has_class.items():
-        print(f"  has {k:6}  n={len(v):4d}  CER {100*avg(v):.2f}%")
+        print(f"  has {k:6}  n={len(v):4d}  CER {100 * avg(v):.2f}%")
     print("\n-- per-CLASS char error rate --")
     for k in ("digit", "upper", "punct", "lower", "space"):
-        print(f"  {k:6}  seen={cls_occ[k]:6d}  err-rate {100*rate(cls_err, cls_occ, k):.2f}%")
+        print(f"  {k:6}  seen={cls_occ[k]:6d}  err-rate {100 * rate(cls_err, cls_occ, k):.2f}%")
     print("\n-- weakest characters (seen>=20) --")
     for ch, r, o in weak_chars:
         name = unicodedata.name(ch, "?")
-        print(f"  {ch!r:5}  err {100*r:.1f}%  (n={o})  {name}")
+        print(f"  {ch!r:5}  err {100 * r:.1f}%  (n={o})  {name}")
     print("\n-- worst lines --")
     for g, p, c in worst_lines:
-        print(f"  CER {100*c:.0f}%  gt={g!r}\n            pred={p!r}")
+        print(f"  CER {100 * c:.0f}%  gt={g!r}\n            pred={p!r}")
 
     report = {
         "htr": args.htr,
         "overall_cer": overall,
         "cer_by_length": {k: avg(v) for k, v in by_len.items()},
         "cer_has_class": {k: avg(v) for k, v in has_class.items()},
-        "class_error_rate": {k: rate(cls_err, cls_occ, k) for k in ("digit", "upper", "punct", "lower", "space")},
+        "class_error_rate": {
+            k: rate(cls_err, cls_occ, k) for k in ("digit", "upper", "punct", "lower", "space")
+        },
         "weak_chars": [{"char": ch, "err_rate": r, "n": o} for ch, r, o in weak_chars],
     }
     with open(args.out, "w") as f:

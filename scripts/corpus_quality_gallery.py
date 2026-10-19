@@ -8,7 +8,7 @@ It does NOT modify the corpus: it's a diagnostic to eyeball the data the model l
 matches its training distribution, so faded/cropped/mis-transcribed lines teach the model those exact defects.
 
 Run:
-    HF_HUB_OFFLINE=1 CUDA_VISIBLE_DEVICES=1 uv run python scripts/corpus_quality_gallery.py \
+    HF_HUB_OFFLINE=1 CUDA_VISIBLE_DEVICES=0 uv run python scripts/corpus_quality_gallery.py \
         --manifest data_out_lejonet/val.jsonl --n 500 --out galleries/corpus_quality.html
 """
 
@@ -22,6 +22,7 @@ import statistics
 from pathlib import Path
 
 import numpy as np
+import torch
 from PIL import Image
 from pydantic import BaseModel
 
@@ -57,7 +58,7 @@ def line_stats(img: Image.Image) -> LineStats:
     ink = g < paper - _INK_DELTA
     cov = float(ink.mean())
     contrast = paper - float(g[ink].mean()) if ink.any() else 0.0
-    k = max(1, g.shape[0] // 20)  # ~3px band at height 64
+    k = max(1, g.shape[0] // 20)  # ~6px band at height 128
     return LineStats(
         contrast=contrast,
         coverage=cov,
@@ -175,7 +176,7 @@ def main() -> None:
     ap.add_argument("--n", type=int, default=500, help="lines to score")
     ap.add_argument("--out", default="galleries/corpus_quality.html")
     ap.add_argument("--htr", default=Config().aux.htr_recognizer_eval)
-    ap.add_argument("--device", default="cuda")
+    ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = ap.parse_args()
 
     rows = load_manifest(args.manifest)[: args.n]

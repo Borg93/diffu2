@@ -78,8 +78,14 @@ def main() -> None:
             repo_type="space",
             commit_message="deploy from local repo (packages/diffu-studio/space/push.py)",
             delete_patterns=[  # scrub anything not in this upload: stale flattened pkgs, the old PiD clone, pyc
-                "diffu/**", "diffu_page/**", "diffu_studio/**", "assets/**",
-                "PiD/**", "**/__pycache__/**", "*.py", "*.txt",
+                "diffu/**",
+                "diffu_page/**",
+                "diffu_studio/**",
+                "assets/**",
+                "PiD/**",
+                "**/__pycache__/**",
+                "*.py",
+                "*.txt",
             ],  # fmt: skip
         )
         print(f"\npushed -> {commit.commit_url}")

@@ -14,8 +14,9 @@ nothing to download — the corpus is already on disk; the layout is just nested
 ``build_manifest`` can't be pointed at it directly (it would also slurp ``alto/`` + ``mets`` and lose
 the real volume as the split key).
 
-    uv run python scripts/prepare_gt_lejonet.py --out-dir data_out_lejonet
-    uv run python scripts/prepare_gt_lejonet.py --collections finnish_letter --limit-pages 30  # quick check
+    uv run python scripts/prepare_gt_lejonet.py --base <GT-Lejonet root> --out-dir data_out_lejonet
+    uv run python scripts/prepare_gt_lejonet.py --base <GT-Lejonet root> --collections finnish_letter \
+        --limit-pages 30  # quick check
 """
 
 from __future__ import annotations
@@ -28,13 +29,10 @@ from pathlib import Path
 
 from PIL import Image
 
-from diffu.data.dataset import char_coverage, crop_line, normalize_text, write_splits
+from diffu.data.dataset import IMAGE_EXTS, LINE_HEIGHT, char_coverage, crop_line, normalize_text, write_splits
 from diffu.data.parse import parse_file
 
 Image.MAX_IMAGE_PIXELS = None  # trusted local scans; some pages exceed PIL's decompression-bomb limit
-
-_IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp")
-DEFAULT_BASE = Path("/home/blackwell/Desktop/diffu/GT-Lejonet_HTR_202602")
 
 
 def _sibling_image(xml_path: Path, image_field: str) -> Path | None:
@@ -49,7 +47,7 @@ def _sibling_image(xml_path: Path, image_field: str) -> Path | None:
         if cand.is_file():
             return cand
     stem = xml_path.stem
-    for ext in _IMAGE_EXTS:
+    for ext in IMAGE_EXTS:
         cand = vol_dir / f"{stem}{ext}"
         if cand.is_file():
             return cand
@@ -92,16 +90,30 @@ def _process_page(task: tuple[str, str, str, int, int, bool]) -> tuple[list[dict
                 crop.save(out_png)
                 # writer_id is globally unique (collection/volume/page) so a page stem reused across
                 # volumes can never merge two scribes for style-pairing or leak across the split.
-                rows.append({"image": str(out_png), "text": text,
-                             "writer_id": f"{collection}/{volume}/{rec.source_id}",
-                             "volume": volume, "collection": collection})
+                rows.append(
+                    {
+                        "image": str(out_png),
+                        "text": text,
+                        "writer_id": f"{collection}/{volume}/{rec.source_id}",
+                        "volume": volume,
+                        "collection": collection,
+                    }
+                )
     except Exception:  # noqa: BLE001 — one unreadable/corrupt page must never kill a 30k-page batch
         return [], 0, 1
     return rows, 0, 0
 
 
-def build(base: Path, out_dir: Path, height: int, collections: str | None,
-          limit_pages: int, log_every: int, workers: int, mask: bool) -> int:
+def build(
+    base: Path,
+    out_dir: Path,
+    height: int,
+    collections: str | None,
+    limit_pages: int,
+    log_every: int,
+    workers: int,
+    mask: bool,
+) -> int:
     pages = sorted(p for p in base.glob("*/**/page/*.xml") if not p.name.startswith("._"))
     if collections:
         wanted = [c.strip().lower() for c in collections.split(",") if c.strip()]
@@ -123,30 +135,75 @@ def build(base: Path, out_dir: Path, height: int, collections: str | None,
             bad += b
             done += 1
             if done % log_every == 0 or done == len(tasks):
-                print(f"  [{done}/{len(tasks)} pages] {n} lines  "
-                      f"({missing} no-image, {bad} unreadable)  ×{workers} workers", flush=True)
+                print(
+                    f"  [{done}/{len(tasks)} pages] {n} lines  "
+                    f"({missing} no-image, {bad} unreadable)  ×{workers} workers",
+                    flush=True,
+                )
     print(f"wrote {n} line crops from {len(pages)} pages -> {out_dir / 'manifest.jsonl'}", flush=True)
     return n
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Prepare the local GT-Lejonet HTR corpus into line crops for Diffu.")
-    ap.add_argument("--base", type=Path, default=DEFAULT_BASE, help="GT-Lejonet root directory")
-    ap.add_argument("--out-dir", type=Path, default=Path("data_out_lejonet"), help="output dir for crops + manifest + splits")
-    ap.add_argument("--height", type=int, default=64, help="line crop height px")
-    ap.add_argument("--collections", default=None, help="comma-separated substrings to include (default: all)")
-    ap.add_argument("--limit-pages", type=int, default=0, help="cap pages processed (0 = all) — for quick validation")
-    ap.add_argument("--split-by", choices=["writer_id", "volume"], default="volume",
-                    help="split granularity (default volume: a scribe-stint stays on one side)")
+    ap = argparse.ArgumentParser(
+        description="Prepare the local GT-Lejonet HTR corpus into line crops for Diffu."
+    )
+    ap.add_argument(
+        "--base",
+        type=Path,
+        required=True,
+        help="GT-Lejonet root directory, e.g. .../GT-Lejonet_HTR_202602 (holds GT-<collection>_<date>/)",
+    )
+    ap.add_argument(
+        "--out-dir",
+        type=Path,
+        default=Path("data_out_lejonet"),
+        help="output dir for crops + manifest + splits",
+    )
+    ap.add_argument(
+        "--height",
+        type=int,
+        default=LINE_HEIGHT,
+        help=f"line crop height px (default {LINE_HEIGHT}, the training line height)",
+    )
+    ap.add_argument(
+        "--collections", default=None, help="comma-separated substrings to include (default: all)"
+    )
+    ap.add_argument(
+        "--limit-pages", type=int, default=0, help="cap pages processed (0 = all) — for quick validation"
+    )
+    ap.add_argument(
+        "--split-by",
+        choices=["writer_id", "volume"],
+        default="volume",
+        help="split granularity (default volume: a scribe-stint stays on one side)",
+    )
     ap.add_argument("--log-every", type=int, default=200, help="progress log cadence in pages")
-    ap.add_argument("--workers", type=int, default=min(32, (os.cpu_count() or 4) - 2),
-                    help="parallel page workers (default min(32, cpus-2))")
-    ap.add_argument("--no-mask", action="store_true",
-                    help="disable polygon masking — crop the plain bbox (noisier; keeps neighbour ink)")
+    ap.add_argument(
+        "--workers",
+        type=int,
+        default=min(32, (os.cpu_count() or 4) - 2),
+        help="parallel page workers (default min(32, cpus-2))",
+    )
+    ap.add_argument(
+        "--no-mask",
+        action="store_true",
+        help="disable polygon masking — crop the plain bbox (noisier; keeps neighbour ink)",
+    )
     args = ap.parse_args()
+    if not args.base.is_dir():
+        ap.error(f"--base {args.base} is not a directory")
 
-    n = build(args.base, args.out_dir, args.height, args.collections,
-              args.limit_pages, args.log_every, args.workers, mask=not args.no_mask)
+    n = build(
+        args.base,
+        args.out_dir,
+        args.height,
+        args.collections,
+        args.limit_pages,
+        args.log_every,
+        args.workers,
+        mask=not args.no_mask,
+    )
     if n == 0:
         raise SystemExit("no line crops written")
 

@@ -1,7 +1,8 @@
-"""Config for Diffu (pydantic models)."""
+"""Config for Diffu (pydantic models) + the architecture CLI flags shared by training and every loader."""
 
 from __future__ import annotations
 
+import argparse
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -15,83 +16,56 @@ class VAEConfig(BaseModel):
     video_vae: bool = True
     latent_channels: int = 16
     downscale_factor: int = 8
-    finetune_decoder_only: bool = True  # encoder frozen; decoder fine-tuned on Swedish ink
-    recon_cer_gate: float = (
-        0.05  # decoded-vs-real CER must stay within +0.05 (5pp) of raw; measured +0.008 (passes)
-    )
+    # decoded-vs-real CER must stay within +0.05 (5pp) of raw; measured +0.008 (passes)
+    recon_cer_gate: float = 0.05
 
 
 class BackboneConfig(BaseModel):
-    # Backbone = diffusers SD3 MMDiT (SD3Transformer2DModel, model/backbone.py) — not hand-rolled.
+    # Backbone = diffusers SD3 MMDiT (SD3Transformer2DModel, model/backbone.py) — not hand-rolled — with its
+    # absolute pos_embed table replaced by 2D RoPE on the image Q/K (model/rope.py): relative, so variable-width
+    # lines have no width cap.
     dim: int = 1024
     num_layers: int = 24
     heads: int = 16
     patch: int = 2
-    context_dim: int = 1024  # joint_attention_dim = our (content + style) token dim
-    sample_size: int = 128
-    pos_embed_max_size: int = 192  # ONLY used when rope=False; the rope path drops this width cap
-    # With rope=True the SD3 absolute (sincos) pos_embed table is removed and 2D RoPE is applied to the
-    # image/latent token Q/K instead (model/rope.py). RoPE is relative, so variable-width lines are no
-    # longer capped at pos_embed_max_size tokens — the right fit for our variable-width handwriting and
-    # the root fix for the short-text-on-wide-canvas overflow (no absolute table to extrapolate off).
-    rope: bool = True
+    context_dim: int = 1024  # joint_attention_dim = the glyph token dim (also the pooled AdaLN dim)
     rope_theta: float = 10000.0  # RoPE base frequency (diffusers/Flux default)
     # SD3.5 (vs SD3.0) attention upgrades — diffusers builds them when set.
-    #   qk_norm="rms_norm": RMSNorm on Q/K for training stability — the defining SD3.5 feature, ON by
-    #     default so we train SD3.5, not vanilla SD3.0. (It adds params, so an SD3.0 checkpoint won't
-    #     load into this config — fine, the next run is from scratch.)
+    #   qk_norm="rms_norm": RMSNorm on Q/K for training stability — the defining SD3.5 feature.
     #   dual_attention_layers: the heavier SD3.5-medium / MMDiT-X extra image-only self-attention in the
-    #     listed blocks (e.g. tuple(range(13)) ≈ SD3.5-medium); () = off (SD3.5-large style) — left off by
-    #     default (extra params/compute, overfit risk for from-scratch limited data; opt in per run).
-    # RoPEJointAttnProcessor already rotates both the joint attn and the dual attn2 (tested).
+    #     listed blocks (e.g. tuple(range(13)) ≈ SD3.5-medium); () = off (SD3.5-large style; no CLI flag).
+    # RoPEJointAttnProcessor rotates both the joint attn and the dual attn2.
     qk_norm: str | None = "rms_norm"
     dual_attention_layers: tuple[int, ...] = ()
     fill_ratio_cond: bool = True  # add a text-extent/canvas-width scalar to the pooled AdaLN vector
 
 
 class ConditioningConfig(BaseModel):
-    # Content = Unifont glyph encoder. Style = DINOv3.
-    # Max characters per line. The glyph encoder pads only to the batch's longest text (capped here),
-    # so raising this to 128/256 for long lines is cheap for short lines. NOTE: the deeper limit on
-    # very long lines is canvas width (data.max_line_width) + having training data at that width +
-    # 2D-RoPE extrapolating past trained widths — not this cap alone.
+    # Content = the Unifont glyph-LINE encoder: the whole line rendered as one image -> CNN feature map -> one
+    # content token per image patch-column, with shared-column 2D-RoPE matching the image columns (Qwen-Image
+    # MSRoPE), so the image attends to the glyph at its OWN column. Style = DINOv3 or the canvas reference.
+    # Max characters per line rendered into the glyph strip. NOTE: the deeper limit on very long lines is
+    # canvas width (data.max_line_width) + training data at that width — not this cap alone.
     max_chars: int = 128
     unifont_path: str | None = None  # GNU-Unifont TTF (covers all BMP glyphs incl. å ä ö + historical)
-    # Render content glyphs with GNU-Unifont (full BMP). False = PIL's default font — REQUIRED to match a
-    # model trained before Unifont was wired (e.g. exp_base_weekend); the stencil font must equal training's.
-    use_unifont: bool = True
     glyph_size: int = 32
-    glyph_cnn_pretrained: bool = True  # ImageNet-init the per-glyph ResNet18 (warm start); False = scratch
-    # glyph_line: render the WHOLE line as one image -> CNN feature map -> w_t column-aligned content
-    # tokens (line-level content), with shared-column 2D-RoPE matching the image columns
-    # (Qwen-Image MSRoPE) so the image attends to the glyph at its OWN column — text<->position
-    # alignment for free. OFF by default (the per-char token path stays the default until validated).
-    glyph_line: bool = False
-    # glyph_concat: render the line -> a small conv "glyph block" -> a latent [B, Cg, h, w] that is
-    # CHANNEL-CONCATENATED onto the noisy latent (DiffInk "fuse content into the input" — the
-    # strongest coupling: content is present at every cell, not just attended, and inherits the image
-    # RoPE for free). Backbone in_channels grows by glyph_concat_channels; out stays = latent_channels.
-    # OFF by default (experimental, untested). Pair with --cond-dropout 0.1 for the DiffInk concat+CFG recipe.
-    glyph_concat: bool = False
-    glyph_concat_channels: int = 16
+    glyph_cnn_pretrained: bool = (
+        True  # ImageNet-init the glyph-line ResNet18 trunk (warm start); False = scratch
+    )
     style_encoder: str = "facebook/dinov3-vitl16-pretrain-lvd1689m"
-    style_tokens: int = 64
-    # Inject style ONLY as the global pooled AdaLN vector, NOT as the K attendable
-    # style tokens in joint attention. The K spatial tokens can carry the reference image's GLYPH SHAPES,
-    # so the model copies them and ignores the text (hold the style ref, swap the text -> output unchanged).
-    # Pooled-only forces content to come from the text/glyph path. True = legacy (style tokens in context).
-    style_in_context: bool = True
+    style_tokens: int = 64  # Perceiver latents the DINO features are resampled to before attention-pooling
     # glyph_pad: place each line's glyph strip over ITS OWN extent (the real line width at train time, an
     # estimate at inference) and leave the remaining columns blank, instead of stretching the strip over the
     # whole canvas. Glyph column j then lands on the image column where that letter is actually written, and
-    # the glyph extent doubles as a length control (blank columns = "write nothing here"). Needs glyph_line.
+    # the glyph extent doubles as a length control (blank columns = "write nothing here").
     glyph_pad: bool = False
     # style_mode: how the writer reference reaches the model.
-    #   "dino"   — legacy: frozen DINOv3 features of a 224x224-squashed crop -> resampler/pooled vector.
+    #   "dino"   — frozen DINOv3 features of a 224x224-squashed crop -> resampler -> pooled AdaLN vector (every
+    #              model trained so far).
     #   "canvas" — in-context (F5-TTS / DiffInk / Eruku style): the reference line's clean VAE latent sits
-    #              LEFT of the target on one canvas, fed as an extra conditioning channel, with its own
+    #              LEFT of the target on one canvas, fed as extra conditioning channels, with its own
     #              transcription in the glyph tokens. The model continues the line in the same hand; the loss
-    #              covers only the target columns. No style encoder. Needs glyph_line.
+    #              covers only the target columns. No style encoder.
     style_mode: Literal["dino", "canvas"] = "dino"
 
 
@@ -104,39 +78,37 @@ class FlowConfig(BaseModel):
 
 class AuxLossConfig(BaseModel):
     # REPA token-wise representation alignment (ICLR'25): align the DiT's per-token hidden states to
-    # DINO per-patch features of the target. ON by default — its whole point is ~faster convergence +
-    # finer detail (diacritics), exactly what a near-from-scratch DiT needs. Disable with --no-repa.
-    # Without grad checkpointing (--no-grad-checkpoint) the hook-captured block output carries plain
-    # autograd and the alignment gradient reaches the backbone directly. IF checkpointing is enabled it
-    # must be NON-REENTRANT (Backbone.enable_optimizations) — reentrant mode detaches hook captures;
-    # Diffu's runtime guard covers that case.
+    # DINOv3 per-patch features of the target line (at its native size: DINO's 16-px patches ARE the DiT
+    # token grid). ON by default — faster convergence + finer detail early on. Disable with --no-repa.
+    # With gradient checkpointing it must stay NON-REENTRANT (diffusers' default) — reentrant mode detaches
+    # the hook capture; Diffu's runtime guard covers that case.
     repa: bool = True
     repa_weight: float = 0.5  # weight of the REPA cosine-alignment term
     repa_layer: int = 8  # which SD3 transformer block's hidden state to align (0-indexed)
     repa_stop_frac: float = 0.4  # terminate REPA after this fraction of training (HASTE); 1.0 = never.
     # NOTE: when <1.0 under multi-GPU DDP, repa_proj goes unused at the stop step — the Accelerator's
     # find_unused_parameters=True (train.py) is what lets that early-stop happen without crashing DDP.
-    diacritic_class_weight: float = 3.0  # loss up-weight on ink cells when ink-focal flow is on
+    # ink-focal flow loss: up-weight the sparse ink cells so the ~90% paper background doesn't dominate the
+    # velocity MSE. On in every production run so far (exp_base_weekend, the sd35 runs); --no-ink-focal.
+    ink_focal: bool = True
+    ink_weight: float = 3.0  # loss weight on a full-ink latent cell (paper = 1)
     ink_threshold: float = 0.3  # [-1,1] grayscale below this = ink (else tan/white paper)
-    diacritic_focal_flow: bool = False  # ink-focal flow loss (up-weight sparse ink so bg doesn't dominate)
-    # 2026 Swedish Lion, char-based: SOTA historical-Swedish HTR — the live gen_CER / offline eval
-    # legibility gauge (read_lines + char_error_rate). Char vocab generalizes out-of-domain (our
-    # generated lines ARE out-of-domain). Needs interpolate_pos_encoding=True at generate (1024x192).
-    htr_recognizer_eval: str = "Riksarkivet/trocr-base-handwritten-hist-swe-3"
+    # The legibility gauge for the live gen_CER and the offline eval/VAE gate: the char-level historical-
+    # Swedish TrOCR (a char vocab generalizes out-of-domain, and generated lines ARE out-of-domain).
+    htr_recognizer_eval: str = "Riksarkivet/trocr-large-handwritten-hist-swe-3-char"
 
 
 class DataConfig(BaseModel):
     line_height: int = (
-        128  # 128px run (2x native detail; native lines ~217px). 64px converged (exp_sd35_fast).
+        128  # 128px (2x native detail; native lines ~217px). 64px converged too (exp_sd35_fast).
     )
     max_line_width: int = 1024
+    # A line wider than max_line_width is squashed to it (aspect lost) unless drop_wide_lines skips it. The
+    # model has no width limit of its own (2D RoPE + column-aligned glyph tokens); this cap bounds memory.
+    drop_wide_lines: bool = False
     # White-pad augmentation (train split ONLY, off by default): right-pad a line with extra white
     # before batch-width bucketing, so the model sees short text on a wider canvas at train time and
     # learns to leave the tail blank (paired with the fill_ratio scalar that explains the blank space).
-    # NOTE: the CLI flag is the actual control — train.py passes --white-pad-prob straight to
-    # build_dataloader (train loader only) → collate. This FIELD is record-keeping: main() writes the
-    # flag back here so the run-config log captures it. build_dataloader does read
-    # cfg.data.white_pad_max_frac from config, but takes white_pad_prob as a parameter.
     white_pad_prob: float = 0.0  # per-line probability of applying the right-white-pad augmentation
     white_pad_max_frac: float = 0.5  # max extra width as a fraction of the line's natural width
     # style_mode="canvas": widest reference line placed left of the target. A wider reference is cropped and
@@ -152,3 +124,58 @@ class Config(BaseModel):
     aux: AuxLossConfig = Field(default_factory=AuxLossConfig)
     data: DataConfig = Field(default_factory=DataConfig)
     seed: int = 42
+
+
+def add_arch_args(ap: argparse.ArgumentParser) -> None:
+    """The architecture flags shared by ``diffu-train`` and the checkpoint loaders. Each defaults to unset:
+    training then keeps the Config default, a loader the checkpoint's ``config.json``."""
+    g = ap.add_argument_group("architecture (loaders read it from the checkpoint's config.json)")
+    g.add_argument("--line-height", type=int, default=None, help="line crop height in px (default 128)")
+    g.add_argument(
+        "--style-canvas",
+        action="store_true",
+        default=None,
+        help="in-context style: the reference line's clean latent sits left of the target on one canvas",
+    )
+    g.add_argument(
+        "--glyph-pad",
+        action="store_true",
+        default=None,
+        help="glyph tokens over each line's own ink extent, blank past it (a length control)",
+    )
+    g.add_argument(
+        "--no-fill-ratio",
+        dest="fill_ratio",
+        action="store_false",
+        default=None,
+        help="no text-extent/canvas-width scalar in the pooled AdaLN vector",
+    )
+    g.add_argument(
+        "--max-line-width",
+        type=int,
+        default=None,
+        help="cap on the line width in px (default 1024); wider lines are squashed unless --drop-wide-lines",
+    )
+    g.add_argument(
+        "--max-ref-width", type=int, default=None, help="--style-canvas: cap on the reference width (px)"
+    )
+    g.add_argument("--max-chars", type=int, default=None, help="max characters in the glyph strip (128)")
+
+
+def apply_arch_args(cfg: Config, args: argparse.Namespace) -> Config:
+    """Write the architecture flags that were given (see :func:`add_arch_args`) onto ``cfg``; returns it."""
+    if args.line_height is not None:
+        cfg.data.line_height = args.line_height
+    if args.style_canvas:
+        cfg.cond.style_mode = "canvas"
+    if args.glyph_pad:
+        cfg.cond.glyph_pad = True
+    if args.fill_ratio is not None:
+        cfg.backbone.fill_ratio_cond = args.fill_ratio
+    if args.max_line_width is not None:
+        cfg.data.max_line_width = args.max_line_width
+    if args.max_ref_width is not None:
+        cfg.data.max_ref_width = args.max_ref_width
+    if args.max_chars is not None:
+        cfg.cond.max_chars = args.max_chars
+    return cfg

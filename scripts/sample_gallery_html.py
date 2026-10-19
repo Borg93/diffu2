@@ -82,17 +82,23 @@ def build(manifest: Path, out: Path, n: int, max_width: int, collections: str | 
             continue
         text = html.escape(r.get("text", ""))
         meta = html.escape(f"{r.get('collection', '')} · {r.get('volume', '')}")
-        cells.append(f'<figure><img src="{uri}" loading="lazy" alt=""><figcaption>{text}'
-                     f'<span class="meta">{meta}</span></figcaption></figure>')
+        cells.append(
+            f'<figure><img src="{uri}" loading="lazy" alt=""><figcaption>{text}'
+            f'<span class="meta">{meta}</span></figcaption></figure>'
+        )
         shown_collections[str(r.get("collection", ""))] += 1
 
-    sub = (f"{len(cells)} random line crops of {pool:,} in the manifest"
-           f"  ·  {len(shown_collections)} collections  ·  seed {seed}")
-    doc = (f"<!doctype html><html lang='sv'><head><meta charset='utf-8'>"
-           f"<meta name='viewport' content='width=device-width, initial-scale=1'>"
-           f"<title>GT-Lejonet sample — {len(cells)} lines</title><style>{_CSS}</style></head>"
-           f"<body><h1>GT-Lejonet line-crop sample</h1><p class='sub'>{html.escape(sub)}</p>"
-           f"<div class='grid'>{''.join(cells)}</div></body></html>")
+    sub = (
+        f"{len(cells)} random line crops of {pool:,} in the manifest"
+        f"  ·  {len(shown_collections)} collections  ·  seed {seed}"
+    )
+    doc = (
+        f"<!doctype html><html lang='sv'><head><meta charset='utf-8'>"
+        f"<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        f"<title>GT-Lejonet sample — {len(cells)} lines</title><style>{_CSS}</style></head>"
+        f"<body><h1>GT-Lejonet line-crop sample</h1><p class='sub'>{html.escape(sub)}</p>"
+        f"<div class='grid'>{''.join(cells)}</div></body></html>"
+    )
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(doc, encoding="utf-8")
     return len(cells)
@@ -102,9 +108,15 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Self-contained HTML gallery of sampled line crops.")
     ap.add_argument("--manifest", type=Path, default=Path("data_out_lejonet/manifest.jsonl"))
     ap.add_argument("--out", type=Path, default=Path("galleries/gt_lejonet_sample.html"))
-    ap.add_argument("--n", type=int, default=200, help="number of crops to sample (kept small to stay portable)")
-    ap.add_argument("--max-width", type=int, default=700, help="downscale wider crops to this before embedding")
-    ap.add_argument("--collections", default=None, help="comma-separated substrings to include (default: all)")
+    ap.add_argument(
+        "--n", type=int, default=200, help="number of crops to sample (kept small to stay portable)"
+    )
+    ap.add_argument(
+        "--max-width", type=int, default=700, help="downscale wider crops to this before embedding"
+    )
+    ap.add_argument(
+        "--collections", default=None, help="comma-separated substrings to include (default: all)"
+    )
     ap.add_argument("--seed", type=int, default=42, help="sampling seed (change for a fresh random set)")
     args = ap.parse_args()
 

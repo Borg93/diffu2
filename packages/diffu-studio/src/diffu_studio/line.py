@@ -24,16 +24,11 @@ if TYPE_CHECKING:
 type Recognizer = tuple[TrOCRProcessor, VisionEncoderDecoderModel]  # (processor, model) for TrOCR read-back
 
 
-def style_from_pil(img: Image, device: str, dtype: torch.dtype, size: int = 224) -> torch.Tensor:
+def style_from_pil(img: Image, device: str, dtype: torch.dtype) -> torch.Tensor:
     """A PIL style-reference line → an ImageNet-normalised ``[1,3,S,S]`` tensor (matches training)."""
-    from PIL import Image as PILImage
-    from torchvision.transforms import functional as TF
+    from diffu.generate import load_style
 
-    from diffu.generate import _IMAGENET_MEAN, _IMAGENET_STD
-
-    rgb = img.convert("RGB").resize((size, size), PILImage.Resampling.BILINEAR)
-    tensor = TF.normalize(TF.to_tensor(rgb), list(_IMAGENET_MEAN), list(_IMAGENET_STD))
-    return tensor.unsqueeze(0).to(device, dtype=dtype)
+    return load_style(img).unsqueeze(0).to(device, dtype=dtype)
 
 
 def sample_gallery(manifest: str, n: int = 24, seed: int = 0) -> list[str]:
@@ -68,13 +63,11 @@ def denoise_frames(
     """Yield each denoise step (decoded x0: blurry static → sharp ink) for ``text`` in ``style``'s hand."""
     import torch
 
-    from diffu.generate import natural_width, to_pil
+    from diffu.generate import auto_canvas_width, to_pil
 
     model, cfg = loaded.model, loaded.cfg
     text = text or " "
-    canvas_w = (
-        natural_width(model.guidance_renderer, text, cfg) if settings.auto_width else _round16(settings.width)
-    )
+    canvas_w = auto_canvas_width(model, text) if settings.auto_width else _round16(settings.width)
     ds = cfg.vae.downscale_factor
     latent_hw = (cfg.data.line_height // ds, max(1, canvas_w // ds))
     with torch.no_grad():

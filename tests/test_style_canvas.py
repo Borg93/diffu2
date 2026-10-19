@@ -40,7 +40,6 @@ def _cfg(*, canvas: bool = True, glyph_pad: bool = True) -> Config:
     cfg = Config()
     cfg.backbone.dim, cfg.backbone.num_layers, cfg.backbone.heads = 64, 2, 2
     cfg.backbone.context_dim = 64
-    cfg.cond.glyph_line = True
     cfg.cond.glyph_cnn_pretrained = False
     cfg.cond.glyph_pad = glyph_pad
     cfg.cond.style_mode = "canvas" if canvas else "dino"
@@ -69,7 +68,6 @@ def _item(width: int, text: str, ref_width: int, ref_text: str) -> dict[str, obj
         "image": torch.rand(3, 32, width) * 2 - 1,
         "text": text,
         "writer_id": "w0",
-        "style_pixel_values": torch.zeros(3, 224, 224),
         "style_text": ref_text,
         "style_image": torch.rand(3, 32, ref_width) * 2 - 1,
     }
@@ -122,13 +120,6 @@ def test_collate_widths_ignore_the_white_pad_augmentation():
 
 
 # --- model -------------------------------------------------------------------------------------------
-
-
-def test_canvas_needs_glyph_line(fake_vae):
-    cfg = _cfg()
-    cfg.cond.glyph_line = False
-    with pytest.raises(ValueError, match="glyph_line"):
-        _model(cfg)
 
 
 def test_canvas_forward_takes_the_loss_on_target_columns_only(fake_vae, monkeypatch: pytest.MonkeyPatch):
@@ -201,8 +192,121 @@ def test_canvas_generate_line_sizes_the_canvas_from_the_reference(fake_vae):
     model = _model(cfg).eval()
     ref = load_ref_line(Image.new("RGB", (120, 32), "white"), cfg, text="abcd")  # 30 px per char
     assert ref.image.shape == (1, 3, 32, 128) and ref.width == 120
-    img = generate_line(model, "abcdefgh", None, cfg=cfg, num_steps=2, ref=ref)
+    img = generate_line(model, "abcdefgh", None, num_steps=2, ref=ref)
     assert img.height == 32 and img.width <= 288  # 8 chars × 30 px × slack, rounded to 16
+    short = generate_line(model, "abcdefgh", None, num_steps=2, ref=ref, ink_width=64)  # a set length
+    assert short.width <= 80  # 64 px × slack, rounded to 16
+
+
+def test_style_guidance_without_text_guidance_keeps_the_text(fake_vae):
+    model = _model(_cfg()).eval()
+    calls = _backbone_calls(model)
+    model.generate(
+        ["Lind"],
+        None,
+        latent_hw=(4, 10),
+        num_steps=2,
+        cfg_scale=0.0,  # text guidance off = scale 1, not "drop the text"
+        style_cfg_scale=2.0,
+        text_widths=[64],
+        ref_images=torch.ones(1, 3, 32, 48),
+        ref_texts=["Lund"],
+        ref_widths=[48],
+    )
+    assert all(latent.shape[0] == 2 for latent, _ in calls)  # full + text-only: no null pass
+
+
+def test_checkpoints_carry_config_and_the_ema_export(fake_vae, tmp_path):
+    from accelerate.state import AcceleratorState
+    from safetensors import safe_open
+
+    from diffu.generate import build_model, load_config
+    from diffu.train import train
+
+    AcceleratorState._reset_state(reset_partial_state=True)
+    cfg = _cfg()
+    batch = [_item(96, "Lind", 48, "Lund"), _item(64, "Åsa", 64, "Erik")] * 2
+    loader = DataLoader(batch, batch_size=2, collate_fn=partial(collate_lines, max_ref_width=128))
+    train(
+        cfg,
+        loader,
+        steps=2,
+        save_every=1,
+        log_every=1,
+        out_dir=str(tmp_path),
+        grad_checkpoint=False,
+        log_cer=False,
+    )
+    for ckpt in ("step_1", "final"):
+        assert load_config(tmp_path / ckpt).model_dump() == cfg.model_dump()  # config.json round-trips
+    assert (
+        tmp_path / "step_1" / "ema_model.safetensors"
+    ).is_file()  # EMA weights next to the resumable state
+    final = str(tmp_path / "final" / "model.safetensors")
+    with safe_open(final, framework="pt") as handle:
+        keys = set(handle.keys())
+    assert keys and not any(k.startswith("vae.") for k in keys)  # the frozen pretrained VAE is not exported
+    assert build_model(load_config(tmp_path / "final"), final, device="cpu").canvas
+
+
+def _backbone_calls(model) -> list[tuple[torch.Tensor, torch.Tensor]]:
+    """Record each backbone call's (input latent, pooled vector)."""
+    calls: list[tuple[torch.Tensor, torch.Tensor]] = []
+    real = model.backbone.forward
+
+    def spy(latent, timestep, context, pooled, **kwargs):
+        calls.append((latent.detach().clone(), pooled.detach().clone()))
+        return real(latent, timestep, context, pooled, **kwargs)
+
+    model.backbone.forward = spy
+    return calls
+
+
+@pytest.mark.parametrize(("ref_dropout", "cond_dropout"), [(1.0, 0.0), (0.0, 1.0)])
+def test_a_dropped_reference_leaves_its_canvas_columns_pure_noise(fake_vae, ref_dropout, cond_dropout):
+    model = _model(_cfg()).train()
+    calls = _backbone_calls(model)
+    images = torch.rand(1, 3, 32, 64) * 2 - 1
+    common = {"text_widths": [64], "ref_texts": ["Lund"], "ref_widths": [48]}
+    for dropout in ({"ref_dropout": ref_dropout, "cond_dropout": cond_dropout}, {}):
+        for ref in (torch.ones(1, 3, 32, 48), -torch.ones(1, 3, 32, 48)):
+            torch.manual_seed(0)
+            model(images, ["Lind"], None, ref_images=ref, **common, **dropout)
+    ref_cols = 48 // 8
+    noisy = [latent[:, :C, :, :ref_cols] for latent, _ in calls]
+    torch.testing.assert_close(noisy[0], noisy[1])  # dropped: the same noise whatever the reference
+    assert calls[0][0][:, C:].abs().sum() == 0  # and the clean-reference channels are blank
+    assert not torch.allclose(noisy[2], noisy[3])  # kept: the columns carry the (noised) reference
+
+
+def test_sampling_rebuilds_the_reference_columns_each_step(fake_vae):
+    from diffusers import FlowMatchEulerDiscreteScheduler
+
+    model = _model(_cfg()).eval()
+    calls = _backbone_calls(model)
+    ref = torch.ones(1, 3, 32, 48)
+    model.generate(
+        ["Lind"],
+        None,
+        latent_hw=(4, 10),
+        num_steps=3,
+        cfg_scale=5.0,
+        style_cfg_scale=2.0,
+        text_widths=[64],
+        ref_images=ref,
+        ref_texts=["Lund"],
+        ref_widths=[48],
+    )
+    scheduler = FlowMatchEulerDiscreteScheduler()
+    scheduler.set_timesteps(3)
+    ref_latent, ref_cols = model.vae.encode(ref), 48 // 8
+    eps_ref = calls[0][0][:1, :C, :, :ref_cols]  # the first step is all noise (sigma = 1)
+    for (latent, pooled), sigma in zip(calls, scheduler.sigmas, strict=False):
+        full, text_only, null = latent[:, :C, :, :ref_cols].chunk(3)
+        torch.testing.assert_close(full, (1 - sigma) * ref_latent + sigma * eps_ref)  # as forward() noises it
+        torch.testing.assert_close(text_only, eps_ref)  # the reference-dropped variants see pure noise
+        torch.testing.assert_close(null, eps_ref)
+        assert pooled[2].abs().sum() == 0 and torch.equal(pooled[0], pooled[1])  # null = cond-dropout mode
 
 
 def test_canvas_trains_end_to_end(fake_vae):
@@ -240,9 +344,9 @@ class FakeDino(nn.Module):
         self.enc = nn.Module()
         self.enc.config = type("Cfg", (), {"hidden_size": 24, "patch_size": 16})()
 
-    def _features(self, pixels: torch.Tensor) -> torch.Tensor:
-        side = pixels.shape[-1] // 16
-        return torch.randn(pixels.shape[0], 1 + side * side, 24)
+    def _features(self, pixels: torch.Tensor) -> torch.Tensor:  # CLS + one token per 16-px patch
+        patches = (pixels.shape[-2] // 16) * (pixels.shape[-1] // 16)
+        return torch.randn(pixels.shape[0], 1 + patches, 24)
 
 
 def test_canvas_repa_aligns_only_the_target_tokens(fake_vae, monkeypatch: pytest.MonkeyPatch):
@@ -302,15 +406,14 @@ def test_fused_qkv_generation_is_unchanged(fake_vae, monkeypatch: pytest.MonkeyP
 
 
 class FakeDinoStyle(FakeDino):
-    """FakeDino that also acts as the dino-mode style encoder (zero style tokens + pooled vector)."""
+    """FakeDino that also acts as the dino-mode style encoder (a zero pooled style vector)."""
 
     def __init__(self, _cond, dim: int) -> None:
         super().__init__()
         self.dim = dim
 
-    def forward(self, pixels: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        tokens = pixels.new_zeros(pixels.shape[0], 4, self.dim)
-        return tokens, tokens.mean(1)
+    def forward(self, pixels: torch.Tensor) -> torch.Tensor:
+        return pixels.new_zeros(pixels.shape[0], self.dim)
 
 
 def _train_two_log_steps(monkeypatch: pytest.MonkeyPatch, loss_value: float) -> list[int]:
@@ -352,3 +455,42 @@ def test_training_reads_losses_only_at_log_steps(fake_vae, monkeypatch: pytest.M
 def test_non_finite_loss_still_stops_training(fake_vae, monkeypatch: pytest.MonkeyPatch):
     with pytest.raises(RuntimeError, match="non-finite loss"):
         _train_two_log_steps(monkeypatch, float("nan"))
+
+
+# --- model guards --------------------------------------------------------------------------------------
+
+
+def test_a_grid_first_seen_while_sampling_still_trains(fake_vae):
+    # generate() runs under inference_mode; a RoPE table first built there used to be cached as an inference
+    # tensor, which autograd can't save, so the next training step on that canvas width failed.
+    model = _model(_cfg())
+    ref = torch.ones(1, 3, 32, 48)
+    model.eval().generate(["Lind"], None, latent_hw=(4, 10), ref_images=ref, ref_texts=["Lund"])
+    model.train()
+    images = torch.rand(1, 3, 32, 80) * 2 - 1  # latent width 10: the canvas grid sampled above
+    loss = model(images, ["Lind"], text_widths=[80], ref_images=ref, ref_texts=["Lund"], ref_widths=[48])
+    loss.backward()
+
+
+@pytest.mark.parametrize("text", ["a", ""])  # "" = a reference with an unknown transcription
+def test_one_glyph_strip_trains_at_batch_size_one(text: str):
+    from diffu.model.content_encoder import GlyphLineContentEncoder
+
+    enc = GlyphLineContentEncoder(_cfg().cond, out_dim=32).train()  # train-mode BatchNorm
+    tokens = enc([text], torch.device("cpu"), w_tokens=4, extents=[2])
+    assert tokens.shape == (1, 4, 32) and tokens[0, 2:].abs().sum() == 0
+    assert enc([text], torch.device("cpu"), w_tokens=4).shape == (1, 4, 32)
+
+
+def test_line_height_must_fit_the_token_grid(fake_vae):
+    cfg = _cfg()
+    cfg.data.line_height = 40
+    with pytest.raises(ValueError, match="multiple of 16"):
+        _model(cfg)
+
+
+def test_style_guidance_needs_a_canvas_model(fake_vae, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr("diffu.model.diffu.StyleEncoder", FakeDinoStyle)
+    model = _model(_cfg(canvas=False)).eval()
+    with pytest.raises(ValueError, match="canvas"):
+        model.generate(["Lind"], torch.zeros(1, 3, 224, 224), latent_hw=(4, 10), style_cfg_scale=2.0)

@@ -1,12 +1,12 @@
-"""Backbone = diffusers SD3 MMDiT (SD3Transformer2DModel).
+"""Backbone = diffusers SD3 MMDiT (SD3Transformer2DModel) with 2D RoPE.
 
-We deliberately do NOT hand-roll the transformer: diffusers' implementation is more optimized
-(fused / SDPA = FlashAttention, gradient checkpointing, torch.compile-friendly) and battle-tested.
-We only wrap it to map our conditioning:
-  - hidden_states         = noised line latent           [B, C, h, w]
-  - encoder_hidden_states = content + style tokens        [B, L+K, context_dim]   (joint attention)
-  - pooled_projections    = pooled style vector           [B, pooled_dim]          (AdaLN)
-  - timestep              = flow-matching timestep        [B]
+We deliberately do NOT hand-roll the transformer: diffusers' implementation is optimized (attention
+backends, gradient checkpointing, torch.compile-friendly) and battle-tested. We only wrap it to map our
+conditioning:
+  - hidden_states         = noised line latent (+ conditioning channels)  [B, C_in, h, w]
+  - encoder_hidden_states = column-aligned glyph tokens                    [B, L, context_dim]
+  - pooled_projections    = pooled AdaLN vector                            [B, context_dim]
+  - timestep              = flow-matching timestep                         [B]
 Output: predicted velocity [B, C, h, w].
 """
 
@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
+import torch.utils.checkpoint
 from diffusers import SD3Transformer2DModel
 from diffusers.models.attention_processor import Attention
 from diffusers.models.embeddings import PatchEmbed
@@ -21,20 +22,26 @@ from diffusers.models.embeddings import PatchEmbed
 from ..config import BackboneConfig
 from .rope import RoPEJointAttnProcessor, build_2d_rope
 
+_RECOMPILE_LIMIT = 256
+
 
 def configure_compile(mode: str | None = None) -> None:
-    """Process-global Dynamo / Inductor settings for the regional, dynamic-width compiles (blocks and VAE)."""
+    """Dynamo / Inductor settings for the regional, dynamic-width compiles (blocks and VAE).
+
+    torch keeps these overrides per thread, so they hold only in the thread that sets them:
+    :func:`ensure_compile_config` re-applies them wherever a compiled region runs on another thread.
+    """
     import torch._dynamo
     import torch._inductor.config as inductor_config
     import torch.fx.experimental._config as fx_config
 
     # use_duck_shape=False keeps the line width a free symbol, so a width that coincidentally equals
-    # batch/heads/h_t doesn't trigger a recompile. Process-global; set once per entrypoint.
+    # batch/heads/h_t doesn't trigger a recompile.
     fx_config.use_duck_shape = False
-    # Variable widths + the last block's context_pre_only=True guard trigger several recompiles; the
-    # default recompile_limit (8) is too low and Dynamo ABORTS. Raise it (bucketing keeps the real count
-    # to ~num_buckets; dynamic=True keeps most widths on one symbolic shape).
-    torch._dynamo.config.recompile_limit = 256
+    # Widths don't recompile (dynamic=True), but each grad mode (train / no_grad / inference) compiles its own
+    # graphs for the first block (its context is a view), the middle blocks and the last (context_pre_only),
+    # and batch size 1 specializes: past the default recompile_limit of 8, which fullgraph=True makes fatal.
+    torch._dynamo.config.recompile_limit = _RECOMPILE_LIMIT
     torch._dynamo.config.accumulated_recompile_limit = 2048
     if mode is not None and mode.startswith("max-autotune"):
         # The Inductor settings diffusers' SD3 docs pair with max-autotune ("Performance Optimizations for SD3").
@@ -44,60 +51,55 @@ def configure_compile(mode: str | None = None) -> None:
         inductor_config.coordinate_descent_check_all_directions = True
 
 
-class Backbone(nn.Module):
-    """SD3 Transformer2D wrapper mapping (latent, timestep, content+style tokens) -> velocity.
+def ensure_compile_config(mode: str | None = None) -> None:
+    """Apply :func:`configure_compile` in the CURRENT thread unless it already holds there: a server's worker
+    threads, and autograd's backward thread, where gradient checkpointing re-runs a compiled block."""
+    import torch._dynamo
 
-    With ``cfg.rope`` (default) the SD3 absolute ``pos_embed`` table is replaced by a position-free
-    ``PatchEmbed`` and a custom 2D-RoPE joint-attention processor; per-call rotary freqs are passed via
-    ``joint_attention_kwargs`` (grad-checkpoint-safe — SD3 threads that dict through every block and
-    through its gradient-checkpointing wrapper). With ``cfg.rope=False`` the stock SD3 pos_embed is kept.
+    if torch._dynamo.config.recompile_limit != _RECOMPILE_LIMIT:
+        configure_compile(mode)
+
+
+class Backbone(nn.Module):
+    """SD3 Transformer2D wrapper mapping (latent, timestep, context tokens, pooled) -> velocity.
+
+    The SD3 absolute ``pos_embed`` table is replaced by a position-free ``PatchEmbed`` and a custom 2D-RoPE
+    joint-attention processor, so variable-width lines have no width cap; per-call rotary freqs are passed
+    via ``joint_attention_kwargs`` (grad-checkpoint-safe — SD3 threads that dict through every block and
+    through its gradient-checkpointing wrapper).
     """
 
-    def __init__(
-        self,
-        cfg: BackboneConfig,
-        in_channels: int,
-        context_dim: int,
-        pooled_dim: int,
-        out_channels: int | None = None,
-    ) -> None:
+    def __init__(self, cfg: BackboneConfig, in_channels: int, out_channels: int | None = None) -> None:
         super().__init__()
-        # in_channels may exceed out_channels when a glyph latent is channel-concatenated onto the input
-        # (glyph_concat): the model READS extra channels but still predicts only the latent_channels velocity.
+        # in_channels may exceed out_channels when conditioning channels are concatenated onto the input
+        # (the canvas reference): the model READS extra channels but still predicts only the velocity.
         out_channels = out_channels if out_channels is not None else in_channels
         self.transformer = SD3Transformer2DModel(
-            sample_size=cfg.sample_size,
             patch_size=cfg.patch,
             in_channels=in_channels,
             out_channels=out_channels,
             num_layers=cfg.num_layers,
             attention_head_dim=cfg.dim // cfg.heads,
             num_attention_heads=cfg.heads,
-            joint_attention_dim=context_dim,
+            joint_attention_dim=cfg.context_dim,
             caption_projection_dim=cfg.dim,
-            pooled_projection_dim=pooled_dim,
-            pos_embed_max_size=cfg.pos_embed_max_size,
+            pooled_projection_dim=cfg.context_dim,
+            pos_embed_max_size=1,  # its sincos table is replaced right below; size 1 skips building ~150 MB
             qk_norm=cfg.qk_norm,  # SD3.5: RMSNorm on Q/K (training stability)
             dual_attention_layers=cfg.dual_attention_layers,  # SD3.5-medium / MMDiT-X (() = off)
         )
-        self.rope = cfg.rope
         self.patch = cfg.patch
         self.head_dim = cfg.dim // cfg.heads
         self.theta = cfg.rope_theta
-        if self.rope:
-            # Swap in a position-free PatchEmbed: drops the absolute sincos table AND the
-            # pos_embed_max_size width cap, so variable-width lines patch-embed without a hard limit.
-            self.transformer.pos_embed = PatchEmbed(
-                height=cfg.sample_size,
-                width=cfg.sample_size,
-                patch_size=cfg.patch,
-                in_channels=in_channels,
-                embed_dim=cfg.dim,
-                pos_embed_type=None,
-            )
-            self.transformer.set_attn_processor(RoPEJointAttnProcessor())
-            # Memoized 2D-RoPE freqs keyed by (h_tokens, w_tokens, device) — see forward().
-            self._rope_cache: dict[tuple[int, int, torch.device], tuple[torch.Tensor, torch.Tensor]] = {}
+        # A position-free PatchEmbed: no absolute sincos table, so no width cap (RoPE carries position).
+        self.transformer.pos_embed = PatchEmbed(
+            patch_size=cfg.patch, in_channels=in_channels, embed_dim=cfg.dim, pos_embed_type=None
+        )
+        self.transformer.set_attn_processor(RoPEJointAttnProcessor())
+        # Memoized 2D-RoPE freqs keyed by (h_tokens, w_tokens, device) — see forward().
+        self._rope_cache: dict[tuple[int, int, torch.device], tuple[torch.Tensor, torch.Tensor]] = {}
+        self._compiled = False  # compile_blocks() ran: forward re-applies the per-thread compile settings
+        self._compile_mode: str | None = None
 
     def _rope(self, h_t: int, w_t: int, device: torch.device) -> tuple[torch.Tensor, torch.Tensor]:
         """Memoized 2D-RoPE (cos, sin) for an ``h_t x w_t`` grid (constants, so caching is bit-identical).
@@ -108,21 +110,29 @@ class Backbone(nn.Module):
         key = (h_t, w_t, device)
         cached = self._rope_cache.get(key)
         if cached is None:
-            cached = build_2d_rope(h_t, w_t, self.head_dim, device, self.theta)
+            # Never an inference tensor, even when a grid is first seen while sampling (generate() runs under
+            # inference_mode): autograd can't save one for backward, so the next training step on it would fail.
+            with torch.inference_mode(False):
+                cached = build_2d_rope(h_t, w_t, self.head_dim, device, self.theta)
             self._rope_cache[key] = cached
         return cached
 
-    def enable_optimizations(self) -> None:
-        """Enable diffusers' gradient checkpointing (non-reentrant).
+    def enable_gradient_checkpointing(self) -> None:
+        """diffusers' gradient checkpointing, non-reentrant (so REPA's hook capture still backprops).
 
-        Non-reentrant checkpointing keeps the checkpointed blocks' outputs attached to the autograd
-        graph during the forward pass, so REPA's forward-hook capture of a mid-block hidden state can
-        still backprop into the backbone (reentrant checkpointing detaches it -> REPA would train only
-        its projection head). diffusers (0.38+) defaults to non-reentrant for torch>=1.11, so the plain
-        call already gives us what REPA needs. (The previous ``gradient_checkpointing_kwargs=`` form
-        was never a diffusers arg — it is a HF Transformers arg — so that try-branch always raised.)
+        The recompute runs on autograd's backward thread, so a compiled block first re-applies the compile
+        settings there (they are per thread; a block would otherwise recompile against the default limit).
         """
-        self.transformer.enable_gradient_checkpointing()
+
+        def checkpoint(block: nn.Module, *args: object) -> object:
+            def run(*inputs: object) -> object:
+                if self._compiled:
+                    ensure_compile_config(self._compile_mode)
+                return block(*inputs)
+
+            return torch.utils.checkpoint.checkpoint(run, *args, use_reentrant=False)
+
+        self.transformer.enable_gradient_checkpointing(checkpoint)
 
     def set_attention_backend(self, backend: str) -> None:
         """Route attention through a diffusers kernel backend (``RoPEJointAttnProcessor`` dispatches).
@@ -147,8 +157,8 @@ class Backbone(nn.Module):
     def compile_blocks(self, mode: str | None = None) -> None:
         """Regionally ``torch.compile`` the repeated ``JointTransformerBlock`` (shared by train + inference).
 
-        Compiles ONE block (not all 24): cold start is cheap and per-step throughput matches a full compile.
-        The change is IN-PLACE (no ``_orig_mod.`` state-dict prefix, no ``OptimizedModule`` proxy) so a REPA
+        All 24 blocks share one compiled code object (3 graphs per grad mode: the first, middle and last block
+        differ), so cold start is cheap and per-step throughput matches a full compile. The change is IN-PLACE (no ``_orig_mod.`` state-dict prefix, no ``OptimizedModule`` proxy) so a REPA
         forward-hook on an inner block still fires with grad intact. ``dynamic=True`` keeps the variable line
         width on one symbolic shape — pair with width bucketing (train) / one width per call (inference) so
         only a handful of shapes occur and recompiles stay bounded. Measured: −70% kernel launches, ~1.9×
@@ -159,6 +169,7 @@ class Backbone(nn.Module):
         only; one graph per line width, so keep widths bucketed).
         """
         configure_compile(mode)
+        self._compiled, self._compile_mode = True, mode
         # Compiled, the per-call Q/K/V weight concat fuses into the bf16 weight cast autocast does anyway, so
         # the one-GEMM projection is free; eager it would add a weight copy per call, so it stays off there.
         for processor in self.transformer.attn_processors.values():
@@ -171,27 +182,22 @@ class Backbone(nn.Module):
         self.transformer.compile_repeated_blocks(dynamic=True, fullgraph=True, mode=mode)
 
     def forward(
-        self,
-        latent: torch.Tensor,
-        timestep: torch.Tensor,
-        context_tokens: torch.Tensor,
-        pooled: torch.Tensor,
-        n_content: int | None = None,
+        self, latent: torch.Tensor, timestep: torch.Tensor, context_tokens: torch.Tensor, pooled: torch.Tensor
     ) -> torch.Tensor:
-        joint_attention_kwargs: dict[str, object] | None = None
-        if self.rope:
-            # The 2D-RoPE (cos, sin) are deterministic constants of the token grid (arange-derived,
-            # non-differentiable), so memoize them per (grid, device): under width-bucketing only a
-            # handful of grids occur, so this rebuilds arange/get_1d_rotary/cat at most once per bucket
-            # instead of every step. Bit-identical to rebuilding.
-            h_t = latent.shape[-2] // self.patch
-            w_t = latent.shape[-1] // self.patch
-            joint_attention_kwargs = {"image_rotary_emb": self._rope(h_t, w_t, latent.device)}
-            if n_content:
-                # Shared-column RoPE for the line-glyph content tokens: 1 row × n_content columns, so
-                # content token j carries the SAME column frequency as image patches in column j (MSRoPE-style).
-                joint_attention_kwargs["content_rotary_emb"] = self._rope(1, n_content, latent.device)
-                joint_attention_kwargs["n_content"] = n_content
+        if self._compiled:  # the compile settings are per thread: apply them in this one too
+            ensure_compile_config(self._compile_mode)
+        # The 2D-RoPE (cos, sin) are deterministic constants of the token grid (arange-derived,
+        # non-differentiable), so memoize them per (grid, device): under width-bucketing only a handful of
+        # grids occur, so this rebuilds arange/get_1d_rotary/cat at most once per bucket instead of every step.
+        h_t = latent.shape[-2] // self.patch
+        w_t = latent.shape[-1] // self.patch
+        # The context is the column-aligned glyph tokens: one row of columns, rotated with the SAME column
+        # frequencies as the image patches (shared-column RoPE, MSRoPE-style), so glyph token j lines up with
+        # image column j.
+        joint_attention_kwargs = {
+            "image_rotary_emb": self._rope(h_t, w_t, latent.device),
+            "content_rotary_emb": self._rope(1, context_tokens.shape[1], latent.device),
+        }
         return self.transformer(
             hidden_states=latent,
             timestep=timestep,

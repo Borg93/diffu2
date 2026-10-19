@@ -43,14 +43,21 @@ Library API (equivalent, in Python):
 ```python
 from diffu_page import PageSpec, build_layout, compose_page, PlaceholderRenderer, PageLabels, export
 
-spec = PageSpec(template="single_column", header_lines=["Ahr 1744"], header_scale=1.6,
-                marginalia=["No 478", "Resolution"], marg_scale=0.95, page_number="61.", recto=True)
-renderer = PlaceholderRenderer()                       # or DiffuRenderer(ckpt, style) / ErukuRenderer(style)
+spec = PageSpec(
+    template="single_column",
+    header_lines=["Ahr 1744"],
+    header_scale=1.6,
+    marginalia=["No 478", "Resolution"],
+    marg_scale=0.95,
+    page_number="61.",
+    recto=True,
+)
+renderer = PlaceholderRenderer()  # or DiffuRenderer(ckpt, style) / ErukuRenderer(style)
 layout = build_layout(spec, paragraphs, seed=0, measure=renderer.measure_width)
 #   or:  layout = load_xml_layout("your_real.alto.xml")     # replay a real layout
 page, lines = compose_page(layout, renderer, paper_dir="assets/paper", seed=0)
 labels = PageLabels(width=spec.width, height=spec.height, image="page.png", lines=lines)
-open("page.alto.xml", "w").write(export(labels, "alto"))    # or "page" / "json"
+open("page.alto.xml", "w").write(export(labels, "alto"))  # or "page" / "json"
 ```
 
 ## Pipeline

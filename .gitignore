@@ -18,6 +18,7 @@ venv/
 *.zip
 data_raw/
 data_out/
+data_iam/
 outputs/
 checkpoints/
 model_zoo/

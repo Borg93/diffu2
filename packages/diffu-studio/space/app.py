@@ -1,10 +1,11 @@
 """Hugging Face ZeroGPU Space entry point for Diffu Studio.
 
 Spaces auto-runs ``app.py``. This reuses diffu_studio's own build components (the SAME path as
-``diffu_studio.__main__.main()``) but adapts them to a Space: the single model is pulled from the Hub
-(there is no local ``checkpoints/`` dir), style crops ship under ``assets/styles/``, and the ZeroGPU
-constraints a local launcher does not have are applied — no forced HF offline, no ``CUDA_VISIBLE_DEVICES``
-pin, and the eager-CUDA recognizer is disabled (CUDA must init only inside the forked ``@spaces.GPU`` call).
+``diffu_studio.__main__.main()``) but adapts them to a Space: the single model is pulled from the Hub repo
+named by ``DIFFU_CKPT_REPO`` (there is no local ``checkpoints/`` dir), style crops ship under
+``assets/styles/``, and the ZeroGPU constraints a local launcher does not have are applied — no forced HF
+offline, no ``CUDA_VISIBLE_DEVICES`` pin, and the eager-CUDA recognizer is disabled (CUDA must init only
+inside the forked ``@spaces.GPU`` call).
 
 AoT: on first model load the engine calls ``aot_compile_backbone`` (aokit) — a no-op / fallback-safe off
 ZeroGPU, and on ZeroGPU it AoT-compiles the MMDiT backbone for the H200 (falls back to JIT/eager on any
@@ -19,6 +20,7 @@ from __future__ import annotations
 
 import glob
 import os
+from pathlib import PurePosixPath
 
 # 1) Allocator guard BEFORE any torch import (reads env at init). Reuse the studio's helper.
 from diffu_studio.device import configure_memory
@@ -39,6 +41,7 @@ from diffu_studio.engine import StudioEngine  # noqa: E402
 from diffu_studio.ui import build_blocks  # noqa: E402
 from diffu_studio.upscale import prefetch_weights  # noqa: E402
 from huggingface_hub import hf_hub_download  # noqa: E402
+from huggingface_hub.errors import EntryNotFoundError  # noqa: E402
 
 # PiD weights (decoder + Flux VAE + Gemma-2 text encoder) → HF cache at boot, on CPU time not GPU budget.
 # Only the DOWNLOAD is done here (pure CPU, ZeroGPU-safe). The PiD MODEL itself is NOT preloaded — see the
@@ -46,14 +49,25 @@ from huggingface_hub import hf_hub_download  # noqa: E402
 prefetch_weights()
 
 # --- The one model this Space ships -----------------------------------------------------------------
-# Gabriel/diffu_sd35_128 holds a single `model.safetensors` (128px SD3.5 MMDiT). checkpoints.py accepts a
-# .safetensors file and auto-detects qk_norm/unifont from the weights; the ONE non-default arch flag is
-# line_height=128 (config.json confirms glyph_line=True, glyph_concat=False, style_in_context=False).
-CKPT_REPO = os.environ.get("DIFFU_CKPT_REPO", "Gabriel/diffu_sd35_128")
+# DIFFU_CKPT_REPO (a Space variable) names the Hub model repo: `model.safetensors` + the `config.json` that
+# describes its architecture (what diffu-train / scripts/export_release.py write). No default: the old
+# Gabriel/diffu_sd35_128 repo is gone, and a boot that 404s on a stale default hides the missing setting.
+CKPT_REPO = os.environ.get("DIFFU_CKPT_REPO")
+if not CKPT_REPO:
+    raise SystemExit(
+        "[space] DIFFU_CKPT_REPO is not set — point it at the Hub model repo holding the checkpoint "
+        "(model.safetensors + config.json) in the Space settings (Variables)."
+    )
 CKPT_FILE = os.environ.get("DIFFU_CKPT_FILE", "model.safetensors")
 ckpt_path = hf_hub_download(repo_id=CKPT_REPO, filename=CKPT_FILE)
+# checkpoints.load_model reads the architecture from the config.json NEXT TO the weights: fetch it into the
+# same snapshot dir. A repo without one (an older export) falls back to the arch knob below.
+try:
+    hf_hub_download(repo_id=CKPT_REPO, filename=str(PurePosixPath(CKPT_FILE).with_name("config.json")))
+except EntryNotFoundError:
+    print(f"[space] {CKPT_REPO} has no config.json — using the fallback arch (line_height=128)", flush=True)
 
-arch = ArchConfig(line_height=128)
+arch = ArchConfig(line_height=128)  # only used without config.json (the released model's 128px)
 device = resolve_device(os.environ.get("DIFFU_STUDIO_DEVICE"))  # autodetects 'zerogpu' via SPACES_ZERO_GPU
 
 # recognizer_name=None: StudioEngine loads the TrOCR read-back with device_map='cuda' in __init__, which

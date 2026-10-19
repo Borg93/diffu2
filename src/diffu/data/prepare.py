@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import argparse
 
-from .dataset import build_manifest, char_coverage, write_splits
+from .dataset import LINE_HEIGHT, build_manifest, char_coverage, write_splits
 
 
 def main() -> None:
@@ -18,7 +18,7 @@ def main() -> None:
     ap.add_argument("--xml-dir", required=True, help="dir with PAGE/ALTO .xml (searched recursively)")
     ap.add_argument("--image-dir", required=True, help="dir with the page images")
     ap.add_argument("--out-dir", required=True, help="output dir for line crops + manifests")
-    ap.add_argument("--height", type=int, default=64)
+    ap.add_argument("--height", type=int, default=LINE_HEIGHT, help="crop height in px (the training height)")
     ap.add_argument(
         "--split-by",
         choices=["writer_id", "volume"],

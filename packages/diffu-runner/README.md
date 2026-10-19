@@ -42,7 +42,7 @@ uv run diffu-runner --ckpt checkpoints/exp_sd35_128/step_120000/model.safetensor
 
 | flag | meaning |
 |---|---|
-| `--ckpt` / `--train-jsonl` / `--out` | Diffu checkpoint (`.safetensors`) · TRAIN split (never `val.jsonl`) · Lance output dir |
+| `--ckpt` / `--train-jsonl` / `--out` | Diffu checkpoint (`.safetensors`; its architecture comes from the `config.json` next to it, else the released 128px one) · TRAIN split (never `val.jsonl`) · Lance output dir |
 | `--n` | candidate count before gating (`--stream`), or exact clean target (`--exact-target`) |
 | `--num-steps` | denoise steps per line (default 24); **12 is benchmark-validated equal quality** on the 128px model (paired ΔCER ≈ 0 vs 24) for ~1.5× generation speed — 8 visibly degrades letterforms |
 | `--bucket-px` | width-bucket coarseness; **0 = off (the default, fixed-width canvas)** — bucketing is blocked by the current checkpoint's batch-composition glyph conditioning; set only for a future conditioning-fixed checkpoint |

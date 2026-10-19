@@ -33,8 +33,8 @@ from pydantic import BaseModel
 
 from .validate import char_error_rate
 
-# Recogniser = the SAME one diffu uses for gen_CER: Config().aux.htr_recognizer_eval, i.e.
-# `trocr-base-handwritten-hist-swe-3` (see src/diffu/config.py, app.py, eval_cer.py). The repo is
+# Recogniser = `trocr-base-handwritten-hist-swe-3`, the subword model diffu gauged gen_CER with before its
+# char-level default (Config().aux.htr_recognizer_eval); the settings below are tuned to it. The repo is
 # GATED to the Riksarkivet org (404 over the network here) but is ALREADY CACHED locally — diffu
 # loads it with local_files_only=True — so run htrflow with HF_HUB_OFFLINE=1 to read it from
 # ~/.cache/huggingface. Override via --recognizer.

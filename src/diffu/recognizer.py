@@ -1,7 +1,7 @@
 """Frozen Swedish HTR recognizer — the legibility gauge (CER) for generated lines.
 
 The recognizer reads a generated line back to text; CER vs the requested text = how legible we are.
-Used by scripts/eval_cer.py (offline report) and train.py (live gen_CER logged to trackio).
+Used by train.py (the live gen_CER), eval.py, the VAE gate, the eval scripts and the page/runner packages.
 """
 
 from __future__ import annotations
@@ -11,22 +11,11 @@ from typing import TYPE_CHECKING
 import numpy as np
 import torch
 
+from .model.metrics import char_error_rate as char_error_rate  # re-exported: callers read CER from here
+
 if TYPE_CHECKING:
     from PIL.Image import Image as PILImage
     from transformers import TrOCRProcessor, VisionEncoderDecoderModel
-
-
-def char_error_rate(pred: str, gt: str) -> float:
-    """Character-level Levenshtein(pred, gt) / len(gt). 0 = perfect, ~1+ = illegible."""
-    if not gt:
-        return 1.0 if pred else 0.0
-    prev = list(range(len(gt) + 1))
-    for i, pc in enumerate(pred, 1):
-        cur = [i]
-        for j, gc in enumerate(gt, 1):
-            cur.append(min(prev[j] + 1, cur[-1] + 1, prev[j - 1] + (pc != gc)))
-        prev = cur
-    return prev[-1] / len(gt)
 
 
 def load_recognizer(
@@ -62,19 +51,12 @@ def trim_to_ink(img: PILImage, margin: int = 40, pad: int = 6) -> PILImage:
 
 
 @torch.no_grad()
-def read_lines(
-    proc: TrOCRProcessor,
-    model: VisionEncoderDecoderModel,
-    images: list[PILImage],
-    *,
-    trim: bool = True,
-) -> list[str]:
-    """Recognize each line to text. ``trim`` crops blank paper first so CER reflects legibility, not
-    overflow (interpolate_pos_encoding handles the resulting variable widths)."""
+def read_lines(proc: TrOCRProcessor, model: VisionEncoderDecoderModel, images: list[PILImage]) -> list[str]:
+    """Recognize each line to text, cropped to its ink first so CER reflects legibility, not overflow
+    (interpolate_pos_encoding handles the resulting variable widths)."""
     out: list[str] = []
     for img in images:
-        crop = trim_to_ink(img) if trim else img
-        pv = proc(images=crop.convert("RGB"), return_tensors="pt").pixel_values.to(model.device)
+        pv = proc(images=trim_to_ink(img).convert("RGB"), return_tensors="pt").pixel_values.to(model.device)
         ids = model.generate(pv, max_new_tokens=64, interpolate_pos_encoding=True)
         out.append(proc.batch_decode(ids, skip_special_tokens=True)[0].strip())
     return out

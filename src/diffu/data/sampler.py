@@ -34,82 +34,73 @@ from PIL import Image
 from torch.utils.data import Sampler
 
 
-def line_widths(rows: list[dict[str, str]], *, max_width: int, cache_path: str | None = None) -> list[int]:
-    """Per-row line width in px, capped at ``max_width``.
+def line_widths(
+    rows: list[dict[str, str]], *, max_width: int | None = None, cache_path: str | None = None
+) -> list[int]:
+    """Per-row line width in px, capped at ``max_width`` (``None`` = the raw widths).
 
     Crops are stored at a fixed height, so the on-disk image width IS the line width (what the collate
-    pads to). Reading ~1.6M PNG headers is slow, so the result is cached to a ``cache_path`` sidecar
-    and reused on later runs. Cache key = row count + first/last image path: a re-prepped manifest with
+    pads to). Reading ~1.6M PNG headers is slow, so the RAW widths are cached to a ``cache_path`` sidecar
+    and reused on later runs; the cap is applied on read, so a changed ``max_width`` never reuses stale
+    capped widths. Cache key = format + row count + first/last image path: a re-prepped manifest with
     the SAME length but different crops must not silently reuse stale widths.
     """
     fingerprint = {
+        "format": 2,  # 2: raw widths (format 1 stored them capped, without the cap in the key)
         "n": len(rows),
         "first": rows[0]["image"] if rows else "",
         "last": rows[-1]["image"] if rows else "",
     }
+    widths: list[int] | None = None
     if cache_path and os.path.exists(cache_path):
         try:
             with open(cache_path) as fh:
                 cached = json.load(fh)
             if all(cached.get(k) == v for k, v in fingerprint.items()):
-                return cached["widths"]
+                widths = cached["widths"]
         except (OSError, ValueError, KeyError):
             pass  # stale/corrupt cache -> recompute
-    widths: list[int] = []
-    for row in rows:
-        with Image.open(row["image"]) as im:
-            widths.append(min(im.width, max_width))
-    if cache_path:
-        with open(cache_path, "w") as fh:
-            json.dump({**fingerprint, "widths": widths}, fh)
-    return widths
+    if widths is None:
+        widths = []
+        for row in rows:
+            with Image.open(row["image"]) as im:
+                widths.append(im.width)
+        if cache_path:
+            with open(cache_path, "w") as fh:
+                json.dump({**fingerprint, "widths": widths}, fh)
+    return widths if max_width is None else [min(w, max_width) for w in widths]
 
 
 class WidthBucketBatchSampler(Sampler[list[int]]):
     """Yield batches of dataset indices whose lines have SIMILAR width (see module docstring).
 
+    Each epoch: shuffle all rows, cut them into megabatches of ``MEGABATCH × batch_size``, sort each by
+    width, cut into full batches (a partial last batch is dropped — DDP needs equal batch counts per rank),
+    then shuffle the batch order. A larger megabatch gives more width-homogeneous batches but less
+    cross-batch randomness.
+
     Args:
         widths: Per-row line width, aligned to the dataset's rows.
         batch_size: Lines per batch (per rank — accelerate shards whole batches across ranks).
-        shuffle: Reshuffle each epoch. ``False`` = deterministic width-sorted order (eval).
-        drop_last: Drop a final partial batch (required for DDP — equal batch counts per rank).
         seed: Base RNG seed; combined with the epoch so all ranks shuffle identically.
-        megabatch_mult: Megabatch = this × ``batch_size``. Larger = more width-homogeneous batches but
-            less cross-batch randomness. The megabatch is a multiple of ``batch_size`` so only the final
-            partial megabatch can drop a remainder.
     """
 
-    def __init__(
-        self,
-        widths: list[int],
-        batch_size: int,
-        *,
-        shuffle: bool = True,
-        drop_last: bool = True,
-        seed: int = 0,
-        megabatch_mult: int = 20,
-    ) -> None:
+    MEGABATCH = 20
+
+    def __init__(self, widths: list[int], batch_size: int, *, seed: int = 0) -> None:
         if batch_size < 1:
             raise ValueError(f"batch_size must be >= 1, got {batch_size}")
         self.widths = widths
         self.batch_size = batch_size
-        self.shuffle = shuffle
-        self.drop_last = drop_last
         self.seed = seed
-        self.megabatch = max(1, megabatch_mult) * batch_size
+        self.megabatch = self.MEGABATCH * batch_size
         self._epoch = 0
         n = len(widths)
-        self._nbatches = sum(
-            (
-                min(self.megabatch, n - s) // batch_size
-                if drop_last
-                else -(-min(self.megabatch, n - s) // batch_size)
-            )
-            for s in range(0, n, self.megabatch)
-        )
+        self._nbatches = sum(min(self.megabatch, n - s) // batch_size for s in range(0, n, self.megabatch))
 
     def set_epoch(self, epoch: int) -> None:
-        """Set the epoch (accelerate calls this on the prepared loader); also auto-advances per ``__iter__``."""
+        """Set the epoch. Single-process accelerate calls this; under DDP accelerate's ``BatchSamplerShard``
+        doesn't forward it, and the per-``__iter__`` auto-advance keeps the ranks in lockstep instead."""
         self._epoch = epoch
 
     def __len__(self) -> int:
@@ -118,17 +109,14 @@ class WidthBucketBatchSampler(Sampler[list[int]]):
     def __iter__(self) -> Iterator[list[int]]:
         epoch = self._epoch
         idx = list(range(len(self.widths)))
-        if self.shuffle:
-            random.Random(self.seed + epoch).shuffle(idx)
+        random.Random(self.seed + epoch).shuffle(idx)
         batches: list[list[int]] = []
         for s in range(0, len(idx), self.megabatch):
             mega = sorted(idx[s : s + self.megabatch], key=self.widths.__getitem__)
-            for b in range(0, len(mega), self.batch_size):
-                batch = mega[b : b + self.batch_size]
-                if self.drop_last and len(batch) < self.batch_size:
-                    continue
-                batches.append(batch)
-        if self.shuffle:
-            random.Random(self.seed + epoch + 1_000_003).shuffle(batches)  # decorrelated sub-seed
-            self._epoch += 1  # next epoch reshuffles; lockstep across ranks (same seed, same call count)
+            batches += [
+                mega[b : b + self.batch_size]
+                for b in range(0, len(mega) - self.batch_size + 1, self.batch_size)
+            ]
+        random.Random(self.seed + epoch + 1_000_003).shuffle(batches)  # decorrelated sub-seed
+        self._epoch += 1  # next epoch reshuffles; lockstep across ranks (same seed, same call count)
         yield from batches

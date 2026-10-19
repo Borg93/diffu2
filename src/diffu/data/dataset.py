@@ -1,8 +1,8 @@
 """Build training triples (line_image, transcription, writer_id) from PAGE/ALTO XML, plus a
 torch Dataset, writer-disjoint split, and a character-coverage report.
 
-Parsing/manifest building is pure stdlib + Pillow (no torch). The torch Dataset imports torch
-lazily so the prep tools run on a CPU box without torch installed.
+Parsing/manifest building needs no torch (stdlib + Pillow + pydantic); the torch Dataset imports
+torch lazily, so the prep tools start fast.
 """
 
 from __future__ import annotations
@@ -17,20 +17,25 @@ from typing import TYPE_CHECKING, Any
 
 from PIL import Image, ImageDraw
 
+from ..config import DataConfig
 from .parse import LineRecord, parse_file
 
 if TYPE_CHECKING:
     import torch
 
-    from .latent_cache import LatentCache
+# The DINOv3 input: RGB, ImageNet-normalized; the dino-mode style crop is squashed to STYLE_SIZE².
+IMAGENET_MEAN = (0.485, 0.456, 0.406)
+IMAGENET_STD = (0.229, 0.224, 0.225)
+STYLE_SIZE = 224
 
-# DINOv3 image normalization (ImageNet stats) for the style reference crop.
-_IMAGENET_MEAN = (0.485, 0.456, 0.406)
-_IMAGENET_STD = (0.229, 0.224, 0.225)
+
+LINE_HEIGHT = DataConfig().line_height  # the training geometry; crops default to it
+IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp")
 
 
 def normalize_text(s: str) -> str:
-    """NFC so å ä ö are single precomposed codepoints (U+00E5/E4/F6); drop control chars."""
+    """NFC so å ä ö are single precomposed codepoints (U+00E5/E4/F6); drop control chars except tab and
+    newline; strip."""
     s = unicodedata.normalize("NFC", s)
     return "".join(c for c in s if c in "\n\t" or unicodedata.category(c)[0] != "C").strip()
 
@@ -38,7 +43,7 @@ def normalize_text(s: str) -> str:
 def crop_line(
     page_img: Image.Image,
     bbox: tuple[float, float, float, float],
-    height: int = 64,
+    height: int = LINE_HEIGHT,
     pad: int = 4,
     polygon: list[tuple[float, float]] | None = None,
 ) -> Image.Image | None:
@@ -49,12 +54,15 @@ def crop_line(
     from neighbouring lines that falls inside the bbox is removed. Without it, the plain bbox is used.
 
     Returns None for a degenerate or inverted bbox (some polygons have x1<x0 / y1<y0, which PIL's
-    ``crop`` rejects) — coordinates are sorted and zero-area boxes are skipped.
+    ``crop`` rejects) — coordinates are sorted, clamped to the page, and zero-area boxes are skipped.
     """
     x0, y0, x1, y1 = bbox
     x0, x1 = sorted((x0, x1))
     y0, y1 = sorted((y0, y1))
-    left, upper, right, lower = max(0, int(x0) - pad), max(0, int(y0) - pad), int(x1) + pad, int(y1) + pad
+    page_w, page_h = page_img.size
+    # clamp to the page: PIL fills a crop box past the edge with black, which a bbox-only crop would keep
+    left, upper = max(0, int(x0) - pad), max(0, int(y0) - pad)
+    right, lower = min(page_w, int(x1) + pad), min(page_h, int(y1) + pad)
     if right <= left or lower <= upper:
         return None
     crop = page_img.crop((left, upper, right, lower)).convert("RGB")
@@ -63,12 +71,7 @@ def crop_line(
         ImageDraw.Draw(mask).polygon([(px - left, py - upper) for px, py in polygon], fill=255)
         crop = Image.composite(crop, Image.new("RGB", crop.size, (255, 255, 255)), mask)
     w, h = crop.size
-    if h <= 0 or w <= 0:
-        return None
     return crop.resize((max(8, int(w * height / h)), height), Image.LANCZOS)
-
-
-_IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp")
 
 
 def _index_images(image_dir: str) -> dict[str, str]:
@@ -81,7 +84,7 @@ def _index_images(image_dir: str) -> dict[str, str]:
     index: dict[str, str] = {}
     for root, _dirs, files in os.walk(image_dir):
         for f in files:
-            if f.lower().endswith(_IMAGE_EXTS):
+            if f.lower().endswith(IMAGE_EXTS):
                 path = os.path.join(root, f)
                 index.setdefault(f, path)
                 index.setdefault(os.path.splitext(f)[0], path)
@@ -97,19 +100,19 @@ def _resolve_image(image_field: str, xml_path: str, index: dict[str, str]) -> st
     return next((index[k] for k in keys if k in index), None)
 
 
-def build_manifest(xml_dir: str, image_dir: str, out_dir: str, height: int = 64) -> int:
+def build_manifest(xml_dir: str, image_dir: str, out_dir: str, height: int = LINE_HEIGHT) -> int:
     """Parse every ``*.xml`` under xml_dir, crop each line from its page image, and write
     ``out_dir/lines/*.png`` + ``out_dir/manifest.jsonl`` with ``{image, text, writer_id}``.
 
     Each page image is opened once inside a context manager (its records are grouped first), so no
-    file handles are leaked even on large corpora.
+    file handles are leaked even on large corpora. A page image that can't be read is skipped and counted.
 
     Returns:
         Number of line crops written.
     """
     os.makedirs(os.path.join(out_dir, "lines"), exist_ok=True)
     image_index = _index_images(image_dir)
-    n = 0
+    n = unreadable = 0
     with open(os.path.join(out_dir, "manifest.jsonl"), "w", encoding="utf-8") as mf:
         for xml_path in sorted(glob.glob(os.path.join(xml_dir, "**", "*.xml"), recursive=True)):
             volume = os.path.basename(os.path.dirname(xml_path))  # parent folder = volume (coarser split key)
@@ -122,29 +125,44 @@ def build_manifest(xml_dir: str, image_dir: str, out_dir: str, height: int = 64)
                 try:
                     with Image.open(img_path) as page:
                         page.load()
-                        for rec in recs:
-                            crop = crop_line(page, rec.bbox, height, polygon=rec.polygon)
-                            text = normalize_text(rec.text)
-                            if crop is None or not text:
-                                continue
-                            out_png = os.path.join(out_dir, "lines", f"{n:07d}.png")
-                            crop.save(out_png)
-                            mf.write(
-                                json.dumps(
-                                    {
-                                        "image": out_png,
-                                        "text": text,
-                                        "writer_id": rec.source_id,
-                                        "volume": volume,
-                                    },
-                                    ensure_ascii=False,
-                                )
-                                + "\n"
-                            )
-                            n += 1
-                except OSError:
+                        crops = [(crop_line(page, r.bbox, height, polygon=r.polygon), r) for r in recs]
+                except OSError:  # unreadable/corrupt page image; errors writing our outputs still raise
+                    unreadable += 1
                     continue
+                for crop, rec in crops:
+                    text = normalize_text(rec.text)
+                    if crop is None or not text:
+                        continue
+                    out_png = os.path.join(out_dir, "lines", f"{n:07d}.png")
+                    crop.save(out_png)
+                    row = {"image": out_png, "text": text, "writer_id": rec.source_id, "volume": volume}
+                    mf.write(json.dumps(row, ensure_ascii=False) + "\n")
+                    n += 1
+    if unreadable:
+        print(f"skipped {unreadable} unreadable page image(s)", flush=True)
     return n
+
+
+def load_line(path: str, height: int, max_width: int) -> torch.Tensor:
+    """A line crop as ``[3, height, W]`` in ``[-1, 1]``: resized to ``height`` (aspect kept) when stored at
+    another height, and squashed to ``max_width`` when wider."""
+    from torchvision.transforms import functional as TF
+
+    with Image.open(path) as im:
+        img = im.convert("RGB")
+    if img.height != height:
+        img = img.resize((max(8, round(img.width * height / img.height)), height), Image.LANCZOS)
+    if img.width > max_width:
+        img = img.resize((max_width, height), Image.LANCZOS)
+    return TF.normalize(TF.to_tensor(img), [0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
+
+
+def style_tensor(img: Image.Image) -> torch.Tensor:
+    """A style reference crop as the dino-mode DINOv3 input ``[3, STYLE_SIZE, STYLE_SIZE]`` (ImageNet-normalized)."""
+    from torchvision.transforms import functional as TF
+
+    img = img.convert("RGB").resize((STYLE_SIZE, STYLE_SIZE), Image.BILINEAR)
+    return TF.normalize(TF.to_tensor(img), IMAGENET_MEAN, IMAGENET_STD)
 
 
 def load_manifest(manifest_path: str) -> list[dict[str, str]]:
@@ -235,31 +253,30 @@ def write_splits(
 class HandwritingLineDataset:
     """torch Dataset over manifest rows.
 
-    Each item is ``{'image': [3,H,W] in [-1,1], 'text': str, 'writer_id': str,
-    'style_pixel_values': [3,S,S]}`` where the style reference is another line from the SAME writer
-    (ImageNet-normalized for DINO). With ``ref_lines=True`` (``style_mode="canvas"``) the same reference
-    line is also returned at line height as ``style_image`` (``[3,H,W_ref]`` in ``[-1,1]``, plus
-    ``style_latent`` when a latent cache is attached) for the in-canvas path. torch/torchvision are
-    imported lazily so the prep tools above need neither. Pair with the width-bucketing ``collate_lines``.
+    Each item is ``{'image': [3,H,W] in [-1,1], 'text': str, 'writer_id': str, 'style_text': str}`` plus
+    the style reference — another line from the SAME writer: ``style_pixel_values`` ``[3,S,S]``
+    (ImageNet-normalized for DINO), or with ``ref_lines=True`` (``style_mode="canvas"``) the line itself at
+    line height as ``style_image`` (``[3,H,W_ref]`` in ``[-1,1]``). torch/torchvision are imported lazily so
+    the prep tools above need neither. Pair with the width-bucketing ``collate_lines``.
     """
 
     def __init__(
         self,
         rows: list[dict[str, str]],
-        height: int = 64,
+        height: int = LINE_HEIGHT,
         max_width: int = 1024,
-        style_size: int = 224,
-        latent_cache: LatentCache | None = None,
         ref_lines: bool = False,
+        widths: list[int] | None = None,
+        max_ref_width: int | None = None,
     ) -> None:
         self.rows = rows
         self.ref_lines = ref_lines
+        # Canvas references: with the rows' raw ``widths``, prefer a peer no wider than ``max_ref_width`` — a
+        # wider one is squashed (past max_width) or cropped in collate, losing its transcription.
+        self.widths = widths
+        self.max_ref_width = max_ref_width
         self.height = height
         self.max_width = max_width
-        self.style_size = style_size
-        # Optional precomputed VAE latents (--cache-latents): index-aligned with `rows` (both come from the
-        # same split manifest, in order), so latent_cache[i] is the encoded x0 for rows[i]. See data/latent_cache.py.
-        self.latent_cache = latent_cache
         self.by_writer: defaultdict[str, list[int]] = defaultdict(list)
         for idx, row in enumerate(rows):
             self.by_writer[str(row["writer_id"])].append(idx)
@@ -272,45 +289,35 @@ class HandwritingLineDataset:
 
         Never the target line itself: at inference the style ref is always a foreign line, so
         training on the target's own image leaks its content (the model could copy the answer off
-        the style tokens). Falls back to the target only when the writer has a single line.
+        the style tokens). Falls back to the target only when the writer has a single line. Canvas
+        references prefer a peer that fits ``max_ref_width`` uncropped, when the writer has one.
         """
         peers = [p for p in self.by_writer.get(writer_id, ()) if p != target]
+        if self.ref_lines and self.widths is not None and self.max_ref_width is not None:
+            limit = self.max_ref_width
+            peers = [p for p in peers if self.widths[p] <= limit] or peers
         return random.choice(peers) if peers else target
 
     def _load_style(self, path: str) -> torch.Tensor:
-        from torchvision.transforms import functional as TF
-
         with Image.open(path) as im:
-            img = im.convert("RGB").resize((self.style_size, self.style_size), Image.BILINEAR)
-        return TF.normalize(TF.to_tensor(img), _IMAGENET_MEAN, _IMAGENET_STD)
-
-    def _load_line(self, path: str) -> torch.Tensor:
-        from torchvision.transforms import functional as TF
-
-        with Image.open(path) as im:
-            img = im.convert("RGB")
-        if self.max_width and img.width > self.max_width:
-            img = img.resize((self.max_width, self.height), Image.LANCZOS)
-        return TF.normalize(TF.to_tensor(img), [0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
+            return style_tensor(im)
 
     def __getitem__(self, i: int) -> dict[str, Any]:
         r = self.rows[i]
-        image = self._load_line(r["image"])
+        image = load_line(r["image"], self.height, self.max_width)
         si = self._style_index(str(r["writer_id"]), i)
-        style = self._load_style(self.rows[si]["image"])
         item: dict[str, Any] = {
             "image": image,
             "text": r["text"],
             "writer_id": r["writer_id"],
-            "style_pixel_values": style,
             # The style ref's OWN text (a different line, normally != r["text"]) — so the live eval can
             # show "style wrote B, we asked A": a copy-the-style model renders B and gen_CER-vs-A spikes.
             "style_text": self.rows[si]["text"],
         }
-        if self.ref_lines:  # the same reference line at line height, for style_mode="canvas"
-            item["style_image"] = image if si == i else self._load_line(self.rows[si]["image"])
-        if self.latent_cache is not None:  # precomputed x0 [C, h, w] for rows[i]; collate pads + stacks it
-            item["latent"] = self.latent_cache[i]
-            if self.ref_lines:
-                item["style_latent"] = self.latent_cache[si]
+        if self.ref_lines:  # the reference line at line height, for style_mode="canvas" (no DINO crop)
+            item["style_image"] = (
+                image if si == i else load_line(self.rows[si]["image"], self.height, self.max_width)
+            )
+        else:
+            item["style_pixel_values"] = self._load_style(self.rows[si]["image"])
         return item

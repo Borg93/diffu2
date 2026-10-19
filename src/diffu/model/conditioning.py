@@ -1,17 +1,22 @@
 """Conditioning for Diffu (native transformers).
 
 - GlyphLineRenderer: text -> estimated line width in pixels (the fill-ratio / auto-width estimator).
-- StyleEncoder: DINOv3 ViT-L (frozen) features from 1-5 reference line crops.
-- PerceiverResampler: compress style patch tokens -> fixed style tokens + pooled vector.
+- StyleEncoder: frozen DINOv3 ViT-L features of one reference line crop -> Perceiver-resampled style tokens
+  + an attention-pooled AdaLN vector (style_mode="dino"); features only, as the REPA target (canvas mode).
 """
 
 from __future__ import annotations
 
 import torch
 import torch.nn as nn
-from transformers import AutoImageProcessor, AutoModel
+from transformers import AutoModel
 
 from ..config import ConditioningConfig
+
+# natural_width's glyph geometry: the cap height of a glyph line is ~0.7 of the strip height and a character
+# advances ~0.6 of that. The trained fill-ratio scalar depends on these, so they stay fixed.
+_GLYPH_SIZE_FRAC = 0.7
+_GLYPH_ADVANCE_FRAC = 0.6
 
 
 class GlyphLineRenderer:
@@ -23,19 +28,18 @@ class GlyphLineRenderer:
     is backing auto-width and the fill-ratio scalar via :meth:`natural_width`.
     """
 
-    def __init__(self, cfg: ConditioningConfig, height: int = 64) -> None:
+    def __init__(self, cfg: ConditioningConfig, height: int) -> None:
         self.height = height
         self.max_width = cfg.max_chars * (height // 2)
 
     def natural_width(self, text: str) -> int:
         """Estimated pixel width of ``text`` at this strip height (length-scaled, capped at max_width).
 
-        The single source of truth for "how wide should this line be" — used at inference
-        (generate.py / app.py auto-width) and for the fill-ratio scalar (model/diffu.py), so the
-        train and inference width signals come from the same formula.
+        The raw estimate behind the fill-ratio scalar (model/diffu.py) and, biased narrower, the auto-width
+        canvas (``generate.natural_width``), so train and inference width signals share one formula.
         """
-        size = int(self.height * 0.7)
-        return min(self.max_width, max(self.height, int(len(text) * size * 0.6)))
+        size = int(self.height * _GLYPH_SIZE_FRAC)
+        return min(self.max_width, max(self.height, int(len(text) * size * _GLYPH_ADVANCE_FRAC)))
 
 
 class PerceiverResampler(nn.Module):
@@ -92,12 +96,12 @@ class AttentionPool(nn.Module):
 
 
 class StyleEncoder(nn.Module):
-    """DINOv3 ViT-L (frozen) + Perceiver resampler + attention-pool."""
+    """Frozen DINOv3 ViT-L + Perceiver resampler + attention-pool; ``features_only`` keeps just the DINOv3
+    (the REPA target in canvas mode, which has no style encoder)."""
 
-    def __init__(self, cfg: ConditioningConfig, dim: int) -> None:
+    def __init__(self, cfg: ConditioningConfig, dim: int, *, features_only: bool = False) -> None:
         super().__init__()
         try:
-            self.proc = AutoImageProcessor.from_pretrained(cfg.style_encoder)
             self.enc = AutoModel.from_pretrained(cfg.style_encoder)
         except Exception as exc:  # noqa: BLE001 - HF raises varied (non-OSError) types for gated repos
             raise RuntimeError(
@@ -105,8 +109,10 @@ class StyleEncoder(nn.Module):
                 "on the Hub and run `hf auth login`."
             ) from exc
         self.enc.requires_grad_(False)
-        self.resampler = PerceiverResampler(self.enc.config.hidden_size, dim, cfg.style_tokens)
-        self.pool = AttentionPool(dim)  # learned-query pool for the AdaLN vector (trained; see train.py)
+        self.resampler = (
+            None if features_only else PerceiverResampler(self.enc.config.hidden_size, dim, cfg.style_tokens)
+        )
+        self.pool = None if features_only else AttentionPool(dim)  # the AdaLN vector (trained; see train.py)
 
     def train(self, mode: bool = True) -> StyleEncoder:
         # Keep the frozen DINO encoder in eval() regardless of the parent's train()/eval() toggling, so its
@@ -120,8 +126,8 @@ class StyleEncoder(nn.Module):
     def _features(self, pixel_values: torch.Tensor) -> torch.Tensor:
         return self.enc(pixel_values=pixel_values).last_hidden_state  # [B, P, D]
 
-    def forward(self, pixel_values: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        feats = self._features(pixel_values)
-        tokens = self.resampler(feats)  # [B, K, dim]
-        pooled = self.pool(tokens)  # [B, dim] — learned-query attention pool (vs the old mean)
-        return tokens, pooled
+    def forward(self, pixel_values: torch.Tensor) -> torch.Tensor:
+        """The ``[B, dim]`` attention-pooled style vector of the resampled DINOv3 features."""
+        if self.resampler is None or self.pool is None:
+            raise RuntimeError("a features_only StyleEncoder has no style tokens")
+        return self.pool(self.resampler(self._features(pixel_values)))

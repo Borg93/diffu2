@@ -13,10 +13,10 @@ generated handwriting, packed tight. This script crops the OURS strip out of eac
 
 The crop geometry mirrors ``_compose_sample_grid`` in ``src/diffu/train.py``: each of ``--grid-rows``
 entries is a vertical block ``style_h + cap_h + 2*line_h + read_h`` tall, and OURS is the 2nd of the two
-image rows in that block (REAL is the 1st). ``lbl_w``/``cap_h`` are the fixed tag/caption sizes there.
+image rows in that block (REAL is the 1st). The fixed tag-gutter width / caption height are
+``SAMPLE_LABEL_W`` / ``SAMPLE_CAPTION_H``, imported from there.
 
-    uv run python scripts/make_training_animation.py \
-        --samples-dir checkpoints/exp_base_weekend/samples --name exp_base_weekend
+    uv run python scripts/make_training_animation.py --samples-dir runs/<run>/samples --name <run>
 
 Reusable for any run (point ``--samples-dir`` at its ``samples/`` folder).
 """
@@ -25,18 +25,18 @@ from __future__ import annotations
 
 import argparse
 import re
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-_STEP_RE = re.compile(r"step_0*(\d+)\.png$")
+# The burned-in grid geometry of _compose_sample_grid: the left REAL/OURS tag gutter, and the height of one
+# caption line (want / style-ref / HTR-reads).
+from diffu.train import SAMPLE_CAPTION_H, SAMPLE_LABEL_W
 
-# Mirror _compose_sample_grid (src/diffu/train.py): the burned-in grid geometry. lbl_w is the left tag
-# gutter (REAL/OURS), cap_h the height of one caption line (want / style-ref / HTR-reads).
-_LBL_W = 88
-_CAP_H = 22
+_STEP_RE = re.compile(r"step_0*(\d+)\.png$")
 
 
 def _font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
@@ -69,9 +69,7 @@ def subsample(frames: list[tuple[int, Path]], max_frames: int) -> list[tuple[int
     return [frames[i] for i in idx]
 
 
-def crop_generated(
-    grid: Image.Image, rows: int, entry: int, has_style: bool, has_reads: bool
-) -> Image.Image:
+def crop_generated(grid: Image.Image, rows: int, entry: int, has_style: bool, has_reads: bool) -> Image.Image:
     """Crop just the OURS (generated) strip for sample ``entry`` out of a labelled grid PNG.
 
     Reconstructs ``_compose_sample_grid``'s layout: each entry block is ``style_h + cap_h + 2*line_h +
@@ -80,10 +78,10 @@ def crop_generated(
     REAL row, no tags.
     """
     w, h = grid.size
-    style_h = _CAP_H if has_style else 0
-    read_h = _CAP_H if has_reads else 0
+    style_h = SAMPLE_CAPTION_H if has_style else 0
+    read_h = SAMPLE_CAPTION_H if has_reads else 0
     pair_h = h // rows
-    line_h = (pair_h - style_h - _CAP_H - read_h) // 2
+    line_h = (pair_h - style_h - SAMPLE_CAPTION_H - read_h) // 2
     if line_h <= 0:
         raise SystemExit(
             f"bad crop geometry: --grid-rows {rows} gives line_h={line_h} on a {w}x{h} grid; "
@@ -91,8 +89,8 @@ def crop_generated(
         )
     if not 0 <= entry < rows:
         raise SystemExit(f"--entry {entry} out of range for --grid-rows {rows}")
-    y0 = entry * pair_h + style_h + _CAP_H + line_h  # skip style+want captions, then the REAL row
-    return grid.crop((_LBL_W, y0, w, y0 + line_h)).convert("RGB")
+    y0 = entry * pair_h + style_h + SAMPLE_CAPTION_H + line_h  # skip style+want captions, then the REAL row
+    return grid.crop((SAMPLE_LABEL_W, y0, w, y0 + line_h)).convert("RGB")
 
 
 def to_width(img: Image.Image, width: int) -> Image.Image:
@@ -122,12 +120,25 @@ def build_gif(frames: list[Image.Image], out: Path, fps: int) -> None:
 
 
 def build_mp4(frames: list[Image.Image], out: Path, fps: int) -> bool:
+    if shutil.which("ffmpeg") is None:  # not installed: subprocess.run would raise, not return non-zero
+        return False
     with tempfile.TemporaryDirectory() as tmp:
         for i, fr in enumerate(frames):
             fr.save(Path(tmp) / f"{i:05d}.png")
         cmd = [
-            "ffmpeg", "-y", "-framerate", str(fps), "-i", f"{tmp}/%05d.png",
-            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(out),
+            "ffmpeg",
+            "-y",
+            "-framerate",
+            str(fps),
+            "-i",
+            f"{tmp}/%05d.png",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            str(out),
         ]
         return subprocess.run(cmd, capture_output=True).returncode == 0
 
@@ -150,7 +161,7 @@ def main() -> None:
     ap.add_argument("--out-dir", default="galleries")
     ap.add_argument("--name", default=None, help="artifact prefix (default: parent run dir name)")
     ap.add_argument("--entry", type=int, default=0, help="which sample line to follow (0 = first)")
-    ap.add_argument("--grid-rows", type=int, default=4, help="entries per saved grid (save_samples n)")
+    ap.add_argument("--grid-rows", type=int, default=4, help="entries per saved grid (generate_samples n)")
     ap.add_argument("--no-style", action="store_true", help="grids have NO 'style ref wrote' caption")
     ap.add_argument("--no-reads", action="store_true", help="grids have NO 'HTR reads' caption")
     ap.add_argument("--max-frames", type=int, default=160, help="thin the GIF/MP4 to at most this many")

@@ -3,11 +3,11 @@
 trackio logs each step's metrics as a JSON blob in ``metrics.metrics``. This reads the
 loss / lr / val_loss trajectory for one run, prints a downsampled table + a summary (best
 val-loss step, final loss, where the LR schedule bottomed out), and maps the best-val step
-to the nearest checkpoint on disk so you know which one to load in diffu-studio.
+to the nearest checkpoint on disk (``--ckpt-root``) so you know which one to load in diffu-studio.
 
     uv run --no-sync python scripts/study_training.py                  # most recent run
     uv run --no-sync python scripts/study_training.py --run gentle-meadow-5
-    uv run --no-sync python scripts/study_training.py --ckpt-root data_out/run3
+    uv run --no-sync python scripts/study_training.py --ckpt-root runs/<run>
 """
 
 from __future__ import annotations
@@ -43,6 +43,8 @@ def _series(con: sqlite3.Connection, run: str) -> list[tuple[int, dict[str, floa
 
 
 def _nearest_checkpoint(ckpt_root: Path, step: int) -> Path | None:
+    """The ``step_<N>`` dir nearest ``step``: its EMA weights (what inference uses), else the raw
+    ``model.safetensors`` of a run saved before training wrote ``ema_model.safetensors``."""
     steps = []
     for path in ckpt_root.glob("step_*"):
         head, _, tail = path.name.partition("_")
@@ -50,14 +52,21 @@ def _nearest_checkpoint(ckpt_root: Path, step: int) -> Path | None:
             steps.append((int(tail), path))
     if not steps:
         return None
-    return min(steps, key=lambda s: abs(s[0] - step))[1] / "model.safetensors"
+    nearest = min(steps, key=lambda s: abs(s[0] - step))[1]
+    ema = nearest / "ema_model.safetensors"
+    return ema if ema.is_file() else nearest / "model.safetensors"
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Study a Diffu run from trackio's SQLite DB.")
     ap.add_argument("--db", type=Path, default=DEFAULT_DB)
     ap.add_argument("--run", default=None, help="run_name (default: most recently active)")
-    ap.add_argument("--ckpt-root", type=Path, default=Path("data_out/run3"))
+    ap.add_argument(
+        "--ckpt-root",
+        type=Path,
+        default=None,
+        help="the run's out dir, to map the best val step to a checkpoint",
+    )
     ap.add_argument("--every", type=int, default=0, help="print every Nth loss point (0 = auto ~30 rows)")
     args = ap.parse_args()
 
@@ -88,7 +97,7 @@ def main() -> None:
         print(
             f"\nval_loss: {len(vals)} pts | best {best_val:.4f} @ {best_step} | last {last_val:.4f} @ {last_step}"
         )
-        nearest = _nearest_checkpoint(args.ckpt_root, best_step)
+        nearest = _nearest_checkpoint(args.ckpt_root, best_step) if args.ckpt_root else None
         if nearest is not None:
             print(f"-> best checkpoint to load: {nearest}")
     else:

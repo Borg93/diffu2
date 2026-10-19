@@ -84,30 +84,25 @@ class DiffuRenderer:
             return
         import torch  # lazy
 
-        from diffu.config import Config
-        from diffu.generate import assert_conditioner_loaded, load_checkpoint, load_style
-        from diffu.model import Diffu
+        from diffu.generate import build_model, load_config, load_style
 
         if self.cfg is None:
-            # Default to the RELEASED model's arch (exp_sd35_128): glyph-LINE content + pooled-only style at
-            # 128px. A bare Config() (glyph_line=False, style_in_context=True) mismatches the shipping
-            # checkpoint and trips the conditioner guard before anything renders; pass cfg for other archs.
-            self.cfg = Config()
-            self.cfg.cond.glyph_line = True
-            self.cfg.cond.style_in_context = False
-            self.cfg.data.line_height = 128
+            # The checkpoint's own config.json (diffu-train saves it next to the weights). Without one,
+            # config.py's defaults ARE the released model's arch (exp_sd35_128: glyph-line content, pooled-only
+            # style, 128px); pass cfg for other archs.
+            self.cfg = load_config(self.ckpt or None)
         self.device = self.device or ("cuda" if torch.cuda.is_available() else "cpu")
-        model = Diffu(self.cfg).to(self.device).eval()
-        if self.ckpt:
-            load_checkpoint(model, self.ckpt)
-            assert_conditioner_loaded(model, self.ckpt)  # fail fast: a mismatched arch generates gibberish
-        if self.lora:  # Stage-3 LoRA adapter (dir or Hub id) on the base ckpt — BEFORE compile (peft mutates modules)
-            from diffu.lora import load_lora
-
-            load_lora(model, self.lora, scale=self.lora_scale)
-        if self.compile_model:
-            model.backbone.compile_blocks()  # a page = many lines → compile cold-start amortizes well
-        self._model = model
+        # build_model: weights + the conditioner guard (fail fast: a mismatched arch generates gibberish), the
+        # Stage-3 LoRA adapter (dir or Hub id) BEFORE compile (peft mutates modules), then the regional compile
+        # (a page = many lines → compile cold-start amortizes well)
+        self._model = build_model(
+            self.cfg,
+            self.ckpt,
+            device=self.device,
+            lora=self.lora,
+            lora_scale=self.lora_scale,
+            compile_backbone=self.compile_model,
+        )
         self._style = load_style(self.style_path).unsqueeze(0).to(self.device)  # [1,3,S,S]
 
     def render(self, text: str, height: int) -> np.ndarray:
@@ -116,14 +111,13 @@ class DiffuRenderer:
         from diffu.generate import generate_line
 
         self._ensure()
-        if self._model is None or self._style is None or self.cfg is None:
+        if self._model is None or self._style is None:
             raise RuntimeError("DiffuRenderer not initialised")  # _ensure guarantees these
         with torch.no_grad():
             pil = generate_line(
                 self._model,
                 text or " ",
                 self._style,
-                cfg=self.cfg,
                 num_steps=self.num_steps,
                 cfg_scale=self.cfg_scale,
             )
@@ -131,12 +125,12 @@ class DiffuRenderer:
 
     def measure_width(self, text: str, height: int) -> int:
         """Predicted width at ``height`` from the model's content-aware natural width (no denoise)."""
-        from diffu.generate import natural_width
+        from diffu.generate import auto_canvas_width
 
         self._ensure()
         if self._model is None or self.cfg is None:
             raise RuntimeError("DiffuRenderer not initialised")
-        w = natural_width(self._model.guidance_renderer, text or " ", self.cfg)
+        w = auto_canvas_width(self._model, text or " ")
         return int(w * height / self.cfg.data.line_height)
 
 
@@ -183,34 +177,29 @@ class BatchedDiffuRenderer:
             return
         import torch  # lazy
 
-        from diffu.config import Config
-        from diffu.generate import assert_conditioner_loaded, load_checkpoint
-        from diffu.model import Diffu
+        from diffu.generate import build_model, load_config
 
         if self.cfg is None:
-            # Default to the RELEASED model's arch (exp_sd35_128): glyph-LINE content + pooled-only style at
-            # 128px. A bare Config() (glyph_line=False, style_in_context=True) mismatches the shipping
-            # checkpoint and trips the conditioner guard before anything renders; pass cfg for other archs.
-            self.cfg = Config()
-            self.cfg.cond.glyph_line = True
-            self.cfg.cond.style_in_context = False
-            self.cfg.data.line_height = 128
+            # The checkpoint's own config.json (diffu-train saves it next to the weights). Without one,
+            # config.py's defaults ARE the released model's arch (exp_sd35_128: glyph-line content, pooled-only
+            # style, 128px); pass cfg for other archs.
+            self.cfg = load_config(self.ckpt or None)
         self.device = self.device or ("cuda" if torch.cuda.is_available() else "cpu")
-        torch.set_float32_matmul_precision("high")  # TF32 matmuls — free on Ampere+, no quality cost
         # bf16 end-to-end is the validated shipping config (docs/PERF_AUDIT.md §I) — CUDA only; a CPU
         # fallback (tests / no GPU) stays fp32 since bf16-on-CPU is unvalidated here and not the target path.
         torch_dtype = getattr(torch, self.dtype) if self.device.startswith("cuda") else torch.float32
-        model = Diffu(self.cfg).to(self.device, dtype=torch_dtype).eval()
-        if self.ckpt:
-            load_checkpoint(model, self.ckpt)
-            assert_conditioner_loaded(model, self.ckpt)  # fail fast: a mismatched arch generates gibberish
-        if self.lora:  # Stage-3 LoRA adapter (dir or Hub id) on the base ckpt — BEFORE compile (peft mutates modules)
-            from diffu.lora import load_lora
-
-            load_lora(model, self.lora, scale=self.lora_scale)
-        if self.compile_blocks and hasattr(model.backbone, "compile_blocks"):
-            model.backbone.compile_blocks()  # fuse per-block glue; amortised over the few bucket widths
-        self._model = model
+        # build_model: TF32 matmuls, weights + the conditioner guard (fail fast: a mismatched arch generates
+        # gibberish), the Stage-3 LoRA adapter (dir or Hub id) BEFORE compile (peft mutates modules), then the
+        # regional compile (fuses per-block glue; amortised over the few bucket widths)
+        self._model = build_model(
+            self.cfg,
+            self.ckpt,
+            device=self.device,
+            dtype=torch_dtype,
+            lora=self.lora,
+            lora_scale=self.lora_scale,
+            compile_backbone=self.compile_blocks,
+        )
 
     def _style(self, path: str) -> torch.Tensor:
         if path not in self._styles:
@@ -226,19 +215,19 @@ class BatchedDiffuRenderer:
     def measure_width(self, text: str, height: int) -> int:
         """Predicted rendered width of ``text`` at ``height`` from the model's content-aware natural width
         (no denoise) — lets the layout wrap by real width before the batched render."""
-        from diffu.generate import natural_width
+        from diffu.generate import auto_canvas_width
 
         self._ensure()
         if self._model is None or self.cfg is None:
             raise RuntimeError("renderer not initialised")  # _ensure guarantees these
-        w = natural_width(self._model.guidance_renderer, text or " ", self.cfg)
+        w = auto_canvas_width(self._model, text or " ")
         return int(w * height / self.cfg.data.line_height)
 
     def render_jobs(self, jobs: list[LineJob]) -> list[np.ndarray]:
         """Render each job to a BGRA ink raster, width-bucketed and batched. Output aligns with ``jobs``."""
         import torch  # lazy
 
-        from diffu.generate import ink_crop, natural_width, to_pil
+        from diffu.generate import auto_canvas_width, ink_crop, to_pil
 
         self._ensure()
         if self._model is None or self.cfg is None:
@@ -246,7 +235,7 @@ class BatchedDiffuRenderer:
         ds = self.cfg.vae.downscale_factor
         latent_h = self.cfg.data.line_height // ds
 
-        widths = [natural_width(self._model.guidance_renderer, j.text or " ", self.cfg) for j in jobs]
+        widths = [auto_canvas_width(self._model, j.text or " ") for j in jobs]
         inks: list[np.ndarray | None] = [None] * len(jobs)
         for width, chunk in bucket_render_batches(widths, bucket_px=self.bucket_px, max_batch=self.max_batch):
             latent_w = width // ds

@@ -11,6 +11,8 @@ Batches are plain dicts of column-lists (Ray Data's ``map_batches`` "numpy"/"pan
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from PIL.Image import Image
 
 
@@ -63,24 +65,16 @@ class DiffuActor:
                  width: int = 1024, bucket_px: int | None = None, compile_model: bool = True,
                  dtype: str = "bfloat16", lora: str | None = None, lora_scale: float = 1.0) -> None:  # fmt: skip
         import torch
-        from safetensors import safe_open
 
-        from diffu.config import Config
-        from diffu.generate import load_checkpoint
-        from diffu.model import Diffu
+        from diffu.generate import build_model, load_config
 
-        cfg = Config()
-        cfg.cond.glyph_line = True
-        cfg.cond.style_in_context = False
-        cfg.data.line_height = line_height
-        with safe_open(ckpt, framework="pt") as h:
-            cfg.backbone.qk_norm = "rms_norm" if any(".norm_q." in k for k in h.keys()) else None  # noqa: SIM118
-        cfg.cond.use_unifont = cfg.backbone.qk_norm is not None
+        cfg = load_config(ckpt)  # the config.json diffu-train saves next to the weights
+        if not (Path(ckpt).parent / "config.json").is_file():  # an older run: no saved config
+            cfg.data.line_height = line_height
 
-        torch.set_float32_matmul_precision("high")
         self._steps, self._scale = num_steps, cfg_scale
-        self._cfg = cfg  # kept on self: __call__ needs it per-batch for natural_width (content-aware widths)
-        self._latent_h = line_height // cfg.vae.downscale_factor
+        self._cfg = cfg  # kept on self: __call__ needs its VAE geometry per batch
+        self._latent_h = cfg.data.line_height // cfg.vae.downscale_factor
         # ``bucket_px=None`` (the default, and the only mode validated on THIS checkpoint) renders every
         # line on the fixed ``width`` canvas — the glyph-line conditioning aligns each text's glyph strip
         # against the BATCH-max strip width, and the released model was trained only on batches whose
@@ -94,25 +88,23 @@ class DiffuActor:
         self._bucket_px = bucket_px
         self._device = "cuda"  # single knob the unit tests stub to "cpu" (actors run off-cluster there)
         self._dtype = getattr(torch, dtype)
-        self._model = Diffu(cfg).to(self._device, dtype=self._dtype).eval()
-        load_checkpoint(self._model, ckpt)
-        if lora:  # Stage-3 LoRA adapter (dir or Hub id) on the base ckpt — BEFORE compile (peft mutates the modules)
-            from diffu.lora import load_lora
-
-            load_lora(self._model, lora, scale=lora_scale)
-        if compile_model:
-            self._model.backbone.compile_blocks()  # regional compile — see Backbone.compile_blocks
+        # build_model: TF32 matmuls, weights + the conditioner guard, the Stage-3 LoRA adapter (dir or Hub id)
+        # BEFORE compile (peft mutates the modules), then the regional compile — see Backbone.compile_blocks
+        self._model = build_model(
+            cfg, ckpt, device=self._device, dtype=self._dtype, lora=lora, lora_scale=lora_scale,
+            compile_backbone=compile_model,
+        )  # fmt: skip
 
     def __call__(self, batch: dict[str, list]) -> dict[str, list]:
         import torch
 
-        from diffu.generate import load_style, natural_width, to_pil
+        from diffu.generate import auto_canvas_width, load_style, to_pil
 
         texts, styles = list(batch["text"]), list(batch["style_path"])
         if self._bucket_px is None:  # fixed canvas — the validated mode; see the ctor comment
             plan = [(self._max_width, list(range(len(texts))))]
         else:
-            widths = [natural_width(self._model.guidance_renderer, t or " ", self._cfg) for t in texts]
+            widths = [auto_canvas_width(self._model, t or " ") for t in texts]
             plan = bucket_plan(widths, bucket_px=self._bucket_px, max_width=self._max_width)
         pngs: list[bytes | None] = [None] * len(texts)
         for bucket_w, idxs in plan:

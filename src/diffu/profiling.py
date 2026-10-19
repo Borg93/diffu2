@@ -1,8 +1,7 @@
 """Standing profiling instrumentation for Diffu (Tensor-Core utilization + DCGM telemetry).
 
-Importable from both the standalone ``scripts/profile_tensorcore.py`` and ``train.py``'s
-``--profile-steps`` flag so the profiling logic lives in exactly one place. The torch.profiler
-method (per the HF "Profiling in PyTorch" posts) classifies each CUDA kernel as Tensor-Core-eligible
+Behind ``diffu-train --profile-steps`` (the trace it writes also feeds the ``profile-model`` skill). The
+torch.profiler method (per the HF "Profiling in PyTorch" posts) classifies each CUDA kernel as Tensor-Core-eligible
 (GEMM/conv) or memory-bound, then reports the share of GPU time spent doing Tensor-Core math.
 
 Reading the output:
@@ -83,25 +82,6 @@ class ProfileReport(BaseModel):
         return "\n".join(lines)
 
 
-def _self_cuda_us(evt: object) -> float:
-    """Self GPU time (microseconds) of a profiler event across torch versions.
-
-    torch renamed ``self_cuda_time_total`` to ``self_device_time_total``; this reads whichever is
-    present so the module works on both old and new torch.
-
-    Args:
-        evt: A ``torch.autograd.profiler_util.FunctionEventAvg`` (or similar) event.
-
-    Returns:
-        Self GPU time in microseconds, or 0.0 if neither attribute is set.
-    """
-    for attr in ("self_device_time_total", "self_cuda_time_total"):
-        val = getattr(evt, attr, 0)
-        if val:
-            return float(val)
-    return 0.0
-
-
 def _build_report(prof: TorchProfile) -> ProfileReport:
     """Assemble a :class:`ProfileReport` from a finished profiler context.
 
@@ -111,9 +91,18 @@ def _build_report(prof: TorchProfile) -> ProfileReport:
     Returns:
         The populated report (table text, Tensor-Core percentage, total time, sorted kernels).
     """
-    table_text = prof.key_averages().table(sort_by="cuda_time_total", row_limit=30)
-    rows = [(e.key, _self_cuda_us(e)) for e in prof.key_averages()]
-    rows = [(name, t) for name, t in rows if t > 0]
+    from torch.autograd import DeviceType
+
+    events = prof.key_averages()
+    table_text = events.table(sort_by="device_time_total", row_limit=30)
+    # GPU kernels only — the rule torch's own table total uses: the aten op that launched a kernel carries
+    # that kernel's time as its own self device time, and user annotations (ProfilerStep#) span them all, so
+    # summing every row would count each kernel two or more times.
+    rows = [
+        (e.key, float(e.self_device_time_total))
+        for e in events
+        if e.device_type == DeviceType.CUDA and not e.is_user_annotation and e.self_device_time_total > 0
+    ]
     total_us = sum(t for _, t in rows)
     kernels = [
         KernelRow(

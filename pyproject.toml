@@ -36,7 +36,7 @@ hf = [
 ]
 track = [
     "nvidia-ml-py>=13.610.43",
-    "trackio",          # opt-in live training dashboard (diffu-train --track); lazy-imported
+    "trackio>=0.42",    # opt-in live training dashboard (diffu-train --track); lazy-imported
 ]
 viz = [
     "torchview",        # static shape-annotated model graphs (needs graphviz `dot` on PATH)
@@ -52,7 +52,6 @@ diffu-vae-gate = "diffu.vae_gate:main"     # Stage-0: does the VAE preserve Ã¥ Ã
 diffu-generate = "diffu.generate:main"     # generate line images from text + a style reference
 diffu-eval = "diffu.eval:main"             # HTR Character Error Rate over a line manifest
 diffu-htr-train = "diffu.htr_train:main"   # fine-tune a TrOCR recognizer (the CER A/B training half)
-diffu-cache-latents = "diffu.data.latent_cache:main"  # pre-encode lines to a VAE latent cache (diffu-train --cache-latents)
 diffu-synth = "diffu.synth:main"           # bulk-generate a synthetic line manifest from a checkpoint (HTR A/B)
 # The interactive Gradio demo moved to its own workspace member: `uv run diffu-studio` (packages/diffu-studio).
 

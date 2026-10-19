@@ -1,5 +1,5 @@
 """Parse PAGE-XML and ALTO-XML into per-line records. Namespace-agnostic (matches local tag names),
-so it works across PAGE/ALTO versions. Pure stdlib — no torch needed.
+so it works across PAGE/ALTO versions. No torch needed.
 """
 
 from __future__ import annotations
@@ -54,8 +54,7 @@ def _page_line_text(line: ET.Element) -> str:
     return " ".join(words)
 
 
-def parse_page_xml(path: str) -> list[LineRecord]:
-    root = ET.parse(path).getroot()
+def _page_records(root: ET.Element, path: str) -> list[LineRecord]:
     records: list[LineRecord] = []
     for page in _iter_local(root, "Page"):
         img = page.attrib.get("imageFilename", "")
@@ -74,8 +73,7 @@ def parse_page_xml(path: str) -> list[LineRecord]:
     return records
 
 
-def parse_alto_xml(path: str) -> list[LineRecord]:
-    root = ET.parse(path).getroot()
+def _alto_records(root: ET.Element, path: str) -> list[LineRecord]:
     fname = next((e.text for e in root.iter() if _local(e.tag) == "fileName" and e.text), "")
     src = os.path.splitext(os.path.basename(fname or path))[0]
     records: list[LineRecord] = []
@@ -93,8 +91,8 @@ def parse_alto_xml(path: str) -> list[LineRecord]:
 
 
 def parse_file(path: str) -> list[LineRecord]:
-    """Auto-detect PAGE vs ALTO from the root tag."""
+    """Line records of a PAGE or ALTO file (auto-detected from the root tag; the file is parsed once)."""
     root = ET.parse(path).getroot()
     if _local(root.tag).lower() == "alto":
-        return parse_alto_xml(path)
-    return parse_page_xml(path)  # PcGts / PAGE
+        return _alto_records(root, path)
+    return _page_records(root, path)  # PcGts / PAGE

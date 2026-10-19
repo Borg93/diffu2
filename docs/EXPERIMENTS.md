@@ -17,6 +17,13 @@ uv run trackio show --project diffu       # generator runs
 uv run trackio show --project diffu-htr   # downstream TrOCR A/B
 ```
 
+> **Note (2026-10-19):** a record of past runs, kept as written. Since then: `Gabriel/diffu_sd35_128` is no
+> longer on the Hub; `--glyph-line` and `--no-style-tokens` were removed (the glyph-line encoder and pooled-only
+> style are now the only options — drop those flags from the commands below); the ink-focal loss is now on by
+> default; the latent cache was removed; the experiment drivers (`scripts/diag_*`, `scripts/exp_*`) are in git
+> history at `c53d30e`. IAM with real writer ids is now built by `scripts/prepare_iam_writers.py`
+> (`TRAINING.md` §3).
+
 A caveat runs through everything below and is worth stating once up front: the generator's `val_loss` is
 **flow-matching MSE, not legibility**. It measures how well the model predicts the rectified-flow velocity
 field, not whether a human or a recognizer can read the output. Where we have a legibility signal we log
@@ -26,7 +33,8 @@ field, not whether a human or a recognizer can read the output. Where we have a 
 
 Three arms adapt the released 128px Swedish base (`exp_sd35_128/step_120000`) onto the English
 `Teklia/IAM-line` dataset, to compare the *step and parameter efficiency* of three adaptation strategies.
-All three share the base architecture flags (`--glyph-line --no-style-tokens`), batch 8, `line_height=128`,
+All three share the base architecture flags (`--glyph-line --no-style-tokens`; both removed 2026-10-19, their
+behaviour is now the only option), batch 8, `line_height=128`,
 single GPU, warmup 2000 steps + cosine decay to ~1e-6.
 
 | Arm | Key config | Final val_loss | Min-ever val_loss (step) | Last-5-mean val_loss | Throughput / wall | Takeaway |
@@ -125,7 +133,7 @@ turned out to be a **rendering bug**, and it took looking at the actual synth im
 Inspected at full resolution, the `iam_lora` synth lines were **garbled** — the model fell into
 **character-looping / stuttering**, repeating strokes instead of committing to the next glyph
 (`"Sentence Database"` → `Semewtentenacccee DDatatatababasase`). Chasing it down through the `scripts/diag_*`
-sweeps:
+sweeps (removed; in git history at `c53d30e`):
 
 1. A **CFG sweep** (`diag_cfg_sweep.py`) ruled out sampling — the looping is present at *every* guidance
    scale (1.0–5.0).
@@ -143,7 +151,8 @@ CER-vs-density sweep: 30 px/char → 0.41 CER, 15 → 0.037). Worse, **`synth.py
 using the raw ~53 px/char width — the worst case.
 
 **The fix (verified):** `_WIDTH_BIAS 0.55 → 0.45` (the empirically clean ~24 px/char at 128px, via
-`diag_bias_pick.py`) and make `synth.py` use the biased width + `ink_crop` like the deploy path. Regenerated
+`diag_bias_pick.py`, removed; in git history at `c53d30e`) and make `synth.py` use the biased width + `ink_crop`
+like the deploy path. Regenerated
 synth is now clean and legible (`Any mental confusion can cause this and`, `She went back to Philip. But`).
 
 ### Two bugs, then the honest verdict
@@ -190,7 +199,8 @@ lucky-low single draw (true 5-seed mean **9.95%**). When we redo the sweep **ste
 When real data is scarce, clean synth cuts CER by ~**40% relative**, and here *more* synth keeps helping
 (dose-response runs opposite to the data-rich case). **This is the headline: diffu synth helps most exactly
 where you have little labeled data** — Swedish archives, new hands, low-resource scripts.
-(Reproduce: `scripts/exp_htr_ratio_sweep.sh`, `exp_htr_lowres.sh`; arms in trackio `diffu-htr`.)
+(Reproduce: `scripts/exp_htr_ratio_sweep.sh`, `exp_htr_lowres.sh` — removed; in git history at `c53d30e`; arms
+in trackio `diffu-htr`.)
 
 ### Is the synth broken? No — it's label-clean but off-manifold
 
@@ -209,8 +219,8 @@ answered by the settle below.
 
 Removing both audit confounds at once — `--max-steps 1250` (identical optimizer budget + LR decay) × **5
 seeds** — flips the data-rich story entirely. CER on 1000 real IAM test lines, mean ± sd over seeds 1–5, with
-the **paired** (per-seed) delta vs real-only (`scripts/exp_htr_harmonize_sweep.sh` + `exp_htr_harm_hiratio.sh`
-→ `results_harmonize.txt`, `results_harm_hiratio.txt`):
+the **paired** (per-seed) delta vs real-only (`scripts/exp_htr_harmonize_sweep.sh` + `exp_htr_harm_hiratio.sh`,
+removed; in git history at `c53d30e` → `results_harmonize.txt`, `results_harm_hiratio.txt`):
 
 | arm (step-matched) | CER (5 seeds) | paired Δ vs real-only | seeds better |
 |---|:---:|:---:|:---:|
@@ -234,7 +244,8 @@ Three conclusions, each **overturning an earlier claim**:
    it. The covariate-shift hypothesis is falsified for this task — no need to harmonize.
 
 **Where does "more synth" peak?** Pushing the ratio further (fresh disjoint fakes, pooled to 14k; step-matched
-1250 × 5 seeds; `exp_htr_moreratio.sh` → `results_moreratio.txt`) finds the turnover at **~2:1**:
+1250 × 5 seeds; `exp_htr_moreratio.sh`, removed; in git history at `c53d30e` → `results_moreratio.txt`) finds
+the turnover at **~2:1**:
 
 | ratio | synth | CER (5 seeds) | paired Δ vs real-only |
 |---|---|:---:|:---:|
@@ -274,7 +285,8 @@ exposure), **not** from a base that already owns the domain — synth-heavy trai
 expert init (textbook catastrophic forgetting; iso-step, so it's not a budget artifact). For a strong base
 with ample real data the upside is structurally small; **the decisive win is the low-resource regime, now
 measured (−40% at 200 real, above)** — diffu's actual use case.
-(Drivers: `scripts/exp_htr_curriculum.sh`, `exp_htr_curriculum_lora.sh`, `exp_htr_lowres.sh`.)
+(Drivers: `scripts/exp_htr_curriculum.sh`, `exp_htr_curriculum_lora.sh`, `exp_htr_lowres.sh` — removed; in git
+history at `c53d30e`.)
 
 ### Caveats (still honest about scope)
 
@@ -365,13 +377,19 @@ Median throughput across the 24 runs spans ~17–145 img/s. A few honest observa
 - **Config caveat:** every run that *logs* `compile`/`grad_checkpoint` (22 of 24) has `compile=False` and
   `grad_checkpoint=True`; `exp_sd35_128` and `exp_sd35_fast` use a different, near-empty config schema and
   log no system metrics, so their throughput cannot be attributed from trackio. The known `torch.compile`
-  (~1.9×) and latent-cache (~1.36×) wins live in `docs/PERF_AUDIT.md`, not in these logged configs.
+  (~1.9×) and latent-cache (~1.36×) wins live in `docs/PERF_AUDIT.md`, not in these logged configs. (The latent
+  cache was removed on 2026-10-19.)
 
 ## Reproduce
 
+> **Note (2026-10-19):** the drivers below were removed; recover them from git history, e.g.
+> `git show c53d30e:scripts/exp_iam.sh`. Drop `--glyph-line --no-style-tokens` from their commands (both flags
+> were removed; their behaviour is now the only option) and add `--no-ink-focal` (these runs trained without
+> the ink-focal loss, which is now on by default). `exp_sd35_128/step_120000` is no longer available.
+
 ### IAM adaptation (3 arms, project `diffu`)
 
-`scripts/exp_iam.sh` runs all three arms against the released base
+`scripts/exp_iam.sh` (removed; in git history at `c53d30e`) runs all three arms against the released base
 (`checkpoints/exp_sd35_128/step_120000/model.safetensors`), logging to trackio project `diffu` under run
 names `iam_lora` / `iam_full` / `iam_scratch`:
 
@@ -391,7 +409,8 @@ init, REPA on).
 
 ### Downstream HTR A/B (project `diffu-htr`)
 
-Two scripts, run in order. The first materializes real IAM, generates synthetic lines from the diffu LoRA
+Two scripts (`scripts/exp_htr_ab.sh`, `scripts/exp_htr_ab_train.sh` — removed; in git history at `c53d30e`),
+run in order. The first materializes real IAM, generates synthetic lines from the diffu LoRA
 adapter, and builds the mixed manifest; the second fine-tunes the two TrOCR recognizers in parallel and
 evaluates both on held-out real test:
 

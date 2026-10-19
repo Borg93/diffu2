@@ -1,20 +1,16 @@
 """Training loop + entrypoint for Diffu (diffusers-first, Stage-1 flow matching).
 
-Modern optimizations baked in: bf16 mixed precision (accelerate), gradient checkpointing
-(diffusers), and EMA weights (diffusers EMAModel). torch.compile optional (bucket line widths
-to limit recompiles). FlashAttention comes for free via SD3's SDPA attention. Single- and
-multi-GPU via `accelerate launch` (see the Makefile `train-1gpu` / `train-2gpu` targets).
+Modern optimizations baked in: bf16 mixed precision (accelerate), EMA weights (diffusers EMAModel),
+optional gradient checkpointing (diffusers), optional regional torch.compile (bucket line widths to bound
+recompiles), attention through diffusers' kernel backends. Single- and multi-GPU via `accelerate launch`
+(see the Makefile `train-*` targets).
 
-Stages: 0) VAE decoder fine-tune + recon-CER gate (run separately via `diffu-vae-gate`),
-1) synthetic pretrain, 2) real Swedish adaptation, 3) per-collection LoRA.
+Every checkpoint dir holds ``config.json`` — the model config every loader reads back — and the weights:
+``step_N/`` the full resumable accelerate state plus ``ema_model.safetensors`` (the EMA weights, what
+inference uses); ``final/`` the EMA-applied ``model.safetensors`` export.
 
-Run (prefer the Makefile, which pins CUDA_VISIBLE_DEVICES so the busy GPU 2 is never touched):
-    make train-1gpu DATA_DIR=data_out          # GPU 0 only
-    make train-2gpu DATA_DIR=data_out          # GPU 0 + 1
-
-Equivalent raw command (2 GPUs):
-    CUDA_VISIBLE_DEVICES=0,1 accelerate launch --multi_gpu --num_processes 2 --mixed_precision bf16 \
-        -m diffu.train --data-dir data_out --steps 100000 --batch-size 8
+    make train-1gpu DATA_DIR=data_out
+    accelerate launch --mixed_precision bf16 -m diffu.train --data-dir data_out --steps 100000 --batch-size 8
 """
 
 from __future__ import annotations
@@ -22,43 +18,55 @@ from __future__ import annotations
 import argparse
 import math
 import os
+from collections.abc import Generator
+from contextlib import contextmanager
 from functools import partial
 from time import perf_counter
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import torch
-from accelerate import Accelerator
+from accelerate import Accelerator, PartialState
 from accelerate.utils import DataLoaderConfiguration, DistributedDataParallelKwargs, set_seed
 from diffusers.training_utils import EMAModel
+from safetensors.torch import save_file
 from torch.utils.data import DataLoader
 
-from .config import Config
+from .config import Config, add_arch_args, apply_arch_args
 from .data.collate import collate_lines
 from .data.dataset import HandwritingLineDataset, load_manifest
+from .data.sampler import WidthBucketBatchSampler, line_widths
+from .generate import load_checkpoint, to_pil
 from .model import Diffu
+from .model.metrics import cer
+from .recognizer import load_recognizer, read_lines
 
 if TYPE_CHECKING:
     from PIL import ImageFont
     from PIL.Image import Image as PILImage
 
-    from .data.latent_cache import LatentCache
+_VAL_BATCHES = 8  # held-out batches averaged per val_loss (damps the per-batch timestep noise)
+_HF_VAL_ROWS = 64  # rows of an --hf-dataset val split kept for the val loss / sample sheet
+# classic-CFG scale of the guided gen_CER (cfg=5 measured best vs 3; docs/PERF_AUDIT.md §0c)
+_GEN_CER_CFG_SCALE = 5.0
+# The sample-sheet geometry: the REAL/OURS tag gutter and one caption line's height
+# (scripts/make_training_animation.py crops the sheets by these).
+SAMPLE_LABEL_W, SAMPLE_CAPTION_H = 88, 22
+# Frozen pretrained submodules: rebuilt from their Hub weights by Diffu(cfg), so the exported weights skip them.
+_PRETRAINED_PREFIXES = ("vae.", "style.enc.")
 
 
 def trainable_parameters(model: Diffu) -> list[torch.nn.Parameter]:
     """Parameters trained in Stage 1 (flow matching).
 
-    Trained: SD3 backbone, DINOv3 style resampler (``style_mode="dino"`` only), Unifont content encoder.
-    Frozen in Stage 1: the whole VAE — the Stage-1 forward never decodes, so it cannot receive a
-    gradient here (and including it would trip DDP's unused-parameter check on multi-GPU). VAE
-    decoder fine-tuning is Stage 0 (`diffu-vae-gate`).
+    Trained: SD3 backbone, DINOv3 style resampler + pool (``style_mode="dino"`` only), the glyph-line content
+    encoder, the fill-ratio MLP, the REPA head. Frozen: the whole VAE (the Stage-1 forward never decodes) and
+    the DINOv3 encoder.
     """
     params = list(model.backbone.parameters())
-    if model.style is not None and not model.canvas:  # canvas mode: DINO is only REPA's frozen target
+    if model.style is not None and model.style.resampler is not None and model.style.pool is not None:
         params += list(model.style.resampler.parameters())
         params += list(model.style.pool.parameters())  # learned-query style attention-pool
     params += list(model.glyph_content.parameters())
-    if model.glyph_latent is not None:  # glyph_concat conv "glyph block"
-        params += list(model.glyph_latent.parameters())
     if model.fill_ratio_mlp is not None:  # fill-ratio AdaLN conditioning MLP (EMA shadows it too)
         params += list(model.fill_ratio_mlp.parameters())
     if model.repa_proj is not None:  # REPA alignment head (when cfg.aux.repa)
@@ -66,16 +74,17 @@ def trainable_parameters(model: Diffu) -> list[torch.nn.Parameter]:
     return [p for p in params if p.requires_grad]
 
 
-_REF_BATCH_KEYS = ("ref_images", "ref_latents", "ref_texts", "ref_widths")
+_OPTIONAL_BATCH_KEYS = ("style_pixel_values", "ref_images", "ref_texts", "ref_widths")
 
 
 def model_inputs(batch: dict[str, Any], device: torch.device | None = None) -> dict[str, Any]:
-    """The optional model kwargs a batch carries: ``text_widths`` (glyph_pad) + the canvas reference.
+    """The optional model kwargs a batch carries: ``text_widths`` (glyph_pad), the DINO style crop (dino
+    mode) or the canvas reference (canvas mode).
 
     Moves tensors to ``device`` when given (the val/sample batches are not accelerate-prepared).
     """
     out: dict[str, Any] = {"text_widths": batch.get("widths")}
-    for key in _REF_BATCH_KEYS:
+    for key in _OPTIONAL_BATCH_KEYS:
         value = batch.get(key)
         if value is not None:
             out[key] = value.to(device) if device is not None and isinstance(value, torch.Tensor) else value
@@ -83,25 +92,20 @@ def model_inputs(batch: dict[str, Any], device: torch.device | None = None) -> d
 
 
 @torch.no_grad()
-def evaluate_val_loss(model: Diffu, val_loader: DataLoader, device: torch.device, max_batches: int) -> float:
-    """Mean flow loss on held-out (volume-disjoint) lines.
+def evaluate_val_loss(model: Diffu, val_loader: DataLoader, device: torch.device) -> float:
+    """Mean flow loss on held-out (writer-disjoint) lines.
 
-    The overfitting signal: this rising while train loss keeps falling = the model is memorizing
-    the training volumes instead of learning generalizable handwriting. Averaged over several
-    batches to damp the per-batch timestep noise so the trend is readable.
+    The overfitting signal: this rising while train loss keeps falling = the model is memorizing the
+    training writers instead of learning generalizable handwriting. Averaged over several batches to damp
+    the per-batch timestep noise so the trend is readable.
     """
     model.eval()
     total, seen = 0.0, 0
     try:
         for i, batch in enumerate(val_loader):
-            if i >= max_batches:
+            if i >= _VAL_BATCHES:
                 break
-            loss = model(
-                batch["images"].to(device),
-                batch["texts"],
-                batch["style_pixel_values"].to(device),
-                **model_inputs(batch, device),
-            )
+            loss = model(batch["images"].to(device), batch["texts"], **model_inputs(batch, device))
             total += loss.item()
             seen += 1
     finally:
@@ -110,8 +114,8 @@ def evaluate_val_loss(model: Diffu, val_loader: DataLoader, device: torch.device
 
 
 def _label_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    """A label font that can render Swedish glyphs (å ä ö). DejaVu if present, else PIL's default
-    (the bitmap default mangles non-ASCII, but a missing font must never crash a training run)."""
+    """A label font that can render Swedish glyphs (å ä ö): DejaVu if present, else PIL's scalable default
+    (a missing font must never crash a training run)."""
     from PIL import ImageFont
 
     for path in (
@@ -122,10 +126,7 @@ def _label_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
             return ImageFont.truetype(path, size)
         except OSError:
             continue
-    try:
-        return ImageFont.load_default(size=size)
-    except TypeError:
-        return ImageFont.load_default()
+    return ImageFont.load_default(size=size)
 
 
 def _compose_sample_grid(
@@ -146,7 +147,7 @@ def _compose_sample_grid(
     the recognizer thinks our line says (the legibility gap) at a glance."""
     from PIL import Image, ImageDraw
 
-    lbl_w, cap_h = 88, 22
+    lbl_w, cap_h = SAMPLE_LABEL_W, SAMPLE_CAPTION_H
     read_h = cap_h if reads is not None else 0
     style_h = cap_h if style_texts is not None else 0
     pair_h = style_h + cap_h + 2 * line_h + read_h
@@ -176,42 +177,38 @@ def _compose_sample_grid(
     return canvas
 
 
+class Samples(NamedTuple):
+    """Generated held-out lines: the requested texts, what each style reference wrote, the real targets, the
+    unguided generations, the CFG-guided ones (when measured) and the canvas width."""
+
+    texts: list[str]
+    style_texts: list[str]
+    reals: list[PILImage]
+    gens: list[PILImage]
+    gens_cfg: list[PILImage] | None
+    width: int
+
+
 @torch.no_grad()
-def save_samples(
-    model: Diffu,
-    batch: dict[str, Any],
-    cfg: Config,
-    device: torch.device,
-    out_dir: str,
-    step: int,
-    n: int = 4,
-    cfg_eval_scale: float = 0.0,
-) -> tuple[str, list[PILImage], list[PILImage] | None, list[str], list[PILImage], int, list[str]]:
-    """Generate n held-out lines and save a labeled ``[REAL / OURS]`` strip to eyeball progress.
+def generate_samples(
+    model: Diffu, batch: dict[str, Any], cfg: Config, device: torch.device, n: int = 4, cfg_scale: float = 0.0
+) -> Samples:
+    """Generate ``n`` held-out lines of a val batch.
 
-    Each pair is captioned with the requested text; the real target (green REAL tag) sits above the
-    model's attempt (red OURS tag) — so legibility and any overflow are visible at a glance in the
-    trackio media tab without spinning up the app or decoding a 17 GB checkpoint.
-
-    Returns ``(path, gen_pils, gen_cfg_pils, texts, real_pils, width)``. ``gen_pils`` is the raw
-    (unguided) generation — also what the visual grid shows. If ``cfg_eval_scale > 0`` a SECOND,
-    CFG-guided generation is run and returned as ``gen_cfg_pils`` (else ``None``); the caller reads
-    both back to log gen_CER with AND without guidance, so we can see whether CFG actually helps.
-    ``real_pils`` + ``width`` are returned so the caller can re-draw the grid with the reads burned in.
+    ``gens`` are the raw (unguided) generations — what the sample sheet shows: high guidance over-saturates
+    an undertrained model to pure white, hiding the real (on-manifold) generation. With ``cfg_scale > 0`` a
+    second, CFG-guided generation of the same texts/styles is returned as ``gens_cfg`` (else ``None``) so the
+    caller can report gen_CER with AND without guidance (does CFG actually help legibility here?).
     """
-    from .generate import to_pil
-
     n = min(n, len(batch["texts"]))
-    texts = batch["texts"][:n]
-    style_texts = batch.get("style_texts", [""] * len(batch["texts"]))[:n]
-    style = batch["style_pixel_values"][:n].to(device)
+    texts = list(batch["texts"][:n])
+    style_texts = list(batch.get("style_texts", [""] * len(batch["texts"]))[:n])
     real = batch["images"][:n]
     w = real.shape[-1]
     latent_hw = (cfg.data.line_height // cfg.vae.downscale_factor, w // cfg.vae.downscale_factor)
-    # glyph_pad widths + the canvas reference, sliced to the n samples (cached ref latents are train-only).
-    gen_kwargs = {
-        k: v[:n] for k, v in model_inputs(batch, device).items() if v is not None and k != "ref_latents"
-    }
+    # glyph_pad widths + the style input, sliced to the n samples
+    gen_kwargs = {k: v[:n] for k, v in model_inputs(batch, device).items() if v is not None}
+    style = gen_kwargs.pop("style_pixel_values", None)  # dino mode; canvas models read the ref_* keys
     if "ref_texts" in gen_kwargs:  # caption the sheet with what the in-canvas reference actually says
         style_texts = list(gen_kwargs["ref_texts"])
 
@@ -220,46 +217,19 @@ def save_samples(
     # skip the CFG cond/text-dropout (it gates on `self.training`) — quietly breaking CFG training.
     model.eval()
     try:
-        # The VISUAL grid is unguided: high guidance over-saturates an undertrained model's output to
-        # pure white, hiding the real (on-manifold) generation. Raw output shows true progress.
-        gen = model.generate(texts, style, latent_hw=latent_hw, num_steps=cfg.flow.sample_steps, **gen_kwargs)
-        gen_pils = [to_pil(gen[i]) for i in range(n)]
-        # The CFG variant is for MEASUREMENT only (gen_CER with guidance), not the grid — same texts/style
-        # so the two CER numbers are directly comparable at this step.
-        gen_cfg_pils: list[PILImage] | None = None
-        if cfg_eval_scale > 0.0:
-            gen_cfg = model.generate(
-                texts,
-                style,
-                latent_hw=latent_hw,
-                num_steps=cfg.flow.sample_steps,
-                cfg_scale=cfg_eval_scale,
-                **gen_kwargs,
-            )
-            gen_cfg_pils = [to_pil(gen_cfg[i]) for i in range(n)]
+        gen = model.generate(texts, style, latent_hw=latent_hw, **gen_kwargs)
+        gens_cfg = None
+        if cfg_scale > 0.0:
+            gen_cfg = model.generate(texts, style, latent_hw=latent_hw, cfg_scale=cfg_scale, **gen_kwargs)
+            gens_cfg = [to_pil(img) for img in gen_cfg]
     finally:
         model.train()
-
-    real_pils = [to_pil(real[i]) for i in range(n)]
-    canvas = _compose_sample_grid(
-        real_pils, gen_pils, list(texts), w, cfg.data.line_height, style_texts=list(style_texts)
+    return Samples(
+        texts, style_texts, [to_pil(img) for img in real], [to_pil(img) for img in gen], gens_cfg, w
     )
-    sample_dir = os.path.join(out_dir, "samples")
-    os.makedirs(sample_dir, exist_ok=True)
-    path = os.path.join(sample_dir, f"step_{step:06d}.png")
-    canvas.save(path)
-    return path, gen_pils, gen_cfg_pils, list(texts), real_pils, w, list(style_texts)
 
 
-def _setup_model(
-    cfg: Config,
-    *,
-    grad_checkpoint: bool,
-    compile_model: bool,
-    attention_backend: str | None = None,
-    compile_mode: str | None = None,
-    compile_vae: bool = False,
-) -> Diffu:
+def _setup_model(cfg: Config, *, grad_checkpoint: bool, attention_backend: str | None = None) -> Diffu:
     """Build the model and freeze everything Stage-1 flow matching never touches.
 
     The VAE (encode is no_grad, decode unused) is frozen so DDP's reducer doesn't wait on gradients
@@ -267,13 +237,9 @@ def _setup_model(
     """
     model = Diffu(cfg)
     if grad_checkpoint:
-        model.backbone.enable_optimizations()  # gradient checkpointing (off = ~20% faster on big VRAM)
+        model.backbone.enable_gradient_checkpointing()  # off = ~20% faster on big VRAM
     if attention_backend:
         model.backbone.set_attention_backend(attention_backend)  # before compile: it is traced into the graph
-    if compile_model:
-        model.backbone.compile_blocks(compile_mode)  # regional torch.compile (see Backbone.compile_blocks)
-    if compile_vae:  # the live encode (no --cache-latents) is ~13-23% of a step (docs/PERF_AUDIT.md)
-        model.vae.compile_codec(compile_mode)
     model.vae.requires_grad_(False)
     return model
 
@@ -281,16 +247,17 @@ def _setup_model(
 def _init_tracker(
     track: bool, is_main: bool, config: dict[str, Any], track_space: str | None, run_name: str | None = None
 ) -> Any:
-    """Initialise trackio on the main process (live dashboard + NaN alerts); return None otherwise.
+    """Initialise trackio on the main process (live dashboard + alerts); return None otherwise.
 
     ``run_name`` (the out-dir basename) is passed so parallel runs get distinct dashboard names —
-    trackio auto-names collide when several runs launch at once with the same seed.
+    trackio auto-names collide when several runs launch at once with the same seed. A ``track_space`` the
+    run creates is PRIVATE: the sample sheets show training lines, and an auto-created Space is public.
     """
     if not (track and is_main):
         return None
     import trackio
 
-    trackio.init(project="diffu", name=run_name, config=config, space_id=track_space)
+    trackio.init(project="diffu", name=run_name, config=config, space_id=track_space, private=True)
     return trackio
 
 
@@ -301,14 +268,15 @@ def _run_profile(
     params: list[torch.nn.Parameter],
     out_dir: str,
     profile_steps: int,
-    cond_dropout: float,
+    dropouts: dict[str, float],
+    with_stack: bool,
 ) -> Diffu:
     """Profile ``profile_steps`` real forward+backward steps and write the kernel report.
 
-    Mirrors the Stage-1 training step (model forward under accelerate's bf16 autocast, backward,
-    grad zeroing) but skips the optimizer/scheduler/EMA so the profile reflects compute only. The
-    report is written to ``out_dir/profile_step_table.txt`` on the main process. Called from
-    :func:`train` only when ``profile_steps > 0``; returns the unwrapped model immediately after.
+    Mirrors the Stage-1 training step (model forward under accelerate's bf16 autocast with the run's
+    dropouts, backward, grad zeroing) but skips the optimizer/scheduler/EMA so the profile reflects compute
+    only. The report goes to ``out_dir/profile_step_table.txt`` and the trace to ``trace.json`` (main
+    process). Called from :func:`train` only when ``profile_steps > 0``; returns the unwrapped model after.
     """
     from .profiling import profile_callable, read_dcgm
 
@@ -321,27 +289,17 @@ def _run_profile(
         except StopIteration:  # small datasets: re-iterate so we always have profile_steps batches
             batches = iter(dataloader)
             batch = next(batches)
-        loss = model(
-            batch["images"],
-            batch["texts"],
-            batch["style_pixel_values"],
-            cond_dropout=cond_dropout,
-            **model_inputs(batch),
-        )
+        loss = model(batch["images"], batch["texts"], **dropouts, **model_inputs(batch))
         accel.backward(loss)
         for p in params:
             p.grad = None
 
     model.train()
-    report = profile_callable(
-        step,
-        warmup=2,
-        active=profile_steps,
-        trace_path=os.path.join(out_dir, "trace.json"),
-        with_stack=os.environ.get("DIFFU_PROFILE_STACK") == "1",  # opt-in Python-line attribution
+    trace = os.path.join(
+        out_dir, "trace.json" if accel.is_main_process else f"trace_rank{accel.process_index}.json"
     )
+    report = profile_callable(step, warmup=2, active=profile_steps, trace_path=trace, with_stack=with_stack)
     if accel.is_main_process:
-        os.makedirs(out_dir, exist_ok=True)
         path = os.path.join(out_dir, "profile_step_table.txt")
         with open(path, "w") as fh:
             fh.write(report.render())
@@ -390,20 +348,75 @@ def _resume_step(ckpt_dir: str) -> int:
     return int(tail) if tail.isdigit() else 0
 
 
-def _save_checkpoint(accel: Accelerator, unwrapped: Diffu, out_dir: str, *, lora: bool) -> None:
-    """Checkpoint the run: a few-MB LoRA adapter (``lora``) or a full ``accelerate`` state (default).
+def _latest_checkpoint(out_dir: str) -> str | None:
+    """The newest complete ``step_N`` checkpoint under ``out_dir``, or None (a fresh run). Complete = it has
+    the ``config.json`` written after the state, so a job killed mid-save resumes from the one before."""
+    if not os.path.isdir(out_dir):
+        return None
+    done = [
+        (int(name.removeprefix("step_")), name)
+        for name in os.listdir(out_dir)
+        if name.removeprefix("step_").isdigit() and os.path.isfile(os.path.join(out_dir, name, "config.json"))
+    ]
+    return os.path.join(out_dir, max(done)[1]) if done else None
 
-    ``save_state`` is a collective call (all ranks); the LoRA adapter is written on the main process only,
-    with a barrier so the others don't race ahead of the write.
+
+@contextmanager
+def _ema_weights(ema: EMAModel | None, params: list[torch.nn.Parameter]) -> Generator[None]:
+    """Swap the EMA weights into ``params`` for the block, then restore the raw training weights."""
+    if ema is None:
+        yield
+        return
+    ema.store(params)
+    ema.copy_to(params)
+    try:
+        yield
+    finally:
+        ema.restore(params)
+
+
+def _export_state(model: Diffu) -> dict[str, torch.Tensor]:
+    """The model's weights for inference: everything but the frozen pretrained encoders (CPU copies)."""
+    return {
+        k: v.detach().to("cpu", copy=True).contiguous()
+        for k, v in model.state_dict().items()
+        if not k.startswith(_PRETRAINED_PREFIXES)
+    }
+
+
+def _save_checkpoint(
+    accel: Accelerator,
+    unwrapped: Diffu,
+    out_dir: str,
+    *,
+    cfg: Config,
+    ema: EMAModel | None,
+    params: list[torch.nn.Parameter],
+    lora: bool,
+    final: bool,
+) -> None:
+    """Write a checkpoint dir: ``config.json`` + the weights (see the module docstring).
+
+    ``final=False`` (``step_N``): the full resumable accelerate state (collective, raw weights) + the
+    ``ema_model.safetensors`` export. ``final=True``: just the EMA-applied ``model.safetensors`` export. A
+    LoRA run writes the few-MB adapter instead (EMA-applied in ``final``).
     """
-    if lora:
-        if accel.is_main_process:
+    if not lora and not final:
+        accel.save_state(out_dir)
+    if accel.is_main_process:
+        os.makedirs(out_dir, exist_ok=True)
+        with open(os.path.join(out_dir, "config.json"), "w", encoding="utf-8") as fh:
+            fh.write(cfg.model_dump_json(indent=2))
+        if lora:
             from .lora import save_lora
 
-            save_lora(unwrapped, out_dir)
-        accel.wait_for_everyone()
-    else:
-        accel.save_state(out_dir)
+            with _ema_weights(ema if final else None, params):
+                save_lora(unwrapped, out_dir)
+        elif final or ema is not None:
+            with _ema_weights(ema, params):
+                name = "model.safetensors" if final else "ema_model.safetensors"
+                save_file(_export_state(unwrapped), os.path.join(out_dir, name))
+    accel.wait_for_everyone()
 
 
 def train(
@@ -414,7 +427,7 @@ def train(
     lr: float = 1e-4,
     weight_decay: float = 1e-4,
     log_every: int = 50,
-    save_every: int = 2000,
+    save_every: int = 10_000,
     out_dir: str = "checkpoints",
     use_ema: bool = True,
     compile_model: bool = False,
@@ -433,15 +446,14 @@ def train(
     resume_from: str | None = None,
     val_loader: DataLoader | None = None,
     val_every: int = 500,
-    val_batches: int = 8,
     sample_every: int = 2000,
     log_cer: bool = True,
     profile_steps: int = 0,
+    profile_stack: bool = False,
     lora: bool = False,
     lora_rank: int = 16,
     lora_alpha: int = 32,
     lora_dropout: float = 0.0,
-    lora_targets: tuple[str, ...] | None = None,
     run_config: dict[str, Any] | None = None,
     attention_backend: str | None = None,
     compile_mode: str | None = None,
@@ -450,23 +462,30 @@ def train(
     """Run the Stage-1 flow-matching training loop.
 
     Args:
-        cfg: Full model/data config.
-        dataloader: Yields batches of ``images`` / ``texts`` / ``style_pixel_values``.
+        cfg: Full model/data config (saved as ``config.json`` in every checkpoint).
+        dataloader: Yields ``collate_lines`` batches (``images`` / ``texts`` + the style input).
         steps: Total optimizer steps.
-        lr: AdamW learning rate.
-        weight_decay: AdamW weight decay.
-        log_every: Print the loss every N steps (main process only).
-        save_every: Checkpoint (``accelerate save_state``) every N steps.
-        out_dir: Directory for checkpoints.
-        use_ema: Maintain EMA weights of the trained parameters.
-        compile_model: ``torch.compile`` the SD3 transformer.
-        grad_accum: Gradient accumulation steps.
-        save_final: Write a final ``accelerate`` checkpoint to ``out_dir/final`` when done.
-        track: Log loss to trackio (live dashboard) + fire a trackio alert on non-finite loss.
-        track_space: HF Space id to sync trackio metrics to (persists for remote/cloud runs).
-        profile_steps: If > 0, run torch.profiler over this many real training steps, write the
-            kernel/Tensor-Core report to ``out_dir/profile_step_table.txt``, and return BEFORE the
-            main training loop. 0 (default) leaves the training path unchanged.
+        lr / weight_decay / max_grad_norm / warmup_steps / min_lr: AdamW + grad clipping + the warmup ->
+            cosine-to-``min_lr`` schedule.
+        log_every: Print (and track) the losses every N steps; also when a non-finite loss is caught.
+        save_every: Write a ``step_N`` checkpoint every N steps.
+        out_dir: Directory for checkpoints and sample sheets.
+        use_ema: Maintain EMA weights of the trained parameters (sampling, exports).
+        compile_model: Regionally ``torch.compile`` the MMDiT blocks (fastest with ``grad_checkpoint=False``).
+        grad_accum: Gradient accumulation steps (``step`` counts optimizer steps).
+        save_final: Write the EMA-applied ``final`` export when done.
+        track / track_space: Log to trackio (+ alerts), optionally synced to a private HF Space.
+        grad_checkpoint: diffusers gradient checkpointing (less memory, ~20% slower).
+        cond_dropout / text_dropout / ref_dropout: the guidance dropout modes (see ``Diffu.forward``).
+        init_from: Warm-start weights from a checkpoint (optimizer/LR/step restart).
+        resume_from: FULL resume from an accelerate ``step_N`` dir (model+optimizer+LR+EMA+RNG+step).
+        val_loader / val_every / sample_every / log_cer: held-out val loss, sample sheets and the live
+            gen_CER legibility gauge (rank 0).
+        profile_steps / profile_stack: If > 0, profile that many real steps (optionally with Python stack
+            attribution), write the report to ``out_dir``, and return BEFORE the training loop.
+        lora / lora_rank / lora_alpha / lora_dropout: Stage-3 adapter training on a frozen base.
+        run_config: CLI-only extras logged with the run (batch size, dataset, …).
+        attention_backend / compile_mode / compile_vae: kernel backend, compile mode, VAE-encode compile.
 
     Returns:
         The (unwrapped) trained model.
@@ -493,35 +512,27 @@ def train(
             )
         ],
     )
-    torch.set_float32_matmul_precision("high")  # TF32 on fp32 GEMMs (VAE gate / generate paths)
+    torch.set_float32_matmul_precision("high")  # TF32 on the fp32 GEMMs outside bf16 autocast
     set_seed(cfg.seed)  # reproducible init + data order across ranks
-    model = _setup_model(
-        cfg,
-        grad_checkpoint=grad_checkpoint,
-        compile_model=compile_model and not lora,  # LoRA must be injected BEFORE the backbone is compiled
-        attention_backend=attention_backend,
-        compile_mode=compile_mode,
-        compile_vae=compile_vae,
-    )
+    model = _setup_model(cfg, grad_checkpoint=grad_checkpoint, attention_backend=attention_backend)
     if init_from is not None:  # warm-start from prior weights (strict=False) instead of random init
-        from .generate import load_checkpoint
-
         load_checkpoint(model, init_from)
         if accel.is_main_process:
             print(f"warm-started weights from {init_from}", flush=True)
-
     if lora:  # Stage-3: freeze the base, train only a low-rank adapter on the backbone (diffu.lora)
         from .lora import add_lora
 
-        n_lora = add_lora(model, rank=lora_rank, alpha=lora_alpha, dropout=lora_dropout, targets=lora_targets)
-        if compile_model:
-            model.backbone.compile_blocks(compile_mode)  # compile now that the adapter is in place
+        n_lora = add_lora(model, rank=lora_rank, alpha=lora_alpha, dropout=lora_dropout)
         if accel.is_main_process:
             base = "random init — pass --init-from for a real adapter" if init_from is None else init_from
             print(
                 f"LoRA rank={lora_rank}: {n_lora / 1e6:.3f}M trainable adapter params (base frozen: {base})",
                 flush=True,
             )
+    if compile_model:  # after the LoRA injection: the adapter must be in the compiled graph
+        model.backbone.compile_blocks(compile_mode)  # regional torch.compile (see Backbone.compile_blocks)
+    if compile_vae:  # the live x0 encode runs every step
+        model.vae.compile_codec(compile_mode)
 
     # LoRA trains only the (requires_grad) adapter tensors; a full run trains the Stage-1 parameter set.
     params = [p for p in model.parameters() if p.requires_grad] if lora else trainable_parameters(model)
@@ -571,9 +582,17 @@ def train(
     if accel.is_main_process:
         os.makedirs(out_dir, exist_ok=True)
 
-    # Full experiment config to trackio so runs are comparable by every knob we sweep (batch, LR,
-    # white-pad, rope, fill-ratio, grad-clip, …). run_config carries the CLI-only extras (batch_size).
+    unwrapped = accel.unwrap_model(model)
+    dropouts = {"cond_dropout": cond_dropout, "text_dropout": text_dropout, "ref_dropout": ref_dropout}
+    if (
+        profile_steps > 0
+    ):  # off by default; returns BEFORE the tracker and main loop, so training is untouched
+        return _run_profile(accel, model, dataloader, params, out_dir, profile_steps, dropouts, profile_stack)
+
+    # The run's full config (the model config + every train() knob + the CLI extras) to trackio, so runs are
+    # comparable by every knob we sweep.
     run_cfg: dict[str, Any] = {
+        **cfg.model_dump(),
         "steps": steps,
         "lr": lr,
         "weight_decay": weight_decay,
@@ -581,32 +600,20 @@ def train(
         "max_grad_norm": max_grad_norm,
         "warmup_steps": warmup_steps,
         "min_lr": min_lr,
-        "cond_dropout": cond_dropout,
-        "text_dropout": text_dropout,
-        "ref_dropout": ref_dropout,
+        **dropouts,
         "use_ema": use_ema,
         "grad_checkpoint": grad_checkpoint,
-        "repa": cfg.aux.repa,
-        "ink_focal": cfg.aux.diacritic_focal_flow,
         "num_processes": accel.num_processes,
-        "rope": cfg.backbone.rope,
-        "fill_ratio_cond": cfg.backbone.fill_ratio_cond,
-        "max_chars": cfg.cond.max_chars,
-        "glyph_line": cfg.cond.glyph_line,
-        "glyph_concat": cfg.cond.glyph_concat,
-        "style_in_context": cfg.cond.style_in_context,
-        "style_mode": cfg.cond.style_mode,
-        "glyph_pad": cfg.cond.glyph_pad,
         "attention_backend": attention_backend,
-        "white_pad_prob": cfg.data.white_pad_prob,
-        "white_pad_max_frac": cfg.data.white_pad_max_frac,
-        "line_height": cfg.data.line_height,
-        "dim": cfg.backbone.dim,
-        "num_layers": cfg.backbone.num_layers,
         "init_from": init_from,
+        "resume_from": resume_from,
         "compile": compile_model,
         "compile_mode": compile_mode,
         "compile_vae": compile_vae,
+        "lora": lora,
+        "lora_rank": lora_rank,
+        "lora_alpha": lora_alpha,
+        "lora_dropout": lora_dropout,
         "log_cer": log_cer,
         "val_every": val_every,
         "sample_every": sample_every,
@@ -618,19 +625,16 @@ def train(
     tracker = _init_tracker(
         track, accel.is_main_process, run_cfg, track_space, run_name=os.path.basename(out_dir.rstrip("/"))
     )
+    save = partial(_save_checkpoint, accel, unwrapped, cfg=cfg, ema=ema, params=params, lora=lora)
 
-    unwrapped = accel.unwrap_model(model)
-    if profile_steps > 0:  # off by default; returns BEFORE the main loop so training is untouched
-        return _run_profile(accel, model, dataloader, params, out_dir, profile_steps, cond_dropout)
     # One fixed held-out batch on rank 0, reused for every sample strip so progress is comparable
     # step-to-step (same texts + same style references each time).
     sample_batch = next(iter(val_loader)) if val_loader is not None and accel.is_main_process else None
     recognizer = None
     if log_cer and sample_batch is not None:  # rank-0 legibility gauge: read our lines back -> gen_CER
-        from .recognizer import load_recognizer
-
         recognizer = load_recognizer(cfg.aux.htr_recognizer_eval, accel.device)
         print(f"loaded HTR recognizer for live gen_CER ({cfg.aux.htr_recognizer_eval})", flush=True)
+    val_history: list[float] = []
     model.train()
     step = start_step  # 0 for a fresh run; the resumed optimizer-step count otherwise
     last_log_t, last_log_step = perf_counter(), start_step
@@ -639,17 +643,12 @@ def train(
         for batch in dataloader:
             seen += 1
             with accel.accumulate(model):
-                repa_w = (
-                    cfg.aux.repa_weight if step < cfg.aux.repa_stop_frac * steps else 0.0
-                )  # REPA early-stop (HASTE)
+                # REPA early-stop (HASTE): it helps early, then its gradient fights the denoiser
+                repa_w = cfg.aux.repa_weight if step < cfg.aux.repa_stop_frac * steps else 0.0
                 out = model(
                     batch["images"],
                     batch["texts"],
-                    batch["style_pixel_values"],
-                    latents=batch.get("latents"),  # cached x0 (--cache-latents); None -> live vae.encode
-                    cond_dropout=cond_dropout,
-                    text_dropout=text_dropout,
-                    ref_dropout=ref_dropout,
+                    **dropouts,
                     return_losses=True,
                     repa_weight=repa_w,
                     **model_inputs(batch),
@@ -662,20 +661,18 @@ def train(
                 lr_scheduler.step()
                 opt.zero_grad()
             # Gradient accumulation: run the per-OPTIMIZER-step bookkeeping (EMA, logging, save, val,
-            # sample, the barrier, and the step counter) ONLY when grads actually synced — so `step`
-            # counts optimizer steps (matching the LR horizon / recog ramp / cadence), not micro-batches.
-            # Diffusers' own training loops gate on `accelerator.sync_gradients` the same way. No-op at
-            # grad_accum=1 (sync every iteration).
+            # sample, the step counter) ONLY when grads actually synced — so `step` counts optimizer steps
+            # (matching the LR horizon and cadences), not micro-batches. Diffusers' own training loops gate
+            # on `accelerator.sync_gradients` the same way. No-op at grad_accum=1 (sync every iteration).
             if not accel.sync_gradients:
                 continue
             if ema is not None:
                 ema.step(params)
             if step % log_every == 0:
                 # The losses stay on the GPU between log steps: a per-step .item() makes the CPU wait for
-                # the GPU every step, which stalls kernel launching in this host-bound loop. Every rank checks
-                # (so a NaN stops all ranks together); NaN is caught at most log_every steps late.
-                # flow is the term comparable to val_loss (REPA is training-only); log both so the
-                # train-flow vs val-flow overfitting check is apples-to-apples.
+                # the GPU every step, which stalls kernel launching in this host-bound loop. Each rank checks
+                # its own loss, so a NaN is caught at most log_every steps late. flow is the term comparable
+                # to val_loss (REPA is training-only); log both so the overfitting check is apples-to-apples.
                 loss_val = loss.item()
                 flow_val = out["flow"].item()
                 repa_val = out["repa"].item() if "repa" in out else None
@@ -687,128 +684,113 @@ def train(
                             level=tracker.AlertLevel.ERROR,
                         )
                     raise RuntimeError(f"non-finite loss {loss_val} at step {step}")
+                lr_now = lr_scheduler.get_last_lr()[0]
                 msg = f"loss {loss_val:.4f}  flow {flow_val:.4f}"
                 if repa_val is not None:
                     msg += f"  repa {repa_val:.4f}"
-                msg += f"  lr {lr_scheduler.get_last_lr()[0]:.2e}"
+                msg += f"  lr {lr_now:.2e}"
                 if accel.is_main_process:
                     now = perf_counter()
-                    imgs_per_s = (
-                        (step - last_log_step)
-                        * batch["images"].shape[0]
-                        * accel.num_processes
-                        / max(now - last_log_t, 1e-6)
-                    )
+                    metrics: dict[str, float] = {"loss": loss_val, "flow_loss": flow_val, "lr": lr_now}
+                    if repa_val is not None:
+                        metrics["repa_loss"] = repa_val
+                    if step > last_log_step:  # throughput since the last log (none on the first)
+                        lines = (
+                            (step - last_log_step)
+                            * batch["images"].shape[0]
+                            * grad_accum
+                            * accel.num_processes
+                        )
+                        metrics["images_per_s"] = lines / max(now - last_log_t, 1e-6)
+                        msg += f"  {metrics['images_per_s']:.1f} img/s"
                     last_log_t, last_log_step = now, step
-                    print(f"step {step}/{steps}  {msg}  {imgs_per_s:.0f} img/s", flush=True)
+                    print(f"step {step}/{steps}  {msg}", flush=True)
                     if tracker is not None:
-                        lr_now = lr_scheduler.get_last_lr()[0]  # step= -> real-step x-axis
-                        metrics: dict[str, float] = {
-                            "loss": loss_val,
-                            "lr": lr_now,
-                            "images_per_s": imgs_per_s,
-                        }
-                        if flow_val is not None:  # flow_loss is what val_loss is comparable to
-                            metrics["flow_loss"] = flow_val
-                        if repa_val is not None:
-                            metrics["repa_loss"] = repa_val
                         tracker.log(metrics, step=step)
+            rank0_work = False  # whether rank 0 did extra work the other ranks must wait for
             if step > 0 and step % save_every == 0:
-                _save_checkpoint(accel, unwrapped, os.path.join(out_dir, f"step_{step}"), lora=lora)
+                save(os.path.join(out_dir, f"step_{step}"), final=False)
+                if tracker is not None:
+                    tracker.alert(
+                        title="Checkpoint saved", text=f"step_{step}", level=tracker.AlertLevel.INFO
+                    )
             if val_loader is not None and accel.is_main_process and step > 0 and step % val_every == 0:
-                val_loss = evaluate_val_loss(unwrapped, val_loader, accel.device, val_batches)
+                rank0_work = True
+                val_loss = evaluate_val_loss(unwrapped, val_loader, accel.device)
+                val_history.append(val_loss)
                 print(f"step {step}/{steps}  val_loss {val_loss:.4f}", flush=True)
                 if tracker is not None:
                     tracker.log({"val_loss": val_loss}, step=step)
+                    if len(val_history) >= 3 and val_history[-1] > val_history[-2] > val_history[-3]:
+                        tracker.alert(
+                            title="Val loss rising",
+                            text=f"val_loss rose 3 evals in a row to {val_loss:.4f} at step {step}: overfitting?",
+                            level=tracker.AlertLevel.WARN,
+                        )
             if sample_batch is not None and step > 0 and step % sample_every == 0:
-                # When the recognizer is loaded, also generate a CFG-guided variant so gen_CER is
-                # reported WITH and WITHOUT guidance (does CFG actually help legibility here?).
-                cfg_eval_scale = (
-                    5.0 if recognizer is not None else 0.0
-                )  # classic-CFG scale for guided gen_CER (cfg=5 measured best vs 3; see docs/PERF_AUDIT.md §0c)
-                # Sample from the EMA weights (what inference/export uses), then restore the raw
-                # training weights — otherwise the gauge measures noisier raw weights and understates
-                # quality. EMA shadows only the trainable params, which is exactly what we swap.
-                if ema is not None:
-                    ema.store(params)
-                    ema.copy_to(params)
-                try:
-                    path, gen_imgs, gen_imgs_cfg, texts, real_imgs, sample_w, style_texts = save_samples(
+                rank0_work = True
+                # Sample from the EMA weights (what inference/export uses), not the noisier raw weights —
+                # EMA shadows only the trainable params, which is exactly what is swapped.
+                with _ema_weights(ema, params):
+                    samples = generate_samples(
                         unwrapped,
                         sample_batch,
                         cfg,
                         accel.device,
-                        out_dir,
-                        step,
-                        cfg_eval_scale=cfg_eval_scale,
+                        cfg_scale=_GEN_CER_CFG_SCALE if recognizer is not None else 0.0,
                     )
-                finally:
-                    if ema is not None:
-                        ema.restore(params)
-                line = f"step {step}/{steps}  samples -> {path}"
-                gen_cer: float | None = None
-                gen_cer_cfg: float | None = None
-                ctrl_gap: float | None = None
-                preds: list[str] = []
+                line = f"step {step}/{steps}  samples"
+                payload: dict[str, object] = {}
+                preds: list[str] | None = None
                 if recognizer is not None:  # read our lines back -> gen_CER (the legibility gauge)
-                    from .model.metrics import cer
-                    from .recognizer import read_lines
-
-                    def _cer(imgs: list[PILImage], want: list[str]) -> tuple[list[str], float]:
-                        # micro-average (total edits / total chars), matching eval.py. A macro mean of
-                        # per-line ratios over-weights short/empty targets (empty gt scores a flat 1.0),
-                        # so it read ~1.4x too high on mixed-length sample batches.
-                        p = read_lines(recognizer[0], recognizer[1], imgs)
-                        return p, cer(p, want)
-
-                    preds, gen_cer = _cer(gen_imgs, texts)
+                    # micro-average CER (total edits / total chars), matching eval.py
+                    reads = read_lines(recognizer[0], recognizer[1], samples.gens)
+                    preds = reads
+                    gen_cer = cer(reads, samples.texts)
+                    payload["gen_cer"] = gen_cer
                     line += f"  gen_CER {gen_cer:.2f}"
                     # Controllability: is the read closer to the REQUESTED text than to a RANDOM other
                     # text? Pair each read with a different sample's text (roll by 1) and take the CER
-                    # gap. >0 = the output follows the instruction; ~0 = marginal collapse / copying (the
-                    # output is no closer to what we asked than to a random line). Reuses `preds` (free).
-                    if len(texts) > 1:
-                        rand_texts = list(texts[1:]) + list(texts[:1])
-                        ctrl_gap = cer(preds, rand_texts) - gen_cer
+                    # gap. >0 = the output follows the instruction; ~0 = marginal collapse / copying.
+                    if len(samples.texts) > 1:
+                        ctrl_gap = cer(reads, samples.texts[1:] + samples.texts[:1]) - gen_cer
+                        payload["ctrl_gap"] = ctrl_gap
                         line += f"  ctrl_gap {ctrl_gap:+.2f}"
-                    if gen_imgs_cfg is not None:
-                        _, gen_cer_cfg = _cer(gen_imgs_cfg, texts)
+                    if samples.gens_cfg is not None:
+                        gen_cer_cfg = cer(
+                            read_lines(recognizer[0], recognizer[1], samples.gens_cfg), samples.texts
+                        )
+                        payload["gen_cer_cfg"] = gen_cer_cfg
                         line += f"  gen_CER_cfg {gen_cer_cfg:.2f}"
-                    # redraw the grid with the reads burned in so the PNG itself shows want -> read
-                    _compose_sample_grid(
-                        real_imgs,
-                        gen_imgs,
-                        list(texts),
-                        sample_w,
-                        cfg.data.line_height,
-                        reads=preds,
-                        style_texts=style_texts,
-                    ).save(path)
-                print(line, flush=True)
+                sheet = _compose_sample_grid(
+                    samples.reals,
+                    samples.gens,
+                    samples.texts,
+                    samples.width,
+                    cfg.data.line_height,
+                    reads=preds,
+                    style_texts=samples.style_texts,
+                )
+                path = os.path.join(out_dir, "samples", f"step_{step:06d}.png")
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                sheet.save(path)
+                print(f"{line}  -> {path}", flush=True)
                 if tracker is not None:  # noise->ink + prompt->reading + gen_CER, by step, in trackio
                     caption = f"step {step} — top: real, bottom: generated"
-                    if gen_cer is not None:
+                    if preds is not None:
                         pairs = "  |  ".join(
                             f"style {s!r} → want {t!r} → read {p!r}"
-                            for s, t, p in zip(style_texts, texts, preds, strict=False)
+                            for s, t, p in zip(samples.style_texts, samples.texts, preds, strict=False)
                         )
-                        cfg_note = f" | gen_CER_cfg {gen_cer_cfg:.2f}" if gen_cer_cfg is not None else ""
                         caption = (
-                            f"step {step} | gen_CER {gen_cer:.2f} (0=perfect, unguided){cfg_note} | "
-                            f"image: top=real scan, bottom=ours | {pairs}"
+                            f"step {step} | gen_CER (0=perfect, unguided) | top=real, bottom=ours | {pairs}"
                         )
-                    payload: dict[str, object] = {"samples": tracker.Image(path, caption=caption)}
-                    if gen_cer is not None:
-                        payload["gen_cer"] = gen_cer
-                    if gen_cer_cfg is not None:
-                        payload["gen_cer_cfg"] = gen_cer_cfg
-                    if ctrl_gap is not None:  # >0 = following the text; ~0 = marginal collapse / copying
-                        payload["ctrl_gap"] = ctrl_gap
+                    payload["samples"] = tracker.Image(path, caption=caption)
                     tracker.log(payload, step=step)
-            # Other ranks idle through the rank-0-only val/sample blocks above; barrier here so a slow
-            # sample step (CFG + TrOCR generate on rank 0) can't trip the NCCL watchdog at the next
-            # all-reduce. Cheap when ranks are already in sync.
-            accel.wait_for_everyone()
+            if rank0_work:
+                # The other ranks idled through rank 0's val/sample work; barrier so a slow sample step
+                # (CFG + TrOCR generate) can't trip the NCCL watchdog at the next all-reduce.
+                accel.wait_for_everyone()
             step += 1
             if step >= steps:
                 break
@@ -819,19 +801,10 @@ def train(
             )
     accel.wait_for_everyone()
     if save_final:
-        # Export the EMA weights as the final model (generate.py loads a plain state-dict, so without
-        # this the deployed model would be the raw, noisier weights and EMA's cost would be wasted).
-        # Periodic step_N checkpoints stay raw for clean resume; only the final export is EMA-applied.
-        # For a LoRA run this writes just the (EMA-applied) adapter safetensors, not a full state.
-        if ema is not None:
-            ema.store(params)
-            ema.copy_to(params)
-        _save_checkpoint(accel, unwrapped, os.path.join(out_dir, "final"), lora=lora)
-        if ema is not None:
-            ema.restore(params)
+        save(os.path.join(out_dir, "final"), final=True)
     if tracker is not None:
         tracker.finish()
-    return accel.unwrap_model(model)
+    return unwrapped
 
 
 def build_dataloader(
@@ -843,33 +816,47 @@ def build_dataloader(
     split: str = "train",
     shuffle: bool = True,
     strict: bool = True,
-    white_pad_prob: float = 0.0,
     bucket_width: bool = False,
-    latent_cache: LatentCache | None = None,
 ) -> DataLoader:
-    """Build a width-bucketing DataLoader over ``{data_dir}/{split}.jsonl`` (from ``make data``).
+    """Build a DataLoader over ``{data_dir}/{split}.jsonl`` (from ``make data``).
 
     Args:
         split: Manifest split to load (``train`` / ``val`` / ``test``).
-        shuffle: Shuffle and drop the last partial batch (training). ``False`` keeps every row in
-            order — used for the held-out val loader so the overfitting metric is stable.
+        shuffle: Shuffle and drop the last partial batch (training), with ``cfg.data.white_pad_prob``
+            augmentation. ``False`` keeps every row in order and text-tight — the held-out val loader, so
+            the overfitting metric is stable and honest.
         strict: Raise if the split has fewer than ``batch_size × num_processes`` rows. ``True`` for
             train (a too-small set hangs DDP under ``drop_last``); ``False`` for val.
-        white_pad_prob: Train-only right-white-pad augmentation probability (0 = off). Pass >0 only
-            for the train loader; val/test stay text-tight (white_pad_prob=0) for honest metrics.
+        bucket_width: Batch similar-width lines together (``WidthBucketBatchSampler``; training only).
+
+    With ``cfg.data.drop_wide_lines`` the lines wider than ``max_line_width`` are skipped instead of squashed.
 
     Raises:
         ValueError: if ``strict`` and the split has fewer than ``batch_size × num_processes`` rows.
     """
-    from accelerate import PartialState
-
     rows = load_manifest(os.path.join(data_dir, f"{split}.jsonl"))
+    canvas = cfg.cond.style_mode == "canvas"
+    widths = (  # raw px widths (cached sidecar), when something needs them
+        line_widths(rows, cache_path=os.path.join(data_dir, f"{split}.widths.json"))
+        if cfg.data.drop_wide_lines or canvas or (bucket_width and shuffle)
+        else None
+    )
+    if cfg.data.drop_wide_lines and widths is not None:
+        keep = [i for i, w in enumerate(widths) if w <= cfg.data.max_line_width]
+        if len(keep) < len(rows) and PartialState().is_main_process:
+            print(
+                f"{split}: skipping {len(rows) - len(keep)} of {len(rows)} lines wider than "
+                f"{cfg.data.max_line_width} px",
+                flush=True,
+            )
+        rows, widths = [rows[i] for i in keep], [widths[i] for i in keep]
     ds = HandwritingLineDataset(
         rows,
         height=cfg.data.line_height,
         max_width=cfg.data.max_line_width,
-        latent_cache=latent_cache,
-        ref_lines=cfg.cond.style_mode == "canvas",
+        ref_lines=canvas,
+        widths=widths,
+        max_ref_width=cfg.data.max_ref_width,
     )
     world = PartialState().num_processes
     if strict and len(ds) < batch_size * world:
@@ -881,26 +868,16 @@ def build_dataloader(
     collate = partial(
         collate_lines,
         max_width=cfg.data.max_line_width,
-        white_pad_prob=white_pad_prob,
+        white_pad_prob=cfg.data.white_pad_prob if shuffle else 0.0,
         white_pad_max_frac=cfg.data.white_pad_max_frac,
-        # Cached-latent path: hand the collate the encoder's white-paper latent column so it can pad
-        # batched latents correctly (no-op when latent_cache is None → the standard image-only batch).
-        white_latent_col=latent_cache.white_column if latent_cache is not None else None,
-        downscale=cfg.vae.downscale_factor,
         max_ref_width=cfg.data.max_ref_width,
     )
-    if bucket_width and shuffle:
+    if bucket_width and shuffle and widths is not None:
         # Group similar-width lines per batch -> ~54% padding-FLOPs reclaimed + stable shapes (lets
         # torch.compile stop recompiling). accelerate's prepared loader shards whole batches across ranks
         # (BatchSamplerShard); DDP all-reduces param-shaped grads, so per-rank differing widths are fine.
-        from .data.sampler import WidthBucketBatchSampler, line_widths
-
-        widths = line_widths(
-            rows, max_width=cfg.data.max_line_width, cache_path=os.path.join(data_dir, f"{split}.widths.json")
-        )
-        batch_sampler = WidthBucketBatchSampler(
-            widths, batch_size, shuffle=True, drop_last=True, seed=cfg.seed
-        )
+        capped = [min(w, cfg.data.max_line_width) for w in widths]
+        batch_sampler = WidthBucketBatchSampler(capped, batch_size, seed=cfg.seed)
         return DataLoader(
             ds,
             batch_sampler=batch_sampler,
@@ -921,8 +898,46 @@ def build_dataloader(
     )
 
 
+def _hf_loaders(cfg: Config, args: argparse.Namespace) -> tuple[DataLoader, DataLoader | None]:
+    """Train (+ val) loaders straight off a Hub image+text dataset (e.g. Teklia/IAM-line)."""
+    from .data.hf_dataset import HFLineDataset
+
+    dataset = partial(
+        HFLineDataset,
+        args.hf_dataset,
+        height=cfg.data.line_height,
+        max_width=cfg.data.max_line_width,
+        ref_lines=cfg.cond.style_mode == "canvas",
+    )
+    collate = partial(
+        collate_lines,
+        max_width=cfg.data.max_line_width,
+        white_pad_max_frac=cfg.data.white_pad_max_frac,
+        max_ref_width=cfg.data.max_ref_width,
+    )
+    loader = partial(
+        DataLoader, num_workers=args.num_workers, pin_memory=True, persistent_workers=args.num_workers > 0
+    )
+    train_ds = dataset(split=args.hf_split, max_rows=args.hf_max_rows)
+    train_loader = loader(
+        train_ds,
+        batch_size=args.batch_size,
+        shuffle=True,
+        drop_last=True,
+        collate_fn=partial(collate, white_pad_prob=cfg.data.white_pad_prob),
+    )
+    if not args.hf_val_split:
+        return train_loader, None
+    try:  # a small held-out val loader for the overfitting / sample gauge
+        val_ds = dataset(split=args.hf_val_split, max_rows=_HF_VAL_ROWS)
+    except Exception as exc:  # noqa: BLE001 - a missing/renamed val split must not kill training
+        print(f"(no HF val split {args.hf_val_split!r}: {exc})", flush=True)
+        return train_loader, None
+    return train_loader, loader(val_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate)
+
+
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Train Diffu (Stage-1 flow matching).")
+    ap = argparse.ArgumentParser(description="Diffu Stage-1 flow-matching training.")
     ap.add_argument(
         "--data-dir", default=None, help="dir with train.jsonl (from `make data`); or use --hf-dataset"
     )
@@ -932,14 +947,20 @@ def main() -> None:
     ap.add_argument("--batch-size", type=int, default=8)
     ap.add_argument("--num-workers", type=int, default=8)
     ap.add_argument("--grad-accum", type=int, default=1)
-    ap.add_argument("--save-every", type=int, default=10000, help="checkpoint every N steps (each ~17 GB)")
+    ap.add_argument(
+        "--save-every", type=int, default=10_000, help="checkpoint every N steps (a resumable state: ~17 GB)"
+    )
     ap.add_argument("--no-ema", action="store_true")
     ap.add_argument(
         "--no-grad-checkpoint",
         action="store_true",
         help="disable grad checkpointing (~20%% faster, more VRAM)",
     )
-    ap.add_argument("--compile", action="store_true")
+    ap.add_argument(
+        "--compile",
+        action="store_true",
+        help="regionally torch.compile the MMDiT blocks (~1.4-1.9x; fastest with --no-grad-checkpoint)",
+    )
     ap.add_argument(
         "--compile-mode",
         choices=("max-autotune-no-cudagraphs",),
@@ -948,34 +969,28 @@ def main() -> None:
         "CUDA-graph modes are inference-only (diffu-generate)",
     )
     ap.add_argument(
-        "--compile-vae",
-        action="store_true",
-        help="torch.compile the VAE encode (the live x0 encode; moot with --cache-latents)",
+        "--compile-vae", action="store_true", help="torch.compile the VAE encode (the live x0 encode)"
     )
     ap.add_argument(
         "--no-repa",
         dest="repa",
         action="store_false",
-        help="disable REPA representation-alignment aux loss (ON by default)",
+        help="disable the REPA representation-alignment aux loss",
     )
-    ap.set_defaults(repa=True)
     ap.add_argument(
-        "--no-fill-ratio",
-        dest="fill_ratio",
+        "--no-ink-focal",
+        dest="ink_focal",
         action="store_false",
-        help="disable fill-ratio conditioning (ON by default)",
+        help="don't up-weight the loss on ink cells vs the paper (on in every production run so far)",
     )
-    ap.set_defaults(fill_ratio=True)
     ap.add_argument(
-        "--no-style-tokens",
-        dest="style_in_context",
-        action="store_false",
-        help="inject style as the global pooled AdaLN vector ONLY, not as K attendable style tokens in "
-        "joint attention (those let the model COPY the reference's glyphs and ignore the text). ON by default.",
+        "--track", action="store_true", help="log to trackio (live dashboard + alerts); needs --extra track"
     )
-    ap.set_defaults(style_in_context=True)
-    ap.add_argument("--track", action="store_true", help="log loss to trackio (live dashboard + NaN alerts)")
-    ap.add_argument("--track-space", default=None, help="HF Space id to sync trackio to (e.g. user/diffu)")
+    ap.add_argument(
+        "--track-space",
+        default=None,
+        help="HF Space id to sync trackio to (created private), e.g. user/diffu",
+    )
     ap.add_argument(
         "--val-every", type=int, default=500, help="held-out val loss every N steps (overfitting check)"
     )
@@ -992,10 +1007,7 @@ def main() -> None:
         "--weight-decay", type=float, default=1e-4, help="AdamW weight decay (lighter than the 1e-2 default)"
     )
     ap.add_argument(
-        "--cond-dropout",
-        type=float,
-        default=0.0,
-        help="drop ALL conditioning prob (full CFG: text+style); 0=off",
+        "--cond-dropout", type=float, default=0.0, help="drop ALL conditioning prob (full CFG null); 0=off"
     )
     ap.add_argument(
         "--text-dropout",
@@ -1011,19 +1023,9 @@ def main() -> None:
         "mode style guidance contrasts against (DiffInk uses 0.2); 0=off",
     )
     ap.add_argument(
-        "--style-canvas",
+        "--drop-wide-lines",
         action="store_true",
-        help="in-context style: the reference line's clean latent sits left of the target on one canvas "
-        "(no DINO style encoder); needs --glyph-line",
-    )
-    ap.add_argument(
-        "--glyph-pad",
-        action="store_true",
-        help="place each line's glyph tokens over its own ink extent and pad the rest blank, instead of "
-        "stretching them over the canvas; needs --glyph-line",
-    )
-    ap.add_argument(
-        "--max-ref-width", type=int, default=None, help="--style-canvas: cap on the reference width (px)"
+        help="skip lines wider than --max-line-width instead of squashing them (keeps every hand's aspect)",
     )
     ap.add_argument(
         "--attention-backend",
@@ -1032,15 +1034,13 @@ def main() -> None:
         "Needs a backward kernel for training (not sage*); benchmark on your GPU",
     )
     ap.add_argument(
-        "--ink-focal", action="store_true", help="up-weight the loss on ink regions vs white paper"
-    )
-    ap.add_argument(
         "--init-from", default=None, help="warm-start model weights from a checkpoint (strict=False)"
     )
     ap.add_argument(
         "--resume",
         default=None,
-        help="FULL resume from an accelerate step_N checkpoint dir (model+optimizer+LR+EMA+step). Unlike "
+        help="FULL resume from an accelerate step_N checkpoint dir (model+optimizer+LR+EMA+step), or 'auto' "
+        "for the newest complete one in --out-dir (a fresh start if none: chained Slurm jobs). Unlike "
         "--init-from (weights only -> restarts optimizer/LR/step), this continues the run; use the SAME "
         "number of GPUs the checkpoint was saved with.",
     )
@@ -1048,7 +1048,12 @@ def main() -> None:
         "--profile-steps",
         type=int,
         default=0,
-        help="profile N real training steps to out-dir/profile_step_table.txt, then exit (0=off)",
+        help="profile N real training steps to out-dir/profile_step_table.txt + trace.json, then exit (0=off)",
+    )
+    ap.add_argument(
+        "--profile-stack",
+        action="store_true",
+        help="--profile-steps: attribute kernels to Python lines (slower)",
     )
     ap.add_argument(
         "--white-pad-prob",
@@ -1062,32 +1067,6 @@ def main() -> None:
         help="group similar-width lines into each batch (reclaims ~54%% padding-FLOPs + stabilizes shapes "
         "so --compile stops recompiling). Batches become width-correlated (small training-dynamics change) "
         "-> validate gen_CER before treating as default.",
-    )
-    ap.add_argument(
-        "--cache-latents",
-        action="store_true",
-        help="skip the frozen VAE encode every step by feeding precomputed latents as x0 (the top remaining "
-        "perf win, ~23%% of the step; docs/PERF_AUDIT.md). Builds the cache once if missing, then reads it. "
-        "Requires --white-pad-prob 0 (augmentation invalidates the cache). Stores the posterior MODE, not a "
-        "per-step sample -> opt-in; validate gen_CER before treating as default (like --bucket-width).",
-    )
-    ap.add_argument(
-        "--max-chars",
-        type=int,
-        default=None,
-        help="max characters per line (glyph content length cap; default from config, currently 128)",
-    )
-    ap.add_argument(
-        "--glyph-line",
-        action="store_true",
-        help="line-level glyph content: whole-line image -> w_t column-aligned tokens + shared-column "
-        "RoPE (MSRoPE), instead of per-char tokens. Smoke-validated; opt-in.",
-    )
-    ap.add_argument(
-        "--glyph-concat",
-        action="store_true",
-        help="CHANNEL-CONCAT a spatial glyph latent onto the noisy latent (content in the input, not "
-        "just attended — strongest coupling). Pair with --cond-dropout 0.1. EXPERIMENTAL.",
     )
     ap.add_argument(
         "--logit-normal-mean",
@@ -1124,127 +1103,36 @@ def main() -> None:
     ap.add_argument(
         "--htr-recognizer-eval",
         default=None,
-        help="HF TrOCR id for the live gen_CER legibility gauge (default: the Swedish Lion). Pass "
-        "microsoft/trocr-base-handwritten for an English corpus like IAM, else the gauge reads gibberish.",
+        help="HF TrOCR id for the live gen_CER legibility gauge (default: the Swedish char-level model). "
+        "Pass microsoft/trocr-base-handwritten for an English corpus like IAM, else the gauge reads gibberish.",
     )
+    add_arch_args(ap)
     args = ap.parse_args()
+    # Fail before any data scan or model build.
+    if args.lora and args.resume:
+        raise SystemExit("--resume can't restore a --lora run: its checkpoints hold only the adapter")
+    if args.hf_dataset and (args.bucket_width or args.drop_wide_lines):
+        raise SystemExit("--bucket-width / --drop-wide-lines need a --data-dir manifest, not --hf-dataset")
+    if not (args.hf_dataset or args.data_dir):
+        raise SystemExit("provide --data-dir (a `make data` manifest) or --hf-dataset (a Hub dataset)")
+    if args.resume == "auto":
+        args.resume = _latest_checkpoint(args.out_dir)
 
-    cfg = Config()
+    cfg = apply_arch_args(Config(), args)
     cfg.aux.repa = args.repa
-    cfg.backbone.fill_ratio_cond = args.fill_ratio
-    cfg.aux.diacritic_focal_flow = args.ink_focal
+    cfg.aux.ink_focal = args.ink_focal
     if args.htr_recognizer_eval:  # override the default (Swedish) gauge recognizer — e.g. English for IAM
         cfg.aux.htr_recognizer_eval = args.htr_recognizer_eval
-    cfg.cond.glyph_line = args.glyph_line
-    cfg.cond.glyph_concat = args.glyph_concat
-    cfg.cond.style_in_context = args.style_in_context
-    cfg.cond.glyph_pad = args.glyph_pad
-    if args.style_canvas:
-        cfg.cond.style_mode = "canvas"
-    if args.max_ref_width is not None:
-        cfg.data.max_ref_width = args.max_ref_width
-    if args.max_chars is not None:
-        cfg.cond.max_chars = args.max_chars
+    cfg.data.drop_wide_lines = args.drop_wide_lines
     if args.logit_normal_mean is not None:
         cfg.flow.logit_normal_mean = args.logit_normal_mean
-    cfg.data.white_pad_prob = args.white_pad_prob  # record-keeping; only the train loader uses it
-    # White-pad augmentation is TRAIN-ONLY: the val loader keeps white_pad_prob=0 so val canvases stay
-    # text-tight and the overfitting / gen_CER metrics are honest.
-    dataloader: DataLoader
-    val_loader: DataLoader | None
-    if args.hf_dataset:  # train straight off a Hub image+text dataset (e.g. Teklia/IAM-line)
-        from .data.hf_dataset import HFLineDataset
+    cfg.data.white_pad_prob = args.white_pad_prob  # train-only: the val loaders stay text-tight
 
-        if args.cache_latents:
-            raise SystemExit("--cache-latents needs a --data-dir manifest; not supported with --hf-dataset")
-        collate = partial(
-            collate_lines,
-            max_width=cfg.data.max_line_width,
-            white_pad_prob=args.white_pad_prob,
-            white_pad_max_frac=cfg.data.white_pad_max_frac,
-            max_ref_width=cfg.data.max_ref_width,
-        )
-        train_ds = HFLineDataset(
-            args.hf_dataset,
-            split=args.hf_split,
-            height=cfg.data.line_height,
-            max_width=cfg.data.max_line_width,
-            max_rows=args.hf_max_rows,
-            ref_lines=cfg.cond.style_mode == "canvas",
-        )
-        dataloader = DataLoader(
-            train_ds,
-            batch_size=args.batch_size,
-            shuffle=True,
-            collate_fn=collate,
-            num_workers=args.num_workers,
-            drop_last=True,
-            pin_memory=True,
-            persistent_workers=args.num_workers > 0,
-        )
-        val_loader = None
-        if args.hf_val_split:  # a small held-out val loader for the overfitting / sample gauge
-            try:
-                val_ds = HFLineDataset(
-                    args.hf_dataset,
-                    split=args.hf_val_split,
-                    height=cfg.data.line_height,
-                    max_width=cfg.data.max_line_width,
-                    max_rows=64,
-                    ref_lines=cfg.cond.style_mode == "canvas",
-                )
-                val_loader = DataLoader(
-                    val_ds,
-                    batch_size=args.batch_size,
-                    shuffle=False,
-                    collate_fn=partial(
-                        collate_lines, max_width=cfg.data.max_line_width, max_ref_width=cfg.data.max_ref_width
-                    ),
-                    num_workers=args.num_workers,
-                    drop_last=False,
-                )
-            except Exception as exc:  # noqa: BLE001 - a missing/renamed val split must not kill training
-                print(f"(no HF val split {args.hf_val_split!r}: {exc})", flush=True)
+    if args.hf_dataset:
+        dataloader, val_loader = _hf_loaders(cfg, args)
     else:
-        if not args.data_dir:
-            raise SystemExit("provide --data-dir (a `make data` manifest) or --hf-dataset (a Hub dataset)")
-        # --cache-latents: open (or one-time build) the train-split VAE latent cache. Multi-GPU: only the main
-        # process builds; the others wait at the barrier, then every rank opens the same memmap read-only. The
-        # cache is keyed to the encoder/geometry, so a stale one refuses to load. Val stays on live encode.
-        train_latent_cache: LatentCache | None = None
-        if args.cache_latents:
-            from accelerate import PartialState
-
-            from .data.latent_cache import build_latent_cache, open_cache
-
-            if args.white_pad_prob > 0.0:
-                raise SystemExit(
-                    "--cache-latents needs --white-pad-prob 0 (the augmentation invalidates the cache)"
-                )
-            state = PartialState()
-            try:
-                train_latent_cache = open_cache(cfg, args.data_dir, "train")
-            except (FileNotFoundError, ValueError):
-                if state.is_main_process:
-                    print(
-                        "--cache-latents: building the VAE latent cache (train split, one-time)…", flush=True
-                    )
-                    build_latent_cache(cfg, args.data_dir, "train")
-                state.wait_for_everyone()  # non-main ranks wait for the build before opening
-                train_latent_cache = open_cache(cfg, args.data_dir, "train")
-            if state.is_main_process:
-                print(
-                    f"--cache-latents: feeding {len(train_latent_cache)} cached latents as x0 (no per-step encode)",
-                    flush=True,
-                )
         dataloader = build_dataloader(
-            cfg,
-            args.data_dir,
-            args.batch_size,
-            args.num_workers,
-            white_pad_prob=args.white_pad_prob,
-            bucket_width=args.bucket_width,
-            latent_cache=train_latent_cache,
+            cfg, args.data_dir, args.batch_size, args.num_workers, bucket_width=args.bucket_width
         )
         val_loader = build_dataloader(
             cfg, args.data_dir, args.batch_size, args.num_workers, split="val", shuffle=False, strict=False
@@ -1276,6 +1164,7 @@ def main() -> None:
         sample_every=args.sample_every,
         log_cer=not args.no_cer,
         profile_steps=args.profile_steps,
+        profile_stack=args.profile_stack,
         lora=args.lora,
         lora_rank=args.lora_rank,
         lora_alpha=args.lora_alpha,
@@ -1286,9 +1175,9 @@ def main() -> None:
         run_config={
             "batch_size": args.batch_size,
             "num_workers": args.num_workers,
-            "lora": args.lora,
-            "lora_rank": args.lora_rank,
+            "data_dir": args.data_dir,
             "hf_dataset": args.hf_dataset,
+            "bucket_width": args.bucket_width,
         },
     )
 

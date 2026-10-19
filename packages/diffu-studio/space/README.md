@@ -9,8 +9,6 @@ python_version: "3.12"
 app_file: app.py
 pinned: false
 short_description: Swedish historical handwriting synthesis + HTR labels
-models:
-  - Gabriel/diffu_sd35_128
 ---
 
 # ✒️ Diffu Studio
@@ -25,8 +23,9 @@ augmentation. Type text, pick a writer's hand, and generate:
 - **Every layout / furniture / aging knob** is a control; look/aging changes re-composite instantly (no
   re-generation).
 
-Model: [`Gabriel/diffu_sd35_128`](https://huggingface.co/Gabriel/diffu_sd35_128) (128 px, downloaded on
-first load).
+Model: the Hub repo named by the **`DIFFU_CKPT_REPO`** Space variable (required) — `model.safetensors` +
+the `config.json` describing its architecture (override the weights filename with `DIFFU_CKPT_FILE`),
+downloaded at boot.
 
 ## ⚡ ZeroGPU + ahead-of-time compilation
 

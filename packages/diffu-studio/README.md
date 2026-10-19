@@ -24,8 +24,10 @@ uv run diffu-studio --ckpt checkpoints/exp_sd35_128/step_120000 --line-height 12
     --gallery data_out_lejonet_128/manifest.jsonl
 ```
 
-`--line-height 128` is the known footgun: the released `exp_sd35_128` checkpoint was trained at 128px,
-but the flag defaults to 64 — leave it off and every generation is an illegible smudge.
+The architecture (line height included) comes from the `config.json` diffu-train saves next to the
+weights. `--line-height` only applies to an older checkpoint without one, and there it is the known
+footgun: the released `exp_sd35_128` checkpoint was trained at 128px, but the flag defaults to 64 — leave
+it off and every generation is an illegible smudge.
 
 Device is auto-detected (`zerogpu` on HF Spaces, local `gpu`, else `cpu`); override with
 `--device` or `DIFFU_STUDIO_DEVICE`. On CPU the page build shows progress instead of a live animation.

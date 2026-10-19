@@ -791,7 +791,11 @@ def main() -> None:
         labels.append(f"overlay:{name}")
 
     fill = _fill_probe(pool, renderer)
-    checks = [*_evaluate(results, fill, tables, spreads), _sampler_check(args.seed), _label_check(page_labels)]
+    checks = [
+        *_evaluate(results, fill, tables, spreads),
+        _sampler_check(args.seed),
+        _label_check(page_labels),
+    ]
 
     contact = _montage(pages, labels, args.cols, cell_w=360)
     cv2.imwrite(str(out / "contact_sheet.png"), contact)

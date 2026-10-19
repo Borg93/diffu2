@@ -1,4 +1,4 @@
-"""Rectified flow / flow matching objective (SD3 formulation), native PyTorch.
+"""Rectified flow / flow matching objective (SD3 formulation).
 
 Convention: predict velocity v = eps - x0 along the linear interpolant
     x_t = (1 - t) * x0 + t * eps ,   t in [0, 1]  (t=0 data, t=1 noise).
@@ -15,8 +15,8 @@ def repa_loss(proj_hidden: torch.Tensor, target_feats: torch.Tensor) -> torch.Te
     """REPA (ICLR'25): cosine-align projected DiT hidden states to frozen-encoder features.
 
     Args:
-        proj_hidden: Projected DiT hidden states, ``[B, D]`` or ``[B, N, D]``.
-        target_feats: Frozen-encoder (DINOv3) features, same shape as ``proj_hidden``.
+        proj_hidden: Projected DiT hidden states per token, ``[B, N, D]``.
+        target_feats: Frozen-encoder (DINOv3) features of the same tokens, ``[B, N, D]``.
 
     Returns:
         Scalar alignment loss (lower is better fine structure).
@@ -29,9 +29,8 @@ def repa_loss(proj_hidden: torch.Tensor, target_feats: torch.Tensor) -> torch.Te
 def sample_timesteps(batch: int, device: torch.device, mean: float = 0.0, std: float = 1.0) -> torch.Tensor:
     """Logit-normal flow-matching timesteps ``[B]`` in ``[0, 1]`` (emphasizes the hard mid-range).
 
-    Delegates to diffusers' own SD3 sampler instead of re-deriving the formula: with
-    ``weighting_scheme="logit_normal"`` it returns ``sigmoid(N(mean, std))`` — identical to the
-    hand-rolled ``sigmoid(randn*std + mean)`` it replaces.
+    Delegates to diffusers' own SD3 sampler: with ``weighting_scheme="logit_normal"`` it returns
+    ``sigmoid(N(mean, std))``.
     """
     return compute_density_for_timestep_sampling(
         weighting_scheme="logit_normal", batch_size=batch, logit_mean=mean, logit_std=std, device=device

@@ -45,6 +45,10 @@ def test_tiling_keeps_the_stock_path(monkeypatch, tiny_vae):
 
 def test_decoder_gradients_match_the_stock_path(monkeypatch, tiny_vae):
     wrapper = _wrapper(monkeypatch, tiny_vae).train()
+    wrapper.vae.decoder.requires_grad_(
+        True
+    )  # the wrapper freezes the whole VAE; this test needs decoder grads
+    wrapper.vae.post_quant_conv.requires_grad_(True)
     stock = copy.deepcopy(tiny_vae).train()
     z = torch.randn(1, 16, 8, 8)
     wrapper.decode(z).square().mean().backward()

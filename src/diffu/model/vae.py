@@ -1,8 +1,7 @@
 """16-ch f8 VAE wrapper (diffusers).
 
-PICK = Qwen-Image VAE 1.0 (f8, 16-ch, text-rich decoder, Apache-2.0); FLUX.2 VAE is an Apache
-fallback. Encoder frozen; decoder fine-tunable on Swedish ink. Latent normalization is read from
-the loaded VAE's own config (scalar scaling/shift for FLUX/SD, per-channel mean/std for Qwen/Wan)
+PICK = Qwen-Image VAE 1.0 (f8, 16-ch, text-rich decoder, Apache-2.0), frozen. Latent normalization is read
+from the loaded VAE's own config (scalar scaling/shift for SD-style VAEs, per-channel mean/std for Qwen/Wan)
 so we never hardcode the wrong constants. Includes the round-trip reconstruction-CER gate.
 """
 
@@ -18,6 +17,8 @@ from diffusers.models.autoencoders.autoencoder_kl_qwenimage import QwenImageCaus
 from diffusers.models.autoencoders.vae import DiagonalGaussianDistribution
 
 from ..config import VAEConfig
+from .backbone import configure_compile, ensure_compile_config
+from .metrics import cer
 
 
 class _SingleFrameCausalConv3d(QwenImageCausalConv3d):
@@ -55,34 +56,19 @@ class _NativeDtypeUpsample(QwenImageUpsample):
         return super().forward(x)
 
 
-def _load_vae(pretrained: str, subfolder: str) -> AutoencoderKL:
-    """Load the latent VAE, falling back to the Qwen-Image (video-derived) VAE class.
-
-    ``AutoencoderKL.from_pretrained`` fails on the Qwen-Image checkpoint because it declares a
-    different model class; we catch the load/config error and retry with the dedicated class.
-
-    Args:
-        pretrained: HF repo id (e.g. ``"Qwen/Qwen-Image"``).
-        subfolder: Subfolder holding the VAE weights (e.g. ``"vae"``).
-
-    Returns:
-        The instantiated diffusers VAE module.
-    """
-    try:
-        return AutoencoderKL.from_pretrained(pretrained, subfolder=subfolder)
-    except (OSError, ValueError, KeyError):
-        # Class/config mismatch (Qwen is a Wan/video-derived VAE) or a load error -> retry.
-        return AutoencoderKLQwenImage.from_pretrained(pretrained, subfolder=subfolder)
+def _load_vae(cfg: VAEConfig) -> AutoencoderKL | AutoencoderKLQwenImage:
+    """The diffusers VAE: the Qwen-Image (Wan/video-derived) class when ``cfg.video_vae``, else ``AutoencoderKL``."""
+    cls = AutoencoderKLQwenImage if cfg.video_vae else AutoencoderKL
+    return cls.from_pretrained(cfg.pretrained, subfolder=cfg.subfolder)
 
 
 class VAEWrapper(nn.Module):
-    """Frozen-encoder / trainable-decoder VAE with latent (de)normalization and a recon-CER gate."""
+    """Frozen VAE with latent (de)normalization and a recon-CER gate."""
 
     def __init__(self, cfg: VAEConfig) -> None:
         super().__init__()
         self.cfg = cfg
-        self.vae = _load_vae(cfg.pretrained, cfg.subfolder)
-        self.latent_channels = cfg.latent_channels
+        self.vae = _load_vae(cfg)
         self.video_vae = cfg.video_vae  # Qwen/Wan VAE wants 5D [B, C, T, H, W]
 
         c = self.vae.config
@@ -105,20 +91,15 @@ class VAEWrapper(nn.Module):
                     module.__class__ = _NativeDtypeUpsample
 
         self.vae.requires_grad_(False)
-        if cfg.finetune_decoder_only:
-            self.vae.decoder.requires_grad_(True)
-            if getattr(self.vae, "post_quant_conv", None) is not None:
-                self.vae.post_quant_conv.requires_grad_(True)
+        self._compiled = False  # compile_codec() ran: encode/decode re-apply the per-thread compile settings
+        self._compile_mode: str | None = None
 
     def compile_codec(self, mode: str | None = None) -> None:
         """``torch.compile`` the VAE encode + decode (``fullgraph``, dynamic width) — diffusers' SD3 docs compile
-        the decode for inference; the encode is the live training path without ``--cache-latents``."""
-        from .backbone import configure_compile
-
+        the decode for inference; the encode runs every training step. In place: state-dict keys unchanged."""
         configure_compile(mode)
-        self.vae.encoder.compile(
-            fullgraph=True, dynamic=True, mode=mode
-        )  # in place: state-dict keys unchanged
+        self._compiled, self._compile_mode = True, mode
+        self.vae.encoder.compile(fullgraph=True, dynamic=True, mode=mode)
         self.vae.decoder.compile(fullgraph=True, dynamic=True, mode=mode)
 
     def _direct_single_frame(self) -> bool:
@@ -152,14 +133,14 @@ class VAEWrapper(nn.Module):
         Args:
             x: Images ``[B, 3, H, W]`` in ``[-1, 1]``.
             sample: Draw from the posterior (``True``, training default — one reparam sample) or return its
-                MODE/mean (``False``). Use ``sample=False`` to precompute a DETERMINISTIC latent cache
-                (data/latent_cache.py); the posterior std is tiny for an f8 VAE and flow matching injects its
-                own noise, so the mode is the conventional, behavior-safe cache choice.
+                MODE/mean (``False``, deterministic — e.g. an inference reference line).
 
         Returns:
             Normalized latent ``[B, C, H/8, W/8]`` (encoder frozen). For video VAEs (Qwen/Wan) a
             ``T=1`` frame dim is added then squeezed so the latent stays 4D for the DiT.
         """
+        if self._compiled:  # the compile settings are per thread: apply them in this one too
+            ensure_compile_config(self._compile_mode)
         if self.video_vae:
             x = x.unsqueeze(2)  # [B, 3, 1, H, W]
         dist = self._single_frame_encode(x) if self._direct_single_frame() else self.vae.encode(x).latent_dist
@@ -169,7 +150,9 @@ class VAEWrapper(nn.Module):
         return self._normalize(z)
 
     def decode(self, z: torch.Tensor) -> torch.Tensor:
-        """Decode a normalized 4D latent to an image ``[B, 3, H, W]`` in ``[-1, 1]`` (decoder trainable)."""
+        """Decode a normalized 4D latent to an image ``[B, 3, H, W]`` in ``[-1, 1]``."""
+        if self._compiled:
+            ensure_compile_config(self._compile_mode)
         z = self._denormalize(z)
         if self.video_vae:
             z = z.unsqueeze(2)  # [B, C, 1, h, w]
@@ -203,8 +186,6 @@ class VAEWrapper(nn.Module):
         Returns:
             ``{"raw_cer", "recon_cer", "passed"}``.
         """
-        from .metrics import cer as _cer
-
         # Chunked: the Qwen/Wan VAE's 3D convs allocate >80 GB if the whole set is round-tripped at
         # once (the gate OOMed on 500 lines). Encode/decode + recognize in small batches instead.
         raw_preds: list[str] = []
@@ -214,8 +195,8 @@ class VAEWrapper(nn.Module):
             recon = self.decode(self.encode(chunk))
             raw_preds.extend(recognizer(chunk))
             recon_preds.extend(recognizer(recon))
-        raw_cer = _cer(raw_preds, transcriptions)
-        recon_cer = _cer(recon_preds, transcriptions)
+        raw_cer = cer(raw_preds, transcriptions)
+        recon_cer = cer(recon_preds, transcriptions)
         return {
             "raw_cer": raw_cer,
             "recon_cer": recon_cer,
