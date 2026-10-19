@@ -5,7 +5,9 @@ A tiny backbone and a fake f8 VAE keep these CPU-fast and offline; they check wi
 
 from __future__ import annotations
 
+import os
 import tempfile
+import traceback
 from functools import partial
 
 import pytest
@@ -309,3 +311,44 @@ class FakeDinoStyle(FakeDino):
     def forward(self, pixels: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         tokens = pixels.new_zeros(pixels.shape[0], 4, self.dim)
         return tokens, tokens.mean(1)
+
+
+def _train_two_log_steps(monkeypatch: pytest.MonkeyPatch, loss_value: float) -> list[int]:
+    """Run 4 optimizer steps with log_every=2 on a stubbed loss; return train.py's .item() call count."""
+    from accelerate.state import AcceleratorState
+
+    import diffu.model.diffu as diffu_mod
+    from diffu.train import train
+
+    AcceleratorState._reset_state(reset_partial_state=True)
+
+    def fake_forward(self, images, texts, *_args, **_kwargs):
+        loss = self.backbone.transformer.proj_out.weight.sum() * 0.0 + loss_value
+        return {"loss": loss, "flow": loss.detach()}
+
+    monkeypatch.setattr(diffu_mod.Diffu, "forward", fake_forward)
+    calls = [0]
+    real_item = torch.Tensor.item
+
+    def counting_item(self):
+        caller = traceback.extract_stack(limit=2)[0].filename
+        if caller.endswith(os.path.join("diffu", "train.py")):  # not torch internals (e.g. CPU AdamW)
+            calls[0] += 1
+        return real_item(self)
+
+    monkeypatch.setattr(torch.Tensor, "item", counting_item)
+    cfg = _cfg()
+    loader = DataLoader([_item(64, "a", 32, "b")] * 8, batch_size=2, collate_fn=collate_lines)
+    with tempfile.TemporaryDirectory() as tmp:
+        train(cfg, loader, steps=4, log_every=2, use_ema=False, out_dir=tmp, save_final=False, log_cer=False)
+    return calls
+
+
+def test_training_reads_losses_only_at_log_steps(fake_vae, monkeypatch: pytest.MonkeyPatch):
+    calls = _train_two_log_steps(monkeypatch, 1.0)
+    assert calls[0] == 4  # (loss, flow) at steps 0 and 2 — not at every step
+
+
+def test_non_finite_loss_still_stops_training(fake_vae, monkeypatch: pytest.MonkeyPatch):
+    with pytest.raises(RuntimeError, match="non-finite loss"):
+        _train_two_log_steps(monkeypatch, float("nan"))

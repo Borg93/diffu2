@@ -66,9 +66,8 @@ def _run_gated_loop(grad_accum: int, num_micro_batches: int) -> tuple[int, int, 
         micro_seen += 1
 
         # ---- mirror train.py:588-591, 705 (the gated bookkeeping) ----
-        # The non-finite loss check (train.py:575) runs every micro-batch — BEFORE this
-        # guard — so we omit it here (loss is always finite for this dummy model) and focus
-        # on the gated block, which is what the fix moved behind the guard.
+        # The non-finite loss check runs inside the gated block at log steps (train.py) — omitted
+        # here (loss is always finite for this dummy model); we focus on the gating itself.
         if not accel.sync_gradients:
             continue
         ema.step(params)  # train.py:590-591

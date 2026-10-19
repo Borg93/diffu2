@@ -635,9 +635,6 @@ def train(
         seen = 0
         for batch in dataloader:
             seen += 1
-            loss_val: float | None = None
-            flow_val: float | None = None
-            repa_val: float | None = None
             with accel.accumulate(model):
                 repa_w = (
                     cfg.aux.repa_weight if step < cfg.aux.repa_stop_frac * steps else 0.0
@@ -661,50 +658,54 @@ def train(
                 opt.step()
                 lr_scheduler.step()
                 opt.zero_grad()
-            loss_val = loss.item()
-            # flow is the term comparable to val_loss (REPA is training-only); log both so the
-            # train-flow vs val-flow overfitting check is apples-to-apples.
-            flow_val = out["flow"].item()
-            repa_val = out["repa"].item() if "repa" in out else None
-            msg = f"loss {loss_val:.4f}  flow {flow_val:.4f}"
-            if repa_val is not None:
-                msg += f"  repa {repa_val:.4f}"
-            msg += f"  lr {lr_scheduler.get_last_lr()[0]:.2e}"
-            if loss_val is not None and not math.isfinite(loss_val):  # NaN/inf -> training is broken
-                if tracker is not None:
-                    tracker.alert(
-                        title="Non-finite loss",
-                        text=f"loss={loss_val} at step {step}",
-                        level=tracker.AlertLevel.ERROR,
-                    )
-                raise RuntimeError(f"non-finite loss {loss_val} at step {step}")
             # Gradient accumulation: run the per-OPTIMIZER-step bookkeeping (EMA, logging, save, val,
             # sample, the barrier, and the step counter) ONLY when grads actually synced — so `step`
             # counts optimizer steps (matching the LR horizon / recog ramp / cadence), not micro-batches.
             # Diffusers' own training loops gate on `accelerator.sync_gradients` the same way. No-op at
-            # grad_accum=1 (sync every iteration). The non-finite check above still runs every micro-batch.
+            # grad_accum=1 (sync every iteration).
             if not accel.sync_gradients:
                 continue
             if ema is not None:
                 ema.step(params)
-            if accel.is_main_process and step % log_every == 0:
-                now = perf_counter()
-                imgs_per_s = (
-                    (step - last_log_step)
-                    * batch["images"].shape[0]
-                    * accel.num_processes
-                    / max(now - last_log_t, 1e-6)
-                )
-                last_log_t, last_log_step = now, step
-                print(f"step {step}/{steps}  {msg}  {imgs_per_s:.0f} img/s", flush=True)
-                if tracker is not None and loss_val is not None:
-                    lr_now = lr_scheduler.get_last_lr()[0]  # step= -> real-step x-axis
-                    metrics: dict[str, float] = {"loss": loss_val, "lr": lr_now, "images_per_s": imgs_per_s}
-                    if flow_val is not None:  # flow_loss is what val_loss is comparable to
-                        metrics["flow_loss"] = flow_val
-                    if repa_val is not None:
-                        metrics["repa_loss"] = repa_val
-                    tracker.log(metrics, step=step)
+            if step % log_every == 0:
+                # The losses stay on the GPU between log steps: a per-step .item() makes the CPU wait for
+                # the GPU every step, which stalls kernel launching in this host-bound loop. Every rank checks
+                # (so a NaN stops all ranks together); NaN is caught at most log_every steps late.
+                # flow is the term comparable to val_loss (REPA is training-only); log both so the
+                # train-flow vs val-flow overfitting check is apples-to-apples.
+                loss_val = loss.item()
+                flow_val = out["flow"].item()
+                repa_val = out["repa"].item() if "repa" in out else None
+                if not math.isfinite(loss_val):  # NaN/inf -> training is broken
+                    if tracker is not None:
+                        tracker.alert(
+                            title="Non-finite loss",
+                            text=f"loss={loss_val} at step {step}",
+                            level=tracker.AlertLevel.ERROR,
+                        )
+                    raise RuntimeError(f"non-finite loss {loss_val} at step {step}")
+                msg = f"loss {loss_val:.4f}  flow {flow_val:.4f}"
+                if repa_val is not None:
+                    msg += f"  repa {repa_val:.4f}"
+                msg += f"  lr {lr_scheduler.get_last_lr()[0]:.2e}"
+                if accel.is_main_process:
+                    now = perf_counter()
+                    imgs_per_s = (
+                        (step - last_log_step)
+                        * batch["images"].shape[0]
+                        * accel.num_processes
+                        / max(now - last_log_t, 1e-6)
+                    )
+                    last_log_t, last_log_step = now, step
+                    print(f"step {step}/{steps}  {msg}  {imgs_per_s:.0f} img/s", flush=True)
+                    if tracker is not None:
+                        lr_now = lr_scheduler.get_last_lr()[0]  # step= -> real-step x-axis
+                        metrics: dict[str, float] = {"loss": loss_val, "lr": lr_now, "images_per_s": imgs_per_s}
+                        if flow_val is not None:  # flow_loss is what val_loss is comparable to
+                            metrics["flow_loss"] = flow_val
+                        if repa_val is not None:
+                            metrics["repa_loss"] = repa_val
+                        tracker.log(metrics, step=step)
             if step > 0 and step % save_every == 0:
                 _save_checkpoint(accel, unwrapped, os.path.join(out_dir, f"step_{step}"), lora=lora)
             if val_loader is not None and accel.is_main_process and step > 0 and step % val_every == 0:
