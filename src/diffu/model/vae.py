@@ -72,6 +72,15 @@ class VAEWrapper(nn.Module):
             if getattr(self.vae, "post_quant_conv", None) is not None:
                 self.vae.post_quant_conv.requires_grad_(True)
 
+    def compile_codec(self, mode: str | None = None) -> None:
+        """``torch.compile`` the VAE encode + decode (``fullgraph``, dynamic width) — diffusers' SD3 docs compile
+        the decode for inference; the encode is the live training path without ``--cache-latents``."""
+        from .backbone import configure_compile
+
+        configure_compile(mode)
+        self.vae.encode = torch.compile(self.vae.encode, fullgraph=True, dynamic=True, mode=mode)
+        self.vae.decode = torch.compile(self.vae.decode, fullgraph=True, dynamic=True, mode=mode)
+
     def _normalize(self, z: torch.Tensor) -> torch.Tensor:
         if self._per_channel:
             return (z - self.lat_mean) / self.lat_std

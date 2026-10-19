@@ -98,10 +98,14 @@ class RoPEJointAttnProcessor:
         residual = hidden_states
         batch_size = hidden_states.shape[0]
 
-        # image (`sample`) projections
-        query = attn.to_q(hidden_states)
-        key = attn.to_k(hidden_states)
-        value = attn.to_v(hidden_states)
+        # image (`sample`) projections — one fused matmul after Backbone.fuse_qkv_projections()
+        fused = getattr(attn, "fused_projections", False)
+        if fused:
+            query, key, value = attn.to_qkv(hidden_states).chunk(3, dim=-1)
+        else:
+            query = attn.to_q(hidden_states)
+            key = attn.to_k(hidden_states)
+            value = attn.to_v(hidden_states)
 
         inner_dim = key.shape[-1]
         head_dim = inner_dim // attn.heads
@@ -122,9 +126,12 @@ class RoPEJointAttnProcessor:
 
         # text (`context`) projections — position-free (no rotary)
         if encoder_hidden_states is not None:
-            enc_q = attn.add_q_proj(encoder_hidden_states)
-            enc_k = attn.add_k_proj(encoder_hidden_states)
-            enc_v = attn.add_v_proj(encoder_hidden_states)
+            if fused:
+                enc_q, enc_k, enc_v = attn.to_added_qkv(encoder_hidden_states).chunk(3, dim=-1)
+            else:
+                enc_q = attn.add_q_proj(encoder_hidden_states)
+                enc_k = attn.add_k_proj(encoder_hidden_states)
+                enc_v = attn.add_v_proj(encoder_hidden_states)
 
             enc_q = enc_q.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
             enc_k = enc_k.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)

@@ -41,6 +41,11 @@ img.save("out.png")
 - **Many lines / serving:** `DiffuPipeline.from_pretrained(..., compile_backbone=True)` — regional
   `torch.compile` (dynamic; one compile covers variable widths), ~0.37 s/line vs ~1 s eager after the
   one-time cold start.
+- **More inference speed (diffusers' SD3 recommendations, all exact):** fused Q/K/V projections are on by
+  default (`fuse_qkv=True`, skipped with a LoRA); `compile_vae=True` compiles the VAE decode;
+  `compile_mode="reduce-overhead"` / `"max-autotune"` adds CUDA graphs (+ the SD3 Inductor flags). CLI:
+  `--compile --compile-vae --compile-mode max-autotune`. Training: `--compile-mode max-autotune-no-cudagraphs`
+  and `--compile-vae` (the live encode). Measure on your GPU — gains are not benchmarked yet.
 - **Quantization:** measured a *loss* on this model (see `docs/PERF_AUDIT.md` §0f) — don't; bf16 + compile
   is the shipping config. `diffu.quantize` stays available for hardware where low-bit GEMMs win.
 - CLI equivalent: `diffu-generate --text "…" --style ref.png --ckpt <weights> [--compile]`.

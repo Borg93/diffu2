@@ -55,6 +55,9 @@ class DiffuPipeline:
         lora: str | None = None,
         lora_scale: float = 1.0,
         attention_backend: str | None = None,
+        compile_mode: str | None = None,
+        compile_vae: bool = False,
+        fuse_qkv: bool = True,
     ) -> DiffuPipeline:
         """Build from a local dir OR a Hub repo id, each holding ``config.json`` + ``weights_name``.
 
@@ -64,6 +67,10 @@ class DiffuPipeline:
         ``compile_backbone`` fuses the repeated MMDiT blocks (the same regional ``torch.compile`` win used
         in training; ``dynamic=True`` — one compile covers the variable line widths). The cold-start cost
         pays off over many lines (batch/served), not a single one-off call — left off by default.
+
+        ``compile_mode`` / ``compile_vae``: a ``torch.compile`` mode (``"reduce-overhead"`` / ``"max-autotune"`` add
+        CUDA graphs) and compiling the VAE decode. ``fuse_qkv`` (default) merges each stream's Q/K/V projections
+        into one matmul — exact; skipped when a LoRA is attached.
         """
         device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         # TF32 matmuls for fp32 inference (train.py sets this for training; without it every GEMM —
@@ -78,10 +85,14 @@ class DiffuPipeline:
             from .lora import load_lora
 
             load_lora(model, lora, scale=lora_scale)
+        if fuse_qkv and not lora:  # one Q/K/V matmul per stream — exact; skipped with a LoRA attached
+            model.backbone.fuse_qkv_projections()
         if attention_backend:  # a diffusers kernel backend, e.g. "_native_cudnn" / "sage_blackwell_hub"
             model.backbone.set_attention_backend(attention_backend)
+        if compile_vae:  # diffusers' SD3 docs compile the VAE decode too
+            model.vae.compile_codec(compile_mode)
         if compile_backbone:
-            model.backbone.compile_blocks()  # regional compile — same fusion as the training win
+            model.backbone.compile_blocks(compile_mode)  # regional compile — same fusion as the training win
         return cls(model, cfg, device=device, dtype=dtype)
 
     @staticmethod

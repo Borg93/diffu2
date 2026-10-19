@@ -252,7 +252,13 @@ def save_samples(
 
 
 def _setup_model(
-    cfg: Config, *, grad_checkpoint: bool, compile_model: bool, attention_backend: str | None = None
+    cfg: Config,
+    *,
+    grad_checkpoint: bool,
+    compile_model: bool,
+    attention_backend: str | None = None,
+    compile_mode: str | None = None,
+    compile_vae: bool = False,
 ) -> Diffu:
     """Build the model and freeze everything Stage-1 flow matching never touches.
 
@@ -265,7 +271,9 @@ def _setup_model(
     if attention_backend:
         model.backbone.set_attention_backend(attention_backend)  # before compile: it is traced into the graph
     if compile_model:
-        model.backbone.compile_blocks()  # regional torch.compile (see Backbone.compile_blocks)
+        model.backbone.compile_blocks(compile_mode)  # regional torch.compile (see Backbone.compile_blocks)
+    if compile_vae:  # the live encode (no --cache-latents) is ~13-23% of a step (docs/PERF_AUDIT.md)
+        model.vae.compile_codec(compile_mode)
     model.vae.requires_grad_(False)
     return model
 
@@ -436,6 +444,8 @@ def train(
     lora_targets: tuple[str, ...] | None = None,
     run_config: dict[str, Any] | None = None,
     attention_backend: str | None = None,
+    compile_mode: str | None = None,
+    compile_vae: bool = False,
 ) -> Diffu:
     """Run the Stage-1 flow-matching training loop.
 
@@ -490,6 +500,8 @@ def train(
         grad_checkpoint=grad_checkpoint,
         compile_model=compile_model and not lora,  # LoRA must be injected BEFORE the backbone is compiled
         attention_backend=attention_backend,
+        compile_mode=compile_mode,
+        compile_vae=compile_vae,
     )
     if init_from is not None:  # warm-start from prior weights (strict=False) instead of random init
         from .generate import load_checkpoint
@@ -503,7 +515,7 @@ def train(
 
         n_lora = add_lora(model, rank=lora_rank, alpha=lora_alpha, dropout=lora_dropout, targets=lora_targets)
         if compile_model:
-            model.backbone.compile_blocks()  # compile now that the adapter is in place
+            model.backbone.compile_blocks(compile_mode)  # compile now that the adapter is in place
         if accel.is_main_process:
             base = "random init — pass --init-from for a real adapter" if init_from is None else init_from
             print(f"LoRA rank={lora_rank}: {n_lora / 1e6:.3f}M trainable adapter params (base frozen: {base})", flush=True)
@@ -590,6 +602,8 @@ def train(
         "num_layers": cfg.backbone.num_layers,
         "init_from": init_from,
         "compile": compile_model,
+        "compile_mode": compile_mode,
+        "compile_vae": compile_vae,
         "log_cer": log_cer,
         "val_every": val_every,
         "sample_every": sample_every,
@@ -919,6 +933,18 @@ def main() -> None:
     )
     ap.add_argument("--compile", action="store_true")
     ap.add_argument(
+        "--compile-mode",
+        choices=("max-autotune-no-cudagraphs",),
+        default=None,
+        help="with --compile: autotune the GEMMs (+ diffusers' SD3 Inductor flags); slower first compile. "
+        "CUDA-graph modes are inference-only (diffu-generate)",
+    )
+    ap.add_argument(
+        "--compile-vae",
+        action="store_true",
+        help="torch.compile the VAE encode (the live x0 encode; moot with --cache-latents)",
+    )
+    ap.add_argument(
         "--no-repa",
         dest="repa",
         action="store_false",
@@ -1237,6 +1263,8 @@ def main() -> None:
         lora_alpha=args.lora_alpha,
         lora_dropout=args.lora_dropout,
         attention_backend=args.attention_backend,
+        compile_mode=args.compile_mode,
+        compile_vae=args.compile_vae,
         run_config={
             "batch_size": args.batch_size,
             "num_workers": args.num_workers,

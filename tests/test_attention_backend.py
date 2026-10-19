@@ -48,3 +48,15 @@ def test_set_attention_backend_reaches_the_rope_processor():
     latent, t, ctx, pooled = _inputs()
     with torch.no_grad():
         assert torch.isfinite(model(latent, t, ctx, pooled, n_content=6)).all()
+
+
+def test_fused_qkv_matches_separate_projections():
+    model = _backbone()
+    latent, t, ctx, pooled = _inputs()
+    with torch.no_grad():
+        separate = model(latent, t, ctx, pooled, n_content=6)
+        model.fuse_qkv_projections()
+        fused = model(latent, t, ctx, pooled, n_content=6)
+    fused_attns = [m for m in model.transformer.modules() if getattr(m, "fused_projections", False)]
+    assert fused_attns and all(hasattr(m, "to_qkv") and hasattr(m, "to_added_qkv") for m in fused_attns)
+    torch.testing.assert_close(fused, separate)

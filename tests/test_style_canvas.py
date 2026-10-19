@@ -281,3 +281,31 @@ def test_warm_start_widens_the_input_layer_with_zeroed_new_channels(
     widened = canvas.state_dict()[key]
     torch.testing.assert_close(widened[:, :C], legacy.state_dict()[key])
     assert widened[:, C:].abs().sum() == 0  # the reference channels start silent
+
+
+@pytest.mark.parametrize("canvas", [False, True])
+def test_fused_qkv_generation_is_unchanged(fake_vae, monkeypatch: pytest.MonkeyPatch, canvas: bool):
+    monkeypatch.setattr("diffu.model.diffu.StyleEncoder", FakeDinoStyle)
+    model = _model(_cfg(canvas=canvas)).eval()
+    kwargs = {"latent_hw": (4, 10), "num_steps": 2, "cfg_scale": 5.0, "text_widths": [64]}
+    if canvas:
+        kwargs |= {"ref_images": torch.ones(1, 3, 32, 48), "ref_texts": ["Lund"], "ref_widths": [48]}
+    style = None if canvas else torch.zeros(1, 3, 224, 224)
+    torch.manual_seed(0)
+    separate = model.generate(["Lind"], style, **kwargs)
+    model.backbone.fuse_qkv_projections()
+    torch.manual_seed(0)
+    fused = model.generate(["Lind"], style, **kwargs)
+    torch.testing.assert_close(fused, separate)
+
+
+class FakeDinoStyle(FakeDino):
+    """FakeDino that also acts as the dino-mode style encoder (zero style tokens + pooled vector)."""
+
+    def __init__(self, _cond, dim: int) -> None:
+        super().__init__()
+        self.dim = dim
+
+    def forward(self, pixels: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        tokens = pixels.new_zeros(pixels.shape[0], 4, self.dim)
+        return tokens, tokens.mean(1)

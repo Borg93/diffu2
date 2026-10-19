@@ -281,6 +281,9 @@ def generate(
     lora: str | None = None,
     lora_scale: float = 1.0,
     attention_backend: str | None = None,
+    compile_mode: str | None = None,
+    compile_vae: bool = False,
+    fuse_qkv: bool = True,
     style_text: str = "",
     style_cfg_scale: float = 0.0,
 ) -> list[Image.Image]:
@@ -304,13 +307,17 @@ def generate(
         from .lora import load_lora
 
         load_lora(model, lora, scale=lora_scale)
+    if fuse_qkv and not lora:  # exact; a LoRA wraps the unfused projections, so keep those then
+        model.backbone.fuse_qkv_projections()
     if attention_backend:  # before compile: the backend is traced into the compiled graph
         model.backbone.set_attention_backend(attention_backend)
+    if compile_vae:
+        model.vae.compile_codec(compile_mode)
     if compile_model:
         # Fuse the per-block glue (−70% kernel launches, §0e). compile_blocks is dynamic=True — ONE
         # compile covers the variable widths — but the cold-start cost still only pays off over MANY
         # lines (batch / served / page rendering), not a one-shot generation.
-        model.backbone.compile_blocks()
+        model.backbone.compile_blocks(compile_mode)
 
     if model.canvas:  # in-context reference: always the canonical per-text geometry
         ref = load_ref_line(style_path, cfg, text=style_text)
@@ -397,6 +404,17 @@ def main() -> None:
         "--attention-backend", default=None, help="diffusers attention kernel (e.g. _native_cudnn, flash_hub)"
     )
     ap.add_argument(
+        "--compile-mode",
+        choices=("reduce-overhead", "max-autotune", "max-autotune-no-cudagraphs"),
+        default=None,
+        help="torch.compile mode for --compile / --compile-vae: reduce-overhead / max-autotune add CUDA graphs "
+        "(one per line width)",
+    )
+    ap.add_argument("--compile-vae", action="store_true", help="torch.compile the VAE decode")
+    ap.add_argument(
+        "--no-fuse-qkv", dest="fuse_qkv", action="store_false", help="keep separate Q/K/V matmuls (default: fused)"
+    )
+    ap.add_argument(
         "--lora", default=None, help="LoRA adapter dir or Hub id to load onto the base checkpoint"
     )
     ap.add_argument("--lora-scale", type=float, default=1.0, help="how strongly to apply the LoRA (0..1+)")
@@ -426,6 +444,9 @@ def main() -> None:
         style_text=args.style_text,
         style_cfg_scale=args.style_cfg_scale,
         attention_backend=args.attention_backend,
+        compile_mode=args.compile_mode,
+        compile_vae=args.compile_vae,
+        fuse_qkv=args.fuse_qkv,
     )
 
     out = Path(args.out)

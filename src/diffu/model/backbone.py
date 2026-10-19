@@ -15,10 +15,33 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 from diffusers import SD3Transformer2DModel
+from diffusers.models.attention_processor import Attention
 from diffusers.models.embeddings import PatchEmbed
 
 from ..config import BackboneConfig
 from .rope import RoPEJointAttnProcessor, build_2d_rope
+
+
+def configure_compile(mode: str | None = None) -> None:
+    """Process-global Dynamo / Inductor settings for the regional, dynamic-width compiles (blocks and VAE)."""
+    import torch._dynamo
+    import torch._inductor.config as inductor_config
+    import torch.fx.experimental._config as fx_config
+
+    # use_duck_shape=False keeps the line width a free symbol, so a width that coincidentally equals
+    # batch/heads/h_t doesn't trigger a recompile. Process-global; set once per entrypoint.
+    fx_config.use_duck_shape = False
+    # Variable widths + the last block's context_pre_only=True guard trigger several recompiles; the
+    # default recompile_limit (8) is too low and Dynamo ABORTS. Raise it (bucketing keeps the real count
+    # to ~num_buckets; dynamic=True keeps most widths on one symbolic shape).
+    torch._dynamo.config.recompile_limit = 256
+    torch._dynamo.config.accumulated_recompile_limit = 2048
+    if mode is not None and mode.startswith("max-autotune"):
+        # The Inductor settings diffusers' SD3 docs pair with max-autotune ("Performance Optimizations for SD3").
+        inductor_config.conv_1x1_as_mm = True
+        inductor_config.coordinate_descent_tuning = True
+        inductor_config.epilogue_fusion = False
+        inductor_config.coordinate_descent_check_all_directions = True
 
 
 class Backbone(nn.Module):
@@ -111,7 +134,18 @@ class Backbone(nn.Module):
         """
         self.transformer.set_attention_backend(backend)
 
-    def compile_blocks(self) -> None:
+    def fuse_qkv_projections(self) -> None:
+        """Inference: one Q/K/V matmul per stream instead of three (diffusers' ``Attention.fuse_projections``).
+
+        Keeps :class:`RoPEJointAttnProcessor` (``SD3Transformer2DModel.fuse_qkv_projections`` would swap in
+        the stock processor and drop our RoPE). Call AFTER loading weights and NOT with a LoRA attached —
+        the fused copies are taken from the base Q/K/V weights; the unfused ones are kept for training.
+        """
+        for module in self.transformer.modules():
+            if isinstance(module, Attention):
+                module.fuse_projections()
+
+    def compile_blocks(self, mode: str | None = None) -> None:
         """Regionally ``torch.compile`` the repeated ``JointTransformerBlock`` (shared by train + inference).
 
         Compiles ONE block (not all 24): cold start is cheap and per-step throughput matches a full compile.
@@ -120,23 +154,17 @@ class Backbone(nn.Module):
         width on one symbolic shape — pair with width bucketing (train) / one width per call (inference) so
         only a handful of shapes occur and recompiles stay bounded. Measured: −70% kernel launches, ~1.9×
         train throughput (docs/PERF_AUDIT.md §0e).
-        """
-        import torch._dynamo
-        import torch.fx.experimental._config as fx_config
 
-        # use_duck_shape=False keeps the line width a free symbol, so a width that coincidentally equals
-        # batch/heads/h_t doesn't trigger a recompile. Process-global; set once per entrypoint.
-        fx_config.use_duck_shape = False
-        # Variable widths + the last block's context_pre_only=True guard trigger several recompiles; the
-        # default recompile_limit (8) is too low and Dynamo ABORTS. Raise it (bucketing keeps the real count
-        # to ~num_buckets; dynamic=True keeps most widths on one symbolic shape).
-        torch._dynamo.config.recompile_limit = 256
-        torch._dynamo.config.accumulated_recompile_limit = 2048
+        ``mode`` is a ``torch.compile`` mode: ``None`` (default), ``"max-autotune-no-cudagraphs"`` (GEMM
+        autotuning; training-safe), ``"reduce-overhead"`` / ``"max-autotune"`` (add CUDA graphs — inference
+        only; one graph per line width, so keep widths bucketed).
+        """
+        configure_compile(mode)
         # SD3 ships `_repeated_blocks` empty, so populate it or compile_repeated_blocks() is a no-op.
         self.transformer._repeated_blocks = ["JointTransformerBlock"]
         # fullgraph=True so a graph break in the custom RoPE processor (apply_rotary_emb on a slice + cat,
         # qk RMSNorm, SDPA) fails LOUDLY at compile time instead of silently un-fusing and erasing the win.
-        self.transformer.compile_repeated_blocks(dynamic=True, fullgraph=True)
+        self.transformer.compile_repeated_blocks(dynamic=True, fullgraph=True, mode=mode)
 
     def forward(
         self,
