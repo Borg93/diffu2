@@ -20,3 +20,4 @@ tests_data/
 *.db
 *.log
 packages/diffu-studio/frontend/
+data_flux3/
