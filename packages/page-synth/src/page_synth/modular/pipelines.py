@@ -6,8 +6,8 @@ FLUX.3's own blocks, as :class:`CropTextBlocks` and :class:`CropBlocks`:
 
 - the **text pipeline**: ``CropPromptStep`` -> FLUX.3's text encoder (Qwen3-VL). A crop plan in, its prompt
   embeddings out.
-- the **crop pipeline**: ``CropPromptStep`` -> reference VAE encoder (only when an ``image`` is passed) -> denoise ->
-  decode -> ``LineReadbackStep`` -> ``LabelExportStep``. The plan and the embeddings in, the image, the per-line
+- the **crop pipeline**: ``CropPromptStep`` -> ``ReferenceGridStep`` (a reference on v3's training grid) -> reference
+  VAE encoder (only when an ``image`` is passed) -> denoise -> decode -> ``LineReadbackStep`` -> ``LabelExportStep``. The plan and the embeddings in, the image, the per-line
   read-back and the labels out. FLUX.3's auto blocks pick text-to-image or reference-conditioned denoising from the
   inputs, so one pipeline draws both the v2 (style by name) and the v3 (style by example) crops.
 
@@ -30,7 +30,7 @@ from diffusers.modular_pipelines.modular_pipeline_utils import InsertableDict
 from pydantic import BaseModel, ConfigDict
 from safetensors.torch import load_file
 
-from page_synth.modular.blocks import CropPromptStep, LabelExportStep, LineReadbackStep
+from page_synth.modular.blocks import CropPromptStep, LabelExportStep, LineReadbackStep, ReferenceGridStep
 from page_synth.modular.readback import materialize_position_tables
 
 FLUX3_KLEIN = Path(os.environ.get("FLUX3_MODEL", Path.home() / "Desktop/repos/flux3-models/flux-3-image-klein-base"))
@@ -44,6 +44,7 @@ CROP_TEXT_BLOCKS = InsertableDict([("crop_prompt", CropPromptStep()), ("text_enc
 CROP_BLOCKS = InsertableDict(
     [
         ("crop_prompt", CropPromptStep()),
+        ("reference_grid", ReferenceGridStep()),
         ("vae_encoder", _FLUX3["vae_encoder"]),
         ("denoise", _FLUX3["denoise"]),
         ("decode", _FLUX3["decode"]),

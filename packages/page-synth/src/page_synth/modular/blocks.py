@@ -1,6 +1,7 @@
 """Our Modular Diffusers blocks around FLUX.3's own: a crop plan in, a crop's ground truth out.
 
 - ``CropPromptStep`` turns a :class:`page_synth.crops.plan.CropPlan` into the prompt, the line boxes and the image size;
+- ``ReferenceGridStep`` resizes a reference image the way it was resized for v3 training;
 - ``LineReadbackStep`` reads every line box of the generated image with a Swedish HTR TrOCR;
 - ``LabelExportStep`` writes the crop's labels from the plan's boxes and words, each line tagged ``unclear`` when
   its read-back error rate is over ``max_line_cer`` (its words may not be on the page as the label says).
@@ -20,6 +21,7 @@ from diffusers.modular_pipelines import (
     OutputParam,
     PipelineState,
 )
+from PIL import Image
 from transformers import TrOCRProcessor, VisionEncoderDecoderModel
 
 from page_synth.crops.plan import ROLES, CropPlan
@@ -28,8 +30,49 @@ from page_synth.modular.readback import HTR, pixel_box, read_lines
 
 type LabelFormat = Literal["alto", "page"]
 
+REFERENCE_PIXELS = 1024 * 1024  # page_synth.data.cache_pairs caches v3's references under this many pixels
+REFERENCE_GRID = 16  # px; NeMo's FLUX.3 cache encoder floors both sides of an image to a multiple of this
 SLOT_BASELINE = 0.7  # a line slot runs 0.7 line pitch above its baseline and 0.3 below (page_synth.crops.geometry)
 _REGION_OF_ROLE = {role: region for region, role in reversed(ROLES.items())}  # the first region naming each role
+
+
+def training_grid(image: Image.Image) -> Image.Image:
+    """A reference image as NeMo's FLUX.3 cache encoder resized it for training: scaled under ``REFERENCE_PIXELS``,
+    each side floored to a multiple of ``REFERENCE_GRID`` (the image is squashed onto the grid, never padded)."""
+    scale = min(1.0, (REFERENCE_PIXELS / (image.width * image.height)) ** 0.5)
+    width = max(REFERENCE_GRID, int(image.width * scale) // REFERENCE_GRID * REFERENCE_GRID)
+    height = max(REFERENCE_GRID, int(image.height * scale) // REFERENCE_GRID * REFERENCE_GRID)
+    return image.convert("RGB").resize((width, height), Image.Resampling.LANCZOS)
+
+
+class ReferenceGridStep(ModularPipelineBlocks):
+    """Puts a reference image on the grid the v3 LoRA was trained on.
+
+    NeMo's cache encoder squashed every training reference onto the 16-pixel grid, while FLUX.3's own preprocessing
+    pads a reference out to it with a reflected border. Resizing first makes FLUX.3's preprocessing a no-op, so a
+    reference is drawn from exactly as in training. Without a reference the step does nothing.
+    """
+
+    model_name = "flux3"
+
+    @property
+    def description(self) -> str:
+        return "Resizes the reference image onto the 16-px grid the way NeMo's FLUX.3 cache encoder did in training."
+
+    @property
+    def inputs(self) -> list[InputParam]:
+        return [InputParam("image", required=False, description="The reference image (PIL), if any.")]
+
+    @property
+    def intermediate_outputs(self) -> list[OutputParam]:
+        return [OutputParam("image", description="The reference image on the training grid.")]
+
+    def __call__(self, components: ModularPipeline, state: PipelineState) -> tuple[ModularPipeline, PipelineState]:
+        block_state = self.get_block_state(state)
+        if block_state.image is not None:
+            block_state.image = training_grid(block_state.image)
+        self.set_block_state(state, block_state)
+        return components, state
 
 
 class CropPromptStep(ModularPipelineBlocks):

@@ -60,18 +60,55 @@ red-checked); not yet run on the GPU with FLUX.3 Klein.
       take the adapter.
 - [x] The base model is a constructor argument (`CropGenerator(model, ...)`), so diffu plugs in the same way.
 - [x] Training and inference see the same conditioning (checked 2026-10-21 on the real FLUX.3 text encoder, CPU): NeMo's
-      FLUX.3 cache encoder and our `CropTextBlocks` give bit-identical prompt embeddings on the same device (same chat
-      template, 80-token padding, position ids, layers 4…32). v2's cache (made on the GPU) vs ours on CPU: mean
-      per-token cosine 0.997 (bf16 arithmetic differs by device; inference runs on the GPU like the cache). The
-      latents: same VAE `mode()`, patchify and batch-norm normalization; our 16-aligned references pass both resizes
-      unchanged. Not yet checked: the reference tokens' RoPE positions in NeMo's v3 training vs diffusers' blocks.
+      FLUX.3 cache encoder and our `CropTextBlocks` give bit-identical prompt embeddings on the same device (chat
+      template, 80-token padding, position ids, layers 4…32); v2's GPU-made cache vs ours on CPU: mean per-token
+      cosine 0.997, bf16 arithmetic differing by device. Latents: same VAE `mode()`, patchify, batch-norm normalization.
+      RoPE ids and the reference stream: identical in NeMo's flux3 adapter and diffusers' blocks (image
+      (0, h·0.5, w·0.5, 0), reference l = -1, text (0, 0, 0, i), references at timestep 0 inside the transformer).
+- [x] Fixed: v3's references (10,299 of 11,152 not 16-px aligned) were squashed onto the grid by NeMo's cache encoder
+      in training but would have been reflect-padded by FLUX.3's preprocessing at inference. `ReferenceGridStep` now
+      resizes a reference exactly as training did, before FLUX.3's VAE encoder (test red-checked).
+- [x] CFG null: NeMo's dropout zeroes the text embeddings, FLUX.3 (BFL, diffusers) uses the empty prompt's. Our LoRA
+      configs set `cfg_dropout_prob: 0.0`, so v2/v3 are consistent; diffu must pick one null for training and inference.
 - [ ] Publish the blocks to the Hub (`diffusers-cli custom_blocks`) if others should use them; they import page-synth.
-- [ ] Guidance: we use 4.0 (what the LoRAs were evaluated with); FLUX.3's blocks recommend 3.5 (and scheduler shift
-      6.93). Compare on the eval set.
+- [ ] Guidance: we use 4.0, BFL's own code's default (the model card says 3.5). Sampling shift: diffusers 6.93, BFL's
+      code 16.0 since 2026-10-17. Compare both on the eval set.
 - [ ] The text-encoder layer choice is `GeneratorSettings.text_layers` (FLUX.3's default when unset); diffu's encoder
       will need its own.
 
 ## diffu: FLUX.3 architecture, our weights (plan only, nothing implemented)
+
+Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
+
+- BFL published no technical report for FLUX.3 / Klein: the architecture is fully in the code, most of the training
+  recipe is not public. What is: "FLUX 3 builds on Self-Flow" (bfl.ai/blog/flux-3; arXiv 2603.06507): two noise
+  levels per sample, an EMA teacher (0.9999) on the cleaner input, a cosine feature loss (student layer 0.3·depth to
+  teacher layer 0.7·depth, weight 0.8); it reports clearly better text rendering than plain flow matching. Candidate
+  for diffu (needs an EMA teacher: a NeMo recipe subclass).
+- Architecture details that matter: the 5 early blocks are per mode (image, reference, text each attend only within
+  their mode), then 28 shared joint blocks (62% of the weights); one modulation per mode per stage; no biases; no
+  pooled text vector; CFG null = the empty caption. Captions: Klein trained on its upsampler's output (200–350-word
+  English prose, quoted text verbatim, JSON layout boxes [y0, x0, y1, x1] on 0–1000).
+- Timestep shift: FLUX.2-latent experiments found logit-normal with shift 4.63 best for training at 256², scaled by
+  √(token ratio) for other resolutions; NeMo has only a constant `flow_shift` (no resolution-dependent shift).
+- The autoencoder: FLUX.3's `ae.safetensors` is byte-identical (sha256) to the autoencoder BFL also publishes under
+  Apache-2.0 (32 channels, semantically regularized like REPA-E). Legal question: if that license holds, diffu can
+  use FLUX.3's own autoencoder instead of Qwen-Image's 16-channel VAE.
+- NeMo trains diffu without a NeMo patch: the flux3 adapter and `Flux3Transformer2DModel` take channel count and
+  text width from the config. Use an init directory (modular index + our initialized weights) with `mode: finetune`
+  and no `peft:` block, so every rank loads identical weights (pretrain mode inits per rank and HSDP never resyncs).
+  Our caching code writes NeMo's cache layout (Qwen-Image VAE: `vae.encode(x.unsqueeze(2))`, per-channel
+  mean/std, patchify to 64 channels; Qwen3.5-4B: with 8 stacked layers NeMo's rule picks exactly its 8
+  full-attention layers). No EMA in the diffusion recipe; validation is held-out loss only; consolidated export with
+  `diffusers_compatible: true` should load with `from_pretrained` (verify in the smoke run).
+- Biggest risk: the text cache. v2's FLUX.3 cache is 524 GB for 11,329 crops (layout prompts ~1,150 tokens). For diffu
+  at 8 / 4 / 2 / 1 stacked layers: ~47 / 24 / 12 / 6 MB per crop, 4.7 / 2.4 / 1.2 / 0.6 TB per 100k crops (Leonardo:
+  1 TB `$WORK`, 20 TB `$SCRATCH` with a 40-day purge). Options: ≤ 2 layers, shorter prompts, or encoding text during
+  training (~+45% compute, 9 GB per GPU).
+- Order: measure Qwen3.5 token counts and latent statistics on ~1k crops → init-directory script → caching script →
+  YAML (finetune mode, flux3 adapter, logit-normal shift ≈ 3, fp32 weights / bf16 compute, `dp_replicate_size: 8`,
+  our interleaved dataloader, consolidated diffusers export) → GB10 smoke run → diffu inference blocks → EMA /
+  Self-Flow recipe subclass → Leonardo.
 
 - [ ] **Model**: `Flux3Transformer2DModel.from_config(...)`, random init. Sizes measured on the meta device:
       diffu-S 0.66B (hidden 1536, 3 double + 10 single blocks), diffu-M 1.66B (2048, 4 + 16); Klein is 5.54B
