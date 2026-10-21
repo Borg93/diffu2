@@ -1,0 +1,93 @@
+"""diffu's training cache on CPU with the tiny diffu repo: each crop written where NeMo's TextToImageDataset reads it,
+holding exactly the latents and prompt embeddings diffu's own pipeline steps make at generation."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import torch
+from diffusers.modular_pipelines import SequentialPipelineBlocks
+from PIL import Image
+
+from diffu.modular_pipelines.diffu import DiffuModularPipeline
+from diffu.modular_pipelines.diffu.encoders import DiffuTextEncoderStep
+from diffu.modular_pipelines.diffu.modular_blocks_diffu import DiffuVaeEncoderSequentialStep
+from diffu_page.captions.prompt import LineRecord
+from diffu_page.captions.records import CropRecord
+from diffu_train.cache import DiffuEncoders, cache_crops, write_metadata
+
+CAPTIONS = ["Ett protokoll i brun bläck.", "En dombok på gult papper, två rader."]
+
+
+def _split(directory: Path) -> list[CropRecord]:
+    """Two 64 x 32 crops with their records, as diffu_page.data.build_crops writes a split."""
+    directory.mkdir()
+    records: list[CropRecord] = []
+    for k, caption in enumerate(CAPTIONS):
+        Image.linear_gradient("L").resize((64, 32)).rotate(90 * k).convert("RGB").save(directory / f"{k}.jpg")
+        line = LineRecord(id="Sv_Text_1", text="Göteborgs poliskammare", role="", bbox=[0, 0, 1000, 1000])
+        records.append(
+            CropRecord(
+                file_name=f"{k}.jpg",
+                caption=caption,
+                collection="GT-RA_test",
+                page="page.xml",
+                width=64,
+                height=32,
+                greyscale=False,
+                paper="cream",
+                ink="brown",
+                layout=[],
+                lines=[line],
+            )
+        )
+    return records
+
+
+def _pipeline(blocks: SequentialPipelineBlocks, model: Path) -> DiffuModularPipeline:
+    pipe = DiffuModularPipeline(blocks=blocks, pretrained_model_name_or_path=str(model))
+    pipe.load_components(dtype={"vae": torch.float32, "default": torch.bfloat16})
+    return pipe
+
+
+def test_cache_holds_each_crop_as_diffus_pipeline_encodes_it_where_nemo_reads_it(
+    tiny_diffu: Path, tmp_path: Path
+) -> None:
+    records = _split(tmp_path / "crops")
+    out = tmp_path / "cache"
+
+    run = cache_crops(
+        records, tmp_path / "crops", encoders=DiffuEncoders.load(tiny_diffu, "cpu"), out=out, bucket_id=lambda w, h: 7
+    )
+    write_metadata(run.entries, out, model=tiny_diffu)
+
+    metadata = json.loads((out / "metadata.json").read_text())
+    rows = [row for shard in metadata["shards"] for row in json.loads((out / shard).read_text())]
+    samples = [torch.load(row["cache_file"], weights_only=True) for row in rows]
+    text = _pipeline(SequentialPipelineBlocks.from_blocks_dict({"text_encoder": DiffuTextEncoderStep()}), tiny_diffu)
+    vae = _pipeline(DiffuVaeEncoderSequentialStep(), tiny_diffu)
+    assert [(row["prompt"], row["bucket_resolution"], row["bucket_id"]) for row in rows] == [
+        (caption, [64, 32], 7) for caption in CAPTIONS
+    ]
+    for k, (caption, sample) in enumerate(zip(CAPTIONS, samples, strict=True)):
+        with Image.open(tmp_path / "crops" / f"{k}.jpg") as image:
+            latents = vae(image=image.convert("RGB"), output="image_cond_latents")[0][0]
+        assert torch.equal(sample["prompt_embeds"], text(prompt=caption, output="prompt_embeds")[0])
+        assert torch.equal(sample["latent"], latents.float())
+
+
+def test_cache_records_a_crop_it_cannot_read_and_caches_the_rest(tiny_diffu: Path, tmp_path: Path) -> None:
+    records = _split(tmp_path / "crops")
+    (tmp_path / "crops" / "1.jpg").unlink()
+
+    run = cache_crops(
+        records,
+        tmp_path / "crops",
+        encoders=DiffuEncoders.load(tiny_diffu, "cpu"),
+        out=tmp_path / "cache",
+        bucket_id=lambda w, h: 7,
+    )
+
+    assert [entry.prompt for entry in run.entries] == [CAPTIONS[0]]
+    assert list(run.failed) == ["1.jpg"]

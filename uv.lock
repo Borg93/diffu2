@@ -412,12 +412,14 @@ name = "diffu-train"
 version = "0.1.0"
 source = { editable = "packages/train" }
 dependencies = [
+    { name = "diffu" },
     { name = "diffu-page" },
     { name = "typer" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "diffu", editable = "." },
     { name = "diffu-page", editable = "packages/page" },
     { name = "typer", specifier = ">=0.20" },
 ]

@@ -1,9 +1,14 @@
 # diffu-train
 
-NeMo AutoModel glue. It holds:
+NeMo AutoModel glue.
 
-- the training configs: `configs/flux3/` has the FLUX.3 LoRA runs, v2 for style by name and v3 for style by example;
-- the dataloader configs those YAMLs name: `diffu_train.nemo`, with aspect buckets interleaved;
-- the v3 pair caching: `python -m diffu_train.cache_pairs`.
+- **Training configs:**
+  - `configs/flux3/`: the FLUX.3 LoRA runs, v2 for style by name and v3 for style by example.
+  - `configs/diffu/`: diffu trained from our own random weights.
+- **Dataloader configs** those YAMLs name: `diffu_train.nemo`, with the aspect buckets interleaved.
+- **Caching:**
+  - `python -m diffu_train.cache_diffu`: diffu's training cache, made with diffu's own encoder steps (`diffu_train.cache`).
+  - `python -m diffu_train.cache_pairs`: the v3 pair caching.
 
-It is importable only in NeMo AutoModel's environment.
+The commands and `diffu_train.nemo` run only in NeMo AutoModel's environment. `diffu_train.cache` also runs and is
+tested here.

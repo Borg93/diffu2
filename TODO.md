@@ -187,12 +187,21 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
       through `image=[glyph_map, style_ref]`, but FLUX.3's preprocessing center-crops each of several references to
       the 16-px grid: render the glyph map at exactly the target's grid size. Renderer: Unifont covers all 158
       characters of our transcriptions.
-- [ ] **Training**: NeMo finetune mode from `diffu-init`'s repo, no `peft:` (identical weights on every rank). Cache
-      writer for NeMo's layout using `diffu.modular_pipelines.diffu.encoders.prompt_embeds` and
-      `diffu.latents.encode_latents` (the inference steps, not NeMo's FLUX.3 encoder); YAML (logit-normal, shift ≈ 3
-      at 512² and ≈ 6 at 1 MP, fp32 weights / bf16 compute, `cfg_dropout_prob: 0` with the empty prompt swapped in by
-      our dataset, zero latents for a dropped reference); then an EMA / Self-Flow recipe subclass (per-token
-      timesteps through three forward pre-hooks; bit-identical to the stock forward with uniform timesteps).
+- [x] **Training glue**: `diffu_train.cache` writes NeMo's text-to-image cache with diffu's own encoder steps
+      (`prompt_embeds`, `encode_latents`, FLUX.3's image processor). A test pins every cached crop to exactly what
+      diffu's pipeline makes at generation. `diffu_train.cache_diffu` is its command (NeMo's bucket ids);
+      `packages/train/configs/diffu/diffu_s_smoke.yaml` trains every weight in NeMo's finetune mode from
+      `diffu-init`'s repo (float32 weights, bfloat16 compute, logit-normal with shift 6 at 1 MP, no loss weighting);
+      `jobs/diffu/run_smoke.sh` chains init, cache (2,000 v2 crops, ~46 GB), a 5-step run, 2,000 steps x 8, and
+      the held-out eval of the export as a diffu repo.
+- [ ] **E1 smoke run** (after tonight's queue): pull main into the local checkout, `uv sync`, `jobs/setup_nemo_env.sh`
+      (installs diffu, diffu-page, diffu-train into NeMo's environment), then `jobs/diffu/run_smoke.sh`. Pass: the
+      loss falls, the export loads as a diffu repo, read-back CER on the held-out crops goes down from the random
+      init's.
+- [ ] **Training, after the smoke run**: the empty-prompt null swapped in by our dataset (p 0.1; NeMo's own dropout
+      zeroes the embeddings), zero latents for a dropped reference, then the EMA / Self-Flow recipe subclass
+      (per-token timesteps through three forward pre-hooks; bit-identical to the stock forward with uniform
+      timesteps).
 - [ ] **Staged experiments** (design study 2026-10-21): E1 GB10 smoke + overfit (~3–4 h) → E2 conditioning ablation
       at 512² (text only / glyph map + style prompt / both) → E3 Self-Flow vs plain flow matching → E4 style reference
       (swap-test copy rate ≤ 5 %) → E5 main run (~12 h on 32 A100s for diffu-S). Each judged on held-out read-back

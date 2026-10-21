@@ -1,0 +1,114 @@
+# diffu-S from our own random weights: the GB10 smoke run (design study E1). Does the loss fall, and does the
+# consolidated export load as a diffu model?
+#
+# Every weight trains (no LoRA). NeMo's finetune mode loads the transformer from diffu-init's repo on every rank, so
+# every rank starts from the same weights; pretrain mode would initialise each rank on its own. Weights are float32
+# with bfloat16 compute (FSDP casts them).
+#
+# Conditioning is text only: the crops' layout captions, cached with diffu's own encoders by
+# diffu_train.cache_diffu. The glyph map and the empty-prompt null come after this run.
+#
+# Paths come from the environment: DIFFU_REPO (this repo), DIFFU_INIT (diffu-init's repo) and DIFFU_CACHE (the
+# cache). jobs/diffu/run_smoke.sh sets all three. By hand, from the NeMo AutoModel repo root:
+#
+#   DIFFU_REPO=~/Desktop/repos/diffu2 DIFFU_INIT=<repo> DIFFU_CACHE=<cache> uv run --no-sync torchrun \
+#       --nproc-per-node=1 examples/diffusion/finetune/finetune.py \
+#       -c $DIFFU_REPO/packages/train/configs/diffu/diffu_s_smoke.yaml
+
+seed: 42
+
+wandb:
+  enable: false
+  project: diffu
+  mode: offline
+  name: diffu_s_smoke
+
+dist_env:
+  backend: "nccl"
+  init_method: "env://"
+  timeout_minutes: 30
+
+model:
+  pretrained_model_name_or_path: ${DIFFU_INIT}
+  model_type: "flux3"  # NeMo's FLUX.3 loader and adapter: diffu is FLUX.3's architecture
+  mode: "finetune"
+  cache_dir: null
+  attention_backend: "native"  # torch SDPA; flash-attn isn't built for this aarch64 / sm_121 box
+  torch_dtype: float32
+  compute_dtype: bfloat16
+
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 1e-4
+  weight_decay: 0.0
+  betas: [0.9, 0.999]
+  foreach: false
+  fused: true
+
+performance:
+  check_loss: false
+  grad_clip_foreach: true
+
+lr_scheduler:
+  lr_decay_style: cosine
+  lr_warmup_steps: 200
+  min_lr: 1e-5
+
+fsdp:
+  dp_size: 1
+  tp_size: 1
+  cp_size: 1
+  pp_size: 1
+  activation_checkpointing: true
+  cpu_offload: false
+  defer_fsdp_grad_sync: true
+  enable_compile: false
+  enable_fsdp2_prefetch: false
+
+# Logit-normal timesteps with a constant shift of 6 for ~1 MP crops: the design study's ~3 at 512², scaled by
+# sqrt(tokens). No loss weighting and no uniform mix, as in NeMo's pretraining recipe. No CFG dropout yet: NeMo would
+# zero the text embeddings, while diffu's null is the empty prompt.
+flow_matching:
+  adapter_type: "flux3"
+  timestep_sampling: "logit_normal"
+  logit_mean: 0.0
+  logit_std: 1.0
+  flow_shift: 6.0
+  mix_uniform_ratio: 0.0
+  sigma_min: 0.0
+  sigma_max: 1.0
+  num_train_timesteps: 1000
+  cfg_dropout_prob: 0.0
+  i2v_prob: 0.0
+  use_loss_weighting: false
+  log_interval: 25
+  summary_log_interval: 10
+
+# One crop per micro-batch (crops differ in size and caption length); 8 per optimizer step.
+step_scheduler:
+  num_epochs: 1000
+  local_batch_size: 1
+  global_batch_size: 8
+  max_steps: 2000
+  ckpt_every_steps: 500
+  log_remote_every_steps: 10
+  save_checkpoint_every_epoch: false
+
+data:
+  dataloader:
+    _target_: diffu_train.nemo.InterleavedTextToImageDataloaderConfig
+    cache_dir: ${DIFFU_CACHE}
+    train_text_encoder: false
+    num_workers: 2
+    base_resolution: [1024, 1024]
+    dynamic_batch_size: false
+    shuffle: true
+    drop_last: false
+
+checkpoint:
+  enabled: true
+  checkpoint_dir: ${DIFFU_REPO}/runs/diffu_s_smoke
+  model_save_format: safetensors
+  save_consolidated: final
+  diffusers_compatible: true  # <step>/model/consolidated/ loads with Flux3Transformer2DModel.from_pretrained
+  restore_from: null
