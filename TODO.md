@@ -15,28 +15,28 @@ What is known to be wrong or unfinished. Remove an item when it is done; add the
 
 ## Repo structure
 
-Done on branch `next` (worktree `~/Desktop/repos/diffu2-next`), 2026-10-21. Main stays as it was until tonight's
-queue (v2 → steering → generator smoke → v3, ~09:00 2026-10-22) has finished, because the queue imports page-synth
-through editable installs in the NeMo environment.
+Done 2026-10-21.
 
 - [x] `diffu_page.layout` and `diffu_page.labels` moved into page-synth (`page_synth.layout`, `page_synth.labels`)
       with their tests; `layout/__init__.py` exports only public names. Checked: 331 crop plans (4,488 lines) from 60
       random GT pages are byte-identical before and after.
 - [x] Removed the line-pasting era: the rest of diffu-page, `diffu-runner`, `diffu-studio`, the old model `src/diffu`
-      with `tests/`, `Makefile`, `slurm/`, diffu-era `scripts/` and `docs/`, `experiments/`. All under the tag
+      with `tests/`, `Makefile`, `slurm/`, diffu-era `scripts/` and `docs/`. All under the tag
       `diffu-mmdit-v1`.
 - [x] Root `pyproject.toml` is a virtual workspace root; diffusers pinned to `e04f0c5` (the NeMo environment's FLUX.3
       commit); ruff bans `dataclasses.dataclass` (NeMo's dataloader configs are the one exception).
 - [x] `jobs/setup_nemo_env.sh` installs page-synth into the NeMo environment (and removes the old diffu, diffu-page).
 - [x] README says what the repo is and how it is laid out.
-- [ ] Merge `next` after the queue: fast-forward main, push, run `jobs/setup_nemo_env.sh`, delete the branch and the
-      worktree. The job scripts on `next` already use the new CLI (`--lora name=<dir>`).
+- [ ] Delete `experiments/` once the running v2 job's evals have used it (~16:45 2026-10-21). Kept only for that
+      run, which started before the restructure.
+- [ ] Run `jobs/setup_nemo_env.sh` once to drop the stale diffu / diffu-page installs from the NeMo environment
+      (page-synth's editable install already points at this checkout).
 - [ ] Tests for plan and restyle (the generator, layout, labels, refill, sampler and XML replay are covered).
 - [ ] `docs/PIPELINE.md` from the pipeline page, once the generator has run on the GPU.
 
 ## Modular Diffusers (checked against huggingface.co/blog/modular-diffusers and the diffusers source, 2026-10-21)
 
-Done on `next`. Tested end to end on CPU with diffusers' tiny FLUX.3 test model (`test_generator.py`, each test
+Tested end to end on CPU with diffusers' tiny FLUX.3 test model (`test_generator.py`, each test
 red-checked); not yet run on the GPU with FLUX.3 Klein.
 
 - [x] Text encoder as its own pipeline: `pipelines.text_blocks()` (crop prompt + FLUX.3's text encoder) and

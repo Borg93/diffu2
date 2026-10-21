@@ -28,13 +28,16 @@ lora="$(ls -d "$REPO"/runs/flux3_layout_lora_v2/epoch_*_step_* | sort -V | tail 
 step "1/2 the steering prompts with $lora"
 mkdir -p "$OUT"
 cd "$AUTOMODEL"  # the generator runs in the NeMo AutoModel environment
-"$GUARD" --need-gb 40 --name flux-v2-steer --log "$REPO/runs/flux3_layout_v2/guard.log" -- \
+# a failed step is logged, not fatal: DONE must appear so the queue goes on to the generator smoke and v3
+if "$GUARD" --need-gb 40 --name flux-v2-steer --log "$REPO/runs/flux3_layout_v2/guard.log" -- \
     "$PY" -m page_synth.evaluate --crops "$STEER" -n 1000 --steps 50 \
-    --out "$OUT" --lora "v2=$lora" > "$OUT/eval.log" 2>&1
-tail -1 "$OUT/eval.log"
-
-step "2/2 contact sheets"
-"$REPO/.venv/bin/python" -m page_synth.sheets --steer "$STEER" --run "$OUT"
+    --out "$OUT" --lora "v2=$lora" > "$OUT/eval.log" 2>&1; then
+    tail -1 "$OUT/eval.log"
+    step "2/2 contact sheets"
+    "$REPO/.venv/bin/python" -m page_synth.sheets --steer "$STEER" --run "$OUT" || echo "contact sheets failed"
+else
+    echo "steering eval failed, see $OUT/eval.log"
+fi
 
 step "done"
 touch "$OUT/DONE"
