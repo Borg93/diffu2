@@ -42,9 +42,10 @@ PAGE/ALTO page ──► LoadLayout ──► Refill ──► PlanCrops ──�
    - `PagePlanBlocks`: the plan steps alone, no model.
    LoRAs load through the model's own LoRA loader as named adapters (`diffu_page.lora`).
 
-Who runs what: `diffu-generate` and diffu-studio run the page pipeline; `diffu-evaluate` the crop pipeline;
-diffu-runner plans pages with `PagePlanBlocks` on CPU workers and draws one crop per block with the crop pipeline on
-GPU actors. All of them name and seed crops alike, so a page comes out the same from any of them.
+Who runs what: `diffu-generate` runs the page pipeline; `diffu-evaluate` the crop pipeline; diffu-runner plans pages
+with `PagePlanBlocks` on CPU workers and draws one crop per block with the crop pipeline on GPU actors; diffu-studio
+shows the same two seams as `gr.Workflow` nodes: a plan node (`PagePlanBlocks`) feeding a draw node per model (its crop
+pipeline). All of them name and seed crops alike, so a page comes out the same from any of them.
 
 ## Training (NeMo AutoModel)
 

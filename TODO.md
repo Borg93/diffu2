@@ -54,8 +54,11 @@ Done 2026-10-21.
       actors each holding a crop pipeline; Ray 2.59.0. Fixed: a page's crops shared a block, and an actor hands a
       block on only when it has drawn all of it, so Ray Data stopped the CPU smoke run after 30 minutes without
       progress (the same would hit a ~30-crop block on the cluster).
-- [x] diffu-studio: Gradio on the page pipeline (a template, a text and a style in; the crops and a zip with their
-      labels out).
+- [x] diffu-studio as a `gr.Workflow` canvas: a plan node (`PagePlanBlocks`) feeding one draw node per drawer (a model
+      and its LoRAs; drawers on one model share it and switch its LoRAs), each returning a sheet of the crops and a zip
+      of their labels; app view and REST endpoint come with it. The nodes sit where the data is plain values (plans as
+      JSON); embeddings and latents stay inside each crop pipeline.
+- [ ] Studio: a reference-image node (v3, style by example) into the draw nodes; a glyph-map node for diffu.
 - [x] diffu: FLUX.3's architecture with our own weights, laid out like a diffusers model (see "diffu" below), registered
       as a model family: the crop and page pipelines draw with a diffu repo exactly as with FLUX.3 Klein (test).
 - [ ] Page assembly: crops overlap (training windows share lines) and windows that would cut a line are dropped, so

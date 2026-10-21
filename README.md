@@ -20,7 +20,7 @@ around the model's own (FLUX.3 Klein from diffusers, or diffu), chosen by the mo
 | `packages/diffu` | The diffu model, laid out like a diffusers model (`modular_pipelines/diffu/`): FLUX.3's transformer with our own weights, a Qwen3.5 text encoder and the Qwen-Image VAE; `diffu-init` writes a new model repo | torch, diffusers |
 | `packages/diffu-train` | NeMo AutoModel glue: dataloader configs, v3 pair caching | NeMo AutoModel (its environment only) |
 | `packages/diffu-runner` | Generation at scale on a Ray cluster: pages planned on CPU workers, crops drawn by GPU actors each holding a crop pipeline | ray |
-| `packages/diffu-studio` | A Gradio app on the page pipeline: a template, a text and a style in, crops with their labels out | gradio |
+| `packages/diffu-studio` | The page pipeline as a `gr.Workflow` canvas: a plan node feeding one draw node per drawer (a model and its LoRAs), so models draw the same page side by side; app view and REST endpoint included | gradio |
 
 ```
 configs/flux3/  NeMo AutoModel training configs

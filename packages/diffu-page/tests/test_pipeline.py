@@ -11,13 +11,13 @@ from __future__ import annotations
 import hashlib
 import json
 import xml.etree.ElementTree as ET
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 import torch
 from diffusers.modular_pipelines import ModularPipeline
 from PIL import Image
-from safetensors.torch import save_file
 
 from diffu_page.blocks import DrawnCrop, training_grid
 from diffu_page.captions.look import ScanLook
@@ -149,30 +149,17 @@ def test_model_family_refuses_a_repo_whose_blocks_it_does_not_know(tmp_path: Pat
         model_family(tmp_path)
 
 
-def _write_nemo_lora(lora_dir: Path, a: torch.Tensor, b: torch.Tensor, *, alpha: int) -> None:
-    lora_dir.mkdir()
-    save_file(
-        {
-            f"base_model.model.{LORA_MODULE}.lora_A.weight": a,
-            f"base_model.model.{LORA_MODULE}.lora_B.weight": b,
-        },
-        lora_dir / "adapter_model.safetensors",
-    )
-    config = {"r": a.shape[0], "lora_alpha": alpha, "target_modules": [LORA_MODULE], "peft_type": "LORA"}
-    (lora_dir / "adapter_config.json").write_text(json.dumps(config))
-
-
-def test_nemo_lora_loads_at_its_trained_strength(tiny_flux3: Path, tmp_path: Path) -> None:
+def test_nemo_lora_loads_at_its_trained_strength(tiny_flux3: Path, write_nemo_lora: Callable[..., Path]) -> None:
     torch.manual_seed(0)
     pipe = load_pipeline(tiny_flux3, crop_blocks, loras={}, settings=TINY_SETTINGS)
     linear = pipe.transformer.get_submodule(LORA_MODULE)
     a = torch.randn(2, linear.in_features)
     b = torch.randn(linear.out_features, 2)
-    _write_nemo_lora(tmp_path / "lora", a, b, alpha=4)  # scale alpha / r = 2
+    lora_dir = write_nemo_lora(LORA_MODULE, a, b, alpha=4)  # scale alpha / r = 2
     x = torch.randn(3, linear.in_features)
     expected = linear(x.to(linear.weight.dtype)).float() + 2 * x @ a.T @ b.T
 
-    load_nemo_lora(pipe, tmp_path / "lora", "v2")
+    load_nemo_lora(pipe, lora_dir, "v2")
 
     got = pipe.transformer.get_submodule(LORA_MODULE)(x.to(linear.weight.dtype)).float()
     torch.testing.assert_close(got, expected, rtol=2e-2, atol=2e-1)

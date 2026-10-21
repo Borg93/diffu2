@@ -3,12 +3,15 @@ and a tiny diffu model repo (a tiny Qwen3.5, a tiny Qwen-Image VAE and a tiny tr
 
 from __future__ import annotations
 
+import json
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 import torch
 from diffusers import AutoencoderKLQwenImage, Flux3Transformer2DModel
 from huggingface_hub import snapshot_download
+from safetensors.torch import save_file
 
 from diffu.configs import DiffuConfig, DiffuSize, TextEncoder, Vae
 from diffu.init import write_model_repo
@@ -117,3 +120,25 @@ def tiny_diffu(tiny_diffu_config: DiffuConfig, tiny_diffu_dir: Path) -> Path:
     transformer = Flux3Transformer2DModel.from_config(tiny_diffu_config.transformer_config())
     write_model_repo(transformer, tiny_diffu_config, tiny_diffu_dir)
     return tiny_diffu_dir
+
+
+type NemoLoraWriter = Callable[..., Path]
+
+
+@pytest.fixture
+def write_nemo_lora(tmp_path: Path) -> NemoLoraWriter:
+    """Writes a NeMo AutoModel LoRA checkpoint (PEFT keys under ``base_model.model.``) for one module of a transformer:
+    ``write_nemo_lora(module, a, b, alpha=...)`` returns its ``model/`` dir."""
+    written: list[Path] = []
+
+    def write(module: str, a: torch.Tensor, b: torch.Tensor, *, alpha: int) -> Path:
+        lora_dir = tmp_path / f"lora_{len(written)}"
+        lora_dir.mkdir()
+        weights = {f"base_model.model.{module}.lora_A.weight": a, f"base_model.model.{module}.lora_B.weight": b}
+        save_file(weights, lora_dir / "adapter_model.safetensors")
+        config = {"r": a.shape[0], "lora_alpha": alpha, "target_modules": [module], "peft_type": "LORA"}
+        (lora_dir / "adapter_config.json").write_text(json.dumps(config))
+        written.append(lora_dir)
+        return lora_dir
+
+    return write
