@@ -17,7 +17,7 @@ Use it from a NeMo config with this folder on PYTHONPATH, for text-to-image or i
 from __future__ import annotations
 
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass  # noqa: TID251 -- NeMo builds dataloaders only from dataclass configs
 from typing import override
 
 import torch
@@ -43,11 +43,9 @@ class InterleavedBucketSampler(Sampler[list[int]]):
         return len(self._buckets)
 
     @override
-    def __iter__(self) -> Iterator[list[int]]:
+    def __iter__(self) -> Iterator[list[int]]:  # pyrefly: ignore[bad-override] -- NeMo is not in this env
         batches = list(self._buckets)
-        order = torch.randperm(
-            len(batches), generator=torch.Generator().manual_seed(self._buckets.seed + self._epoch)
-        )
+        order = torch.randperm(len(batches), generator=torch.Generator().manual_seed(self._buckets.seed + self._epoch))
         self._yielded, self._resume_at = self._resume_at, 0
         for index in order[self._yielded :].tolist():
             self._yielded += 1
@@ -107,7 +105,7 @@ class InterleavedTextToImageDataloaderConfig(TextToImageDataloaderConfig):
         _require_shuffle(self.shuffle)
 
     @override
-    def build(self, *, dp_rank: int, dp_world_size: int, batch_size: int) -> DiffusionDataloaderBuild:
+    def build(self, *, dp_rank: int, dp_world_size: int, batch_size: int) -> DiffusionDataloaderBuild:  # pyrefly: ignore[bad-override] -- NeMo is not in this env
         return interleaved(super().build(dp_rank=dp_rank, dp_world_size=dp_world_size, batch_size=batch_size))
 
 
@@ -123,5 +121,5 @@ class InterleavedImageEditDataloaderConfig(ImageEditDataloaderConfig):
         _require_shuffle(self.shuffle)
 
     @override
-    def build(self, *, dp_rank: int, dp_world_size: int, batch_size: int) -> DiffusionDataloaderBuild:
+    def build(self, *, dp_rank: int, dp_world_size: int, batch_size: int) -> DiffusionDataloaderBuild:  # pyrefly: ignore[bad-override] -- NeMo is not in this env
         return interleaved(super().build(dp_rank=dp_rank, dp_world_size=dp_world_size, batch_size=batch_size))

@@ -30,7 +30,7 @@ mkdir -p "$OUT"
 cd "$AUTOMODEL"  # the generator runs in the NeMo AutoModel environment
 "$GUARD" --need-gb 40 --name flux-v2-steer --log "$REPO/runs/flux3_layout_v2/guard.log" -- \
     "$PY" -m page_synth.evaluate --crops "$STEER" -n 1000 --steps 50 \
-    --out "$OUT" --lora "$lora" > "$OUT/eval.log" 2>&1
+    --out "$OUT" --lora "v2=$lora" > "$OUT/eval.log" 2>&1
 tail -1 "$OUT/eval.log"
 
 step "2/2 contact sheets"

@@ -68,8 +68,7 @@ def caption_for(crop: Crop, provenance: Provenance, look: ScanLook) -> Caption:
     """
     numbered = [(f"Sv_Text_{i}", line) for i, line in enumerate(caption_order(crop.lines), start=1)]
     fragments = [
-        (f"fragment_{k}", line)
-        for k, line in enumerate(sorted(crop.fragments, key=lambda line: line.baseline_y), 1)
+        (f"fragment_{k}", line) for k, line in enumerate(sorted(crop.fragments, key=lambda line: line.baseline_y), 1)
     ]
     column = _body_column([line for _, line in numbered])
     layout = [
@@ -97,8 +96,7 @@ def caption_for(crop: Crop, provenance: Provenance, look: ScanLook) -> Caption:
         text=f"{' '.join(sentences)} {rows}",
         layout=layout,
         lines=[
-            LineRecord(id=row_id, text=line.text, role=line.role, bbox=crop.slot(line))
-            for row_id, line in numbered
+            LineRecord(id=row_id, text=line.text, role=line.role, bbox=crop.slot(line)) for row_id, line in numbered
         ],
     )
 
@@ -141,9 +139,7 @@ def _fragment_desc(edge: str, look: ScanLook) -> str:
 
 def _opening_sentence(provenance: Provenance, look: ScanLook, numbered: list[tuple[str, Line]]) -> str:
     roles = Counter(line.role for _, line in numbered if line.role)
-    parts = [
-        f"a {ROLE_NAMES[r]}" if n == 1 else f"{_count(n)} {ROLE_NAMES[r]} lines" for r, n in roles.items()
-    ]
+    parts = [f"a {ROLE_NAMES[r]}" if n == 1 else f"{_count(n)} {ROLE_NAMES[r]} lines" for r, n in roles.items()]
     including = f", including {' and '.join(parts)}" if parts else ""
     scan = "greyscale archival scan" if look.greyscale else "archival scan"
     when = f", dated {provenance.years}" if provenance.years else ""
@@ -183,9 +179,7 @@ def _fragment_sentences(fragments: list[tuple[str, Line]], crop: Crop) -> list[s
         return []
     edges = {crop.cut_edge(line) for _, line in fragments}
     along = "the top and bottom edges" if len(edges) == 2 else f"the {edges.pop()} edge"
-    return [
-        f"Cut-off parts of further lines {_cite([row_id for row_id, _ in fragments])} show along {along}."
-    ]
+    return [f"Cut-off parts of further lines {_cite([row_id for row_id, _ in fragments])} show along {along}."]
 
 
 def _cite(ids: list[str]) -> str:

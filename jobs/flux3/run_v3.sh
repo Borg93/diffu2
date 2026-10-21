@@ -44,7 +44,7 @@ evaluate() {  # evaluate <name> <crops dir> <lora dir>
     local name=$1 crops=$2 lora=$3
     if "$GUARD" --need-gb 45 --name "flux-v3-eval-$name" --log "$OUT/guard.log" -- \
         "$PY" -m page_synth.evaluate --crops "$crops" -n 1000 --steps 50 \
-        --out "$OUT/eval_$name" --lora "$lora" > "$OUT/eval_$name.log" 2>&1; then
+        --out "$OUT/eval_$name" --lora "v3=$lora" > "$OUT/eval_$name.log" 2>&1; then
         tail -1 "$OUT/eval_$name.log"
     else
         echo "eval $name failed, see $OUT/eval_$name.log"

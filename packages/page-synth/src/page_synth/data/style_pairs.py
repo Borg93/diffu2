@@ -218,9 +218,7 @@ def main() -> None:
     write_rows(args.out / "by_example/metadata.jsonl", example_rows)
 
     skipped = len(train) - len(manifest)
-    print(
-        f"train: {len(manifest)} pairs ({skipped} crops skipped: no other page in their volume) -> {args.out}"
-    )
+    print(f"train: {len(manifest)} pairs ({skipped} crops skipped: no other page in their volume) -> {args.out}")
     print(f"val_eval: {len(val_rows)} crops, by_example: {len(example_rows)} prompts")
 
 

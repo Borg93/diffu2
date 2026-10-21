@@ -1,3 +1,0 @@
-GNU Unifont (unifont.otf) — https://unifoundry.com/unifont/
-Dual-licensed: GNU GPLv2+ with the GNU font-embedding exception, and SIL Open Font License 1.1.
-Bundled here under the SIL OFL 1.1 as the glyph-stencil font for diffu's content conditioning.

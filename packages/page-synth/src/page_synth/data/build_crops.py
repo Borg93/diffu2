@@ -111,9 +111,7 @@ def _child(element: ET.Element, name: str) -> ET.Element | None:
 
 def sample_pages(collection_dir: Path, count: int, rng: random.Random) -> list[Page]:
     """Up to ``count`` random pages of a collection with a scan and transcribed text."""
-    xml_paths = sorted(
-        p for p in collection_dir.rglob("page/*.xml") if not p.name.startswith("._")
-    )  # "._*": macOS
+    xml_paths = sorted(p for p in collection_dir.rglob("page/*.xml") if not p.name.startswith("._"))  # "._*": macOS
     rng.shuffle(xml_paths)
     pages: list[Page] = []
     for xml_path in xml_paths:
@@ -194,12 +192,8 @@ def _parse_args() -> argparse.Namespace:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--line-spacing", type=float, help="target line pitch in px")
     ap.add_argument("--min-line-spacing", type=float, help="skip crops scaled below this pitch")
-    ap.add_argument(
-        "--min-merge-spacing", type=float, help="smallest pitch a margin note may shrink its column to"
-    )
-    ap.add_argument(
-        "--min-width", type=int, help="narrower regions are only cropped together with a wide one"
-    )
+    ap.add_argument("--min-merge-spacing", type=float, help="smallest pitch a margin note may shrink its column to")
+    ap.add_argument("--min-width", type=int, help="narrower regions are only cropped together with a wide one")
     ap.add_argument("--min-lines", type=int)
     ap.add_argument("--overlap-lines", type=int, help="lines shared by consecutive windows of a column")
     ap.set_defaults(**CropSettings().model_dump())

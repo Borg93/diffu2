@@ -237,11 +237,7 @@ def crops_for_page(regions: list[Region], size: tuple[int, int], settings: CropS
     if pitch is None:
         return []
     page = PageGeometry(size=size, pitch=pitch, lines=[line for region in regions for line in region.lines])
-    return [
-        crop
-        for lines in text_columns(regions, pitch, settings)
-        for crop in _column_crops(lines, page, settings)
-    ]
+    return [crop for lines in text_columns(regions, pitch, settings) for crop in _column_crops(lines, page, settings)]
 
 
 def _column_crops(lines: list[Line], page: PageGeometry, settings: CropSettings) -> list[Crop]:
@@ -322,9 +318,7 @@ def _place(across: float, down: float) -> str:
     side = _third(across, ("left", "center", "right"))
     level = _third(down, ("upper", "middle", "lower"))
     if side == "center":
-        return {"upper": "at the top center", "middle": "in the middle", "lower": "at the bottom center"}[
-            level
-        ]
+        return {"upper": "at the top center", "middle": "in the middle", "lower": "at the bottom center"}[level]
     if level == "middle":
         return f"on the {side} side"
     return f"in the {level} {side} corner"

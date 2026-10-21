@@ -118,9 +118,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--crops", type=Path, default=Path("data_flux3/layout_crops_v2"))
     ap.add_argument("--out", type=Path, default=Path("data_flux3/steer_v2"))
-    ap.add_argument(
-        "--templates", type=int, nargs="+", default=[1, 17], help="val_eval rows to use as templates"
-    )
+    ap.add_argument("--templates", type=int, nargs="+", default=[1, 17], help="val_eval rows to use as templates")
     args = ap.parse_args()
 
     train = read_records(args.crops / "train/metadata.jsonl")
@@ -148,9 +146,7 @@ def main() -> None:
             )
             for variant in variants(template, archives)
         ]
-    (args.out / "metadata.jsonl").write_text(
-        "".join(row.model_dump_json() + "\n" for row in rows), encoding="utf-8"
-    )
+    (args.out / "metadata.jsonl").write_text("".join(row.model_dump_json() + "\n" for row in rows), encoding="utf-8")
     print(f"{len(rows)} prompts from {len(args.templates)} templates -> {args.out}")
     for archive_name, archive in archives.items():
         print(f"  {archive_name}: {archive.style.model_dump()}")

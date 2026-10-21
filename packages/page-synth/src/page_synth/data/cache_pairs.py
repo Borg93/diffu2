@@ -20,7 +20,8 @@ from nemo_automodel.components.models.flux3.preprocessing import (
     Flux3ImageEditCacheEncoder,
 )
 
-DEFAULT_MODEL = Path.home() / "Desktop/repos/flux3-models/flux-3-image-klein-base"
+from page_synth.pipelines import FLUX3_KLEIN
+
 TARGET_PIXELS = 1024 * 1024  # the largest v2 bucket (1024 x 1024)
 
 
@@ -36,7 +37,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--manifest", type=Path, required=True)
     ap.add_argument("--out", type=Path, required=True)
-    ap.add_argument("--model", default=str(DEFAULT_MODEL))
+    ap.add_argument("--model", default=str(FLUX3_KLEIN))
     ap.add_argument("--limit", type=int, default=None, help="cache only the first N pairs (a smoke test)")
     args = ap.parse_args()
 

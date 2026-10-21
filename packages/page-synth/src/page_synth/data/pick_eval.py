@@ -50,9 +50,7 @@ def main() -> None:
             if not image.exists():
                 os.link(args.split / record.file_name, image)
             out.write(f"{record.model_dump_json()}\n")
-    print(
-        f"{len(picked)} crops, {sum(has_role(r) for r in picked)} with a margin note, heading or page number"
-    )
+    print(f"{len(picked)} crops, {sum(has_role(r) for r in picked)} with a margin note, heading or page number")
 
 
 if __name__ == "__main__":

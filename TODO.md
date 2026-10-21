@@ -15,55 +15,46 @@ What is known to be wrong or unfinished. Remove an item when it is done; add the
 
 ## Repo structure
 
-Target (work happens on the `next` worktree, `~/Desktop/repos/diffu2-next`; main is frozen until tonight's
-queue, v2 → steering → generator smoke → v3, has finished, ~09:00 2026-10-22, because the queue imports
-page-synth through editable installs in the NeMo venv):
+Done on branch `next` (worktree `~/Desktop/repos/diffu2-next`), 2026-10-21. Main stays as it was until tonight's
+queue (v2 → steering → generator smoke → v3, ~09:00 2026-10-22) has finished, because the queue imports page-synth
+through editable installs in the NeMo environment.
 
-```
-pyproject.toml        virtual uv workspace root: members, dev tools, ruff / pytest config
-packages/
-  page-synth/         pages: layout (from diffu-page), labels, plan, captions, Modular blocks and pipelines,
-                      generator, evaluation, training-data builders, NeMo dataloader configs
-  diffu/              the model (planned, see "diffu"): configs for Flux3Transformer2DModel, VAE blocks
-configs/flux3/        NeMo configs (FLUX.3 reference LoRAs);  configs/diffu/ later
-jobs/flux3/           GPU job scripts;  jobs/diffu/ later
-scripts/spark_guard.sh
-docs/                 README, PIPELINE.md (the page pipeline), DIFFU.md (the model plan)
-```
-
-- [ ] Move `diffu_page.layout` and `diffu_page.labels` into page-synth (`page_synth.layout`, `page_synth.labels`)
-      with their tests; drop the private re-exports in `layout/__init__.py`.
-- [ ] Remove the line-pasting era: the rest of diffu-page (compose, render, augment, upscale, htr, paper, profiles,
-      validate, overlay, dataset, generation, cli), `packages/diffu-runner` (its Ray Data pattern is rebuilt in
-      page-synth), `packages/diffu-studio` (the app: not wanted), the old diffu model `src/diffu` with its
-      `tests/`, `Makefile`, `slurm/`, diffu-era `scripts/` and `docs/`. Tag `diffu-mmdit-v1` first so the old
-      model stays reachable.
-- [ ] Root `pyproject.toml` becomes a virtual workspace root. diffusers pinned to the git commit that has Flux3
-      (`e04f0c5`, the NeMo venv's), so the repo env and the NeMo env run the same blocks.
-- [ ] Record the NeMo environment: page-synth (and later diffu) installed editable into
-      `~/Desktop/repos/Automodel/.venv-managed` (`uv pip install --no-deps -e`); a `jobs/setup_nemo_env.sh`
-      recreates it.
-- [ ] Delete `experiments/` once the running v2 job's evals have used it (~16:45 2026-10-21).
-- [ ] Tests for page-synth: plan, restyle, caption identity, pipeline wiring (CPU, no weights).
-- [ ] Docs: README says what the repo is (page pipeline + diffu model); `docs/PIPELINE.md` from the pipeline page.
-- [ ] Merge `next` into main after the queue: fast-forward, push, delete the branch and the worktree; rerun the
-      queue's commands from the new paths once to check them.
+- [x] `diffu_page.layout` and `diffu_page.labels` moved into page-synth (`page_synth.layout`, `page_synth.labels`)
+      with their tests; `layout/__init__.py` exports only public names. Checked: 331 crop plans (4,488 lines) from 60
+      random GT pages are byte-identical before and after.
+- [x] Removed the line-pasting era: the rest of diffu-page, `diffu-runner`, `diffu-studio`, the old model `src/diffu`
+      with `tests/`, `Makefile`, `slurm/`, diffu-era `scripts/` and `docs/`, `experiments/`. All under the tag
+      `diffu-mmdit-v1`.
+- [x] Root `pyproject.toml` is a virtual workspace root; diffusers pinned to `e04f0c5` (the NeMo environment's FLUX.3
+      commit); ruff bans `dataclasses.dataclass` (NeMo's dataloader configs are the one exception).
+- [x] `jobs/setup_nemo_env.sh` installs page-synth into the NeMo environment (and removes the old diffu, diffu-page).
+- [x] README says what the repo is and how it is laid out.
+- [ ] Merge `next` after the queue: fast-forward main, push, run `jobs/setup_nemo_env.sh`, delete the branch and the
+      worktree. The job scripts on `next` already use the new CLI (`--lora name=<dir>`).
+- [ ] Tests for plan and restyle (the generator, layout, labels, refill, sampler and XML replay are covered).
+- [ ] `docs/PIPELINE.md` from the pipeline page, once the generator has run on the GPU.
 
 ## Modular Diffusers (checked against huggingface.co/blog/modular-diffusers and the diffusers source, 2026-10-21)
 
-- [ ] Text encoder as its own pipeline: pop `text_encoder` from the Flux3 blocks, encode prompts in batches,
-      feed `prompt_embeds` to the denoise pipeline. For Ray Data a separate stage that streams ahead of the GPU
-      denoiser; for training the same embeddings NeMo caches.
-- [ ] One `ComponentsManager` shared by the text-encoder, text2image (v2) and image_conditioned (v3) pipelines:
-      no double loads; offloading matters on the inference cluster's discrete-VRAM cards.
-- [ ] TrOCR through `load_components` from the read-back block's `ComponentSpec` (then fix its meta position
-      table), not the side loader `load_trocr`.
-- [ ] Self-contained blocks in page-synth (no imports of local scripts), publishable with
-      `save_pretrained(push_to_hub=True)` / `diffusers-cli custom_blocks`.
-- [ ] The base model is a component, not a constant: FLUX.3 Klein for the reference, diffu for ours, swapped with
-      `update_components`; the same blocks drive both.
-- Done right already: `get_workflow` + `sub_blocks.pop/insert`, standard block shape, automatic data flow (only
-  `crop_plan` is a pipeline input), `load_components(dtype={...})`, `update_components`.
+Done on `next`. Tested end to end on CPU with diffusers' tiny FLUX.3 test model (`test_generator.py`, each test
+red-checked); not yet run on the GPU with FLUX.3 Klein.
+
+- [x] Text encoder as its own pipeline: `pipelines.text_blocks()` (crop prompt + FLUX.3's text encoder) and
+      `pipelines.crop_blocks()` (everything else), `CropGenerator.encode` / `draw` as the two Ray stages.
+- [x] One `ComponentsManager` for both pipelines. One crop pipeline serves v2 and v3: FLUX.3's auto blocks choose
+      reference-conditioned denoising when an `image` is passed.
+- [x] TrOCR loads through `load_components` from the read-back block's `ComponentSpec`;
+      `readback.materialize_position_tables` fixes its meta table. `load_pipelines` fails fast when a component
+      did not load (`load_components` only logs).
+- [x] LoRAs load with diffusers' FLUX.3 LoRA loader (`pipelines.load_nemo_lora`, alpha/r folded into lora_B), named
+      adapters, `set_adapters`. NeMo is no longer needed at inference. All 21 module kinds of the real v2 checkpoint
+      take the adapter.
+- [x] The base model is a constructor argument (`CropGenerator(model, ...)`), so diffu plugs in the same way.
+- [ ] Publish the blocks to the Hub (`diffusers-cli custom_blocks`) if others should use them; they import page-synth.
+- [ ] Guidance: we use 4.0 (what the LoRAs were evaluated with); FLUX.3's blocks recommend 3.5 (and scheduler shift
+      6.93). Compare on the eval set.
+- [ ] The text-encoder layer choice is `GeneratorSettings.text_layers` (FLUX.3's default when unset); diffu's encoder
+      will need its own.
 
 ## diffu: FLUX.3 architecture, our weights (plan only, nothing implemented)
 

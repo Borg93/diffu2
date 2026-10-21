@@ -1,6 +1,6 @@
-"""Plan a diffu-page layout as FLUX.3 crops: the windows, prompts and line boxes the v2 LoRA was trained on.
+"""Plan a page layout as FLUX.3 crops: the windows, prompts and line boxes the v2 LoRA was trained on.
 
-A :class:`diffu_page.Layout` (a real ALTO/PAGE page replayed and refilled, or a synthetic template) becomes the v2 crop
+A :class:`page_synth.layout.Layout` (a real ALTO/PAGE page replayed and refilled, or a synthetic template) becomes the v2 crop
 builder's lines, so the crops come out of the same windowing (whole lines, about 1 megapixel at a 64 px line pitch,
 NeMo bucket sizes) and the same caption grammar as the training crops. The style is a ``Provenance`` (archive,
 years) and a ``ScanLook`` (scan, paper, ink), as in every v2 caption. CPU only.
@@ -8,15 +8,15 @@ years) and a ``ScanLook`` (scan, paper, ink), as in every v2 caption. CPU only.
 
 from __future__ import annotations
 
-from diffu_page import Layout, LineBox
 from pydantic import BaseModel
 
 from page_synth.caption import Caption, LineRecord, caption_for, caption_order
 from page_synth.geometry import Crop, CropSettings, Line, Region, crops_for_page
+from page_synth.layout import Layout, LineBox
 from page_synth.look import ScanLook
 from page_synth.provenance import Provenance
 
-# diffu-page region -> the PAGE type the v2 captions name as a role; running text and table cells name none
+# layout region -> the PAGE type the v2 captions name as a role; running text and table cells name none
 ROLES = {
     "header": "heading",
     "reg_header": "heading",
@@ -76,9 +76,7 @@ def regions_of(layout: Layout) -> list[Region]:
 def _reading_order(crop: Crop, block_rank: dict[str, int]) -> list[int]:
     """The crop's lines (in caption numbering) in reading order: by their block's place on the page, then down."""
     numbered = caption_order(crop.lines)
-    return sorted(
-        range(len(numbered)), key=lambda i: (block_rank[numbered[i].source], numbered[i].baseline_y)
-    )
+    return sorted(range(len(numbered)), key=lambda i: (block_rank[numbered[i].source], numbered[i].baseline_y))
 
 
 def _plan(crop: Crop, caption: Caption, block_rank: dict[str, int]) -> CropPlan:
@@ -94,10 +92,6 @@ def _plan(crop: Crop, caption: Caption, block_rank: dict[str, int]) -> CropPlan:
 
 def plan_page(layout: Layout, style: PageStyle, settings: CropSettings | None = None) -> list[CropPlan]:
     """The crops the v2 builder would cut from this page, each with its caption in ``style``."""
-    crops = crops_for_page(
-        regions_of(layout), (layout.spec.width, layout.spec.height), settings or CropSettings()
-    )
-    block_rank = {
-        source: rank for rank, source in enumerate(dict.fromkeys(_source(box) for box in layout.boxes))
-    }
+    crops = crops_for_page(regions_of(layout), (layout.spec.width, layout.spec.height), settings or CropSettings())
+    block_rank = {source: rank for rank, source in enumerate(dict.fromkeys(_source(box) for box in layout.boxes))}
     return [_plan(crop, caption_for(crop, style.provenance, style.look), block_rank) for crop in crops]

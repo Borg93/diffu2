@@ -1,32 +1,17 @@
-# Type-check the diffu package. The heavy ML deps (torch / diffusers / transformers / accelerate)
-# live in the GPU training env, not necessarily wherever a check runs — so unresolved-import noise
-# from them is suppressed and `pyrefly check` works on any box (CI, laptop, the training node).
-project-includes = [
-    "src/diffu/**/*.py",
-]
+project-includes = ["packages/*/src/**/*.py"]
+project-excludes = ["**/.git/**", "**/__pycache__/**", "**/.venv/**"]
 
-project-excludes = [
-    "**/.git/**",
-    "**/__pycache__/**",
-    "**/*.pyc",
-    "**/.venv/**",
-]
-
-# Treat the heavy ML deps as `Any`. Their type stubs are loose and don't model the dynamic attributes
-# we rely on (`vae.decoder`, `vae.config.latents_mean`, diffusers module attrs, duck-typed Datasets),
-# so checking against them produces only false positives. We type-check OUR logic, not torch's stubs.
+# The ML libraries' stubs don't model their dynamic attributes (diffusers block state, transformers configs), so they
+# are typed as Any: we check our own logic, not theirs. NeMo AutoModel exists only in its own environment.
 replace-imports-with-any = [
     "torch", "torch.*",
-    "torchvision", "torchvision.*",
     "diffusers", "diffusers.*",
     "transformers", "transformers.*",
-    "accelerate", "accelerate.*",
+    "safetensors", "safetensors.*",
+    "nemo_automodel", "nemo_automodel.*",
     "numpy", "numpy.*",
     "PIL", "PIL.*",
-    "trackio", "trackio.*",
-    "gradio", "gradio.*",
 ]
 
 [errors]
-# torch/numpy/transformers/diffusers may not be importable in the checking env; ignore that.
 missing-import = false
