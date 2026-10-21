@@ -29,20 +29,12 @@ from diffu_gen.generator import CropGenerator, GeneratorSettings
 from diffu_gen.settings import settings
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.provenance import Provenance
-from diffu_page.layout import load_xml_layout, refill, running_text
+from diffu_page.jobs import CropJob, PageJob, crop_jobs
+from diffu_page.layout import load_xml_layout, running_text
 from diffu_page.output import console, err_console
-from diffu_page.plan import CropPlan, PageStyle, plan_page
+from diffu_page.plan import PageStyle
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
-
-
-class CropJob(BaseModel):
-    """One crop to draw: its name, the template it comes from, its plan and its noise seed."""
-
-    name: str
-    template: Path
-    plan: CropPlan
-    seed: int
 
 
 class CropResult(BaseModel):
@@ -64,16 +56,6 @@ class Summary(BaseModel):
     steps: int
     crops: list[CropResult]
     failed: dict[str, str]
-
-
-def plan_jobs(templates: list[Path], text: str, style: PageStyle, seed: int) -> list[CropJob]:
-    """Every crop of every template refilled with ``text``; template ``t``'s crop ``k`` draws from noise seed
-    ``seed + 1000 t + k``."""
-    return [
-        CropJob(name=f"{t:03d}_{template.stem}_{k}", template=template, plan=plan, seed=seed + 1000 * t + k)
-        for t, template in enumerate(templates)
-        for k, plan in enumerate(plan_page(refill(load_xml_layout(template), [text]), style))
-    ]
 
 
 def _draw(generator: CropGenerator, job: CropJob, out: Path) -> CropResult:
@@ -162,7 +144,8 @@ def generate(
         provenance=Provenance(title=title, years=years), look=ScanLook(greyscale=greyscale, paper=paper, ink=ink)
     )
     text = " ".join(running_text(load_xml_layout(path)) for path in text_from)
-    jobs = plan_jobs(templates, text, style, seed)
+    pages = [PageJob(template=template, text=text, style=style, seed=seed) for template in templates]
+    jobs = [job for index, page in enumerate(pages) for job in crop_jobs(page, index)]
     out.mkdir(parents=True, exist_ok=True)
     loras = {adapter.name: adapter.path for adapter in lora or []}
     generator_settings = GeneratorSettings(

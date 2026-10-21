@@ -21,6 +21,7 @@ members = ["packages/*"]
 diffu-page = { workspace = true }
 diffu-gen = { workspace = true }
 diffu-train = { workspace = true }
+diffu-runner = { workspace = true }
 torch = { index = "pytorch-cu130" }
 torchvision = { index = "pytorch-cu130" }
 # FLUX.3 (Flux3Transformer2DModel, its Modular Diffusers blocks and LoRA loader) is on diffusers main only. This is
@@ -33,7 +34,7 @@ url = "https://download.pytorch.org/whl/cu130"
 explicit = true
 
 [dependency-groups]
-workspace = ["diffu-page", "diffu-gen", "diffu-train"]  # every member; diffu-train's modules import NeMo at runtime
+workspace = ["diffu-page", "diffu-gen", "diffu-train", "diffu-runner"]  # every member; diffu-train's modules import NeMo at runtime
 dev = [
     "ruff>=0.17.1",
     "pyrefly>=1.4",
@@ -54,7 +55,7 @@ ignore = ["E501"]
 "dataclasses.dataclass".msg = "Structured values are pydantic BaseModel (NeMo dataloader configs are the exception)."
 
 [tool.ruff.lint.isort]
-known-first-party = ["diffu_page", "diffu_gen", "diffu_train"]
+known-first-party = ["diffu_page", "diffu_gen", "diffu_train", "diffu_runner"]
 
 [tool.pytest.ini_options]
 testpaths = ["packages"]
