@@ -36,13 +36,14 @@ What is known to be wrong or unfinished. Remove an item when it is done; add the
 - [ ] Speed: about 2 minutes per crop at 50 steps with CFG. Measure fewer steps and a compiled transformer before using them.
 - [ ] Read tonight's profile (`runs/flux3_pages/smoke/profile/trace.json`, Perfetto; pytorch-skills:profile-model): which SDPA backend runs on sm_121 (flash/efficient/cudnn/math by kernel name), GPU idle vs busy, top kernels, text-encoder vs denoise vs VAE vs TrOCR share.
 - [ ] Ray Data at scale, the diffu-runner pattern: template/refill/plan as CPU map steps, `CropGenerator` as a stateful GPU actor (`map_batches`, concurrency = GPUs), TrOCR read-back co-located, Lance sink. Decide from the profile whether to batch same-bucket crops per forward pass.
+- [ ] Inference runs on our Ray cluster with Blackwell GPUs (not Leonardo). Re-profile there before fixing optimizations: GB10 is sm_121 with unified memory, so attention backends and memory differ. Measure FP8/NVFP4. Card model and VRAM per GPU still unknown.
 - [ ] Style score: a classifier on real crops to measure whether a generated crop matches the requested archive or reference.
 - [ ] Caption grammar is shared by training and generation but lives in a data-building script (`build_layout_crops.py`).
 
 ## Modular Diffusers conventions (checked against huggingface.co/blog/modular-diffusers, 2026-10-21)
 
 - [ ] Text encoder as its own pipeline: pop `text_encoder`, encode prompts in batches, feed `prompt_embeds` to the denoise pipeline (the blog's pattern). For Ray Data a separate stage that streams ahead of the GPU denoiser. Size the win from tonight's profile.
-- [ ] One `ComponentsManager` shared by the v2 text2image, v3 image_conditioned and text-encoder pipelines (no double loads).
+- [ ] One `ComponentsManager` shared by the v2 text2image, v3 image_conditioned and text-encoder pipelines (no double loads; its offloading matters on the inference cluster's discrete-VRAM Blackwell cards, not on the unified-memory GB10).
 - [ ] Load TrOCR through `load_components` from the block's ComponentSpec, then fix its meta position table; today it bypasses the spec (`load_trocr`).
 - [ ] Self-contained blocks (no imports of local scripts) in the page-synth package, so they can be published with `save_pretrained(push_to_hub=True)` from the custom-block template.
 - Done right already: `get_workflow` + `sub_blocks.pop/insert`, standard block shape, automatic data flow (only `crop_plan` is a pipeline input), `load_components(dtype={...})` (`dtype=` is this diffusers version's name; the blog's `torch_dtype` is older), `update_components`.
