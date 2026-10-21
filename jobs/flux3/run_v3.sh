@@ -69,7 +69,7 @@ else
 fi
 
 step "2/4 a 5-step smoke run"
-train smoke --step_scheduler.max_steps 5 --step_scheduler.ckpt_every_steps 1000 \
+train smoke --step_scheduler.max_steps 5 --step_scheduler.ckpt_every_steps 1000 --lr_scheduler.lr_warmup_steps 1 \
     --checkpoint.checkpoint_dir "$OUT/smoke_ckpt"
 grep -a "\[TRAIN\] step=" "$OUT/smoke.log" | tail -1
 tail -1 "$OUT/guard.log"
