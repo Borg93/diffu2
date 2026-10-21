@@ -19,8 +19,8 @@ from safetensors.torch import save_file
 
 from page_synth.captions.prompt import LineRecord
 from page_synth.generator import CropGenerator, GeneratorSettings
-from page_synth.modular.pipelines import load_nemo_lora, load_pipelines
 from page_synth.modular.blocks import training_grid
+from page_synth.modular.pipelines import load_nemo_lora, load_pipelines
 from page_synth.plan import CropPlan
 
 TINY_FLUX3 = "hf-internal-testing/tiny-flux3-image-modular"

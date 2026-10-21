@@ -18,6 +18,7 @@ import argparse
 from collections.abc import Callable
 from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
+from statistics import fmean
 
 from pydantic import BaseModel
 from torch.profiler import ProfilerActivity, profile, record_function, schedule
@@ -27,7 +28,6 @@ from page_synth.captions.provenance import Provenance
 from page_synth.generator import CropGenerator, GeneratorSettings
 from page_synth.layout import load_xml_layout, refill, running_text
 from page_synth.modular.pipelines import FLUX3_KLEIN
-from page_synth.modular.readback import mean
 from page_synth.plan import PageStyle, plan_page
 
 
@@ -132,7 +132,7 @@ def main() -> None:
                     image=f"{name}.jpg",
                     lines=len(plan.lines),
                     unclear_lines=crop.unclear_lines,
-                    cer=mean(crop.line_cers),
+                    cer=fmean(crop.line_cers),
                     seconds=crop.seconds,
                 )
                 crops.append(result)

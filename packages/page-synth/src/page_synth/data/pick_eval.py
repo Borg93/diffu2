@@ -11,7 +11,6 @@ every archive group is represented. The picked images are hard-linked next to th
 from __future__ import annotations
 
 import argparse
-import os
 from pathlib import Path
 
 from page_synth.captions.records import CropRecord, read_records
@@ -55,7 +54,7 @@ def main() -> None:
         for record in picked:
             image = args.out / record.file_name
             if not image.exists():
-                os.link(args.split / record.file_name, image)
+                image.hardlink_to(args.split / record.file_name)
             out.write(f"{record.model_dump_json()}\n")
     print(f"{len(picked)} crops, {sum(has_role(r) for r in picked)} with a margin note, heading or page number")
 

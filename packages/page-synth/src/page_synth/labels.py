@@ -146,7 +146,7 @@ def _alto_description(image: str) -> str:
         f"    <sourceImageInformation><fileName>{image}</fileName></sourceImageInformation>\n"
         '    <Processing ID="synthesis">\n'
         "      <processingStepDescription>Synthesis</processingStepDescription>\n"
-        "      <processingStepSettings>renderer: page_synth; labels: ground-truth</processingStepSettings>\n"
+        "      <processingStepSettings>generator: page_synth; labels: ground-truth</processingStepSettings>\n"
         "      <processingSoftware>\n"
         "        <softwareCreator>page_synth</softwareCreator>\n"
         "        <softwareName>page_synth</softwareName>\n"

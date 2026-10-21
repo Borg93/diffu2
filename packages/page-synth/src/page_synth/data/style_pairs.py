@@ -17,12 +17,10 @@ come from the reference. Writes, under ``data_flux3/style_pairs_v3``:
 from __future__ import annotations
 
 import argparse
-import os
 import random
 from collections import defaultdict
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
 
 from PIL import Image
 from pydantic import BaseModel
@@ -31,6 +29,7 @@ from page_synth.captions.prompt import LineRecord
 from page_synth.captions.provenance import collection_key
 from page_synth.captions.records import CropRecord, read_records
 from page_synth.captions.restyle import edit_caption
+from page_synth.crops.grid import fit_to_grid
 from page_synth.data.steer_set import ARCHIVES, SEED, archive_style
 
 REF_PIXELS = 512 * 1024  # a reference shows the hand smaller than the ~1 MP target, at half its tokens
@@ -50,13 +49,20 @@ class Media(BaseModel):
     file_name: str  # relative to the manifest's dir
 
 
+class PairMetadata(BaseModel):
+    """What NeMo's manifest carries of a pair besides its media: the row index it requires, and the reference."""
+
+    row_index: int
+    reference: str
+
+
 class ManifestRow(BaseModel):
     """One row of NeMo's image-edit manifest (``nemo_automodel.components.models.flux3.preprocessing``)."""
 
     id: str
     prompt: str
     media: list[Media]
-    metadata: dict[str, Any]
+    metadata: PairMetadata
 
 
 class EvalRow(BaseModel):
@@ -81,18 +87,18 @@ def volume_of(record: CropRecord) -> Volume:
 
 
 def link(source: Path, destination: Path) -> None:
+    """Hard-link ``source`` to ``destination`` unless it is there (NeMo reads only files inside the manifest's dir)."""
     if not destination.exists():
-        os.link(source, destination)
+        destination.hardlink_to(source)
 
 
 def shrink(source: Path, destination: Path) -> None:
-    """Save ``source`` scaled to at most ``REF_PIXELS``, keeping its aspect ratio."""
+    """Save ``source`` on the latent grid under ``REF_PIXELS`` (see ``fit_to_grid``), so training and generation
+    read the same pixels."""
     if destination.exists():
         return
-    image = Image.open(source).convert("RGB")
-    scale = min(1.0, (REF_PIXELS / (image.width * image.height)) ** 0.5)
-    size = (round(image.width * scale), round(image.height * scale))
-    image.resize(size, Image.Resampling.LANCZOS).save(destination, quality=92)
+    with Image.open(source) as image:
+        fit_to_grid(image, REF_PIXELS).save(destination, quality=92)
 
 
 def load_split(crops: Path, split: str) -> list[Scan]:
@@ -167,7 +173,7 @@ def training_pairs(train: list[Scan], out: Path, rng: random.Random) -> list[Man
                     Media(role="target", file_name=f"targets/{scan.record.file_name}"),
                     Media(role="context", file_name=f"refs/{reference.record.file_name}"),
                 ],
-                metadata={"row_index": len(manifest), "reference": reference.record.file_name},
+                metadata=PairMetadata(row_index=len(manifest), reference=reference.record.file_name),
             )
         )
     return manifest

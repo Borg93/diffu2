@@ -23,22 +23,16 @@ from PIL import Image
 from transformers import TrOCRProcessor, VisionEncoderDecoderModel
 
 from page_synth.crops.geometry import SLOT_ABOVE_BASELINE, SLOT_BELOW_BASELINE
+from page_synth.crops.grid import LARGEST_BUCKET_PIXELS, fit_to_grid
 from page_synth.labels import LabelFormat, LineLabel, PageLabels, export
 from page_synth.layout import RUNNING_TEXT
 from page_synth.modular.readback import HTR, pixel_box, read_lines
 from page_synth.plan import CropPlan
 
-REFERENCE_PIXELS = 1024 * 1024  # page_synth.data.cache_pairs caches v3's references under this many pixels
-REFERENCE_GRID = 16  # px; NeMo's FLUX.3 cache encoder floors both sides of an image to a multiple of this
-
 
 def training_grid(image: Image.Image) -> Image.Image:
-    """A reference image as NeMo's FLUX.3 cache encoder resized it for training: scaled under ``REFERENCE_PIXELS``,
-    each side floored to a multiple of ``REFERENCE_GRID`` (the image is squashed onto the grid, never padded)."""
-    scale = min(1.0, (REFERENCE_PIXELS / (image.width * image.height)) ** 0.5)
-    width = max(REFERENCE_GRID, int(image.width * scale) // REFERENCE_GRID * REFERENCE_GRID)
-    height = max(REFERENCE_GRID, int(image.height * scale) // REFERENCE_GRID * REFERENCE_GRID)
-    return image.convert("RGB").resize((width, height), Image.Resampling.LANCZOS)
+    """A reference image as NeMo's FLUX.3 cache encoder resized it for v3 training (see ``fit_to_grid``)."""
+    return fit_to_grid(image, LARGEST_BUCKET_PIXELS)
 
 
 class ReferenceGridStep(ModularPipelineBlocks):

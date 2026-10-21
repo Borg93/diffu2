@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from statistics import fmean
 
 from PIL import Image, ImageDraw
 from pydantic import BaseModel
@@ -20,7 +21,7 @@ from page_synth.captions.prompt import LineRecord
 from page_synth.cli.generate import lora_arg
 from page_synth.generator import CropGenerator, GeneratorSettings
 from page_synth.modular.pipelines import FLUX3_KLEIN
-from page_synth.modular.readback import mean, pixel_box
+from page_synth.modular.readback import pixel_box
 from page_synth.plan import CropPlan
 
 SHEET_GAP = 8  # px between the panels of a contact sheet
@@ -110,6 +111,11 @@ def read_crops(crops_dir: Path, n: int) -> list[EvalCrop]:
     return crops
 
 
+def _load(path: Path) -> Image.Image:
+    with Image.open(path) as image:
+        return image.convert("RGB")
+
+
 def _parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--crops", required=True, type=Path, help="a split dir of page_synth.data.build_crops")
@@ -134,11 +140,11 @@ def main() -> None:
     samples: list[CropResult] = []
     for k, crop in enumerate(crops):
         plan = crop.plan()
-        reference = Image.open(args.crops / crop.reference).convert("RGB") if crop.reference else None
+        reference = _load(args.crops / crop.reference) if crop.reference else None
         seed = crop.seed if crop.seed is not None else args.seed + k
         drawn = generate(plan, seed=seed, image_name=f"{k:03d}.png", reference=reference)
         drawn.image.save(args.out / "generated" / f"{k:03d}.png")
-        real = Image.open(args.crops / crop.file_name).convert("RGB").resize(drawn.image.size)
+        real = _load(args.crops / crop.file_name).resize(drawn.image.size)
         real_reads, real_cers = generate.read(real, plan)
         panels = [reference, real, drawn.image] if reference else [real, drawn.image]
         contact_sheet(panels, crop.lines).save(args.out / f"{k:03d}_{Path(crop.file_name).stem}.jpg")
@@ -146,8 +152,8 @@ def main() -> None:
         sample = CropResult(
             file=crop.file_name,
             variant=crop.variant,
-            gen_cer=mean(drawn.line_cers),
-            real_cer=mean(real_cers),
+            gen_cer=fmean(drawn.line_cers),
+            real_cer=fmean(real_cers),
             lines=[LineResult(text=ln.text, gen=g, gen_cer=gc, real=r, real_cer=rc) for ln, g, gc, r, rc in lines],
         )
         samples.append(sample)
@@ -155,8 +161,8 @@ def main() -> None:
 
     summary = Summary(
         n=len(samples),
-        gen_cer=mean([s.gen_cer for s in samples]),
-        real_cer=mean([s.real_cer for s in samples]),
+        gen_cer=fmean([s.gen_cer for s in samples]),
+        real_cer=fmean([s.real_cer for s in samples]),
         loras={name: str(path) for name, path in loras.items()},
         guidance=args.guidance,
         steps=args.steps,

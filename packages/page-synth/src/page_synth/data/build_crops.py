@@ -39,9 +39,6 @@ from page_synth.captions.records import CropRecord
 from page_synth.crops.geometry import CropSettings, Line, Region, crops_for_page
 from page_synth.layout.page_xml import iter_local, local_name, read_page_line, reading_order_index, region_role
 
-Image.MAX_IMAGE_PIXELS = None  # archival spreads exceed PIL's decompression-bomb default
-
-
 SPLITS = ("train", "val")
 SCAN_SUFFIXES = (".jpg", ".jpeg", ".png", ".tif", ".tiff")
 
@@ -176,6 +173,7 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = _parse_args()
+    Image.MAX_IMAGE_PIXELS = None  # archival spreads exceed PIL's decompression-bomb default
     settings = CropSettings.model_validate(vars(args))
     root = Path(args.gt_root).expanduser()
     out = Path(args.out_dir)

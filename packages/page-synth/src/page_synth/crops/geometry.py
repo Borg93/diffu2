@@ -211,13 +211,13 @@ def text_columns(regions: list[Region], pitch: float, settings: CropSettings) ->
         if wide:
             continue
         box = region.box
-        homes = [c for c in columns if c.gap_to(box) <= 2 * pitch and _merge_fits(c, box, pitch, settings)]
+        homes = [c for c in columns if c.gap_to(box) <= 2 * pitch and _merge_fits(c, box, pitch, settings=settings)]
         if homes:
             min(homes, key=lambda c: c.gap_to(box)).add(region)
     return [sorted(c.lines, key=lambda line: line.baseline_y) for c in columns]
 
 
-def _merge_fits(column: Column, box: Box, pitch: float, settings: CropSettings) -> bool:
+def _merge_fits(column: Column, box: Box, pitch: float, *, settings: CropSettings) -> bool:
     """Whether ``column`` plus ``box``, scaled to fit the widest bucket, keeps a legible line pitch."""
     span = column.width_with(box) + pitch
     scale = min(1.0, settings.line_spacing / pitch, WIDEST_BUCKET / span)

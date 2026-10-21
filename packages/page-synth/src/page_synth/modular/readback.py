@@ -12,6 +12,7 @@ HTR = "Riksarkivet/trocr-base-handwritten-hist-swe-2"
 
 
 def levenshtein(a: str, b: str) -> int:
+    """The edit distance between two strings: insertions, deletions and substitutions, one each."""
     prev = list(range(len(b) + 1))
     for i, ca in enumerate(a, 1):
         cur = [i]
@@ -22,11 +23,8 @@ def levenshtein(a: str, b: str) -> int:
 
 
 def cer(pred: str, ref: str) -> float:
+    """The character error rate of ``pred`` against ``ref``: their edit distance per reference character."""
     return levenshtein(pred, ref) / max(len(ref), 1)
-
-
-def mean(values: list[float]) -> float:
-    return sum(values) / max(len(values), 1)
 
 
 def pixel_box(bbox: list[int], size: tuple[int, int]) -> tuple[float, float, float, float]:

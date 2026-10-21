@@ -2,7 +2,7 @@
 
 NeMo's ``image-edit`` preprocessing CLI reads a Hugging Face dataset and materializes it into a manifest; ours is
 already one, so this hands it straight to the encoder that CLI calls (``Flux3ImageEditCacheEncoder``). Targets keep
-their exact bucket size (none is over ``TARGET_PIXELS``); the references were shrunk by ``page_synth.data.style_pairs``.
+their exact bucket size (none is over ``LARGEST_BUCKET_PIXELS``); the references were shrunk by ``page_synth.data.style_pairs``.
 Runs in the NeMo AutoModel environment, on the GPU:
 
     cd ~/Desktop/repos/Automodel && python -m page_synth.data.cache_pairs \
@@ -20,9 +20,8 @@ from nemo_automodel.components.models.flux3.preprocessing import (
     Flux3ImageEditCacheEncoder,
 )
 
+from page_synth.crops.grid import LARGEST_BUCKET_PIXELS
 from page_synth.modular.pipelines import FLUX3_KLEIN
-
-TARGET_PIXELS = 1024 * 1024  # the largest v2 bucket (1024 x 1024)
 
 
 def first_rows(manifest: Path, limit: int) -> Path:
@@ -46,7 +45,7 @@ def main() -> None:
     metadata = encoder.encode_manifest(
         manifest_path=manifest,
         output_dir=args.out,
-        max_pixels=TARGET_PIXELS,
+        max_pixels=LARGEST_BUCKET_PIXELS,
         resolution_preset=None,
         num_gpus=1,
         verify=False,

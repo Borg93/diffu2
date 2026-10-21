@@ -67,6 +67,11 @@ def stack(rows: list[Image.Image]) -> Image.Image:
     return sheet
 
 
+def _load(path: Path) -> Image.Image:
+    with Image.open(path) as image:
+        return image.convert("RGB")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--steer", type=Path, required=True, help="the steering set (page_synth.data.steer_set)")
@@ -78,9 +83,9 @@ def main() -> None:
     results = Results.model_validate_json((args.run / "results.json").read_text())
     by_template: dict[int, list[Image.Image]] = defaultdict(list)
     for k, (prompt, sample) in enumerate(zip(prompts, results.samples, strict=True)):
-        panels: list[Image.Image] = [Image.open(args.run / "generated" / f"{k:03d}.png")]
+        panels = [_load(args.run / "generated" / f"{k:03d}.png")]
         if prompt.example:
-            panels.append(Image.open(args.steer / prompt.example))
+            panels.append(_load(args.steer / prompt.example))
         by_template[prompt.template].append(labelled_row(label_of(prompt, sample), panels))
     for template, rows in by_template.items():
         out = args.run / f"steer_template_{template}.jpg"
