@@ -11,6 +11,7 @@ supported-markers = [
 
 [manifest]
 members = [
+    "diffu",
     "diffu-page",
     "diffu-runner",
     "diffu-studio",
@@ -276,6 +277,31 @@ nvtx = [
 ]
 
 [[package]]
+name = "diffu"
+version = "0.1.0"
+source = { editable = "packages/diffu" }
+dependencies = [
+    { name = "diffusers" },
+    { name = "pydantic" },
+    { name = "rich" },
+    { name = "safetensors" },
+    { name = "torch" },
+    { name = "transformers" },
+    { name = "typer" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "diffusers", git = "https://github.com/huggingface/diffusers?rev=e04f0c5f24392fcd34b32d18d0ce03668f9bcd50" },
+    { name = "pydantic", specifier = ">=2" },
+    { name = "rich", specifier = ">=13" },
+    { name = "safetensors", specifier = ">=0.4" },
+    { name = "torch", specifier = ">=2.10", index = "https://download.pytorch.org/whl/cu130" },
+    { name = "transformers", specifier = ">=5.18" },
+    { name = "typer", specifier = ">=0.20" },
+]
+
+[[package]]
 name = "diffu-page"
 version = "0.1.0"
 source = { editable = "packages/diffu-page" }
@@ -379,6 +405,7 @@ dev = [
     { name = "xmlschema" },
 ]
 workspace = [
+    { name = "diffu" },
     { name = "diffu-page" },
     { name = "diffu-runner" },
     { name = "diffu-studio" },
@@ -396,6 +423,7 @@ dev = [
     { name = "xmlschema", specifier = ">=4.3.2" },
 ]
 workspace = [
+    { name = "diffu", editable = "packages/diffu" },
     { name = "diffu-page", editable = "packages/diffu-page" },
     { name = "diffu-runner", editable = "packages/diffu-runner" },
     { name = "diffu-studio", editable = "packages/diffu-studio" },
