@@ -39,6 +39,14 @@ What is known to be wrong or unfinished. Remove an item when it is done; add the
 - [ ] Style score: a classifier on real crops to measure whether a generated crop matches the requested archive or reference.
 - [ ] Caption grammar is shared by training and generation but lives in a data-building script (`build_layout_crops.py`).
 
+## Modular Diffusers conventions (checked against huggingface.co/blog/modular-diffusers, 2026-10-21)
+
+- [ ] Text encoder as its own pipeline: pop `text_encoder`, encode prompts in batches, feed `prompt_embeds` to the denoise pipeline (the blog's pattern). For Ray Data a separate stage that streams ahead of the GPU denoiser. Size the win from tonight's profile.
+- [ ] One `ComponentsManager` shared by the v2 text2image, v3 image_conditioned and text-encoder pipelines (no double loads).
+- [ ] Load TrOCR through `load_components` from the block's ComponentSpec, then fix its meta position table; today it bypasses the spec (`load_trocr`).
+- [ ] Self-contained blocks (no imports of local scripts) in the page-synth package, so they can be published with `save_pretrained(push_to_hub=True)` from the custom-block template.
+- Done right already: `get_workflow` + `sub_blocks.pop/insert`, standard block shape, automatic data flow (only `crop_plan` is a pipeline input), `load_components(dtype={...})` (`dtype=` is this diffusers version's name; the blog's `torch_dtype` is older), `update_components`.
+
 ## diffu (line model)
 
 - [ ] Old-recipe baseline to step 12k, to tell whether the refactor helped; then resume the canvas run from step 10k.
