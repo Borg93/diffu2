@@ -306,6 +306,7 @@ name = "diffu-page"
 version = "0.1.0"
 source = { editable = "packages/diffu-page" }
 dependencies = [
+    { name = "diffu" },
     { name = "diffusers" },
     { name = "numpy" },
     { name = "peft" },
@@ -322,6 +323,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "diffu", editable = "packages/diffu" },
     { name = "diffusers", git = "https://github.com/huggingface/diffusers?rev=e04f0c5f24392fcd34b32d18d0ce03668f9bcd50" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "peft", specifier = ">=0.17" },

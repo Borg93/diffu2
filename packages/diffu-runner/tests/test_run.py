@@ -54,11 +54,11 @@ def test_plan_dataset_plans_every_page_into_its_crop_jobs(local_ray: None, body_
 
 
 def test_draw_dataset_draws_every_crop_and_keeps_a_failed_one_with_its_error(
-    local_ray: None, tiny_model: Path, tmp_path: Path
+    local_ray: None, tiny_flux3: Path, tmp_path: Path
 ) -> None:
     jobs = [_small_job("drawn"), _small_job("failed", reference=tmp_path / "missing.jpg")]
     config = RunConfig(
-        model=tiny_model,
+        model=tiny_flux3,
         loras={},
         settings=DrawSettings(steps=2, text_layers=(1,), device="cpu"),
         gpus_per_drawer=0,

@@ -29,6 +29,7 @@ from diffusers.modular_pipelines import ModularPipeline, OutputParam, Sequential
 from PIL import Image
 from pydantic import BaseModel, ConfigDict
 
+from diffu.modular_pipelines.diffu import DiffuAutoBlocks, DiffuModularPipeline
 from diffu_page.blocks import (
     CROP_OUTPUTS,
     CropLoopStep,
@@ -60,6 +61,7 @@ class ModelFamily(BaseModel):
 FAMILIES: dict[str, ModelFamily] = {
     # FLUX.3's prompt upsampler rewrites a prompt as prose: it would rewrite the quoted lines of a layout caption
     "Flux3AutoBlocks": ModelFamily(blocks=Flux3AutoBlocks, pipeline=Flux3ModularPipeline, unused=("prompt_upsampler",)),
+    "DiffuAutoBlocks": ModelFamily(blocks=DiffuAutoBlocks, pipeline=DiffuModularPipeline),
 }
 
 

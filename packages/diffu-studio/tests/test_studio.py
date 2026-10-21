@@ -22,8 +22,8 @@ STYLE_FIELDS = {"title": "the archive", "years": "1700", "paper": "cream", "ink"
 
 
 @pytest.fixture
-def studio(tiny_model: Path, tmp_path: Path) -> Iterator[gr.Blocks]:
-    pipe = load_pipeline(tiny_model, page_blocks, loras={}, settings=TINY_SETTINGS)
+def studio(tiny_flux3: Path, tmp_path: Path) -> Iterator[gr.Blocks]:
+    pipe = load_pipeline(tiny_flux3, page_blocks, loras={}, settings=TINY_SETTINGS)
     app = build_studio(pipe, settings=TINY_SETTINGS, out=tmp_path)
     app.launch(prevent_thread_lock=True, quiet=True)
     yield app

@@ -32,16 +32,16 @@ def _crop(name: str, reference: str | None = None) -> EvalCrop:
     )
 
 
-def _evaluate(tiny_model: Path, crops: Path, out: Path) -> int:
-    args = ["--crops", str(crops), "--out", str(out), "--model", str(tiny_model), "-n", "2", "--steps", "2"]
+def _evaluate(tiny_flux3: Path, crops: Path, out: Path) -> int:
+    args = ["--crops", str(crops), "--out", str(out), "--model", str(tiny_flux3), "-n", "2", "--steps", "2"]
     result = CliRunner().invoke(app, [*args, "--text-layer", "1", "--device", "cpu"])
     return result.exit_code
 
 
-def test_evaluate_scores_every_crop_into_results(tiny_model: Path, tmp_path: Path) -> None:
+def test_evaluate_scores_every_crop_into_results(tiny_flux3: Path, tmp_path: Path) -> None:
     crops = _eval_set(tmp_path / "crops", [_crop("a.jpg"), _crop("b.jpg")])
 
-    exit_code = _evaluate(tiny_model, crops, tmp_path / "out")
+    exit_code = _evaluate(tiny_flux3, crops, tmp_path / "out")
 
     results = Results.model_validate_json((tmp_path / "out" / "results.json").read_text())
     assert exit_code == 0
@@ -49,11 +49,11 @@ def test_evaluate_scores_every_crop_into_results(tiny_model: Path, tmp_path: Pat
     assert results.failed == {}
 
 
-def test_evaluate_records_a_failed_crop_and_scores_the_rest(tiny_model: Path, tmp_path: Path) -> None:
+def test_evaluate_records_a_failed_crop_and_scores_the_rest(tiny_flux3: Path, tmp_path: Path) -> None:
     crops = _eval_set(tmp_path / "crops", [_crop("a.jpg"), _crop("b.jpg")])
     (crops / "b.jpg").unlink()  # its real crop can't be read back
 
-    exit_code = _evaluate(tiny_model, crops, tmp_path / "out")
+    exit_code = _evaluate(tiny_flux3, crops, tmp_path / "out")
 
     results = Results.model_validate_json((tmp_path / "out" / "results.json").read_text())
     assert exit_code == 1

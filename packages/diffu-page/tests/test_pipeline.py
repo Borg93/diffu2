@@ -37,8 +37,8 @@ TEXT = "Anno sextonhundra och tjugo den femte dagen i maj kom for ratten bonden 
 
 
 @pytest.fixture(scope="module")
-def crop_pipe(tiny_model: Path) -> ModularPipeline:
-    return load_pipeline(tiny_model, crop_blocks, loras={}, settings=TINY_SETTINGS)
+def crop_pipe(tiny_flux3: Path) -> ModularPipeline:
+    return load_pipeline(tiny_flux3, crop_blocks, loras={}, settings=TINY_SETTINGS)
 
 
 def _plan() -> CropPlan:
@@ -71,6 +71,15 @@ def test_crop_pipeline_draws_a_plan_with_one_unclear_label_per_line(crop_pipe: M
     assert crop.image.size == (64, 32)
     assert len(crop.line_cers) == 2
     assert crop.unclear_lines == 2  # noise reads back as nothing like the text
+    assert sorted(_alto_lines(crop.labels_xml)) == ["Göteborgs poliskammare", "den 4 maj"]
+
+
+def test_crop_pipeline_draws_a_plan_with_the_model_a_diffu_repo_names(tiny_diffu: Path) -> None:
+    pipe = load_pipeline(tiny_diffu, crop_blocks, loras={}, settings=TINY_SETTINGS)
+
+    crop = _draw(pipe)
+
+    assert crop.image.size == (64, 32)
     assert sorted(_alto_lines(crop.labels_xml)) == ["Göteborgs poliskammare", "den 4 maj"]
 
 
@@ -111,9 +120,9 @@ def _identity(crop: DrawnCrop) -> tuple[str, CropPlan, str, str]:
 
 
 def test_page_pipeline_draws_every_crop_as_the_crop_pipeline_draws_it(
-    tiny_model: Path, crop_pipe: ModularPipeline, two_column_page: Path
+    tiny_flux3: Path, crop_pipe: ModularPipeline, two_column_page: Path
 ) -> None:
-    page_pipe = load_pipeline(tiny_model, page_blocks, loras={}, settings=TINY_SETTINGS)
+    page_pipe = load_pipeline(tiny_flux3, page_blocks, loras={}, settings=TINY_SETTINGS)
     plans = plan_page(refill(load_xml_layout(two_column_page), [TEXT]), STYLE)
     expected = [
         draw_crop(crop_pipe, plan, name=f"p_{k}", seed=7 + k, reference=None, settings=TINY_SETTINGS)
@@ -153,9 +162,9 @@ def _write_nemo_lora(lora_dir: Path, a: torch.Tensor, b: torch.Tensor, *, alpha:
     (lora_dir / "adapter_config.json").write_text(json.dumps(config))
 
 
-def test_nemo_lora_loads_at_its_trained_strength(tiny_model: Path, tmp_path: Path) -> None:
+def test_nemo_lora_loads_at_its_trained_strength(tiny_flux3: Path, tmp_path: Path) -> None:
     torch.manual_seed(0)
-    pipe = load_pipeline(tiny_model, crop_blocks, loras={}, settings=TINY_SETTINGS)
+    pipe = load_pipeline(tiny_flux3, crop_blocks, loras={}, settings=TINY_SETTINGS)
     linear = pipe.transformer.get_submodule(LORA_MODULE)
     a = torch.randn(2, linear.in_features)
     b = torch.randn(linear.out_features, 2)

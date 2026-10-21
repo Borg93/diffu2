@@ -38,7 +38,7 @@ Done 2026-10-21.
 - [ ] Delete `experiments/` once the running v2 job's evals have used it (~16:45 2026-10-21). Kept only for that
       run, which started before the restructure.
 - [ ] Run `jobs/setup_nemo_env.sh` once to drop the stale page-synth / diffu-gen / old diffu installs from the NeMo
-      environment and install diffu-page and diffu-train.
+      environment and install diffu, diffu-page and diffu-train.
 - [x] `docs/PIPELINE.md`: the flow from page to labelled crops, training, and the training/generation consistency table.
 
 ## Workspace (2026-10-21, branch `modular-structure`)
@@ -56,7 +56,8 @@ Done 2026-10-21.
       progress (the same would hit a ~30-crop block on the cluster).
 - [x] diffu-studio: Gradio on the page pipeline (a template, a text and a style in; the crops and a zip with their
       labels out).
-- [x] diffu: FLUX.3's architecture with our own weights, laid out like a diffusers model (see "diffu" below).
+- [x] diffu: FLUX.3's architecture with our own weights, laid out like a diffusers model (see "diffu" below), registered
+      as a model family: the crop and page pipelines draw with a diffu repo exactly as with FLUX.3 Klein (test).
 - [ ] Page assembly: crops overlap (training windows share lines) and windows that would cut a line are dropped, so
       pasting a page's crops back would draw lines twice and leave holes. Needs a tiling plan for generation and crops
       drawn consistently with their neighbours (e.g. the neighbour as a reference image); see "Full pages".

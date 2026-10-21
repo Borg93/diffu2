@@ -21,8 +21,8 @@ from diffu.modular_pipelines.diffu.encoders import prompt_embeds
 
 
 @pytest.fixture(scope="module")
-def pipe(tiny_repo: Path) -> DiffuModularPipeline:
-    pipe = DiffuModularPipeline.from_pretrained(str(tiny_repo))
+def pipe(tiny_diffu: Path) -> DiffuModularPipeline:
+    pipe = DiffuModularPipeline.from_pretrained(str(tiny_diffu))
     pipe.load_components(dtype=torch.float32)
     return pipe
 
@@ -71,9 +71,9 @@ def test_prompt_embeds_pad_the_window_to_a_multiple_of_80(tiny_qwen35: Path, pro
 
 
 def test_init_transformer_predicts_zero_velocity_once_saved_and_loaded(
-    tiny_config: DiffuConfig, tmp_path: Path
+    tiny_diffu_config: DiffuConfig, tmp_path: Path
 ) -> None:
-    write_model_repo(init_transformer(tiny_config, seed=0), tiny_config, tmp_path)
+    write_model_repo(init_transformer(tiny_diffu_config, seed=0), tiny_diffu_config, tmp_path)
     transformer = Flux3Transformer2DModel.from_pretrained(tmp_path / "transformer")
 
     velocity = transformer(

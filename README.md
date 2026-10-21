@@ -17,7 +17,7 @@ around the model's own (FLUX.3 Klein from diffusers, or diffu), chosen by the mo
 | Member | What it is | Heavy dependencies |
 | --- | --- | --- |
 | `packages/diffu-page` | Archive pages as data (`layout/`, `crops/`, `captions/`, plans, labels, the training-data builders in `data/`), our blocks (`blocks/`), the page and crop pipelines (`pipeline.py`) and their CLIs: `diffu-generate`, `diffu-evaluate`, `diffu-sheets` | torch, diffusers, transformers |
-| `packages/diffu` | The diffu model, laid out like a diffusers model: FLUX.3's transformer with our own weights, a Qwen3.5 text encoder and the Qwen-Image VAE (branch `diffu-model`) | torch, diffusers |
+| `packages/diffu` | The diffu model, laid out like a diffusers model (`modular_pipelines/diffu/`): FLUX.3's transformer with our own weights, a Qwen3.5 text encoder and the Qwen-Image VAE; `diffu-init` writes a new model repo | torch, diffusers |
 | `packages/diffu-train` | NeMo AutoModel glue: dataloader configs, v3 pair caching | NeMo AutoModel (its environment only) |
 | `packages/diffu-runner` | Generation at scale on a Ray cluster: pages planned on CPU workers, crops drawn by GPU actors each holding a crop pipeline | ray |
 | `packages/diffu-studio` | A Gradio app on the page pipeline: a template, a text and a style in, crops with their labels out | gradio |
@@ -27,7 +27,7 @@ configs/flux3/  NeMo AutoModel training configs
 jobs/           GPU job scripts (flux3/), spark_guard.sh (one GPU job at a time on the DGX Spark, 128 GB unified
                 memory), setup_nemo_env.sh (installs the members into NeMo's environment)
 docs/           PIPELINE.md
-conftest.py     test fixtures shared by the members (diffusers' tiny FLUX.3 test model)
+conftest.py     test fixtures shared by the members (pages, diffusers' tiny FLUX.3 test model, a tiny diffu repo)
 ```
 
 ## Environments
@@ -35,7 +35,7 @@ conftest.py     test fixtures shared by the members (diffusers' tiny FLUX.3 test
 - **This repo** (`uv sync` builds every member): CPU checks and tests, `CUDA_VISIBLE_DEVICES="" uv run pytest`. The
   generation tests run diffusers' tiny FLUX.3 test model end to end on CPU.
 - **NeMo AutoModel** (`~/Desktop/repos/Automodel/.venv-managed`): training and the GPU jobs.
-  `jobs/setup_nemo_env.sh` installs diffu-page and diffu-train into it.
+  `jobs/setup_nemo_env.sh` installs diffu, diffu-page and diffu-train into it.
 - `FLUX3_MODEL`: the FLUX.3 Klein directory (default `~/Desktop/repos/flux3-models/flux-3-image-klein-base`).
 
 ## Generate
