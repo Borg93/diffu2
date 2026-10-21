@@ -12,6 +12,8 @@ Two parts:
   on our data, so the pipeline can run on a model we may ship. The old from-scratch line model is under the git tag
   `diffu-mmdit-v1`.
 
+How the pieces fit together, and what keeps training and generation consistent: [docs/PIPELINE.md](docs/PIPELINE.md).
+
 ## Layout
 
 The package follows the pipeline: a page **layout** is cut into **crops**, each crop gets a **caption** (its prompt),

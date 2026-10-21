@@ -39,7 +39,7 @@ Done 2026-10-21.
       run, which started before the restructure.
 - [ ] Run `jobs/setup_nemo_env.sh` once to drop the stale diffu / diffu-page installs from the NeMo environment
       (page-synth's editable install already points at this checkout).
-- [ ] `docs/PIPELINE.md` from the pipeline page, once the generator has run on the GPU.
+- [x] `docs/PIPELINE.md`: the flow from page to labelled crops, training, and the training/generation consistency table.
 
 ## Modular Diffusers (checked against huggingface.co/blog/modular-diffusers and the diffusers source, 2026-10-21)
 
