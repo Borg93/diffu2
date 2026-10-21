@@ -122,7 +122,7 @@ data:
   dataloader:
     # bucket_sampler.py (on PYTHONPATH, see run_v2.sh): NeMo's builder with the aspect buckets interleaved,
     # so 1,600 steps over 11k crops see every crop shape, not just the buckets first in line
-    _target_: bucket_sampler.build_interleaved_text_to_image_dataloader
+    _target_: bucket_sampler.InterleavedTextToImageDataloaderConfig
     cache_dir: ${DIFFU_REPO}/data_flux3/cache_train_v2
     train_text_encoder: false
     num_workers: 2

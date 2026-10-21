@@ -1,4 +1,4 @@
-"""Interleaved aspect-ratio buckets for NeMo AutoModel's text-to-image LoRA training.
+"""Interleaved aspect-ratio buckets for NeMo AutoModel's FLUX.3 LoRA training.
 
 NeMo's ``SequentialBucketSampler`` walks the buckets one after another: every batch of one crop shape, then
 every batch of the next. A run shorter than an epoch (v2: 1,600 steps x 4 crops over 11,329 crops) therefore
@@ -7,20 +7,23 @@ last. Crop shape follows page layout, so that decides which archives the LoRA le
 batches NeMo's sampler makes (shuffled, padded and split across ranks, one crop shape per batch) and shuffles
 them across buckets, so any stretch of training sees every bucket in proportion.
 
-Use it from a NeMo config with this folder on PYTHONPATH:
+Use it from a NeMo config with this folder on PYTHONPATH, for text-to-image or image-edit (reference) data:
 
     data:
       dataloader:
-        _target_: bucket_sampler.build_interleaved_text_to_image_dataloader
+        _target_: bucket_sampler.InterleavedTextToImageDataloaderConfig  # or InterleavedImageEditDataloaderConfig
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import Any, override
+from dataclasses import dataclass
+from typing import override
 
 import torch
 from nemo_automodel.components.datasets.diffusion.collate_fns import TextToImageDataloaderConfig
+from nemo_automodel.components.datasets.diffusion.image_edit_dataset import ImageEditDataloaderConfig
+from nemo_automodel.components.datasets.diffusion.loader import DiffusionDataloaderBuild
 from nemo_automodel.components.datasets.diffusion.sampler import SequentialBucketSampler
 from torch.utils.data import Sampler
 from torchdata.stateful_dataloader import StatefulDataLoader
@@ -62,29 +65,63 @@ class InterleavedBucketSampler(Sampler[list[int]]):
         self._resume_at = state["batches_yielded"]
 
 
-def build_interleaved_text_to_image_dataloader(
-    *, batch_size: int = 1, dp_rank: int = 0, dp_world_size: int = 1, **config: Any
-) -> tuple[StatefulDataLoader, InterleavedBucketSampler]:
-    """NeMo's ``build_text_to_image_multiresolution_dataloader`` with interleaved buckets.
+def interleaved(built: DiffusionDataloaderBuild) -> DiffusionDataloaderBuild:
+    """``built`` with its batches shuffled across buckets: the same dataset, collate and worker settings.
 
-    ``config`` holds the dataloader section of the training config (``cache_dir``, ``num_workers``, ...), the
-    fields of NeMo's ``TextToImageDataloaderConfig``.
+    Raises:
+        TypeError: If NeMo built something other than a ``SequentialBucketSampler``.
+    """
+    if not isinstance(built.sampler, SequentialBucketSampler):
+        raise TypeError(f"expected NeMo's SequentialBucketSampler, got {type(built.sampler).__name__}")
+    loader = built.dataloader
+    sampler = InterleavedBucketSampler(built.sampler)
+    dataloader = StatefulDataLoader(
+        loader.dataset,
+        batch_sampler=sampler,
+        collate_fn=loader.collate_fn,
+        num_workers=loader.num_workers,
+        pin_memory=loader.pin_memory,
+        prefetch_factor=loader.prefetch_factor,
+        persistent_workers=loader.persistent_workers,
+        generator=loader.generator,
+    )
+    return DiffusionDataloaderBuild(dataloader=dataloader, sampler=sampler, drop_last=built.drop_last)
+
+
+def _require_shuffle(shuffle: bool) -> None:
+    if not shuffle:
+        raise ValueError("interleaving the buckets shuffles them; use NeMo's config for a fixed order")
+
+
+# Dataclasses, not Pydantic models: NeMo accepts a dataloader _target_ outside its own builders only as a
+# dataclass with a build() (recipes/_typed_config.py, resolve_diffusion_dataloader).
+@dataclass
+class InterleavedTextToImageDataloaderConfig(TextToImageDataloaderConfig):
+    """NeMo's text-to-image dataloader config, with the aspect buckets interleaved.
 
     Raises:
         ValueError: If ``shuffle`` is off: interleaving is a shuffle.
     """
-    settings = TextToImageDataloaderConfig(**config)
-    if not settings.shuffle:
-        raise ValueError("interleaving the buckets shuffles them; use NeMo's builder for a fixed order")
-    built = settings.build(batch_size=batch_size, dp_rank=dp_rank, dp_world_size=dp_world_size)
-    sampler = InterleavedBucketSampler(built.sampler)
-    dataloader = StatefulDataLoader(
-        built.dataloader.dataset,
-        batch_sampler=sampler,
-        collate_fn=built.dataloader.collate_fn,
-        num_workers=settings.num_workers,
-        pin_memory=settings.pin_memory,
-        prefetch_factor=settings.prefetch_factor if settings.num_workers > 0 else None,
-        persistent_workers=settings.num_workers > 0,
-    )
-    return dataloader, sampler
+
+    def __post_init__(self) -> None:
+        _require_shuffle(self.shuffle)
+
+    @override
+    def build(self, *, dp_rank: int, dp_world_size: int, batch_size: int) -> DiffusionDataloaderBuild:
+        return interleaved(super().build(dp_rank=dp_rank, dp_world_size=dp_world_size, batch_size=batch_size))
+
+
+@dataclass
+class InterleavedImageEditDataloaderConfig(ImageEditDataloaderConfig):
+    """NeMo's image-edit (target + reference image) dataloader config, with the buckets interleaved.
+
+    Raises:
+        ValueError: If ``shuffle`` is off: interleaving is a shuffle.
+    """
+
+    def __post_init__(self) -> None:
+        _require_shuffle(self.shuffle)
+
+    @override
+    def build(self, *, dp_rank: int, dp_world_size: int, batch_size: int) -> DiffusionDataloaderBuild:
+        return interleaved(super().build(dp_rank=dp_rank, dp_world_size=dp_world_size, batch_size=batch_size))

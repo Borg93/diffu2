@@ -1,8 +1,10 @@
 """Generate held-out page crops from their layout captions with FLUX.3 Klein (+ a LoRA) and read every line back.
 
-Built on Modular Diffusers: the FLUX.3 ``text2image`` workflow with its prompt upsampler popped (a crop's stored
-training caption is encoded as given) and ``LineReadbackStep`` appended, which crops each line's box out of the
-generated image, reads it with a Swedish HTR TrOCR and returns the per-line character error rate.
+Built on Modular Diffusers: the FLUX.3 ``text2image`` workflow (``image_conditioned`` when the crops name a
+``reference`` image, the v3 reference-style LoRA) with its prompt upsampler popped (a crop's stored training caption
+is encoded as given) and ``LineReadbackStep`` appended, which crops each line's box out of the generated image, reads
+it with a Swedish HTR TrOCR and returns the per-line character error rate. A crop's optional ``seed`` overrides
+``--seed + index`` (the steering test draws every variant of a template from the same noise).
 
 Runs in the NeMo AutoModel environment (diffusers main with FLUX.3); the LoRA is NeMo's adapter format, applied
 to the pipeline's transformer the way NeMo's ``examples/diffusion/generate/generate.py`` does.
@@ -16,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Literal
 
 import torch
 from diffusers.guiders import ClassifierFreeGuidance
@@ -47,6 +50,7 @@ class LineResult(BaseModel):
 
 class CropResult(BaseModel):
     file: str
+    variant: str | None = None
     gen_cer: float
     real_cer: float
     lines: list[LineResult]
@@ -186,9 +190,11 @@ def load_trocr() -> VisionEncoderDecoderModel:
     return model
 
 
-def build_pipeline(model_path: str, guidance_scale: float) -> ModularPipeline:
-    """FLUX.3 text2image without the prompt upsampler (it would rewrite the quoted lines), then the read-back."""
-    blocks = Flux3AutoBlocks().get_workflow("text2image")
+def build_pipeline(
+    model_path: str, guidance_scale: float, workflow: Literal["text2image", "image_conditioned"]
+) -> ModularPipeline:
+    """A FLUX.3 workflow without the prompt upsampler (it would rewrite the quoted lines), then the read-back."""
+    blocks = Flux3AutoBlocks().get_workflow(workflow)
     blocks.sub_blocks.pop("prompt_upsampler")
     blocks.sub_blocks.insert("line_readback", LineReadbackStep(), len(blocks.sub_blocks))
     pipe = blocks.init_pipeline(model_path)
@@ -202,12 +208,22 @@ def build_pipeline(model_path: str, guidance_scale: float) -> ModularPipeline:
     return pipe
 
 
-def contact_sheet(real: Image.Image, generated: Image.Image, lines: list[dict]) -> Image.Image:
-    """The real crop beside the generated one, with the line boxes drawn on the generated side."""
-    offset = generated.width + SHEET_GAP
-    sheet = Image.new("RGB", (offset + generated.width, generated.height), "white")
-    sheet.paste(real, (0, 0))
-    sheet.paste(generated, (offset, 0))
+def contact_sheet(panels: list[Image.Image], lines: list[dict]) -> Image.Image:
+    """The panels side by side at the last one's height ([reference,] real, generated), with the line boxes drawn
+    on the generated crop."""
+    generated = panels[-1]
+    scaled = [
+        panel.resize((round(panel.width * generated.height / panel.height), generated.height))
+        for panel in panels
+    ]
+    sheet = Image.new(
+        "RGB", (sum(p.width for p in scaled) + SHEET_GAP * (len(scaled) - 1), generated.height), "white"
+    )
+    offset = 0
+    for panel in scaled:
+        sheet.paste(panel, (offset, 0))
+        offset += panel.width + SHEET_GAP
+    offset -= generated.width + SHEET_GAP
     draw = ImageDraw.Draw(sheet)
     for line in lines:
         x0, y0, x1, y1 = pixel_box(line["bbox"], generated.size)
@@ -232,8 +248,12 @@ def main() -> None:
     args = _parse_args()
     with (args.crops / "metadata.jsonl").open(encoding="utf-8") as metadata:
         rows = [json.loads(line) for line in metadata][: args.n]
+    with_reference = sum("reference" in row for row in rows)
+    if with_reference not in (0, len(rows)):
+        raise SystemExit(f"{with_reference} of {len(rows)} crops name a reference image: all or none must")
     args.out.mkdir(parents=True, exist_ok=True)
-    pipe = build_pipeline(args.model, args.guidance)
+    (args.out / "generated").mkdir(exist_ok=True)
+    pipe = build_pipeline(args.model, args.guidance, "image_conditioned" if with_reference else "text2image")
     if args.lora:
         print(
             f"LoRA: {apply_nemo_lora(pipe.transformer, Path(args.lora))} modules from {args.lora}", flush=True
@@ -241,26 +261,29 @@ def main() -> None:
 
     samples: list[CropResult] = []
     for k, row in enumerate(rows):
+        reference = Image.open(args.crops / row["reference"]).convert("RGB") if with_reference else None
         state = pipe(
             prompt=row["caption"],  # the crop's training caption, as the LoRA saw it
             page_lines=row["lines"],
             height=round(row["height"] / 16) * 16,
             width=round(row["width"] / 16) * 16,
             num_inference_steps=args.steps,
-            generator=torch.Generator().manual_seed(args.seed + k),
+            generator=torch.Generator().manual_seed(row.get("seed", args.seed + k)),
             output=["images", "line_reads", "line_cers"],
+            **({"image": reference} if reference else {}),
         )
         generated = state["images"][0]
+        generated.save(args.out / "generated" / f"{k:03d}.png")
         real = Image.open(args.crops / row["file_name"]).convert("RGB").resize(generated.size)
         real_reads, real_cers = read_lines(
             real, row["lines"], model=pipe.htr_model, processor=pipe.htr_processor
         )
-        contact_sheet(real, generated, row["lines"]).save(
-            args.out / f"{k:03d}_{Path(row['file_name']).stem}.jpg"
-        )
+        panels = [reference, real, generated] if reference else [real, generated]
+        contact_sheet(panels, row["lines"]).save(args.out / f"{k:03d}_{Path(row['file_name']).stem}.jpg")
         lines = zip(row["lines"], state["line_reads"], state["line_cers"], real_reads, real_cers, strict=True)
         sample = CropResult(
             file=row["file_name"],
+            variant=row.get("variant"),
             gen_cer=mean(state["line_cers"]),
             real_cer=mean(real_cers),
             lines=[

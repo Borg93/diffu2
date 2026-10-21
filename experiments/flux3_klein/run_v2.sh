@@ -7,9 +7,10 @@
 #   2. cache latents + text embeddings of the v2 training crops      data_flux3/cache_train_v2
 #   3. train the LoRA (flux3_layout_lora_v2.yaml)                     runs/flux3_layout_lora_v2
 #   4. the v2 LoRA at its final and middle checkpoints, then the pilot's final LoRA, on the same 24 crops
-# A failed eval is logged and skipped; failed caching or training stops the run. Run detached:
+# A failed eval is logged and skipped; failed caching or training stops the run. A rerun skips the held-out
+# pick, the base eval and the caching when their outputs are there. Run detached:
 #
-#   setsid nohup experiments/flux3_klein/run_v2.sh > runs/flux3_layout_v2/run.log 2>&1 < /dev/null &
+#   setsid nohup experiments/flux3_klein/run_v2.sh >> runs/flux3_layout_v2/run.log 2>&1 < /dev/null &
 
 set -euo pipefail
 
@@ -46,18 +47,31 @@ step "waiting for the pilot to finish"
 while pgrep -f "flux3_klein/run_pilo[t]" > /dev/null; do sleep 60; done
 
 step "0/4 pick $N_EVAL held-out crops, one per collection"
-"$REPO/.venv/bin/python" "$REPO/experiments/flux3_klein/pick_eval_crops.py" "$CROPS/val" "$CROPS/val_eval" -n "$N_EVAL"
+if [ -f "$CROPS/val_eval/metadata.jsonl" ]; then
+    echo "already picked: $CROPS/val_eval"
+else
+    "$REPO/.venv/bin/python" "$REPO/experiments/flux3_klein/pick_eval_crops.py" "$CROPS/val" "$CROPS/val_eval" -n "$N_EVAL"
+fi
 
 step "1/4 base model on the held-out crops"
-evaluate base
+if [ -f "$OUT/eval_base/results.json" ]; then
+    echo "already evaluated: $OUT/eval_base"
+else
+    evaluate base
+fi
 
 step "2/4 cache the v2 training crops"
-rm -rf "$REPO/data_flux3/cache_train_v2"
-"$GUARD" --need-gb 25 --name flux-v2-cache --log "$OUT/guard.log" -- \
-    "$PY" -m tools.diffusion.preprocessing_multiprocess image --processor flux3 --model_name "$MODEL" \
-    --dataset_name "$CROPS/train" --dataset_media_column image \
-    --dataset_caption_column caption --resolution_preset 1024p --output_dir "$REPO/data_flux3/cache_train_v2" \
-    > "$OUT/cache.log" 2>&1
+# the preprocessor writes the merged metadata.json last, so it marks a finished cache
+if [ -f "$REPO/data_flux3/cache_train_v2/metadata.json" ]; then
+    echo "already cached: $REPO/data_flux3/cache_train_v2"
+else
+    rm -rf "$REPO/data_flux3/cache_train_v2"
+    "$GUARD" --need-gb 25 --name flux-v2-cache --log "$OUT/guard.log" -- \
+        "$PY" -m tools.diffusion.preprocessing_multiprocess image --processor flux3 --model_name "$MODEL" \
+        --dataset_name "$CROPS/train" --dataset_media_column image \
+        --dataset_caption_column caption --resolution_preset 1024p --output_dir "$REPO/data_flux3/cache_train_v2" \
+        > "$OUT/cache.log" 2>&1
+fi
 
 step "3/4 train the LoRA"
 # bucket_sampler.py (the config's dataloader) lives next to this script
