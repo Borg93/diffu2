@@ -23,8 +23,6 @@ import argparse
 import hashlib
 import json
 import random
-import re
-import statistics
 import xml.etree.ElementTree as ET
 from collections import Counter
 from contextlib import ExitStack
@@ -35,11 +33,11 @@ from PIL import Image
 from pydantic import BaseModel
 
 from page_synth.captions.look import scan_look
-from page_synth.captions.prompt import ROLE_NAMES, caption_for
+from page_synth.captions.prompt import caption_for
 from page_synth.captions.provenance import Provenance, provenance_of
 from page_synth.captions.records import CropRecord
 from page_synth.crops.geometry import CropSettings, Line, Region, crops_for_page
-from page_synth.layout.page_xml import iter_local, local_name, page_line_text, parse_points
+from page_synth.layout.page_xml import iter_local, local_name, read_page_line, reading_order_index, region_role
 
 Image.MAX_IMAGE_PIXELS = None  # archival spreads exceed PIL's decompression-bomb default
 
@@ -70,43 +68,19 @@ def parse_page(xml_path: Path) -> list[Region]:
     page = iter_local(ET.parse(xml_path).getroot(), "Page")[0]
     ordered: list[tuple[int, Region]] = []
     for position, element in enumerate(iter_local(page, "TextRegion")):
-        role = _region_role(element)
-        parsed = (_parse_line(child, role) for child in element if local_name(child.tag) == "TextLine")
-        lines = sorted((line for line in parsed if line is not None), key=lambda line: line.baseline_y)
+        role = region_role(element)
+        read = (read_page_line(child) for child in element if local_name(child.tag) == "TextLine")
+        lines = sorted(
+            (
+                Line(polygon=line.polygon, baseline_y=line.baseline_y, text=line.text, role=role)
+                for line in read
+                if line
+            ),
+            key=lambda line: line.baseline_y,
+        )
         if lines:
-            ordered.append((_reading_order(element, position), Region(lines=lines)))
+            ordered.append((reading_order_index(element, position), Region(lines=lines)))
     return [region for _, region in sorted(ordered, key=lambda item: item[0])]
-
-
-def _region_role(region: ET.Element) -> str:
-    structure = re.search(r"structure \{type:([^;}]+)", region.attrib.get("custom", ""))
-    role = region.attrib.get("type") or (structure.group(1) if structure else "")
-    return role if role in ROLE_NAMES else ""
-
-
-def _reading_order(region: ET.Element, position: int) -> int:
-    """The region's Transkribus reading-order index, else its position in the file."""
-    match = re.search(r"readingOrder \{index:(\d+);", region.attrib.get("custom", ""))
-    return int(match.group(1)) if match else position
-
-
-def _parse_line(element: ET.Element, role: str) -> Line | None:
-    """A TextLine with its transcription, outline and baseline height; None without text or outline."""
-    text = (page_line_text(element) or "").strip()
-    coords = _child(element, "Coords")
-    if not text or coords is None:
-        return None
-    polygon = parse_points(coords.attrib.get("points", ""))
-    if len(polygon) < 3:
-        return None
-    baseline = _child(element, "Baseline")
-    points = parse_points(baseline.attrib.get("points", "")) if baseline is not None else []
-    baseline_y = statistics.mean(y for _, y in points) if points else max(y for _, y in polygon)
-    return Line(polygon=polygon, baseline_y=baseline_y, text=text, role=role)
-
-
-def _child(element: ET.Element, name: str) -> ET.Element | None:
-    return next((child for child in element if local_name(child.tag) == name), None)
 
 
 def sample_pages(collection_dir: Path, count: int, rng: random.Random) -> list[Page]:

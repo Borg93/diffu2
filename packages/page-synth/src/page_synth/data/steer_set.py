@@ -16,7 +16,6 @@ each archive under ``examples/`` that ``page_synth.cli.sheets`` shows beside the
 from __future__ import annotations
 
 import argparse
-import re
 import shutil
 from collections import Counter
 from pathlib import Path
@@ -25,7 +24,7 @@ from pydantic import BaseModel
 
 from page_synth.captions.look import ScanLook
 from page_synth.captions.prompt import LineRecord
-from page_synth.captions.provenance import Provenance
+from page_synth.captions.provenance import Provenance, collection_key
 from page_synth.captions.records import CropRecord, read_records
 from page_synth.captions.restyle import Style, restyle
 
@@ -72,18 +71,13 @@ class Variant(BaseModel):
     example: Path | None = None
 
 
-def archive_key(record: CropRecord) -> str:
-    """``GT-JLF_jamtlands_domsaga_20260220`` -> ``JLF_jamtlands_domsaga``."""
-    return re.sub(r"^GT-|_\d{8}$", "", record.collection)
-
-
 def archive_style(train: list[CropRecord], key: str, crops_dir: Path) -> ArchiveStyle:
     """The commonest scan look of an archive's training crops, and the commonest years among those crops.
 
     Raises:
         ValueError: If no training crop is from the archive.
     """
-    records = [record for record in train if archive_key(record) == key]
+    records = [record for record in train if collection_key(record.collection) == key]
     if not records:
         raise ValueError(f"no v2 training crop from {key}")
     look = Counter(record.look for record in records).most_common(1)[0][0]

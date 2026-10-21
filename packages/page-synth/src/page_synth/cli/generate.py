@@ -1,7 +1,7 @@
 """Generate synthetic archive crops with ALTO/PAGE ground truth: any page template, any text, a chosen style.
 
 For each template (a real PAGE/ALTO page) the running text is replaced by new text (``refill``), the page is planned
-as training-scale crops (``page_synth.crops.plan``), and every crop goes through a :class:`page_synth.generator.CropGenerator`:
+as training-scale crops (``page_synth.plan``), and every crop goes through a :class:`page_synth.generator.CropGenerator`:
 FLUX.3 + LoRAs draw it, TrOCR reads every line back, and its labels are written with badly read lines tagged
 ``unclear``. Writes ``<out>/<page>_<k>.jpg`` + ``.xml`` per crop and ``<out>/summary.json``; ``--profile <dir>`` also
 records a torch profiler trace (Perfetto) of crops 2-3 after a warm-up crop. One GPU job, through
@@ -24,11 +24,11 @@ from torch.profiler import ProfilerActivity, profile, record_function, schedule
 
 from page_synth.captions.look import ScanLook
 from page_synth.captions.provenance import Provenance
-from page_synth.crops.plan import PageStyle, plan_page
 from page_synth.generator import CropGenerator, GeneratorSettings
 from page_synth.layout import load_xml_layout, refill, running_text
 from page_synth.modular.pipelines import FLUX3_KLEIN
 from page_synth.modular.readback import mean
+from page_synth.plan import PageStyle, plan_page
 
 
 class CropResult(BaseModel):
@@ -109,7 +109,7 @@ def main() -> None:
         provenance=Provenance(title=args.title, years=args.years),
         look=ScanLook(greyscale=args.greyscale, paper=args.paper, ink=args.ink),
     )
-    text = " ".join(running_text(load_xml_layout(str(path), single_page=False)) for path in args.text_from)
+    text = " ".join(running_text(load_xml_layout(path)) for path in args.text_from)
     args.out.mkdir(parents=True, exist_ok=True)
     loras = dict(args.lora)
     settings = GeneratorSettings(steps=args.steps, guidance_scale=args.guidance, label_format=args.format)
@@ -118,7 +118,7 @@ def main() -> None:
     pages: list[PageResult] = []
     with _profiler(args.profile) as prof:
         for t, template in enumerate(args.templates):
-            layout = refill(load_xml_layout(str(template), single_page=False), [text])
+            layout = refill(load_xml_layout(template), [text])
             crops: list[CropResult] = []
             for k, plan in enumerate(plan_page(layout, style)):
                 name = f"{t:03d}_{template.stem}_{k}"

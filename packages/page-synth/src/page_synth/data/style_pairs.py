@@ -28,9 +28,10 @@ from PIL import Image
 from pydantic import BaseModel
 
 from page_synth.captions.prompt import LineRecord
+from page_synth.captions.provenance import collection_key
 from page_synth.captions.records import CropRecord, read_records
 from page_synth.captions.restyle import edit_caption
-from page_synth.data.steer_set import ARCHIVES, SEED, archive_key, archive_style
+from page_synth.data.steer_set import ARCHIVES, SEED, archive_style
 
 REF_PIXELS = 512 * 1024  # a reference shows the hand smaller than the ~1 MP target, at half its tokens
 
@@ -202,7 +203,7 @@ def main() -> None:
         references: list[tuple[str, Path]] = []
         own = pick_reference(template, eval_volumes, rng)
         if own is not None:
-            references.append((f"own volume ({archive_key(template.record)})", own.path))
+            references.append((f"own volume ({collection_key(template.record.collection)})", own.path))
         references += list(examples.items())
         example_rows += [
             eval_row(

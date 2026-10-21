@@ -18,10 +18,10 @@ from pydantic import BaseModel
 
 from page_synth.captions.prompt import LineRecord
 from page_synth.cli.generate import lora_arg
-from page_synth.crops.plan import CropPlan
 from page_synth.generator import CropGenerator, GeneratorSettings
 from page_synth.modular.pipelines import FLUX3_KLEIN
 from page_synth.modular.readback import mean, pixel_box
+from page_synth.plan import CropPlan
 
 SHEET_GAP = 8  # px between the panels of a contact sheet
 

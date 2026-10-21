@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from page_synth.layout import Layout, LineBox, PageSpec, load_xml_layout, refill, running_text
+from page_synth.layout import Layout, LineBox, load_xml_layout, refill, running_text
 
 _BODY_TEXTS = [  # 40 characters on each 680 px line: every refilled line gets a 40-character budget
     "den fjarde maj artonhundra attiotva fors",
@@ -37,7 +37,7 @@ def page(tmp_path: Path) -> Layout:
 </PcGts>"""
     path = tmp_path / "page.xml"
     path.write_text(xml, encoding="utf-8")
-    return load_xml_layout(str(path), single_page=False)
+    return load_xml_layout(path)
 
 
 def _body_texts(layout: Layout) -> list[str]:
@@ -70,7 +70,7 @@ def test_refill_splits_a_word_that_overruns_its_line_with_the_break_mark(page: L
 
 def test_refill_keeps_the_other_regions_text(page: Layout):
     others = {box.region: box.text for box in refill(page, ["Ny text."]).boxes if box.region != "body"}
-    assert others == {"page_number": "61.", "marginalia": "No 12"}
+    assert others == {"page-number": "61.", "marginalia": "No 12"}
 
 
 def test_refill_refuses_a_page_without_a_line_to_measure(page: Layout):
@@ -83,7 +83,8 @@ def test_running_text_joins_the_words_a_transcription_breaks_across_lines():
     lines = ["nastkomne mandag up¬", "gifwa fortekning pa de som", "krogar halla wilja"]
     boxes = [LineBox(text=text, x=0, y=60 * i, w=600, h=40, baseline_y=60 * i + 30) for i, text in enumerate(lines)]
     page = Layout(
-        spec=PageSpec(),
-        boxes=[*boxes, LineBox(text="97.", x=0, y=0, w=40, h=40, baseline_y=30, region="page_number")],
+        width=600,
+        height=400,
+        boxes=[*boxes, LineBox(text="97.", x=0, y=0, w=40, h=40, baseline_y=30, region="page-number")],
     )
     assert running_text(page) == "nastkomne mandag upgifwa fortekning pa de som krogar halla wilja"

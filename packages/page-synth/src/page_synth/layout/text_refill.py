@@ -15,8 +15,7 @@ import statistics
 from collections import deque
 from collections.abc import Iterable
 
-from page_synth.layout.edits import is_body
-from page_synth.layout.model import Layout, LineBox
+from page_synth.layout.model import RUNNING_TEXT, Layout, LineBox
 
 SPLIT_MARK = "¬"
 MIN_SPLIT = 3  # characters each half of a split word keeps
@@ -73,7 +72,7 @@ class _TextStream:
 def running_text(layout: Layout) -> str:
     """A layout's running-text lines as one paragraph, the words its transcription broke with ``SPLIT_MARK``
     joined back, ready to refill another page with."""
-    lines = " ".join(box.text.strip() for box in layout.boxes if is_body(box.region))
+    lines = " ".join(box.text.strip() for box in layout.boxes if box.region == RUNNING_TEXT)
     return lines.replace(f"{SPLIT_MARK} ", "")
 
 
@@ -81,7 +80,7 @@ def refill(layout: Layout, paragraphs: Iterable[str]) -> Layout:
     """Rewrite a layout's running-text lines with new text, in reading order.
 
     Args:
-        layout: The page; its running-text lines (:func:`is_body` regions) set the line widths and the writing
+        layout: The page; its running-text lines (region ``body``) set the line widths and the writing
             density, its other lines keep their text.
         paragraphs: The new text, one paragraph per item; blank items are skipped.
 
@@ -92,11 +91,11 @@ def refill(layout: Layout, paragraphs: Iterable[str]) -> Layout:
     Raises:
         ValueError: If no running-text line holds ``DENSITY_MIN_CHARS`` characters to measure the density by.
     """
-    density = _writing_density([box for box in layout.boxes if is_body(box.region)])
+    density = _writing_density([box for box in layout.boxes if box.region == RUNNING_TEXT])
     text = _TextStream(paragraphs)
     boxes: list[LineBox] = []
     for box in layout.boxes:
-        if not is_body(box.region):
+        if box.region != RUNNING_TEXT:
             boxes.append(box)
             continue
         line = text.line(max(1, round(density * box.w)))

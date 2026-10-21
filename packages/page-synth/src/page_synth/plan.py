@@ -1,8 +1,8 @@
 """Plan a page layout as FLUX.3 crops: the windows, prompts and line boxes the v2 LoRA was trained on.
 
-A :class:`page_synth.layout.Layout` (a real ALTO/PAGE page replayed and refilled, or a synthetic template) becomes the v2 crop
-builder's lines, so the crops come out of the same windowing (whole lines, about 1 megapixel at a 64 px line pitch,
-NeMo bucket sizes) and the same caption grammar as the training crops. The style is a ``Provenance`` (archive,
+A :class:`page_synth.layout.Layout` (a real PAGE or ALTO page, refilled with new text) becomes the v2 crop builder's
+lines, so the crops come out of the same windowing (whole lines, about 1 megapixel at a 64 px line pitch, NeMo bucket
+sizes) and the same caption grammar as the training crops. Table cells are left out, as the builder leaves them out. The style is a ``Provenance`` (archive,
 years) and a ``ScanLook`` (scan, paper, ink), as in every v2 caption. CPU only.
 """
 
@@ -14,20 +14,7 @@ from page_synth.captions.look import ScanLook
 from page_synth.captions.prompt import Caption, LineRecord, caption_for, caption_order
 from page_synth.captions.provenance import Provenance
 from page_synth.crops.geometry import Crop, CropSettings, Line, Region, crops_for_page
-from page_synth.layout import Layout, LineBox
-
-# layout region -> the PAGE type the v2 captions name as a role; running text and table cells name none
-ROLES = {
-    "header": "heading",
-    "reg_header": "heading",
-    "rubric": "heading",
-    "table_header": "heading",
-    "marginalia": "marginalia",
-    "margin_key": "marginalia",
-    "page_number": "page-number",
-    "catchword": "catch-word",
-    "signature": "signature-mark",
-}
+from page_synth.layout import ROLE_NAMES, TABLE, Layout, LineBox
 
 
 class PageStyle(BaseModel):
@@ -49,6 +36,7 @@ class CropPlan(BaseModel):
 
 
 def _source(box: LineBox) -> str:
+    """The block a line came from, as reading order tracks it."""
     return f"{box.region}|{box.block}"
 
 
@@ -58,17 +46,17 @@ def _line(box: LineBox) -> Line:
         polygon=[(x0, y0), (x1, y0), (x1, y1), (x0, y1)],
         baseline_y=box.baseline_y,
         text=box.text,
-        role=ROLES.get(box.region, ""),
+        role=box.region if box.region in ROLE_NAMES else "",
         source=_source(box),
     )
 
 
 def regions_of(layout: Layout) -> list[Region]:
-    """The layout's lines grouped by region and source block (a replayed page's text regions, a template's
-    columns), in reading order, each group's lines top to bottom."""
+    """The layout's text lines grouped by region and source block, in reading order, each group's lines top to
+    bottom; table cells are left out."""
     grouped: dict[tuple[str, str], list[Line]] = {}
     for box in layout.boxes:
-        if box.text.strip():
+        if box.text.strip() and box.region != TABLE:
             grouped.setdefault((box.region, box.block), []).append(_line(box))
     return [Region(lines=sorted(lines, key=lambda line: line.baseline_y)) for lines in grouped.values()]
 
@@ -92,6 +80,6 @@ def _plan(crop: Crop, caption: Caption, block_rank: dict[str, int]) -> CropPlan:
 
 def plan_page(layout: Layout, style: PageStyle, settings: CropSettings | None = None) -> list[CropPlan]:
     """The crops the v2 builder would cut from this page, each with its caption in ``style``."""
-    crops = crops_for_page(regions_of(layout), (layout.spec.width, layout.spec.height), settings or CropSettings())
+    crops = crops_for_page(regions_of(layout), (layout.width, layout.height), settings or CropSettings())
     block_rank = {source: rank for rank, source in enumerate(dict.fromkeys(_source(box) for box in layout.boxes))}
     return [_plan(crop, caption_for(crop, style.provenance, style.look), block_rank) for crop in crops]

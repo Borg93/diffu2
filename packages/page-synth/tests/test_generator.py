@@ -18,18 +18,20 @@ from PIL import Image
 from safetensors.torch import save_file
 
 from page_synth.captions.prompt import LineRecord
-from page_synth.crops.plan import CropPlan
 from page_synth.generator import CropGenerator, GeneratorSettings
+from page_synth.modular.pipelines import load_nemo_lora, load_pipelines
 from page_synth.modular.blocks import training_grid
+from page_synth.plan import CropPlan
 
 TINY_FLUX3 = "hf-internal-testing/tiny-flux3-image-modular"
+TINY_FLUX3_REVISION = "9130f96f124d6c6fdd1beab63cfb6d2f1c8658a1"  # pinned: a changed fixture must not change results
 TINY_SETTINGS = GeneratorSettings(steps=2, guidance_scale=4.0, text_layers=(1,), device="cpu")
 LORA_MODULE = "single_transformer_blocks.0.attn.to_q"
 
 
 @pytest.fixture(scope="module")
 def tiny_model() -> Path:
-    return Path(snapshot_download(TINY_FLUX3))
+    return Path(snapshot_download(TINY_FLUX3, revision=TINY_FLUX3_REVISION))
 
 
 @pytest.fixture(scope="module")
@@ -113,15 +115,15 @@ def _write_nemo_lora(lora_dir: Path, a: torch.Tensor, b: torch.Tensor, *, alpha:
 
 def test_nemo_lora_loads_at_its_trained_strength(tiny_model: Path, tmp_path: Path) -> None:
     torch.manual_seed(0)
-    base = CropGenerator(tiny_model, loras={}, settings=TINY_SETTINGS)._pipes.crop.transformer
-    linear = base.get_submodule(LORA_MODULE)
+    pipelines = load_pipelines(tiny_model, guidance_scale=4.0, device="cpu")
+    linear = pipelines.crop.transformer.get_submodule(LORA_MODULE)
     a = torch.randn(2, linear.in_features)
     b = torch.randn(linear.out_features, 2)
     _write_nemo_lora(tmp_path / "lora", a, b, alpha=4)  # scale alpha / r = 2
     x = torch.randn(3, linear.in_features)
     expected = linear(x.to(linear.weight.dtype)).float() + 2 * x @ a.T @ b.T
 
-    adapted = CropGenerator(tiny_model, loras={"v2": tmp_path / "lora"}, settings=TINY_SETTINGS)
-    got = adapted._pipes.crop.transformer.get_submodule(LORA_MODULE)(x.to(linear.weight.dtype)).float()
+    load_nemo_lora(pipelines.crop, tmp_path / "lora", "v2")
 
+    got = pipelines.crop.transformer.get_submodule(LORA_MODULE)(x.to(linear.weight.dtype)).float()
     torch.testing.assert_close(got, expected, rtol=2e-2, atol=2e-1)

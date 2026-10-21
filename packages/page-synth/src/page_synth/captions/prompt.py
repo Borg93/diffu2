@@ -10,21 +10,9 @@ from pydantic import BaseModel
 from page_synth.captions.look import ScanLook
 from page_synth.captions.provenance import Provenance
 from page_synth.crops.geometry import Crop, Line
+from page_synth.layout.model import ROLE_NAMES
 
 NUMBER_WORDS = ("no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten")
-
-
-# PAGE region types (``type`` or Transkribus' ``structure {type:...}``) a line's desc names; other lines are
-# plain "line of text".
-ROLE_NAMES = {
-    "marginalia": "marginal note",
-    "page-number": "page number",
-    "heading": "heading",
-    "header": "running header",
-    "catch-word": "catchword",
-    "signature-mark": "signature mark",
-    "footer": "footer",
-}
 
 
 class LayoutRow(BaseModel):

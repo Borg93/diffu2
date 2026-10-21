@@ -90,9 +90,17 @@ def provenance_of(collection: str, page_xml: Path) -> Provenance:
     return Provenance(title=collection_title(collection), years=volume_years(page_xml.parent.parent.name))
 
 
+def collection_key(collection: str) -> str:
+    """A GT collection folder's name without the ``GT-`` prefix and the export date: its key in COLLECTION_TITLES.
+
+    ``GT-JLF_jamtlands_domsaga_20260220`` -> ``JLF_jamtlands_domsaga``.
+    """
+    return re.sub(r"^GT-|_\d{8}$", "", collection.translate(_SFM_DECODE).strip())
+
+
 def collection_title(collection: str) -> str:
     """The caption name of a GT collection folder (its slug for a collection COLLECTION_TITLES lacks)."""
-    key = re.sub(r"^GT-|_\d{8}$", "", collection.translate(_SFM_DECODE).strip())
+    key = collection_key(collection)
     return COLLECTION_TITLES.get(key, key.replace("_", " "))
 
 

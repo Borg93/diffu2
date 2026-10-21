@@ -1,6 +1,6 @@
 """Our Modular Diffusers blocks around FLUX.3's own: a crop plan in, a crop's ground truth out.
 
-- ``CropPromptStep`` turns a :class:`page_synth.crops.plan.CropPlan` into the prompt, the line boxes and the image size;
+- ``CropPromptStep`` turns a :class:`page_synth.plan.CropPlan` into the prompt, the line boxes and the image size;
 - ``ReferenceGridStep`` resizes a reference image the way it was resized for v3 training;
 - ``LineReadbackStep`` reads every line box of the generated image with a Swedish HTR TrOCR;
 - ``LabelExportStep`` writes the crop's labels from the plan's boxes and words, each line tagged ``unclear`` when
@@ -10,8 +10,6 @@
 """
 
 from __future__ import annotations
-
-from typing import Literal
 
 from diffusers.modular_pipelines import (
     ComponentSpec,
@@ -24,16 +22,14 @@ from diffusers.modular_pipelines import (
 from PIL import Image
 from transformers import TrOCRProcessor, VisionEncoderDecoderModel
 
-from page_synth.crops.plan import ROLES, CropPlan
-from page_synth.labels import LineLabel, PageLabels, export
+from page_synth.crops.geometry import SLOT_ABOVE_BASELINE, SLOT_BELOW_BASELINE
+from page_synth.labels import LabelFormat, LineLabel, PageLabels, export
+from page_synth.layout import RUNNING_TEXT
 from page_synth.modular.readback import HTR, pixel_box, read_lines
-
-type LabelFormat = Literal["alto", "page"]
+from page_synth.plan import CropPlan
 
 REFERENCE_PIXELS = 1024 * 1024  # page_synth.data.cache_pairs caches v3's references under this many pixels
 REFERENCE_GRID = 16  # px; NeMo's FLUX.3 cache encoder floors both sides of an image to a multiple of this
-SLOT_BASELINE = 0.7  # a line slot runs 0.7 line pitch above its baseline and 0.3 below (page_synth.crops.geometry)
-_REGION_OF_ROLE = {role: region for region, role in reversed(ROLES.items())}  # the first region naming each role
 
 
 def training_grid(image: Image.Image) -> Image.Image:
@@ -82,7 +78,7 @@ class CropPromptStep(ModularPipelineBlocks):
 
     @property
     def description(self) -> str:
-        return "Turns a page_synth.crops.plan.CropPlan into the prompt, the line boxes (page_lines) and the image size."
+        return "Turns a page_synth.plan.CropPlan into the prompt, the line boxes (page_lines) and the image size."
 
     @property
     def inputs(self) -> list[InputParam]:
@@ -156,13 +152,13 @@ def line_labels(plan: CropPlan, line_cers: list[float], max_line_cer: float) -> 
     labels: list[LineLabel] = []
     for index, (line, line_cer) in enumerate(zip(plan.lines, line_cers, strict=True)):
         x0, y0, x1, y1 = (round(v) for v in pixel_box(line.bbox, (plan.width, plan.height)))
-        baseline_y = round(y0 + SLOT_BASELINE * (y1 - y0))
+        baseline_y = round(y0 + SLOT_ABOVE_BASELINE / (SLOT_ABOVE_BASELINE + SLOT_BELOW_BASELINE) * (y1 - y0))
         labels.append(
             LineLabel(
                 text=line.text,
                 polygon=[(x0, y0), (x1, y0), (x1, y1), (x0, y1)],
                 baseline=[(x0, baseline_y), (x1, baseline_y)],
-                region=_REGION_OF_ROLE.get(line.role, "body"),
+                region=line.role or RUNNING_TEXT,
                 order=order_of[index],
                 tag="unclear" if line_cer > max_line_cer else "",
             )
@@ -184,7 +180,7 @@ class LabelExportStep(ModularPipelineBlocks):
         return [
             InputParam("crop_plan", type_hint=CropPlan, required=True),
             InputParam("line_cers", type_hint=list, required=True, description="LineReadbackStep's per-line CER."),
-            InputParam("label_format", type_hint=str, default="alto", description="alto | page"),
+            InputParam("label_format", type_hint=LabelFormat, default="alto", description="alto | page"),
             InputParam("max_line_cer", type_hint=float, default=0.25, description="Above it a line is unclear."),
             InputParam("image_name", type_hint=str, default="", description="The image file the labels name."),
         ]

@@ -1,19 +1,19 @@
-"""Label data + pluggable export formats.
+"""A crop's ground truth and its export formats.
 
-The generator produces a cohesive :class:`PageLabels` value (lines, words, polygons,
-transcriptions, regions, reading order). Output *formats* are decoupled from that data: each is a
-plain ``PageLabels -> str`` function registered in :data:`EXPORTERS`. ALTO v4 is just one entry, not
-a privileged format — add a format by writing a function and adding one dict line.
+:class:`PageLabels` is the label data (lines with their transcription, polygon, baseline, region, reading order and
+tag); PAGE and ALTO XML are only serializations of it, each a ``PageLabels -> str`` function in :data:`EXPORTERS`.
 """
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from importlib.metadata import PackageNotFoundError, version
+from typing import Literal
 from xml.sax.saxutils import escape
 
 from pydantic import BaseModel, Field
+
+from page_synth.layout.model import ROLE_NAMES, RUNNING_TEXT, TABLE
 
 try:
     _VERSION = version("page-synth")
@@ -21,30 +21,22 @@ except PackageNotFoundError:  # not installed (e.g. running from a source checko
     _VERSION = "0"
 
 type Point = tuple[int, int]
-
-
-class WordLabel(BaseModel):
-    """One word's transcription + polygon (page coordinates)."""
-
-    text: str
-    polygon: list[Point]
+type LabelFormat = Literal["alto", "page"]
 
 
 class LineLabel(BaseModel):
-    """One text line: transcription, polygon, baseline polyline, region, reading-order index, words."""
+    """One text line: transcription, polygon, baseline polyline, region, reading-order index and tag."""
 
     text: str
     polygon: list[Point]
-    baseline: list[Point] = Field(default_factory=list)  # left->right baseline points (empty if unknown)
-    region: str = "body"
+    baseline: list[Point] = Field(default_factory=list)  # left to right; empty if unknown
+    region: str = RUNNING_TEXT  # a role's PAGE type (see ROLE_NAMES), "table" or "body"
     order: int = 0
-    words: list[WordLabel] = Field(default_factory=list)
-    tag: str = ""  # editorial tag: "" | add (interlinear insertion) | del (struck/deleted) | unclear
-    printed: bool = False  # typeset form-furniture (header/row number) vs handwriting -> PAGE production type
+    tag: str = ""  # "unclear" when the line read back badly
 
 
 class PageLabels(BaseModel):
-    """A page's full ground truth — the single value every exporter serializes."""
+    """A page's full ground truth: the single value every exporter serializes."""
 
     width: int
     height: int
@@ -62,31 +54,12 @@ def _esc(s: str) -> str:
     return escape(s, {'"': "&quot;"})  # values land in XML attributes, so quotes must be entities too
 
 
-# PAGE TextRegion @type uses a controlled vocabulary; map our region names onto it (default paragraph).
-_PAGE_REGION_TYPE: dict[str, str] = {
-    "body": "paragraph",
-    "header": "heading",
-    "marginalia": "marginalia",
-    "margin_key": "marginalia",  # a keyed marginal note (reads interleaved with the body)
-    "page_number": "page-number",
-    "table_header": "heading",
-    "table": "other",
-    "row_number": "other",
-    "kv_label": "paragraph",
-    "kv_value": "paragraph",
-    "xml": "paragraph",
-    "catchword": "catch-word",
-    "signature": "signature-mark",
-    "reg_header": "heading",
-    "rubric": "heading",
-    "initial": "paragraph",  # an enlarged opening capital (versal) — part of the running text
-}
-
-
 def _page_type(region: str) -> str:
-    if region.startswith("col"):  # col0/col1/... multi-column body
-        return "paragraph"
-    return _PAGE_REGION_TYPE.get(region, "paragraph")
+    """A region's PAGE ``TextRegion@type``: a role's own type, a table cell's ``other``, running text's
+    ``paragraph``."""
+    if region in ROLE_NAMES:
+        return region
+    return "other" if region == TABLE else "paragraph"
 
 
 def _ordered_regions(labels: PageLabels) -> list[tuple[str, list[LineLabel]]]:
@@ -95,14 +68,8 @@ def _ordered_regions(labels: PageLabels) -> list[tuple[str, list[LineLabel]]]:
     groups: dict[str, list[LineLabel]] = {}
     for line in labels.lines:
         groups.setdefault(line.region, []).append(line)
-    for lines in groups.values():
-        lines.sort(key=lambda ln: ln.order)
-    return sorted(groups.items(), key=lambda kv: min(ln.order for ln in kv[1]))
-
-
-def to_json(labels: PageLabels) -> str:
-    """Universal JSON: page dims + a flat line list (polygon, text, region, order, words)."""
-    return json.dumps(labels.model_dump(), ensure_ascii=False, indent=2)
+    ordered = {region: sorted(lines, key=lambda ln: ln.order) for region, lines in groups.items()}
+    return sorted(ordered.items(), key=lambda kv: kv[1][0].order)
 
 
 _PAGE_NS = "http://schema.primaresearch.org/PAGE/gts/pagecontent/2019-07-15"
@@ -112,35 +79,28 @@ _PAGE_SCHEMA = f"{_PAGE_NS} {_PAGE_NS}/pagecontent.xsd"
 # Metadata timestamps valid AND the export byte-reproducible for a given page.
 _CREATED = "1970-01-01T00:00:00Z"
 
-# tag -> the PAGE TextStyle boolean that marks it (the schema-sanctioned way, alongside the Transkribus custom)
-_TAG_STYLE = {
-    "del": "strikethrough",
-    "add": "superscript",
-    "unclear": "underlined",
-    "underline": "underlined",
-}
-
 
 def _pts(points: list[Point]) -> str:
     return " ".join(f"{x},{y}" for x, y in points)
 
 
-def _page_words(region: str, line: LineLabel) -> str:
-    """``<Word>`` elements (Coords + transcription) for a line's word boxes — empty if it has none."""
-    return "\n".join(
-        f'        <Word id="{_esc(region)}_l{line.order}_w{wi}">\n'
-        f'          <Coords points="{_pts(wd.polygon)}"/>\n'
-        f"          <TextEquiv><Unicode>{_esc(wd.text)}</Unicode></TextEquiv>\n"
-        f"        </Word>"
-        for wi, wd in enumerate(line.words)
+def _page_text_line(region: str, line: LineLabel) -> str:
+    """One ``TextLine``: Coords, Baseline, TextEquiv, and the tag as Transkribus writes it into ``@custom``."""
+    baseline = f'        <Baseline points="{_pts(line.baseline)}"/>\n' if line.baseline else ""
+    custom = f' custom="structure {{type:{_esc(line.tag)};}}"' if line.tag else ""
+    return (
+        f'      <TextLine id="{_esc(region)}_l{line.order}" production="handwritten-cursive"{custom}>\n'
+        f'        <Coords points="{_pts(line.polygon)}"/>\n'
+        f"{baseline}"
+        f"        <TextEquiv><Unicode>{_esc(line.text)}</Unicode></TextEquiv>\n"
+        f"      </TextLine>"
     )
 
 
 def to_page_xml(labels: PageLabels) -> str:
-    """PRImA PAGE-XML (validates against the 2019 / 2013 content model): required Metadata timestamps, an
-    explicit ``ReadingOrder``, one typed ``TextRegion`` (Coords) per region, and a ``TextLine`` (Coords,
-    Baseline, ``Word`` boxes, TextEquiv) per line — with ``production`` marking handwriting vs print and a
-    ``TextStyle`` flag (strikethrough/superscript) for struck/inserted edits."""
+    """PRImA PAGE-XML (validates against the 2019 / 2013 content model): the required Metadata timestamps, an
+    explicit ``ReadingOrder``, one typed ``TextRegion`` (Coords) per region, and a ``TextLine`` (Coords, Baseline,
+    TextEquiv) per line."""
     regions = _ordered_regions(labels)
     refs = "\n".join(
         f'        <RegionRefIndexed index="{i}" regionRef="{_esc(region)}"/>' for i, (region, _) in enumerate(regions)
@@ -152,25 +112,11 @@ def to_page_xml(labels: PageLabels) -> str:
     for region, lines in regions:
         rx, ry, rw, rh = _bbox([p for ln in lines for p in ln.polygon])
         rcoords = _pts([(rx, ry), (rx + rw, ry), (rx + rw, ry + rh), (rx, ry + rh)])
-        tl: list[str] = []
-        for ln in lines:
-            production = "printed" if ln.printed else "handwritten-cursive"
-            base = f'        <Baseline points="{_pts(ln.baseline)}"/>\n' if ln.baseline else ""
-            words = _page_words(region, ln)
-            words = f"{words}\n" if words else ""
-            custom = f' custom="structure {{type:{_esc(ln.tag)};}}"' if ln.tag else ""  # Transkribus-style
-            style = f'        <TextStyle {_TAG_STYLE[ln.tag]}="true"/>\n' if ln.tag in _TAG_STYLE else ""
-            tl.append(
-                f'      <TextLine id="{_esc(region)}_l{ln.order}" production="{production}"{custom}>\n'
-                f'        <Coords points="{_pts(ln.polygon)}"/>\n'
-                f"{base}{words}"
-                f"        <TextEquiv><Unicode>{_esc(ln.text)}</Unicode></TextEquiv>\n"
-                f"{style}"
-                f"      </TextLine>"
-            )
         blocks.append(
             f'    <TextRegion id="{_esc(region)}" type="{_page_type(region)}">\n'
-            f'      <Coords points="{rcoords}"/>\n' + "\n".join(tl) + "\n    </TextRegion>"
+            f'      <Coords points="{rcoords}"/>\n'
+            + "\n".join(_page_text_line(region, ln) for ln in lines)
+            + "\n    </TextRegion>"
         )
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -229,36 +175,32 @@ def _alto_reading_order(regions: list[tuple[str, list[LineLabel]]]) -> str:
     )
 
 
+def _alto_text_line(region: str, line: LineLabel) -> str:
+    """One ``TextLine``: its box, its polygon as a ``Shape``, its baseline, and its text as one ``String``."""
+    lx, ly, lw, lh = _bbox(line.polygon)
+    baseline = f' BASELINE="{_pts(line.baseline)}"' if line.baseline else ""
+    return (
+        f'        <TextLine ID="{_esc(region)}_l{line.order}" HPOS="{lx}" VPOS="{ly}" '
+        f'WIDTH="{lw}" HEIGHT="{lh}"{baseline}>\n'
+        f'          <Shape><Polygon POINTS="{_pts(line.polygon)}"/></Shape>\n'
+        f'          <String ID="{_esc(region)}_l{line.order}_s" HPOS="{lx}" VPOS="{ly}" WIDTH="{lw}" '
+        f'HEIGHT="{lh}" WC="1.0" CONTENT="{_esc(line.text)}"/>\n'
+        "        </TextLine>"
+    )
+
+
 def to_alto(labels: PageLabels) -> str:
     """ALTO v4 in the Riksarkivet/htrflow shape: a ``Processing`` provenance block, a ``ReadingOrder``,
-    then ``TextBlock`` -> ``TextLine`` (``Shape``/``Polygon`` tight outline + ``BASELINE``) -> ``String``
-    words. ``PC``/``WC`` confidences are 1.0 — this is ground truth, not a recognition guess."""
+    then ``TextBlock`` -> ``TextLine`` (``Shape``/``Polygon`` outline + ``BASELINE``) -> one ``String``.
+    ``PC``/``WC`` confidences are 1.0 — this is ground truth, not a recognition guess."""
     regions = _ordered_regions(labels)
     blocks: list[str] = []
     for region, lines in regions:
         bx, by, bw, bh = _bbox([p for ln in lines for p in ln.polygon])
-        tl: list[str] = []
-        for ln in lines:
-            lx, ly, lw, lh = _bbox(ln.polygon)
-            baseline = f' BASELINE="{_pts(ln.baseline)}"' if ln.baseline else ""
-            words = ln.words or [WordLabel(text=ln.text, polygon=ln.polygon)]
-            strings: list[str] = []
-            for wi, wd in enumerate(words):
-                wx, wy, ww, wh = _bbox(wd.polygon)
-                strings.append(
-                    f'          <String ID="{_esc(region)}_l{ln.order}_w{wi}" HPOS="{wx}" '
-                    f'VPOS="{wy}" WIDTH="{ww}" HEIGHT="{wh}" WC="1.0" CONTENT="{_esc(wd.text)}"/>'
-                )
-            tl.append(
-                f'        <TextLine ID="{_esc(region)}_l{ln.order}" HPOS="{lx}" VPOS="{ly}" '
-                f'WIDTH="{lw}" HEIGHT="{lh}"{baseline}>\n'
-                f'          <Shape><Polygon POINTS="{_pts(ln.polygon)}"/></Shape>\n'
-                + "\n".join(strings)
-                + "\n        </TextLine>"
-            )
         blocks.append(
-            f'      <TextBlock ID="{_esc(region)}" HPOS="{bx}" VPOS="{by}" WIDTH="{bw}" '
-            f'HEIGHT="{bh}" CS="false">\n' + "\n".join(tl) + "\n      </TextBlock>"
+            f'      <TextBlock ID="{_esc(region)}" HPOS="{bx}" VPOS="{by}" WIDTH="{bw}" HEIGHT="{bh}" CS="false">\n'
+            + "\n".join(_alto_text_line(region, ln) for ln in lines)
+            + "\n      </TextBlock>"
         )
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -272,20 +214,15 @@ def to_alto(labels: PageLabels) -> str:
     )
 
 
-# THE label-format registry: name -> (exporter, file extension). Adding a format is ONE line here —
-# EXPORTERS / EXTENSIONS are derived views (kept so existing imports work) and config.Fmt derives its
-# StrEnum members from these names too.
-FORMATS: dict[str, tuple[Callable[[PageLabels], str], str]] = {
-    "json": (to_json, ".json"),
-    "page": (to_page_xml, ".xml"),
-    "alto": (to_alto, ".alto.xml"),
-}
-EXPORTERS: dict[str, Callable[[PageLabels], str]] = {name: fn for name, (fn, _ext) in FORMATS.items()}
-EXTENSIONS: dict[str, str] = {name: ext for name, (_fn, ext) in FORMATS.items()}
+EXPORTERS: dict[LabelFormat, Callable[[PageLabels], str]] = {"page": to_page_xml, "alto": to_alto}
 
 
-def export(labels: PageLabels, fmt: str) -> str:
-    """Serialize ``labels`` to one registered format (``json`` | ``page`` | ``alto``)."""
+def export(labels: PageLabels, fmt: LabelFormat) -> str:
+    """Serialize ``labels`` to one format (``alto`` | ``page``).
+
+    Raises:
+        ValueError: If ``fmt`` is not a known format.
+    """
     if fmt not in EXPORTERS:
         raise ValueError(f"unknown format {fmt!r}; options: {sorted(EXPORTERS)}")
     return EXPORTERS[fmt](labels)

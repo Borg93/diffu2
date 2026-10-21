@@ -1,97 +1,101 @@
-"""Tests for faithful ALTO/PAGE replay — load_xml_layout carries real region semantics (not a flat "xml"
-region) and turns PAGE SeparatorRegions into furniture rules, and the single-leaf split re-origins rules."""
+"""Reading a real page's layout from PAGE or ALTO XML: lines with their own outline, baseline, region role, block and
+reading order."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from page_synth.layout import load_xml_layout
 
-_PAGE_XML = """<?xml version="1.0" encoding="UTF-8"?>
-<PcGts xmlns="http://schema.primaresearch.org/PAGE/gts/pagecontent/2019-07-15">
-  <Page imageFilename="p.jpg" imageWidth="1000" imageHeight="1400">
-    <TextRegion id="m1" type="marginalia">
-      <TextLine id="ml1"><Coords points="20,100 180,100 180,140 20,140"/>
-        <TextEquiv><Unicode>No 12</Unicode></TextEquiv></TextLine>
-    </TextRegion>
-    <TextRegion id="b1" type="paragraph">
-      <TextLine id="bl1"><Coords points="220,100 900,100 900,150 220,150"/>
-        <TextEquiv><Unicode>den fjarde maj artonhundra attiotva</Unicode></TextEquiv></TextLine>
-    </TextRegion>
-    <TableRegion id="t1">
-      <TableCell id="c1"><TextLine id="cl1"><Coords points="220,300 400,300 400,340 220,340"/>
-        <TextEquiv><Unicode>Anders Persson</Unicode></TextEquiv></TextLine></TableCell>
-    </TableRegion>
-    <SeparatorRegion id="s1"><Coords points="210,90 214,90 214,360 210,360"/></SeparatorRegion>
-    <SeparatorRegion id="s2"><Coords points="220,280 900,280 900,284 220,284"/></SeparatorRegion>
-  </Page>
-</PcGts>
-"""
+_NS = "http://schema.primaresearch.org/PAGE/gts/pagecontent/2013-07-15"
 
 
-def test_replay_carries_region_semantics_and_rules(tmp_path: Path):
-    xml = tmp_path / "p.xml"
-    xml.write_text(_PAGE_XML, encoding="utf-8")
-    layout = load_xml_layout(str(xml), single_page=False)
-
-    regions = {b.region for b in layout.boxes}
-    assert "xml" not in regions, "replay must map real region types, not flatten to 'xml'"
-    assert regions == {"marginalia", "body", "table"}, regions
-    # both separators become rules; one vertical (s1) and one horizontal (s2)
-    assert len(layout.rules) == 2, [f"{r.x1},{r.y1}->{r.x2},{r.y2}" for r in layout.rules]
-    vertical = [r for r in layout.rules if r.x1 == r.x2]
-    horizontal = [r for r in layout.rules if r.y1 == r.y2]
-    assert len(vertical) == 1 and len(horizontal) == 1, layout.rules
+def _page(tmp_path: Path, regions: str) -> Path:
+    path = tmp_path / "page.xml"
+    path.write_text(
+        f'<?xml version="1.0" encoding="UTF-8"?>\n<PcGts xmlns="{_NS}">'
+        f'<Page imageFilename="p.jpg" imageWidth="1000" imageHeight="1400">{regions}</Page></PcGts>',
+        encoding="utf-8",
+    )
+    return path
 
 
-def test_single_leaf_split_reorigins_rules(tmp_path: Path):
-    xml = tmp_path / "p.xml"
-    xml.write_text(_PAGE_XML, encoding="utf-8")
-    leaf = load_xml_layout(str(xml), single_page=True)  # splits (left cluster vs right body) + re-origins
-    # every carried rule is re-origined onto the (narrowed) leaf canvas — none left off-page by the split
-    assert leaf.rules, "the kept leaf should still carry its in-range separator rule(s)"
-    assert all(0 <= r.x1 <= leaf.spec.width and 0 <= r.x2 <= leaf.spec.width for r in leaf.rules), [
-        f"{r.x1}->{r.x2} on w={leaf.spec.width}" for r in leaf.rules
+def _line(line_id: str, points: str, text: str, inner: str = "") -> str:
+    return (
+        f'<TextLine id="{line_id}"><Coords points="{points}"/>{inner}'
+        f"<TextEquiv><Unicode>{text}</Unicode></TextEquiv></TextLine>"
+    )
+
+
+@pytest.fixture
+def transkribus_page(tmp_path: Path) -> Path:
+    """Region types and reading order as Transkribus writes them into ``@custom``, regions out of file order."""
+    return _page(
+        tmp_path,
+        '<TextRegion id="r3" custom="readingOrder {index:2;}">'
+        + _line("b1", "220,200 900,200 900,250 220,250", "den fjarde maj")
+        + '</TextRegion><TextRegion id="r1" custom="readingOrder {index:0;} structure {type:page-number;}">'
+        + _line("n1", "850,60 900,60 900,100 850,100", "97.")
+        + '</TextRegion><TextRegion id="r2" custom="readingOrder {index:1;} structure {type:marginalia;}">'
+        + _line("m1", "20,200 180,200 180,240 20,240", "No 12")
+        + '</TextRegion><TableRegion id="t1"><TableCell id="c1">'
+        + _line("c1l", "220,300 400,300 400,340 220,340", "Anders Persson")
+        + "</TableCell></TableRegion>",
+    )
+
+
+def test_replay_reads_regions_in_transkribus_reading_order_with_their_roles(transkribus_page: Path) -> None:
+    layout = load_xml_layout(transkribus_page)
+
+    assert [(box.text, box.region, box.block) for box in layout.boxes] == [
+        ("97.", "page-number", "r1"),
+        ("No 12", "marginalia", "r2"),
+        ("den fjarde maj", "body", "r3"),
+        ("Anders Persson", "table", "c1"),
     ]
 
 
-_TRANSKRIBUS_XML = """<?xml version="1.0" encoding="UTF-8"?>
-<PcGts xmlns="http://schema.primaresearch.org/PAGE/gts/pagecontent/2013-07-15">
-  <Page imageFilename="p.jpg" imageWidth="1000" imageHeight="1400">
-    <TextRegion id="r1" custom="readingOrder {index:0;} structure {type:page-number;}">
-      <TextLine id="n1"><Coords points="850,60 900,60 900,100 850,100"/>
-        <TextEquiv><Unicode>97.</Unicode></TextEquiv></TextLine>
-    </TextRegion>
-    <TextRegion id="r2" custom="readingOrder {index:1;} structure {type:marginalia;}">
-      <TextLine id="m1"><Coords points="20,200 180,200 180,240 20,240"/>
-        <TextEquiv><Unicode>No 12</Unicode></TextEquiv></TextLine>
-    </TextRegion>
-    <TextRegion id="r3" custom="readingOrder {index:2;}">
-      <TextLine id="b1"><Coords points="220,200 900,200 900,250 220,250"/>
-        <TextEquiv><Unicode>den fjarde maj artonhundra attiotva</Unicode></TextEquiv></TextLine>
-    </TextRegion>
-  </Page>
-</PcGts>
-"""
+def test_replay_takes_a_lines_own_outline_not_its_last_words(tmp_path: Path) -> None:
+    words = (
+        '<Word id="w1"><Coords points="100,200 300,200 300,250 100,250"/></Word>'
+        '<Word id="w2"><Coords points="600,200 900,200 900,250 600,250"/></Word>'
+    )
+    page = _page(
+        tmp_path,
+        '<TextRegion id="r">' + _line("l", "100,190 900,190 900,260 100,260", "ett tva", words) + "</TextRegion>",
+    )
+
+    box = load_xml_layout(page).boxes[0]
+
+    assert (box.x, box.y, box.w, box.h) == (100.0, 190.0, 800.0, 70.0)
 
 
-def test_replay_reads_the_region_types_transkribus_writes_into_custom(tmp_path: Path):
-    xml = tmp_path / "p.xml"
-    xml.write_text(_TRANSKRIBUS_XML, encoding="utf-8")
-    layout = load_xml_layout(str(xml), single_page=False)
-    assert {box.text: box.region for box in layout.boxes} == {
-        "97.": "page_number",
-        "No 12": "marginalia",
-        "den fjarde maj artonhundra attiotva": "body",
-    }
+def test_replay_takes_the_baseline_from_the_lines_baseline_points(tmp_path: Path) -> None:
+    baseline = '<Baseline points="100,240 900,244"/>'
+    page = _page(
+        tmp_path,
+        '<TextRegion id="r">' + _line("l", "100,190 900,190 900,260 100,260", "ett", baseline) + "</TextRegion>",
+    )
+
+    assert load_xml_layout(page).boxes[0].baseline_y == 242.0
 
 
-def test_replay_keeps_the_block_each_line_came_from(tmp_path: Path):
-    xml = tmp_path / "p.xml"
-    xml.write_text(_TRANSKRIBUS_XML, encoding="utf-8")
-    layout = load_xml_layout(str(xml), single_page=False)
-    assert {box.text: box.block for box in layout.boxes} == {
-        "97.": "r1",
-        "No 12": "r2",
-        "den fjarde maj artonhundra attiotva": "r3",
-    }
+def test_replay_reads_an_alto_page(tmp_path: Path) -> None:
+    alto = tmp_path / "page.alto.xml"
+    alto.write_text(
+        '<?xml version="1.0"?><alto xmlns="http://www.loc.gov/standards/alto/ns-v4#"><Layout>'
+        '<Page WIDTH="6000" HEIGHT="5000"><PrintSpace><TextBlock ID="b1">'
+        '<TextLine HPOS="100" VPOS="200" WIDTH="300" HEIGHT="50" BASELINE="100,240 400,240">'
+        '<String CONTENT="Hej"/><String CONTENT="du"/></TextLine>'
+        "</TextBlock></PrintSpace></Page></Layout></alto>",
+        encoding="utf-8",
+    )
+
+    layout = load_xml_layout(alto)
+
+    assert (layout.width, layout.height) == (6000, 5000)
+    assert [(b.text, b.x, b.y, b.w, b.h, b.baseline_y, b.block) for b in layout.boxes] == [
+        ("Hej du", 100.0, 200.0, 300.0, 50.0, 240.0, "b1")
+    ]

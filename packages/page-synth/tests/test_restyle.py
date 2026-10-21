@@ -13,8 +13,8 @@ from page_synth.captions.provenance import Provenance, provenance_of
 from page_synth.captions.records import CropRecord
 from page_synth.captions.restyle import Style, edit_caption, restyle
 from page_synth.crops.geometry import Crop, CropSettings, crops_for_page
-from page_synth.crops.plan import regions_of
 from page_synth.layout import load_xml_layout
+from page_synth.plan import regions_of
 
 COLLECTION = "GT-RA_arjeplogs_tingslag_20260220"
 PAGE = f"{COLLECTION}/Arjeplogs tingslag (1690-1700)/Arjeplogs tingslag (1690-1700)/page/0001.xml"
@@ -23,8 +23,8 @@ LOOK = ScanLook(greyscale=False, paper="yellowed", ink="dark brown")
 
 @pytest.fixture
 def crop(body_and_notes_page: Path) -> Crop:
-    layout = load_xml_layout(str(body_and_notes_page), single_page=False)
-    return crops_for_page(regions_of(layout), (layout.spec.width, layout.spec.height), CropSettings())[0]
+    layout = load_xml_layout(body_and_notes_page)
+    return crops_for_page(regions_of(layout), (layout.width, layout.height), CropSettings())[0]
 
 
 def _record(crop: Crop, caption: Caption) -> CropRecord:

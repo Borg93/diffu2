@@ -22,7 +22,13 @@ def has_role(record: CropRecord) -> bool:
 
 
 def pick(records: list[CropRecord], count: int) -> list[CropRecord]:
-    """One record per collection (preferring one with a role line), at most ``count``, spread over them."""
+    """One record per collection (preferring one with a role line), at most ``count``, spread over them.
+
+    Raises:
+        ValueError: If ``count`` is below 1.
+    """
+    if count < 1:
+        raise ValueError(f"count must be at least 1, got {count}")
     chosen: dict[str, CropRecord] = {}
     for record in records:
         current = chosen.get(record.collection)
@@ -30,7 +36,8 @@ def pick(records: list[CropRecord], count: int) -> list[CropRecord]:
             chosen[record.collection] = record
     names = sorted(chosen)
     if len(names) > count:
-        names = list(dict.fromkeys(names[round(i * (len(names) - 1) / (count - 1))] for i in range(count)))
+        step = (len(names) - 1) / max(count - 1, 1)
+        names = list(dict.fromkeys(names[round(i * step)] for i in range(count)))
     return [chosen[name] for name in names]
 
 
