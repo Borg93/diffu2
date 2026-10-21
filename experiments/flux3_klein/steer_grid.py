@@ -10,15 +10,38 @@ Reads the steering set (``build_steer_set.py``) and the ``eval_layout.py`` run o
 from __future__ import annotations
 
 import argparse
-import json
 from collections import defaultdict
 from pathlib import Path
 
 from PIL import Image, ImageDraw
+from pydantic import BaseModel
 
 PANEL_HEIGHT = 420
 LABEL_HEIGHT = 22
 GAP = 10
+
+
+class Prompt(BaseModel):
+    """What a sheet needs of a set's prompt (``build_steer_set.SteerRow`` or ``build_style_pairs.EvalRow``)."""
+
+    template: int
+    variant: str
+    example: str | None  # a real crop of the variant's style, relative to the set's dir
+
+
+class Sample(BaseModel):
+    gen_cer: float
+
+
+class Results(BaseModel):
+    """What a sheet needs of ``eval_layout.py``'s ``results.json``."""
+
+    samples: list[Sample]
+
+
+def label_of(prompt: Prompt, sample: Sample) -> str:
+    beside = "   | right: a real crop of that style" if prompt.example else ""
+    return f"{prompt.variant}   (TrOCR CER {sample.gen_cer:.3f}){beside}"
 
 
 def labelled_row(label: str, panels: list[Image.Image]) -> Image.Image:
@@ -51,17 +74,14 @@ def main() -> None:
     args = ap.parse_args()
 
     with (args.steer / "metadata.jsonl").open(encoding="utf-8") as metadata:
-        prompts = [json.loads(line) for line in metadata]
-    results = json.loads((args.run / "results.json").read_text())["samples"]
+        prompts = [Prompt.model_validate_json(line) for line in metadata]
+    results = Results.model_validate_json((args.run / "results.json").read_text())
     by_template: dict[int, list[Image.Image]] = defaultdict(list)
-    for k, (prompt, result) in enumerate(zip(prompts, results, strict=True)):
+    for k, (prompt, sample) in enumerate(zip(prompts, results.samples, strict=True)):
         panels: list[Image.Image] = [Image.open(args.run / "generated" / f"{k:03d}.png")]
-        if prompt["example"]:
-            panels.append(Image.open(args.steer / prompt["example"]))
-        label = f"{prompt['variant']}   (TrOCR CER {result['gen_cer']:.3f})" + (
-            "   | right: a real crop of that archive" if prompt["example"] else ""
-        )
-        by_template[prompt["template"]].append(labelled_row(label, panels))
+        if prompt.example:
+            panels.append(Image.open(args.steer / prompt.example))
+        by_template[prompt.template].append(labelled_row(label_of(prompt, sample), panels))
     for template, rows in by_template.items():
         out = args.run / f"steer_template_{template}.jpg"
         stack(rows).save(out, quality=88)

@@ -290,6 +290,8 @@ class Crop(BaseModel):
 class ScanLook(BaseModel):
     """What a crop's scan looks like, in plain words for its caption."""
 
+    model_config = {"frozen": True}
+
     greyscale: bool
     paper: str  # e.g. "yellowed", "light grey"
     ink: str  # e.g. "dark brown", "black"
@@ -297,6 +299,8 @@ class ScanLook(BaseModel):
 
 class Provenance(BaseModel):
     """Where a crop comes from, as its caption names it."""
+
+    model_config = {"frozen": True}
 
     title: str  # the collection
     years: str  # the volume's, '' when its name has none
@@ -340,6 +344,14 @@ class CropRecord(BaseModel):
     layout: list[LayoutRow]
     lines: list[LineRecord]
 
+    @property
+    def provenance(self) -> Provenance:
+        return provenance_of(self.collection, Path(self.page))
+
+    @property
+    def look(self) -> ScanLook:
+        return ScanLook(greyscale=self.greyscale, paper=self.paper, ink=self.ink)
+
 
 class Page(BaseModel):
     """A ground-truth page with a scan and transcribed text."""
@@ -355,8 +367,18 @@ class Page(BaseModel):
 
     @property
     def provenance(self) -> Provenance:
-        volume = self.path.parent.parent.name
-        return Provenance(title=collection_title(self.collection), years=volume_years(volume))
+        return provenance_of(self.collection, self.path)
+
+
+def read_records(metadata: Path) -> list[CropRecord]:
+    """The crop records of a split's ``metadata.jsonl``."""
+    with metadata.open(encoding="utf-8") as rows:
+        return [CropRecord.model_validate_json(row) for row in rows]
+
+
+def provenance_of(collection: str, page_xml: Path) -> Provenance:
+    """The archive and years a caption names for a page: ``<collection>/<volume>/<volume>/page/<file>.xml``."""
+    return Provenance(title=collection_title(collection), years=volume_years(page_xml.parent.parent.name))
 
 
 def collection_title(collection: str) -> str:

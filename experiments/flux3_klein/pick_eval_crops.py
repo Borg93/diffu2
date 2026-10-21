@@ -14,7 +14,7 @@ import argparse
 import os
 from pathlib import Path
 
-from build_layout_crops import CropRecord
+from build_layout_crops import CropRecord, read_records
 
 
 def has_role(record: CropRecord) -> bool:
@@ -41,8 +41,7 @@ def main() -> None:
     ap.add_argument("-n", type=int, default=24, help="crops to pick")
     args = ap.parse_args()
 
-    with (args.split / "metadata.jsonl").open(encoding="utf-8") as metadata:
-        records = [CropRecord.model_validate_json(line) for line in metadata]
+    records = read_records(args.split / "metadata.jsonl")
     picked = pick(records, args.n)
     args.out.mkdir(parents=True, exist_ok=True)
     with (args.out / "metadata.jsonl").open("w", encoding="utf-8") as out:

@@ -17,7 +17,6 @@ come from the reference. Writes, under ``data_flux3/style_pairs_v3``:
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import random
 from collections import defaultdict
@@ -25,15 +24,23 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from build_layout_crops import CropRecord, LineRecord, read_records
 from build_steer_set import ARCHIVES, SEED, archive_key, archive_style
-from caption_style import Style, edit_caption
+from caption_style import edit_caption
 from PIL import Image
 from pydantic import BaseModel
 
 REPO = Path(__file__).resolve().parents[2]
-REF_PIXELS = (
-    512 * 1024
-)  # a reference shows the hand at a smaller scale than the ~1 MP target, at half the tokens
+REF_PIXELS = 512 * 1024  # a reference shows the hand smaller than the ~1 MP target, at half its tokens
+
+type Volume = tuple[str, str]  # (collection dir, volume dir)
+
+
+class Scan(BaseModel):
+    """A crop record and where its scan is."""
+
+    record: CropRecord
+    path: Path
 
 
 class Media(BaseModel):
@@ -55,7 +62,7 @@ class EvalRow(BaseModel):
 
     file_name: str
     caption: str
-    lines: list[dict[str, Any]]
+    lines: list[LineRecord]
     width: int
     height: int
     reference: str  # relative to the eval dir
@@ -65,9 +72,9 @@ class EvalRow(BaseModel):
     example: str | None = None  # steer_grid.py shows it beside the generated crop
 
 
-def volume_of(record: dict[str, Any]) -> tuple[str, str]:
-    """(collection dir, volume) of a crop, from its PAGE path ``<collection>/<volume>/<volume>/page/<file>.xml``."""
-    collection, volume = record["page"].split("/")[:2]
+def volume_of(record: CropRecord) -> Volume:
+    """The volume of a crop, from its PAGE path ``<collection>/<volume>/<volume>/page/<file>.xml``."""
+    collection, volume = record.page.split("/")[:2]
     return collection, volume
 
 
@@ -86,32 +93,28 @@ def shrink(source: Path, destination: Path) -> None:
     image.resize(size, Image.Resampling.LANCZOS).save(destination, quality=92)
 
 
-def load_split(crops: Path, split: str) -> list[dict[str, Any]]:
-    """A split's crop records, each with the ``path`` of its scan."""
-    with (crops / split / "metadata.jsonl").open(encoding="utf-8") as metadata:
-        records = [json.loads(line) for line in metadata]
-    for record in records:
-        record["path"] = crops / split / record["file_name"]
-    return records
+def load_split(crops: Path, split: str) -> list[Scan]:
+    return [
+        Scan(record=record, path=crops / split / record.file_name)
+        for record in read_records(crops / split / "metadata.jsonl")
+    ]
 
 
-def by_volume(records: list[dict[str, Any]]) -> dict[tuple[str, str], list[dict[str, Any]]]:
-    volumes: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
-    for record in records:
-        volumes[volume_of(record)].append(record)
+def by_volume(scans: list[Scan]) -> dict[Volume, list[Scan]]:
+    volumes: dict[Volume, list[Scan]] = defaultdict(list)
+    for scan in scans:
+        volumes[volume_of(scan.record)].append(scan)
     return volumes
 
 
-def pick_reference(
-    record: dict[str, Any], volumes: dict[tuple[str, str], list[dict[str, Any]]], rng: random.Random
-) -> dict[str, Any] | None:
-    """A crop from another page of ``record``'s volume, or None when its volume has no other page."""
-    others = [r for r in volumes[volume_of(record)] if r["page"] != record["page"]]
+def pick_reference(scan: Scan, volumes: dict[Volume, list[Scan]], rng: random.Random) -> Scan | None:
+    """A crop from another page of ``scan``'s volume, or None when its volume has no other page."""
+    others = [other for other in volumes[volume_of(scan.record)] if other.record.page != scan.record.page]
     return rng.choice(others) if others else None
 
 
 def eval_row(
-    target: dict[str, Any],
+    target: Scan,
     reference: Path,
     out: Path,
     *,
@@ -122,14 +125,14 @@ def eval_row(
     """An eval crop of ``target`` drawn in ``reference``'s hand; the target scan and the shrunk reference go to
     ``out``."""
     (out / "refs").mkdir(parents=True, exist_ok=True)
-    link(target["path"], out / target["file_name"])
+    link(target.path, out / target.record.file_name)
     shrink(reference, out / "refs" / reference.name)
     return EvalRow(
-        file_name=target["file_name"],
-        caption=edit_caption(target["caption"], Style.of(target)),
-        lines=target["lines"],
-        width=target["width"],
-        height=target["height"],
+        file_name=target.record.file_name,
+        caption=edit_caption(target.record),
+        lines=target.record.lines,
+        width=target.record.width,
+        height=target.record.height,
         reference=f"refs/{reference.name}",
         seed=seed,
         template=template,
@@ -142,27 +145,27 @@ def write_rows(path: Path, rows: Sequence[BaseModel]) -> None:
     path.write_text("".join(row.model_dump_json() + "\n" for row in rows), encoding="utf-8")
 
 
-def training_pairs(train: list[dict[str, Any]], out: Path, rng: random.Random) -> list[ManifestRow]:
+def training_pairs(train: list[Scan], out: Path, rng: random.Random) -> list[ManifestRow]:
     """Every training crop that has another page in its volume, with a reference crop from that page."""
     for sub in ("targets", "refs"):
         (out / sub).mkdir(parents=True, exist_ok=True)
     volumes = by_volume(train)
     manifest: list[ManifestRow] = []
-    for record in train:
-        reference = pick_reference(record, volumes, rng)
+    for scan in train:
+        reference = pick_reference(scan, volumes, rng)
         if reference is None:
             continue
-        link(record["path"], out / "targets" / record["file_name"])
-        shrink(reference["path"], out / "refs" / reference["file_name"])
+        link(scan.path, out / "targets" / scan.record.file_name)
+        shrink(reference.path, out / "refs" / reference.record.file_name)
         manifest.append(
             ManifestRow(
-                id=Path(record["file_name"]).stem,
-                prompt=edit_caption(record["caption"], Style.of(record)),
+                id=Path(scan.record.file_name).stem,
+                prompt=edit_caption(scan.record),
                 media=[
-                    Media(role="target", file_name=f"targets/{record['file_name']}"),
-                    Media(role="context", file_name=f"refs/{reference['file_name']}"),
+                    Media(role="target", file_name=f"targets/{scan.record.file_name}"),
+                    Media(role="context", file_name=f"refs/{reference.record.file_name}"),
                 ],
-                metadata={"row_index": len(manifest), "reference": reference["file_name"]},
+                metadata={"row_index": len(manifest), "reference": reference.record.file_name},
             )
         )
     return manifest
@@ -184,22 +187,22 @@ def main() -> None:
     # held-out crops, each in the hand of another page of its volume (an unseen page when there is one)
     eval_volumes = by_volume(val + train)
     val_rows = [
-        eval_row(record, reference["path"], args.out / "val_eval")
-        for record in held_out
-        if (reference := pick_reference(record, eval_volumes, rng)) is not None
+        eval_row(scan, reference.path, args.out / "val_eval")
+        for scan in held_out
+        if (reference := pick_reference(scan, eval_volumes, rng)) is not None
     ]
     write_rows(args.out / "val_eval/metadata.jsonl", val_rows)
 
     # the steering templates, by example: in their own volume's hand, then in each steering archive's
-    examples = {key: archive_style(train, key, args.crops).example for key in ARCHIVES}
+    examples = {key: archive_style([s.record for s in train], key, args.crops).example for key in ARCHIVES}
     example_rows: list[EvalRow] = []
     for t in args.templates:
         template = held_out[t]
         references: list[tuple[str, Path]] = []
         own = pick_reference(template, eval_volumes, rng)
         if own is not None:
-            references.append((f"own volume ({archive_key(template)})", own["path"]))
-        references += [(key, path) for key, path in examples.items()]
+            references.append((f"own volume ({archive_key(template.record)})", own.path))
+        references += list(examples.items())
         example_rows += [
             eval_row(
                 template,
@@ -214,7 +217,6 @@ def main() -> None:
     write_rows(args.out / "by_example/metadata.jsonl", example_rows)
 
     skipped = len(train) - len(manifest)
-
     print(
         f"train: {len(manifest)} pairs ({skipped} crops skipped: no other page in their volume) -> {args.out}"
     )

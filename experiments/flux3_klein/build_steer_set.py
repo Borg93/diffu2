@@ -16,13 +16,12 @@ each archive under ``examples/`` that ``steer_grid.py`` shows beside the generat
 from __future__ import annotations
 
 import argparse
-import json
 import re
 import shutil
 from collections import Counter
 from pathlib import Path
-from typing import Any
 
+from build_layout_crops import CropRecord, LineRecord, Provenance, ScanLook, read_records
 from caption_style import Style, restyle
 from pydantic import BaseModel
 
@@ -35,10 +34,10 @@ ARCHIVES = (
     "SSA_stockholms_domkapitel",
     "FNA_finnish_letter_recipes",
 )
-LOOKS = (  # (greyscale, paper, ink): a colour scan, a microfilm, an old yellowed colour scan
-    (False, "cream", "dark brown"),
-    (True, "light grey", "black"),
-    (False, "yellowed", "faded brown"),
+LOOKS = (  # a colour scan, a microfilm, an old yellowed colour scan
+    ScanLook(greyscale=False, paper="cream", ink="dark brown"),
+    ScanLook(greyscale=True, paper="light grey", ink="black"),
+    ScanLook(greyscale=False, paper="yellowed", ink="faded brown"),
 )
 SEED = 1000  # template t's variants all use SEED + t
 
@@ -48,7 +47,7 @@ class SteerRow(BaseModel):
 
     file_name: str  # the template's scan (the eval's "real" side)
     caption: str
-    lines: list[dict[str, Any]]
+    lines: list[LineRecord]
     width: int
     height: int
     seed: int
@@ -64,43 +63,50 @@ class ArchiveStyle(BaseModel):
     example: Path
 
 
-def archive_key(record: dict[str, Any]) -> str:
+class Variant(BaseModel):
+    label: str
+    style: Style
+    example: Path | None = None
+
+
+def archive_key(record: CropRecord) -> str:
     """``GT-JLF_jamtlands_domsaga_20260220`` -> ``JLF_jamtlands_domsaga``."""
-    return re.sub(r"^GT-|_\d{8}$", "", record["collection"])
+    return re.sub(r"^GT-|_\d{8}$", "", record.collection)
 
 
-def archive_style(train: list[dict[str, Any]], key: str, crops_dir: Path) -> ArchiveStyle:
-    """The commonest (greyscale, paper, ink) of an archive's training crops, and its commonest years.
+def archive_style(train: list[CropRecord], key: str, crops_dir: Path) -> ArchiveStyle:
+    """The commonest scan look of an archive's training crops, and the commonest years among those crops.
 
     Raises:
         ValueError: If no training crop is from the archive.
     """
-    rows = [r for r in train if archive_key(r) == key]
-    if not rows:
+    records = [record for record in train if archive_key(record) == key]
+    if not records:
         raise ValueError(f"no v2 training crop from {key}")
-    look = Counter((r["greyscale"], r["paper"], r["ink"]) for r in rows).most_common(1)[0][0]
-    typical = [r for r in rows if (r["greyscale"], r["paper"], r["ink"]) == look]
-    styles = [Style.of(r) for r in typical]
-    years = Counter(s.years for s in styles).most_common(1)[0][0]
-    style = styles[0].model_copy(update={"years": years})
-    return ArchiveStyle(style=style, example=crops_dir / "train" / typical[0]["file_name"])
+    look = Counter(record.look for record in records).most_common(1)[0][0]
+    typical = [record for record in records if record.look == look]
+    years = Counter(record.provenance.years for record in typical).most_common(1)[0][0]
+    provenance = Provenance(title=typical[0].provenance.title, years=years)
+    return ArchiveStyle(
+        style=Style(provenance=provenance, look=look), example=crops_dir / "train" / typical[0].file_name
+    )
 
 
-def variants(
-    template: dict[str, Any], archives: dict[str, ArchiveStyle]
-) -> list[tuple[str, Style, Path | None]]:
-    """(label, style, example crop) of every distinct variant of a template, its own style first."""
+def look_label(look: ScanLook) -> str:
+    return f"look: {'greyscale' if look.greyscale else 'colour'}, {look.paper} paper, {look.ink} ink"
+
+
+def variants(template: CropRecord, archives: dict[str, ArchiveStyle]) -> list[Variant]:
+    """Every distinct variant of a template, its own style first."""
     own = Style.of(template)
-    candidates: list[tuple[str, Style, Path | None]] = [("as written", own, None)]
-    candidates += [(f"archive: {key}", archive.style, archive.example) for key, archive in archives.items()]
-    for greyscale, paper, ink in LOOKS:
-        look = own.model_copy(update={"greyscale": greyscale, "paper": paper, "ink": ink})
-        candidates.append(
-            (f"look: {'greyscale' if greyscale else 'colour'}, {paper} paper, {ink} ink", look, None)
-        )
-    distinct: list[tuple[str, Style, Path | None]] = []
+    candidates = [
+        Variant(label="as written", style=own),
+        *(Variant(label=f"archive: {key}", style=a.style, example=a.example) for key, a in archives.items()),
+        *(Variant(label=look_label(look), style=own.model_copy(update={"look": look})) for look in LOOKS),
+    ]
+    distinct: list[Variant] = []
     for candidate in candidates:
-        if all(candidate[1] != kept[1] for kept in distinct):
+        if all(candidate.style != kept.style for kept in distinct):
             distinct.append(candidate)
     return distinct
 
@@ -114,10 +120,8 @@ def main() -> None:
     )
     args = ap.parse_args()
 
-    with (args.crops / "train/metadata.jsonl").open(encoding="utf-8") as metadata:
-        train = [json.loads(line) for line in metadata]
-    with (args.crops / "val_eval/metadata.jsonl").open(encoding="utf-8") as metadata:
-        held_out = [json.loads(line) for line in metadata]
+    train = read_records(args.crops / "train/metadata.jsonl")
+    held_out = read_records(args.crops / "val_eval/metadata.jsonl")
     archives = {key: archive_style(train, key, args.crops) for key in ARCHIVES}
 
     (args.out / "examples").mkdir(parents=True, exist_ok=True)
@@ -126,22 +130,21 @@ def main() -> None:
     rows: list[SteerRow] = []
     for t in args.templates:
         template = held_out[t]
-        shutil.copy2(args.crops / "val_eval" / template["file_name"], args.out / template["file_name"])
-        own = Style.of(template)
-        for label, style, example in variants(template, archives):
-            rows.append(
-                SteerRow(
-                    file_name=template["file_name"],
-                    caption=restyle(template["caption"], own, style),
-                    lines=template["lines"],
-                    width=template["width"],
-                    height=template["height"],
-                    seed=SEED + t,
-                    template=t,
-                    variant=label,
-                    example=f"examples/{example.name}" if example else None,
-                )
+        shutil.copy2(args.crops / "val_eval" / template.file_name, args.out / template.file_name)
+        rows += [
+            SteerRow(
+                file_name=template.file_name,
+                caption=restyle(template, variant.style),
+                lines=template.lines,
+                width=template.width,
+                height=template.height,
+                seed=SEED + t,
+                template=t,
+                variant=variant.label,
+                example=f"examples/{variant.example.name}" if variant.example else None,
             )
+            for variant in variants(template, archives)
+        ]
     (args.out / "metadata.jsonl").write_text(
         "".join(row.model_dump_json() + "\n" for row in rows), encoding="utf-8"
     )

@@ -33,7 +33,7 @@ from .edits import (
     _apply_edits as _apply_edits,
 )
 from .edits import (
-    _is_body as _is_body,
+    is_body,
 )
 from .flow import (
     _box as _box,
@@ -133,6 +133,7 @@ from .templates import (
 from .templates import (
     _spread_leaf as _spread_leaf,
 )
+from .text_refill import refill
 from .xml_replay import (
     _PAGE_TYPE_REGION as _PAGE_TYPE_REGION,
 )
@@ -161,7 +162,9 @@ __all__ = [
     "TEMPLATES",
     "TableColumn",
     "build_layout",
+    "is_body",
     "load_xml_layout",
+    "refill",
     "to_single_leaf",
     "validate_layout",
 ]

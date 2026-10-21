@@ -16,7 +16,8 @@ _BODY_REGIONS = ("body", "left", "right")  # regions eligible for manuscript edi
 _INSERTS = ["icke", "afven", "samt", "som", "den", "ej", "ater", "vid", "ock", "har"]
 
 
-def _is_body(region: str) -> bool:
+def is_body(region: str) -> bool:
+    """Whether a region holds running text (a body or column paragraph, not page furniture)."""
     return region in _BODY_REGIONS or region.startswith("col")
 
 
@@ -28,7 +29,7 @@ def _apply_edits(layout: Layout, rng: random.Random) -> Layout:
     boxes = list(layout.boxes)
     insertions: list[LineBox] = []
     for i, box in enumerate(boxes):
-        if not _is_body(box.region):
+        if not is_body(box.region):
             continue
         if rng.random() < spec.deletion_prob:
             boxes[i] = box.model_copy(update={"tag": "del"})
