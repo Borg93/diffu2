@@ -19,7 +19,6 @@ several adapters (v2, v3) can sit on one transformer and be switched with ``set_
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import torch
@@ -33,7 +32,6 @@ from safetensors.torch import load_file
 from page_synth.modular.blocks import CropPromptStep, LabelExportStep, LineReadbackStep, ReferenceGridStep
 from page_synth.modular.readback import materialize_position_tables
 
-FLUX3_KLEIN = Path(os.environ.get("FLUX3_MODEL", Path.home() / "Desktop/repos/flux3-models/flux-3-image-klein-base"))
 _NEMO_PREFIX = "base_model.model."
 
 

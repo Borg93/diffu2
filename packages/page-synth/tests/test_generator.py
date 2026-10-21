@@ -13,7 +13,6 @@ from pathlib import Path
 
 import pytest
 import torch
-from huggingface_hub import snapshot_download
 from PIL import Image
 from safetensors.torch import save_file
 
@@ -23,15 +22,8 @@ from page_synth.modular.blocks import training_grid
 from page_synth.modular.pipelines import load_nemo_lora, load_pipelines
 from page_synth.plan import CropPlan
 
-TINY_FLUX3 = "hf-internal-testing/tiny-flux3-image-modular"
-TINY_FLUX3_REVISION = "9130f96f124d6c6fdd1beab63cfb6d2f1c8658a1"  # pinned: a changed fixture must not change results
 TINY_SETTINGS = GeneratorSettings(steps=2, guidance_scale=4.0, text_layers=(1,), device="cpu")
 LORA_MODULE = "single_transformer_blocks.0.attn.to_q"
-
-
-@pytest.fixture(scope="module")
-def tiny_model() -> Path:
-    return Path(snapshot_download(TINY_FLUX3, revision=TINY_FLUX3_REVISION))
 
 
 @pytest.fixture(scope="module")

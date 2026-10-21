@@ -15,11 +15,12 @@ each archive under ``examples/`` that ``page_synth.cli.sheets`` shows beside the
 
 from __future__ import annotations
 
-import argparse
 import shutil
 from collections import Counter
 from pathlib import Path
+from typing import Annotated
 
+import typer
 from pydantic import BaseModel
 
 from page_synth.captions.look import ScanLook
@@ -27,6 +28,9 @@ from page_synth.captions.prompt import LineRecord
 from page_synth.captions.provenance import Provenance, collection_key
 from page_synth.captions.records import CropRecord, read_records
 from page_synth.captions.restyle import Style, restyle
+from page_synth.cli.output import console
+
+app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 
 ARCHIVES = (
     "JLF_jamtlands_domsaga",
@@ -42,6 +46,7 @@ LOOKS = (  # a colour scan, a microfilm, an old yellowed colour scan
     ScanLook(greyscale=False, paper="yellowed", ink="faded brown"),
 )
 SEED = 1000  # template t's variants all use SEED + t
+DEFAULT_TEMPLATES = (1, 17)  # the val_eval rows the steering test uses
 
 
 class SteerRow(BaseModel):
@@ -66,6 +71,8 @@ class ArchiveStyle(BaseModel):
 
 
 class Variant(BaseModel):
+    """One way to draw a template: its label, its style, and a real crop showing that style."""
+
     label: str
     style: Style
     example: Path | None = None
@@ -90,6 +97,7 @@ def archive_style(train: list[CropRecord], key: str, crops_dir: Path) -> Archive
 
 
 def look_label(look: ScanLook) -> str:
+    """A variant's label for a scan look."""
     return f"look: {'greyscale' if look.greyscale else 'colour'}, {look.paper} paper, {look.ink} ink"
 
 
@@ -108,43 +116,48 @@ def variants(template: CropRecord, archives: dict[str, ArchiveStyle]) -> list[Va
     return distinct
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--crops", type=Path, default=Path("data_flux3/layout_crops_v2"))
-    ap.add_argument("--out", type=Path, default=Path("data_flux3/steer_v2"))
-    ap.add_argument("--templates", type=int, nargs="+", default=[1, 17], help="val_eval rows to use as templates")
-    args = ap.parse_args()
+def steer_row(template: CropRecord, variant: Variant, index: int) -> SteerRow:
+    """The steering prompt drawing ``template`` as ``variant``, from template ``index``'s noise."""
+    return SteerRow(
+        file_name=template.file_name,
+        caption=restyle(template, variant.style),
+        lines=template.lines,
+        width=template.width,
+        height=template.height,
+        seed=SEED + index,
+        template=index,
+        variant=variant.label,
+        example=f"examples/{variant.example.name}" if variant.example else None,
+    )
 
-    train = read_records(args.crops / "train/metadata.jsonl")
-    held_out = read_records(args.crops / "val_eval/metadata.jsonl")
-    archives = {key: archive_style(train, key, args.crops) for key in ARCHIVES}
 
-    (args.out / "examples").mkdir(parents=True, exist_ok=True)
+@app.command()
+def main(
+    crops: Annotated[Path, typer.Option(help="the v2 crops (page_synth.data.build_crops output)")] = Path(
+        "data_flux3/layout_crops_v2"
+    ),
+    out: Annotated[Path, typer.Option(help="where the steering set goes")] = Path("data_flux3/steer_v2"),
+    templates: Annotated[
+        list[int] | None, typer.Option("--template", help="a val_eval row to use as a template (repeat it)")
+    ] = None,
+) -> None:
+    """Build the v2 steering set: held-out templates restyled as other archives and scan looks."""
+    train = read_records(crops / "train/metadata.jsonl")
+    held_out = read_records(crops / "val_eval/metadata.jsonl")
+    archives = {key: archive_style(train, key, crops) for key in ARCHIVES}
+    (out / "examples").mkdir(parents=True, exist_ok=True)
     for archive in archives.values():
-        shutil.copy2(archive.example, args.out / "examples" / archive.example.name)
+        shutil.copy2(archive.example, out / "examples" / archive.example.name)
     rows: list[SteerRow] = []
-    for t in args.templates:
+    for t in templates or DEFAULT_TEMPLATES:
         template = held_out[t]
-        shutil.copy2(args.crops / "val_eval" / template.file_name, args.out / template.file_name)
-        rows += [
-            SteerRow(
-                file_name=template.file_name,
-                caption=restyle(template, variant.style),
-                lines=template.lines,
-                width=template.width,
-                height=template.height,
-                seed=SEED + t,
-                template=t,
-                variant=variant.label,
-                example=f"examples/{variant.example.name}" if variant.example else None,
-            )
-            for variant in variants(template, archives)
-        ]
-    (args.out / "metadata.jsonl").write_text("".join(row.model_dump_json() + "\n" for row in rows), encoding="utf-8")
-    print(f"{len(rows)} prompts from {len(args.templates)} templates -> {args.out}")
+        shutil.copy2(crops / "val_eval" / template.file_name, out / template.file_name)
+        rows += [steer_row(template, variant, t) for variant in variants(template, archives)]
+    (out / "metadata.jsonl").write_text("".join(row.model_dump_json() + "\n" for row in rows), encoding="utf-8")
+    console.print(f"{len(rows)} prompts -> {out}")
     for archive_name, archive in archives.items():
-        print(f"  {archive_name}: {archive.style.model_dump()}")
+        console.print(f"  {archive_name}: {archive.style.model_dump()}")
 
 
 if __name__ == "__main__":
-    main()
+    app()

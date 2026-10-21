@@ -16,12 +16,13 @@ come from the reference. Writes, under ``data_flux3/style_pairs_v3``:
 
 from __future__ import annotations
 
-import argparse
 import random
 from collections import defaultdict
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Annotated
 
+import typer
 from PIL import Image
 from pydantic import BaseModel
 
@@ -29,8 +30,11 @@ from page_synth.captions.prompt import LineRecord
 from page_synth.captions.provenance import collection_key
 from page_synth.captions.records import CropRecord, read_records
 from page_synth.captions.restyle import edit_caption
+from page_synth.cli.output import console
 from page_synth.crops.grid import fit_to_grid
-from page_synth.data.steer_set import ARCHIVES, SEED, archive_style
+from page_synth.data.steer_set import ARCHIVES, DEFAULT_TEMPLATES, SEED, archive_style
+
+app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 
 REF_PIXELS = 512 * 1024  # a reference shows the hand smaller than the ~1 MP target, at half its tokens
 
@@ -45,6 +49,8 @@ class Scan(BaseModel):
 
 
 class Media(BaseModel):
+    """One image of a manifest row: the target to draw or the context (reference) to draw it from."""
+
     role: str  # "target" or "context"
     file_name: str  # relative to the manifest's dir
 
@@ -102,6 +108,7 @@ def shrink(source: Path, destination: Path) -> None:
 
 
 def load_split(crops: Path, split: str) -> list[Scan]:
+    """A split's crop records with where their scans are."""
     return [
         Scan(record=record, path=crops / split / record.file_name)
         for record in read_records(crops / split / "metadata.jsonl")
@@ -109,6 +116,7 @@ def load_split(crops: Path, split: str) -> list[Scan]:
 
 
 def by_volume(scans: list[Scan]) -> dict[Volume, list[Scan]]:
+    """The scans grouped by their volume."""
     volumes: dict[Volume, list[Scan]] = defaultdict(list)
     for scan in scans:
         volumes[volume_of(scan.record)].append(scan)
@@ -150,6 +158,7 @@ def eval_row(
 
 
 def write_rows(path: Path, rows: Sequence[BaseModel]) -> None:
+    """Write ``rows`` as JSON lines."""
     path.write_text("".join(row.model_dump_json() + "\n" for row in rows), encoding="utf-8")
 
 
@@ -179,55 +188,67 @@ def training_pairs(train: list[Scan], out: Path, rng: random.Random) -> list[Man
     return manifest
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--crops", type=Path, default=Path("data_flux3/layout_crops_v2"))
-    ap.add_argument("--out", type=Path, default=Path("data_flux3/style_pairs_v3"))
-    ap.add_argument("--templates", type=int, nargs="+", default=[1, 17], help="val_eval rows for by_example/")
-    ap.add_argument("--seed", type=int, default=0)
-    args = ap.parse_args()
-
-    train, val, held_out = (load_split(args.crops, split) for split in ("train", "val", "val_eval"))
-    rng = random.Random(args.seed)
-    manifest = training_pairs(train, args.out, rng)
-    write_rows(args.out / "train.jsonl", manifest)
-
-    # held-out crops, each in the hand of another page of its volume (an unseen page when there is one)
-    eval_volumes = by_volume(val + train)
-    val_rows = [
-        eval_row(scan, reference.path, args.out / "val_eval")
+def held_out_rows(
+    held_out: list[Scan], volumes: dict[Volume, list[Scan]], out: Path, rng: random.Random
+) -> list[EvalRow]:
+    """Each held-out crop in the hand of another page of its volume (an unseen page when there is one)."""
+    return [
+        eval_row(scan, reference.path, out)
         for scan in held_out
-        if (reference := pick_reference(scan, eval_volumes, rng)) is not None
+        if (reference := pick_reference(scan, volumes, rng)) is not None
     ]
-    write_rows(args.out / "val_eval/metadata.jsonl", val_rows)
 
-    # the steering templates, by example: in their own volume's hand, then in each steering archive's
-    examples = {key: archive_style([s.record for s in train], key, args.crops).example for key in ARCHIVES}
-    example_rows: list[EvalRow] = []
-    for t in args.templates:
+
+def by_example_rows(
+    held_out: list[Scan],
+    templates: list[int],
+    examples: dict[str, Path],
+    volumes: dict[Volume, list[Scan]],
+    out: Path,
+    rng: random.Random,
+) -> list[EvalRow]:
+    """The steering templates by example: in their own volume's hand, then in each steering archive's."""
+    rows: list[EvalRow] = []
+    for t in templates:
         template = held_out[t]
-        references: list[tuple[str, Path]] = []
-        own = pick_reference(template, eval_volumes, rng)
-        if own is not None:
-            references.append((f"own volume ({collection_key(template.record.collection)})", own.path))
+        own = pick_reference(template, volumes, rng)
+        references = [(f"own volume ({collection_key(template.record.collection)})", own.path)] if own else []
         references += list(examples.items())
-        example_rows += [
-            eval_row(
-                template,
-                path,
-                args.out / "by_example",
-                seed=SEED + t,
-                template=t,
-                variant=f"reference: {label}",
-            )
+        rows += [
+            eval_row(template, path, out, seed=SEED + t, template=t, variant=f"reference: {label}")
             for label, path in references
         ]
-    write_rows(args.out / "by_example/metadata.jsonl", example_rows)
+    return rows
 
+
+@app.command()
+def main(
+    crops: Annotated[Path, typer.Option(help="the v2 crops (page_synth.data.build_crops output)")] = Path(
+        "data_flux3/layout_crops_v2"
+    ),
+    out: Annotated[Path, typer.Option(help="where the v3 pairs go")] = Path("data_flux3/style_pairs_v3"),
+    templates: Annotated[
+        list[int] | None, typer.Option("--template", help="a val_eval row for by_example/ (repeat it)")
+    ] = None,
+    seed: int = 0,
+) -> None:
+    """Build the v3 reference pairs, the held-out set and the by-example steering set."""
+    train, val, held_out = (load_split(crops, split) for split in ("train", "val", "val_eval"))
+    rng = random.Random(seed)
+    manifest = training_pairs(train, out, rng)
+    write_rows(out / "train.jsonl", manifest)
+    volumes = by_volume(val + train)
+    val_rows = held_out_rows(held_out, volumes, out / "val_eval", rng)
+    write_rows(out / "val_eval/metadata.jsonl", val_rows)
+    examples = {key: archive_style([s.record for s in train], key, crops).example for key in ARCHIVES}
+    example_rows = by_example_rows(
+        held_out, templates or list(DEFAULT_TEMPLATES), examples, volumes, out / "by_example", rng
+    )
+    write_rows(out / "by_example/metadata.jsonl", example_rows)
     skipped = len(train) - len(manifest)
-    print(f"train: {len(manifest)} pairs ({skipped} crops skipped: no other page in their volume) -> {args.out}")
-    print(f"val_eval: {len(val_rows)} crops, by_example: {len(example_rows)} prompts")
+    console.print(f"train: {len(manifest)} pairs ({skipped} crops skipped: no other page in their volume) -> {out}")
+    console.print(f"val_eval: {len(val_rows)} crops, by_example: {len(example_rows)} prompts")
 
 
 if __name__ == "__main__":
-    main()
+    app()

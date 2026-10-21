@@ -13,13 +13,12 @@ scans and a ``page/`` folder of PAGE XML named like them. Output: an imagefolder
 (``<out>/<split>/<id>.jpg`` + ``metadata.jsonl``, one ``CropRecord`` per crop), loadable with
 ``datasets.load_dataset("<out>/<split>")``.
 
-    uv run --no-sync python -m page_synth.data.build_crops \
+    python -m page_synth.data.build_crops \
         --gt-root ~/Desktop/data/GT-Lejonet_HTR_202602 --max-pages 40 --out-dir data_flux3/layout_crops_v2
 """
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import json
 import random
@@ -27,8 +26,9 @@ import xml.etree.ElementTree as ET
 from collections import Counter
 from contextlib import ExitStack
 from pathlib import Path
-from typing import TextIO
+from typing import Annotated, TextIO
 
+import typer
 from PIL import Image
 from pydantic import BaseModel
 
@@ -36,8 +36,11 @@ from page_synth.captions.look import scan_look
 from page_synth.captions.prompt import caption_for
 from page_synth.captions.provenance import Provenance, provenance_of
 from page_synth.captions.records import CropRecord
+from page_synth.cli.output import console, err_console
 from page_synth.crops.geometry import CropSettings, Line, Region, crops_for_page
 from page_synth.layout.page_xml import iter_local, local_name, read_page_line, reading_order_index, region_role
+
+app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 
 SPLITS = ("train", "val")
 SCAN_SUFFIXES = (".jpg", ".jpeg", ".png", ".tif", ".tiff")
@@ -153,43 +156,83 @@ def _create_metadata(split_dir: Path) -> TextIO:
     return open(split_dir / "metadata.jsonl", "w", encoding="utf-8")
 
 
-def _parse_args() -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--gt-root", required=True, help="GT folder with one subfolder per collection")
-    ap.add_argument("--collections", nargs="*", default=None, help="collection names (default: all)")
-    ap.add_argument("--out-dir", required=True)
-    ap.add_argument("--max-pages", type=int, default=40, help="pages sampled per collection")
-    ap.add_argument("--val-frac", type=float, default=0.05, help="pages held out (by page hash)")
-    ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--line-spacing", type=float, help="target line pitch in px")
-    ap.add_argument("--min-line-spacing", type=float, help="skip crops scaled below this pitch")
-    ap.add_argument("--min-merge-spacing", type=float, help="smallest pitch a margin note may shrink its column to")
-    ap.add_argument("--min-width", type=int, help="narrower regions are only cropped together with a wide one")
-    ap.add_argument("--min-lines", type=int)
-    ap.add_argument("--overlap-lines", type=int, help="lines shared by consecutive windows of a column")
-    ap.set_defaults(**CropSettings().model_dump())
-    return ap.parse_args()
+def build(
+    gt_root: Path,
+    collections: list[str],
+    out: Path,
+    *,
+    max_pages: int,
+    val_frac: float,
+    seed: int,
+    settings: CropSettings,
+) -> dict[str, str]:
+    """Cut ``max_pages`` random pages of each collection into crops, written under ``out/<split>``.
 
-
-def main() -> None:
-    args = _parse_args()
-    Image.MAX_IMAGE_PIXELS = None  # archival spreads exceed PIL's decompression-bomb default
-    settings = CropSettings.model_validate(vars(args))
-    root = Path(args.gt_root).expanduser()
-    out = Path(args.out_dir)
-    rng = random.Random(args.seed)
+    Returns:
+        The pages that failed, by path, with their error; the others are written.
+    """
+    rng = random.Random(seed)
     totals: Counter[str] = Counter()
+    failed: dict[str, str] = {}
     with ExitStack() as stack:
         metadata = {split: stack.enter_context(_create_metadata(out / split)) for split in SPLITS}
-        for collection in args.collections or sorted(p.name for p in root.iterdir() if p.is_dir()):
-            for page in sample_pages(root / collection, args.max_pages, rng):
-                split = split_of(page, args.val_frac)
-                records = write_crops(page, out / split, settings)
+        for collection in collections:
+            for page in sample_pages(gt_root / collection, max_pages, rng):
+                split = split_of(page, val_frac)
+                try:
+                    records = write_crops(page, out / split, settings)
+                except Exception as error:  # one unreadable page must not end the build; it is reported
+                    failed[str(page.path)] = f"{type(error).__name__}: {error}"
+                    continue
                 metadata[split].writelines(f"{record.model_dump_json()}\n" for record in records)
                 totals.update(pages=1, crops=len(records), lines=sum(len(record.lines) for record in records))
-            print(f"{collection}: {dict(totals)}", flush=True)
-    print(json.dumps(totals))
+            console.print(f"{collection}: {dict(totals)}")
+    return failed
+
+
+@app.command()
+def main(
+    gt_root: Annotated[Path, typer.Option(help="the GT folder, one subfolder per collection")],
+    out_dir: Annotated[Path, typer.Option(help="where train/ and val/ go")],
+    collections: Annotated[
+        list[str] | None, typer.Option("--collection", help="a collection to use (repeat it; default: all)")
+    ] = None,
+    max_pages: Annotated[int, typer.Option(help="pages sampled per collection")] = 40,
+    val_frac: Annotated[float, typer.Option(help="pages held out, by page hash")] = 0.05,
+    seed: int = 0,
+    line_spacing: Annotated[float, typer.Option(help="target line pitch in px")] = CropSettings().line_spacing,
+    min_line_spacing: Annotated[
+        float, typer.Option(help="skip crops scaled below this pitch")
+    ] = CropSettings().min_line_spacing,
+    min_merge_spacing: Annotated[
+        float, typer.Option(help="smallest pitch a margin note may shrink its column to")
+    ] = CropSettings().min_merge_spacing,
+    min_width: Annotated[
+        int, typer.Option(help="narrower regions are only cropped together with a wide one")
+    ] = CropSettings().min_width,
+    min_lines: int = CropSettings().min_lines,
+    overlap_lines: Annotated[
+        int, typer.Option(help="lines shared by consecutive windows of a column")
+    ] = CropSettings().overlap_lines,
+) -> None:
+    """Cut GT pages into FLUX.3 training crops with layout captions."""
+    Image.MAX_IMAGE_PIXELS = None  # archival spreads exceed PIL's decompression-bomb default
+    root = gt_root.expanduser()
+    settings = CropSettings(
+        line_spacing=line_spacing,
+        min_line_spacing=min_line_spacing,
+        min_merge_spacing=min_merge_spacing,
+        min_width=min_width,
+        min_lines=min_lines,
+        overlap_lines=overlap_lines,
+    )
+    names = collections or sorted(p.name for p in root.iterdir() if p.is_dir())
+    failed = build(root, names, out_dir, max_pages=max_pages, val_frac=val_frac, seed=seed, settings=settings)
+    (out_dir / "failed_pages.json").write_text(json.dumps(failed, indent=1, ensure_ascii=False), encoding="utf-8")
+    if failed:
+        err_console.print(f"{len(failed)} pages failed, see {out_dir / 'failed_pages.json'}")
+        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":
-    main()
+    app()

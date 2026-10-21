@@ -27,8 +27,8 @@ mkdir -p "$OUT"
 cd "$AUTOMODEL"
 if "$REPO/jobs/spark_guard.sh" --need-gb 45 --name flux-pages-smoke --log "$REPO/runs/flux3_pages/guard.log" -- \
     .venv-managed/bin/python -m page_synth.cli.generate \
-    --templates "$VOLUME/40004026_00128.xml" "$VOLUME/40004026_00094.xml" \
-    --text-from "$VOLUME/40004026_00339.xml" "$VOLUME/40004026_00200.xml" \
+    --templates "$VOLUME/40004026_00128.xml" --templates "$VOLUME/40004026_00094.xml" \
+    --text-from "$VOLUME/40004026_00339.xml" --text-from "$VOLUME/40004026_00200.xml" \
     --lora "v2=$lora" --out "$OUT" --profile "$OUT/profile" \
     --title "the reports and letters of Bergskollegium" --years "1691–1692" --paper cream --ink "dark brown" \
     > "$OUT/generate.log" 2>&1; then

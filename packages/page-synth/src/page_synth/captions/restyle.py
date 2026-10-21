@@ -12,6 +12,8 @@ where the grammar writes it, so a change to the grammar fails loudly instead of 
 from __future__ import annotations
 
 import json
+from collections.abc import Generator
+from contextlib import contextmanager
 
 from pydantic import BaseModel, Field
 
@@ -19,6 +21,22 @@ from page_synth.captions.look import ScanLook
 from page_synth.captions.prompt import LayoutRow
 from page_synth.captions.provenance import Provenance
 from page_synth.captions.records import CropRecord
+
+
+class StaleCaptionError(ValueError):
+    """A record's caption lacks the style words the caption grammar writes for it now: it was built by an older
+    grammar or provenance rule, and its crops need rebuilding (``page_synth.data.build_crops``)."""
+
+
+@contextmanager
+def _written_by_this_grammar(record: CropRecord) -> Generator[None]:
+    try:
+        yield
+    except ValueError as error:
+        raise StaleCaptionError(
+            f"{record.file_name}: its caption was not written by the current caption grammar ({error}); "
+            "rebuild the crops with page_synth.data.build_crops"
+        ) from error
 
 
 class Style(BaseModel):
@@ -132,8 +150,9 @@ def _restyled_desc(row: LayoutRow, old: _Phrases, new: _Phrases) -> str:
 def restyle(record: CropRecord, target: Style) -> str:
     """The record's caption naming ``target``'s archive, years, scan, paper and ink instead of its own."""
     old, new = _phrases(Style.of(record)), _phrases(target)
-    rows = [row.model_copy(update={"desc": _restyled_desc(row, old, new)}) for row in record.layout]
-    paragraph = _restyled_paragraph(_paragraph(record), old, new)
+    with _written_by_this_grammar(record):
+        rows = [row.model_copy(update={"desc": _restyled_desc(row, old, new)}) for row in record.layout]
+        paragraph = _restyled_paragraph(_paragraph(record), old, new)
     return f"{paragraph} {_rows_json([row.model_dump() for row in rows])}"
 
 
@@ -144,15 +163,16 @@ def edit_caption(record: CropRecord) -> str:
     from the whole reference, every line and fragment new content.
     """
     old = _phrases(Style.of(record))
-    rows = [
-        EditRow(
-            id=row.id,
-            source="ref_image_0" if row.id == "paper_1" else "target",
-            src_bbox=_WHOLE_IMAGE if row.id == "paper_1" else None,
-            tgt_bbox=row.bbox,
-            desc=_restyled_desc(row, old, _FROM_REFERENCE),
-        )
-        for row in record.layout
-    ]
-    paragraph = _restyled_paragraph(_paragraph(record), old, _FROM_REFERENCE)
+    with _written_by_this_grammar(record):
+        rows = [
+            EditRow(
+                id=row.id,
+                source="ref_image_0" if row.id == "paper_1" else "target",
+                src_bbox=_WHOLE_IMAGE if row.id == "paper_1" else None,
+                tgt_bbox=row.bbox,
+                desc=_restyled_desc(row, old, _FROM_REFERENCE),
+            )
+            for row in record.layout
+        ]
+        paragraph = _restyled_paragraph(_paragraph(record), old, _FROM_REFERENCE)
     return f"{paragraph} {_rows_json([row.model_dump(by_alias=True) for row in rows])}"

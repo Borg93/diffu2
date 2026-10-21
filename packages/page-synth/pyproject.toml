@@ -13,16 +13,19 @@ dependencies = [
     "peft>=0.17",
     "pillow>=11",
     "pydantic>=2",
+    "pydantic-settings>=2.15",
+    "rich>=13",
     "safetensors>=0.4",
     "torch>=2.10",
     "torchvision>=0.25",  # Qwen3-VL's processor (the FLUX.3 text encoder's tokenizer) needs it
     "transformers>=5.18",
+    "typer>=0.20",
 ]
 
 [project.scripts]
-page-synth-generate = "page_synth.cli.generate:main"  # pages from templates and text
-page-synth-evaluate = "page_synth.cli.evaluate:main"  # held-out crops, read-back CER against the real crops
-page-synth-sheets = "page_synth.cli.sheets:main"  # contact sheets of a steering run
+page-synth-generate = "page_synth.cli.generate:app"  # pages from templates and text
+page-synth-evaluate = "page_synth.cli.evaluate:app"  # held-out crops, read-back CER against the real crops
+page-synth-sheets = "page_synth.cli.sheets:app"  # contact sheets of a steering run
 
 [build-system]
 requires = ["hatchling"]

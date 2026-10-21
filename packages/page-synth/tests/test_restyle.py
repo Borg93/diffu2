@@ -11,7 +11,7 @@ from page_synth.captions.look import ScanLook
 from page_synth.captions.prompt import Caption, caption_for
 from page_synth.captions.provenance import Provenance, provenance_of
 from page_synth.captions.records import CropRecord
-from page_synth.captions.restyle import Style, edit_caption, restyle
+from page_synth.captions.restyle import StaleCaptionError, Style, edit_caption, restyle
 from page_synth.crops.geometry import Crop, CropSettings, crops_for_page
 from page_synth.layout import load_xml_layout
 from page_synth.plan import regions_of
@@ -66,3 +66,11 @@ def test_edit_caption_takes_only_the_paper_from_the_reference_and_names_no_style
     assert "Arjeplogs" not in caption
     assert "dark brown" not in caption
     assert "yellowed" not in caption
+
+
+def test_restyle_refuses_a_caption_an_older_provenance_rule_wrote(crop: Crop) -> None:
+    raw_folder_name = Provenance(title="RA arjeplogs tingslag 20260220", years="1690–1700")  # before collection_key
+    record = _record(crop, caption_for(crop, raw_folder_name, LOOK))
+
+    with pytest.raises(StaleCaptionError, match="crop.jpg: its caption was not written by the current caption grammar"):
+        restyle(record, Style.of(record))

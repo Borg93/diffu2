@@ -10,13 +10,19 @@ every archive group is represented. The picked images are hard-linked next to th
 
 from __future__ import annotations
 
-import argparse
 from pathlib import Path
+from typing import Annotated
+
+import typer
 
 from page_synth.captions.records import CropRecord, read_records
+from page_synth.cli.output import console
+
+app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 
 
 def has_role(record: CropRecord) -> bool:
+    """Whether the crop has a line with a role (a margin note, heading, page number, ...)."""
     return any(line.role for line in record.lines)
 
 
@@ -40,24 +46,23 @@ def pick(records: list[CropRecord], count: int) -> list[CropRecord]:
     return [chosen[name] for name in names]
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("split", type=Path, help="a split folder: metadata.jsonl and the crops")
-    ap.add_argument("out", type=Path)
-    ap.add_argument("-n", type=int, default=24, help="crops to pick")
-    args = ap.parse_args()
-
-    records = read_records(args.split / "metadata.jsonl")
-    picked = pick(records, args.n)
-    args.out.mkdir(parents=True, exist_ok=True)
-    with (args.out / "metadata.jsonl").open("w", encoding="utf-8") as out:
+@app.command()
+def main(
+    split: Annotated[Path, typer.Argument(help="a split folder: metadata.jsonl and the crops")],
+    out: Annotated[Path, typer.Argument(help="where the picked crops and their metadata.jsonl go")],
+    n: Annotated[int, typer.Option("-n", help="crops to pick")] = 24,
+) -> None:
+    """Pick one held-out crop per collection, spread over the collections."""
+    picked = pick(read_records(split / "metadata.jsonl"), n)
+    out.mkdir(parents=True, exist_ok=True)
+    with (out / "metadata.jsonl").open("w", encoding="utf-8") as metadata:
         for record in picked:
-            image = args.out / record.file_name
+            image = out / record.file_name
             if not image.exists():
-                image.hardlink_to(args.split / record.file_name)
-            out.write(f"{record.model_dump_json()}\n")
-    print(f"{len(picked)} crops, {sum(has_role(r) for r in picked)} with a margin note, heading or page number")
+                image.hardlink_to(split / record.file_name)
+            metadata.write(f"{record.model_dump_json()}\n")
+    console.print(f"{len(picked)} crops, {sum(has_role(r) for r in picked)} with a margin note, heading or page number")
 
 
 if __name__ == "__main__":
-    main()
+    app()

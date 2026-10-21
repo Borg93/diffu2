@@ -3,80 +3,110 @@
 For each template (a real PAGE/ALTO page) the running text is replaced by new text (``refill``), the page is planned
 as training-scale crops (``page_synth.plan``), and every crop goes through a :class:`page_synth.generator.CropGenerator`:
 FLUX.3 + LoRAs draw it, TrOCR reads every line back, and its labels are written with badly read lines tagged
-``unclear``. Writes ``<out>/<page>_<k>.jpg`` + ``.xml`` per crop and ``<out>/summary.json``; ``--profile <dir>`` also
-records a torch profiler trace (Perfetto) of crops 2-3 after a warm-up crop. One GPU job, through
-jobs/spark_guard.sh:
+``unclear``. Writes ``<out>/<page>_<k>.jpg`` + ``.xml`` per crop and ``<out>/summary.json``; a crop that fails is
+recorded there and the run goes on. ``--profile <dir>`` also records a torch profiler trace (Perfetto) of crops 2-3
+after a warm-up crop. One GPU job, through jobs/spark_guard.sh:
 
-    jobs/spark_guard.sh --need-gb 45 --name pages -- python -m page_synth.cli.generate \\
-        --templates <page.xml ...> --text-from <page.xml ...> --lora v2=<ckpt>/model --out <dir> \\
+    jobs/spark_guard.sh --need-gb 45 --name pages -- page-synth-generate \\
+        --templates <page.xml> --templates <page.xml> --text-from <page.xml> --lora v2=<ckpt>/model --out <dir> \\
         --title "the court records of Jämtlands domsaga" --paper cream --ink "dark brown"
 """
 
 from __future__ import annotations
 
-import argparse
 from collections.abc import Callable
 from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 from statistics import fmean
+from typing import Annotated, Literal
 
+import typer
 from pydantic import BaseModel
 from torch.profiler import ProfilerActivity, profile, record_function, schedule
 
 from page_synth.captions.look import ScanLook
 from page_synth.captions.provenance import Provenance
+from page_synth.cli.options import Lora, parse_lora
+from page_synth.cli.output import console, err_console
 from page_synth.generator import CropGenerator, GeneratorSettings
 from page_synth.layout import load_xml_layout, refill, running_text
-from page_synth.modular.pipelines import FLUX3_KLEIN
-from page_synth.plan import PageStyle, plan_page
+from page_synth.plan import CropPlan, PageStyle, plan_page
+from page_synth.settings import settings
+
+app = typer.Typer(add_completion=False, rich_markup_mode="rich")
+
+
+class CropJob(BaseModel):
+    """One crop to draw: its name, the template it comes from, its plan and its noise seed."""
+
+    name: str
+    template: Path
+    plan: CropPlan
+    seed: int
 
 
 class CropResult(BaseModel):
-    image: str
+    """A drawn crop: its name, its template and how well its lines read back."""
+
+    name: str
+    template: str
     lines: int
     unclear_lines: int
     cer: float
     seconds: float
 
 
-class PageResult(BaseModel):
-    template: str
-    crops: list[CropResult]
-
-
 class Summary(BaseModel):
+    """A run: its style, LoRAs and steps, every drawn crop, and every crop that failed with its error."""
+
     style: PageStyle
     loras: dict[str, str]
     steps: int
-    pages: list[PageResult]
+    crops: list[CropResult]
+    failed: dict[str, str]
 
 
-def lora_arg(value: str) -> tuple[str, Path]:
-    """``name=<dir>`` as an adapter name and a NeMo LoRA checkpoint ``model/`` dir."""
-    name, sep, path = value.partition("=")
-    if not sep or not name or not path:
-        raise argparse.ArgumentTypeError(f"expected name=<lora model dir>, got {value!r}")
-    return name, Path(path)
+def plan_jobs(templates: list[Path], text: str, style: PageStyle, seed: int) -> list[CropJob]:
+    """Every crop of every template refilled with ``text``; template ``t``'s crop ``k`` draws from noise seed
+    ``seed + 1000 t + k``."""
+    return [
+        CropJob(name=f"{t:03d}_{template.stem}_{k}", template=template, plan=plan, seed=seed + 1000 * t + k)
+        for t, template in enumerate(templates)
+        for k, plan in enumerate(plan_page(refill(load_xml_layout(template), [text]), style))
+    ]
 
 
-def _parse_args() -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--templates", type=Path, nargs="+", required=True, help="PAGE/ALTO pages whose layout to use")
-    ap.add_argument("--text-from", type=Path, nargs="+", required=True, help="PAGE/ALTO pages whose text to write")
-    ap.add_argument("--out", type=Path, required=True)
-    ap.add_argument("--model", type=Path, default=FLUX3_KLEIN)
-    ap.add_argument("--lora", type=lora_arg, action="append", default=[], help="name=<NeMo LoRA model dir>")
-    ap.add_argument("--title", required=True, help="the archive, as the captions name it")
-    ap.add_argument("--years", default="")
-    ap.add_argument("--greyscale", action="store_true")
-    ap.add_argument("--paper", default="cream")
-    ap.add_argument("--ink", default="dark brown")
-    ap.add_argument("--steps", type=int, default=50)
-    ap.add_argument("--guidance", type=float, default=4.0)
-    ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--format", choices=["alto", "page"], default="alto")
-    ap.add_argument("--profile", type=Path, default=None, help="write a profiler trace of crops 2-3 here")
-    return ap.parse_args()
+def _draw(generator: CropGenerator, job: CropJob, out: Path) -> CropResult:
+    with record_function(f"crop {job.plan.width}x{job.plan.height}"):
+        crop = generator(job.plan, seed=job.seed, image_name=f"{job.name}.jpg")
+    crop.image.save(out / f"{job.name}.jpg", quality=92)
+    (out / f"{job.name}.xml").write_text(crop.labels_xml, encoding="utf-8")
+    return CropResult(
+        name=job.name,
+        template=str(job.template),
+        lines=len(job.plan.lines),
+        unclear_lines=crop.unclear_lines,
+        cer=fmean(crop.line_cers),
+        seconds=crop.seconds,
+    )
+
+
+def draw_all(
+    generator: CropGenerator, jobs: list[CropJob], out: Path, prof: profile | None
+) -> tuple[list[CropResult], dict[str, str]]:
+    """Every job drawn and saved; a crop that fails is recorded with its error and the rest still run."""
+    results: list[CropResult] = []
+    failed: dict[str, str] = {}
+    for job in jobs:
+        try:
+            results.append(_draw(generator, job, out))
+            console.print(f"{job.name}: CER {results[-1].cer:.3f}, {results[-1].unclear_lines} unclear lines")
+        except Exception as error:  # one crop must not end a long run; the summary records it
+            failed[job.name] = f"{type(error).__name__}: {error}"
+            err_console.print(f"{job.name} failed: {failed[job.name]}")
+        if prof is not None:
+            prof.step()
+    return results, failed
 
 
 def _trace_handler(out: Path) -> Callable[[profile], None]:
@@ -85,7 +115,7 @@ def _trace_handler(out: Path) -> Callable[[profile], None]:
         prof.export_chrome_trace(str(out / "trace.json"))
         table = prof.key_averages().table(sort_by="cuda_time_total", row_limit=40)
         (out / "top_ops.txt").write_text(table, encoding="utf-8")
-        print(table, flush=True)
+        console.print(table)
 
     return handle
 
@@ -103,51 +133,56 @@ def _profiler(out: Path | None) -> AbstractContextManager[profile | None]:
     )
 
 
-def main() -> None:
-    args = _parse_args()
+@app.command()
+def generate(
+    templates: Annotated[list[Path], typer.Option(help="a PAGE/ALTO page whose layout to use (repeat it)")],
+    text_from: Annotated[list[Path], typer.Option(help="a PAGE/ALTO page whose text to write (repeat it)")],
+    out: Annotated[Path, typer.Option(help="where the crops, labels and summary.json go")],
+    title: Annotated[str, typer.Option(help="the archive, as the captions name it")],
+    model: Annotated[Path, typer.Option(help="the FLUX.3 model directory")] = settings.flux3_model,
+    lora: Annotated[list[Lora] | None, typer.Option(parser=parse_lora, help="name=<NeMo LoRA model dir>")] = None,
+    years: str = "",
+    greyscale: Annotated[bool, typer.Option("--greyscale/--colour")] = False,
+    paper: str = "cream",
+    ink: str = "dark brown",
+    steps: int = 50,
+    guidance: float = 4.0,
+    seed: int = 0,
+    text_layer: Annotated[
+        list[int] | None, typer.Option(help="a text-encoder layer to stack (repeat it; default: the model's own)")
+    ] = None,
+    device: Annotated[str, typer.Option(help="where the models run")] = "cuda",
+    label_format: Annotated[
+        Literal["alto", "page"], typer.Option("--format")
+    ] = "alto",  # Typer cannot read LabelFormat
+    profile_dir: Annotated[Path | None, typer.Option("--profile", help="write a trace of crops 2-3 here")] = None,
+) -> None:
+    """Draw every crop of the templates, refilled with the text, in the given style."""
     style = PageStyle(
-        provenance=Provenance(title=args.title, years=args.years),
-        look=ScanLook(greyscale=args.greyscale, paper=args.paper, ink=args.ink),
+        provenance=Provenance(title=title, years=years), look=ScanLook(greyscale=greyscale, paper=paper, ink=ink)
     )
-    text = " ".join(running_text(load_xml_layout(path)) for path in args.text_from)
-    args.out.mkdir(parents=True, exist_ok=True)
-    loras = dict(args.lora)
-    settings = GeneratorSettings(steps=args.steps, guidance_scale=args.guidance, label_format=args.format)
-    generate = CropGenerator(args.model, loras=loras, settings=settings)
-
-    pages: list[PageResult] = []
-    with _profiler(args.profile) as prof:
-        for t, template in enumerate(args.templates):
-            layout = refill(load_xml_layout(template), [text])
-            crops: list[CropResult] = []
-            for k, plan in enumerate(plan_page(layout, style)):
-                name = f"{t:03d}_{template.stem}_{k}"
-                with record_function(f"crop {plan.width}x{plan.height}"):
-                    crop = generate(plan, seed=args.seed + 1000 * t + k, image_name=f"{name}.jpg")
-                if prof is not None:
-                    prof.step()
-                crop.image.save(args.out / f"{name}.jpg", quality=92)
-                (args.out / f"{name}.xml").write_text(crop.labels_xml, encoding="utf-8")
-                result = CropResult(
-                    image=f"{name}.jpg",
-                    lines=len(plan.lines),
-                    unclear_lines=crop.unclear_lines,
-                    cer=fmean(crop.line_cers),
-                    seconds=crop.seconds,
-                )
-                crops.append(result)
-                print(
-                    f"{name}: {result.lines} lines, CER {result.cer:.3f}, {result.unclear_lines} unclear, "
-                    f"{result.seconds:.1f} s",
-                    flush=True,
-                )
-            pages.append(PageResult(template=str(template), crops=crops))
-
+    text = " ".join(running_text(load_xml_layout(path)) for path in text_from)
+    jobs = plan_jobs(templates, text, style, seed)
+    out.mkdir(parents=True, exist_ok=True)
+    loras = {adapter.name: adapter.path for adapter in lora or []}
+    generator_settings = GeneratorSettings(
+        steps=steps,
+        guidance_scale=guidance,
+        label_format=label_format,
+        text_layers=tuple(text_layer) if text_layer else None,
+        device=device,
+    )
+    generator = CropGenerator(model, loras=loras, settings=generator_settings)
+    with _profiler(profile_dir) as prof:
+        crops, failed = draw_all(generator, jobs, out, prof)
     summary = Summary(
-        style=style, loras={name: str(path) for name, path in loras.items()}, steps=args.steps, pages=pages
+        style=style, loras={name: str(path) for name, path in loras.items()}, steps=steps, crops=crops, failed=failed
     )
-    (args.out / "summary.json").write_text(summary.model_dump_json(indent=1), encoding="utf-8")
+    (out / "summary.json").write_text(summary.model_dump_json(indent=1), encoding="utf-8")
+    console.print(f"{len(crops)} crops drawn, {len(failed)} failed -> {out}")
+    if failed:
+        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":
-    main()
+    app()
