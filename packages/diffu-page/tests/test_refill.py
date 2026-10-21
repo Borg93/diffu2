@@ -6,7 +6,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from diffu_page.layout import Layout, load_xml_layout, refill
+from diffu_page.layout import Layout, LineBox, PageSpec, load_xml_layout, refill, running_text
 
 _BODY_TEXTS = [  # 40 characters on each 680 px line: every refilled line gets a 40-character budget
     "den fjarde maj artonhundra attiotva fors",
@@ -78,3 +78,15 @@ def test_refill_refuses_a_page_without_a_line_to_measure(page: Layout):
     short = page.model_copy(update={"boxes": [box.model_copy(update={"text": "kort"}) for box in page.boxes]})
     with pytest.raises(ValueError, match="writing density"):
         refill(short, ["Ny text."])
+
+
+def test_running_text_joins_the_words_a_transcription_breaks_across_lines():
+    lines = ["nastkomne mandag up¬", "gifwa fortekning pa de som", "krogar halla wilja"]
+    boxes = [
+        LineBox(text=text, x=0, y=60 * i, w=600, h=40, baseline_y=60 * i + 30) for i, text in enumerate(lines)
+    ]
+    page = Layout(
+        spec=PageSpec(),
+        boxes=[*boxes, LineBox(text="97.", x=0, y=0, w=40, h=40, baseline_y=30, region="page_number")],
+    )
+    assert running_text(page) == "nastkomne mandag upgifwa fortekning pa de som krogar halla wilja"

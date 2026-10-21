@@ -70,6 +70,13 @@ class _TextStream:
         return f"{line} {head}" if line else head
 
 
+def running_text(layout: Layout) -> str:
+    """A layout's running-text lines as one paragraph, the words its transcription broke with ``SPLIT_MARK``
+    joined back, ready to refill another page with."""
+    lines = " ".join(box.text.strip() for box in layout.boxes if is_body(box.region))
+    return lines.replace(f"{SPLIT_MARK} ", "")
+
+
 def refill(layout: Layout, paragraphs: Iterable[str]) -> Layout:
     """Rewrite a layout's running-text lines with new text, in reading order.
 

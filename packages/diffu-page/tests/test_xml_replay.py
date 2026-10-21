@@ -53,3 +53,34 @@ def test_single_leaf_split_reorigins_rules(tmp_path: Path):
     assert all(0 <= r.x1 <= leaf.spec.width and 0 <= r.x2 <= leaf.spec.width for r in leaf.rules), [
         f"{r.x1}->{r.x2} on w={leaf.spec.width}" for r in leaf.rules
     ]
+
+
+_TRANSKRIBUS_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<PcGts xmlns="http://schema.primaresearch.org/PAGE/gts/pagecontent/2013-07-15">
+  <Page imageFilename="p.jpg" imageWidth="1000" imageHeight="1400">
+    <TextRegion id="r1" custom="readingOrder {index:0;} structure {type:page-number;}">
+      <TextLine id="n1"><Coords points="850,60 900,60 900,100 850,100"/>
+        <TextEquiv><Unicode>97.</Unicode></TextEquiv></TextLine>
+    </TextRegion>
+    <TextRegion id="r2" custom="readingOrder {index:1;} structure {type:marginalia;}">
+      <TextLine id="m1"><Coords points="20,200 180,200 180,240 20,240"/>
+        <TextEquiv><Unicode>No 12</Unicode></TextEquiv></TextLine>
+    </TextRegion>
+    <TextRegion id="r3" custom="readingOrder {index:2;}">
+      <TextLine id="b1"><Coords points="220,200 900,200 900,250 220,250"/>
+        <TextEquiv><Unicode>den fjarde maj artonhundra attiotva</Unicode></TextEquiv></TextLine>
+    </TextRegion>
+  </Page>
+</PcGts>
+"""
+
+
+def test_replay_reads_the_region_types_transkribus_writes_into_custom(tmp_path: Path):
+    xml = tmp_path / "p.xml"
+    xml.write_text(_TRANSKRIBUS_XML, encoding="utf-8")
+    layout = load_xml_layout(str(xml), single_page=False)
+    assert {box.text: box.region for box in layout.boxes} == {
+        "97.": "page_number",
+        "No 12": "marginalia",
+        "den fjarde maj artonhundra attiotva": "body",
+    }

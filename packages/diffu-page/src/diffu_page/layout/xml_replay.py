@@ -1,12 +1,14 @@
 """XML replay — build a layout from real ALTO or PAGE XML instead of a template.
 
-Reads TextLine geometry + transcription, region semantics (TextRegion@type / TableRegion) and
-separator furniture, namespace-agnostic across PAGE (PRImA) and ALTO. The renderer/compositor
-consume the result identically to a template-built layout — that's the LineBox seam.
+Reads TextLine geometry + transcription, region semantics (TextRegion@type, or the ``structure {type:...}`` that
+Transkribus writes into ``@custom`` / TableRegion) and separator furniture, namespace-agnostic across PAGE (PRImA)
+and ALTO. The renderer/compositor consume the result identically to a template-built layout — that's the LineBox
+seam.
 """
 
 from __future__ import annotations
 
+import re
 import xml.etree.ElementTree as ET
 
 from .flow import _normalize_line_heights
@@ -28,6 +30,7 @@ _PAGE_TYPE_REGION: dict[str, str] = {
     "drop-capital": "header",
     "other": "body",
 }
+_CUSTOM_STRUCTURE = re.compile(r"structure \{type:([^;}]+)")
 
 
 def _local_tag(tag: str) -> str:
@@ -38,7 +41,7 @@ def _local_tag(tag: str) -> str:
 def _line_region(line: ET.Element, parents: dict[ET.Element, ET.Element]) -> str:
     """Semantic region name for a ``TextLine`` from its nearest enclosing region ancestor.
 
-    A cell in a PAGE ``TableRegion``/``TableCell`` reads as ``table``; a ``TextRegion`` maps by its ``@type``
+    A cell in a PAGE ``TableRegion``/``TableCell`` reads as ``table``; a ``TextRegion`` maps by its type
     (paragraph->body, heading->header, marginalia, ...); anything else (e.g. an ALTO ``TextBlock``) is body.
     """
     cur = parents.get(line)
@@ -47,9 +50,15 @@ def _line_region(line: ET.Element, parents: dict[ET.Element, ET.Element]) -> str
         if tag in ("TableRegion", "TableCell"):
             return "table"
         if tag == "TextRegion":
-            return _PAGE_TYPE_REGION.get((cur.get("type") or "").lower(), "body")
+            return _PAGE_TYPE_REGION.get(_region_type(cur), "body")
         cur = parents.get(cur)
     return "body"
+
+
+def _region_type(region: ET.Element) -> str:
+    """A ``TextRegion``'s PAGE type: its ``@type``, else the ``structure {type:...}`` in its Transkribus ``@custom``."""
+    structure = _CUSTOM_STRUCTURE.search(region.get("custom") or "")
+    return (region.get("type") or (structure.group(1) if structure else "")).lower()
 
 
 def _separator_rules(root: ET.Element) -> list[Rule]:

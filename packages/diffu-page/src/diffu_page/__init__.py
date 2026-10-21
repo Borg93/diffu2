@@ -46,6 +46,7 @@ from .layout import (
     build_layout,
     load_xml_layout,
     refill,
+    running_text,
     validate_layout,
 )
 from .paper import paper_background
@@ -61,6 +62,7 @@ __all__ = [
     "build_layout",
     "load_xml_layout",
     "refill",
+    "running_text",
     "validate_layout",
     "LineRenderer",
     "PlaceholderRenderer",

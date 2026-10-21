@@ -133,7 +133,7 @@ from .templates import (
 from .templates import (
     _spread_leaf as _spread_leaf,
 )
-from .text_refill import refill
+from .text_refill import refill, running_text
 from .xml_replay import (
     _PAGE_TYPE_REGION as _PAGE_TYPE_REGION,
 )
@@ -165,6 +165,7 @@ __all__ = [
     "is_body",
     "load_xml_layout",
     "refill",
+    "running_text",
     "to_single_leaf",
     "validate_layout",
 ]
