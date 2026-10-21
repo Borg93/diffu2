@@ -18,7 +18,7 @@ What is known to be wrong or unfinished. Remove an item when it is done; add the
 ## Labels (ALTO / PAGE are only output formats; the label data is what must be right)
 
 - [x] Reading order across columns: labels now follow the source blocks in page order, top to bottom in each (`CropPlan.reading_order`); the prompt keeps the training numbering. Checked on a refilled Bergskollegium spread.
-- [ ] Line polygons are the prompt's slots, not the ink: generous rectangles that overlap their neighbours. Measure the generated ink per line (the read-back already crops each line) for tight polygons and baselines.
+- [x] Line polygons: checked against the GT, not a defect. GT line polygons are line bands, median 1.6x the line pitch tall and 0.95 pitch above the baseline (80 random GT pages); our slots are 1.0x and 0.7. A traced ink outline matched the GT polygons worse than the slot (median IoU 0.37 vs 0.72, 1,933 lines). If labels should match the GT convention exactly, widen the slot, don't tighten it.
 - [ ] Narrow columns get no crops: a margin note narrows a multi_column page's columns to 590 px at training scale, under the builder's 640 px minimum, and narrow regions only join a wide one (the v2 training rule). Decide: crop narrow columns side by side, or keep such templates out.
 - Checked 2026-10-21: `test_labels.py` passes with `xmlschema` installed (22 tests); our ALTO is valid against the official ALTO v4 schema but can't carry line roles; our PAGE keeps roles on a round trip. PAGE schema checked only against 2013 (diffu-page's own test); the official repo is now at 2024.
 
