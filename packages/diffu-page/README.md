@@ -150,6 +150,5 @@ integration for automated page-level scoring (see Validation).
   pipeline draws a fresh document + hand per page job).
 - **Eruku is English/modern** (IAM/CVL/RIMES) — a *pipeline test*, not domain-correct data; å ä ö may
   render poorly. The Swedish-historical model (Diffu) is the real renderer.
-- **OpenCV**: default `opencv-python-headless>=4.13` (cv5 has no usable wheel — verified). For real
-  cv5 speedups, compile via `scripts/build_opencv5.sh`. Code uses the cv2 API identical on 4.x/5.x.
+- **OpenCV**: `opencv-python-headless>=5.0`, from its PyPI wheel (5.0.0.93 tested: all tests pass with numpy 2.4).
 - **`ty`**: clean except numpy/cv2 stub strictness (not bugs).

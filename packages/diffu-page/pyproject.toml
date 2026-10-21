@@ -9,11 +9,11 @@ authors = [{ name = "Gabriel Borg" }]
 
 # Page-synthesis deps live HERE, in the member — NOT in the main `diffu` package. `diffu` itself is a
 # workspace member (the line generator); torch is pulled in only lazily by DiffuRenderer, so the
-# layout/compositor run with just OpenCV. Headless OpenCV = server data-gen (no GUI/Qt); cv5-ready cv2
-# API. cv5 has no working wheel yet — compile it with scripts/build_opencv5.sh to override the wheel.
+# layout/compositor run with just OpenCV. Headless OpenCV = server data-gen (no GUI/Qt), OpenCV 5 from its
+# PyPI wheel.
 dependencies = [
     "diffu",
-    "opencv-python-headless>=4.13",
+    "opencv-python-headless>=5.0",
     "numpy>=1.26",
     "pillow>=11",     # render/htr/upscale use PIL directly — declare it, don't ride diffu's transitive dep
     "pydantic>=2",
