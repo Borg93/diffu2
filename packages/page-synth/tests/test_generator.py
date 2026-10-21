@@ -17,6 +17,7 @@ from huggingface_hub import snapshot_download
 from PIL import Image
 from safetensors.torch import save_file
 
+from page_synth.blocks import training_grid
 from page_synth.caption import LineRecord
 from page_synth.generator import CropGenerator, GeneratorSettings
 from page_synth.plan import CropPlan
@@ -73,6 +74,28 @@ def test_generator_conditions_a_crop_on_its_reference_image(generator: CropGener
 
     assert crop.image.size == (64, 32)
     assert crop.image.tobytes() != plain.image.tobytes()
+
+
+def _off_grid_reference() -> Image.Image:
+    return Image.linear_gradient("L").resize((50, 34)).convert("RGB")
+
+
+def test_training_grid_squashes_a_reference_onto_the_16_px_grid() -> None:
+    reference = _off_grid_reference()
+
+    gridded = training_grid(reference)
+
+    assert gridded.size == (48, 32)
+    assert gridded.tobytes() == reference.resize((48, 32), Image.Resampling.LANCZOS).tobytes()
+
+
+def test_generator_draws_from_a_reference_as_resized_for_training(generator: CropGenerator) -> None:
+    reference = _off_grid_reference()
+    as_trained = generator(_plan(), seed=0, image_name="000.jpg", reference=training_grid(reference))
+
+    crop = generator(_plan(), seed=0, image_name="000.jpg", reference=reference)
+
+    assert crop.image.tobytes() == as_trained.image.tobytes()
 
 
 def _write_nemo_lora(lora_dir: Path, a: torch.Tensor, b: torch.Tensor, *, alpha: int) -> None:

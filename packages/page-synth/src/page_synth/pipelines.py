@@ -5,7 +5,8 @@ split at the text encoder, the pattern of huggingface.co/blog/modular-diffusers:
 
 - the **text pipeline**: ``CropPromptStep`` -> FLUX.3's text encoder (Qwen3-VL). A crop plan in, its prompt
   embeddings out. On a Ray cluster it is its own stage, encoding ahead of the GPU denoiser.
-- the **crop pipeline**: ``CropPromptStep`` -> reference VAE encoder (only when an ``image`` is passed) -> denoise ->
+- the **crop pipeline**: ``CropPromptStep`` -> ``ReferenceGridStep`` -> reference VAE encoder (only when an ``image`` is
+  passed) -> denoise ->
   decode -> ``LineReadbackStep`` -> ``LabelExportStep``. The plan and the embeddings in, the image, the per-line
   read-back and the labels out. FLUX.3's auto blocks pick text-to-image or reference-conditioned denoising from the
   inputs, so one pipeline draws both the v2 (style by name) and the v3 (style by example) crops.
@@ -28,7 +29,7 @@ from diffusers.modular_pipelines import Flux3AutoBlocks, ModularPipeline, Sequen
 from pydantic import BaseModel, ConfigDict
 from safetensors.torch import load_file
 
-from page_synth.blocks import CropPromptStep, LabelExportStep, LineReadbackStep
+from page_synth.blocks import CropPromptStep, LabelExportStep, LineReadbackStep, ReferenceGridStep
 from page_synth.readback import materialize_position_tables
 
 FLUX3_KLEIN = Path(os.environ.get("FLUX3_MODEL", Path.home() / "Desktop/repos/flux3-models/flux-3-image-klein-base"))
@@ -48,6 +49,7 @@ def crop_blocks() -> SequentialPipelineBlocks:
     blocks.sub_blocks.pop("prompt_upsampler")
     blocks.sub_blocks.pop("text_encoder")
     blocks.sub_blocks.insert("crop_prompt", CropPromptStep(), 0)
+    blocks.sub_blocks.insert("reference_grid", ReferenceGridStep(), 1)
     blocks.sub_blocks.insert("line_readback", LineReadbackStep(), len(blocks.sub_blocks))
     blocks.sub_blocks.insert("label_export", LabelExportStep(), len(blocks.sub_blocks))
     return blocks
