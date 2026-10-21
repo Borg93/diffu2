@@ -95,6 +95,12 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
   at 8 / 4 / 2 / 1 stacked layers: ~47 / 24 / 12 / 6 MB per crop, 4.7 / 2.4 / 1.2 / 0.6 TB per 100k crops (Leonardo:
   1 TB `$WORK`, 20 TB `$SCRATCH` with a 40-day purge). Options: ≤ 2 layers, shorter prompts, or encoding text during
   training (~+45% compute, 9 GB per GPU).
+- Measured 2026-10-21 (Qwen3.5-4B tokenizer + chat template, all 11,329 v2 captions): median 1,077 tokens (p95 1,483,
+  max 3,810); the prose paragraph is only ~162 of them, the JSON layout rows (each repeating the style words around
+  the line's text) the rest. A compact prompt for diffu (paragraph + `[id, box, text]` per line) is median 554 tokens:
+  at 4 stacked layers 12.4 MB per crop, 1.2 TB per 100k crops; at 2 layers 0.6 TB. The line texts are most of what
+  remains; rendering them as glyphs into a reference image (FLUX.3's reference stream) would leave only the style
+  paragraph as text and spell exactly by construction.
 - Order: measure Qwen3.5 token counts and latent statistics on ~1k crops → init-directory script → caching script →
   YAML (finetune mode, flux3 adapter, logit-normal shift ≈ 3, fp32 weights / bf16 compute, `dp_replicate_size: 8`,
   our interleaved dataloader, consolidated diffusers export) → GB10 smoke run → diffu inference blocks → EMA /
