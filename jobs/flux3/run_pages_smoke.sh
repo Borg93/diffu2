@@ -1,9 +1,9 @@
 #!/bin/bash
-# The first GPU run of the page generator (generate_pages.py): two real Bergskollegium pages refilled with the text of
+# The first GPU run of the page generator (page_synth.generate): two real Bergskollegium pages refilled with the text of
 # two others, every crop drawn with the final v2 LoRA in Bergskollegium's style, read back and labelled. Waits for the
 # v2 steering test (run_steer.sh), runs through scripts/spark_guard.sh, then hands the GPU to run_v3.sh. Run detached:
 #
-#   setsid nohup experiments/flux3_klein/run_pages_smoke.sh >> runs/flux3_pages/run.log 2>&1 < /dev/null &
+#   setsid nohup jobs/flux3/run_pages_smoke.sh >> runs/flux3_pages/run.log 2>&1 < /dev/null &
 
 set -euo pipefail
 
@@ -17,7 +17,7 @@ step() { echo "=== $(date '+%F %T') $*"; }
 
 step "waiting for the v2 steering test to finish"
 until [ -f "$REPO/runs/flux3_layout_v2/steer/DONE" ]; do
-    pgrep -f "flux3_klein/run_(v2|steer)\.s[h]" > /dev/null || { echo "the v2 run or steering test stopped"; exit 1; }
+    pgrep -f "run_(v2|steer)\.s[h]" > /dev/null || { echo "the v2 run or steering test stopped"; exit 1; }
     sleep 60
 done
 
@@ -26,7 +26,7 @@ step "1/2 generate pages with $lora"
 mkdir -p "$OUT"
 cd "$AUTOMODEL"
 if "$REPO/scripts/spark_guard.sh" --need-gb 45 --name flux-pages-smoke --log "$REPO/runs/flux3_pages/guard.log" -- \
-    .venv-managed/bin/python "$REPO/experiments/flux3_klein/generate_pages.py" \
+    .venv-managed/bin/python -m page_synth.generate \
     --templates "$VOLUME/40004026_00128.xml" "$VOLUME/40004026_00094.xml" \
     --text-from "$VOLUME/40004026_00339.xml" "$VOLUME/40004026_00200.xml" \
     --lora "$lora" --out "$OUT" --profile "$OUT/profile" \
@@ -40,4 +40,4 @@ touch "$OUT/DONE"
 
 step "2/2 hand the GPU to run_v3.sh"
 cd "$REPO"
-exec experiments/flux3_klein/run_v3.sh
+exec jobs/flux3/run_v3.sh

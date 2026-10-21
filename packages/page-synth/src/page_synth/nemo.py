@@ -11,7 +11,7 @@ Use it from a NeMo config with this folder on PYTHONPATH, for text-to-image or i
 
     data:
       dataloader:
-        _target_: bucket_sampler.InterleavedTextToImageDataloaderConfig  # or InterleavedImageEditDataloaderConfig
+        _target_: page_synth.nemo.InterleavedTextToImageDataloaderConfig  # or InterleavedImageEditDataloaderConfig
 """
 
 from __future__ import annotations

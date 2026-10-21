@@ -1,6 +1,6 @@
 """The style words of a v2 layout caption: swap in another archive's, or hand them to a reference image.
 
-A caption from ``build_layout_crops.caption_for`` is a paragraph, a space and the crop's layout rows as JSON. Its
+A caption from ``page_synth.data.build_crops.caption_for`` is a paragraph, a space and the crop's layout rows as JSON. Its
 style comes from the crop's ``Provenance`` (archive, years) and ``ScanLook`` (scan, paper, ink), in fixed phrases:
 the paragraph's opening sentence and its ink, the paper row, the ink of every line row and of every fragment row.
 ``restyle`` swaps those phrases for another style's (the v2 steering test: the same text and layout drawn as another
@@ -13,8 +13,12 @@ from __future__ import annotations
 
 import json
 
-from build_layout_crops import CropRecord, LayoutRow, Provenance, ScanLook
 from pydantic import BaseModel, Field
+
+from page_synth.caption import LayoutRow
+from page_synth.look import ScanLook
+from page_synth.provenance import Provenance
+from page_synth.records import CropRecord
 
 
 class Style(BaseModel):

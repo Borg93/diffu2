@@ -1,10 +1,10 @@
-"""Pick a fixed evaluation set from a split of build_layout_crops.py: one crop per collection, spread over them.
+"""Pick a fixed evaluation set from a split of page_synth.data.build_crops: one crop per collection, spread over them.
 
 Each collection contributes its first crop with a margin note, heading or page number (else its first crop),
 and when there are more collections than ``-n`` the picks are spread evenly over the alphabetical list, so
 every archive group is represented. The picked images are hard-linked next to their metadata.
 
-    python experiments/flux3_klein/pick_eval_crops.py data_flux3/layout_crops_v2/val \
+    python -m page_synth.data.pick_eval data_flux3/layout_crops_v2/val \
         data_flux3/layout_crops_v2/val_eval -n 24
 """
 
@@ -14,7 +14,7 @@ import argparse
 import os
 from pathlib import Path
 
-from build_layout_crops import CropRecord, read_records
+from page_synth.records import CropRecord, read_records
 
 
 def has_role(record: CropRecord) -> bool:

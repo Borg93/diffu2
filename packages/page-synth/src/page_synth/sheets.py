@@ -1,10 +1,10 @@
 """Contact sheets of the v2 steering test: per template, every variant's generated crop beside a real crop of the
 archive it was asked to look like.
 
-Reads the steering set (``build_steer_set.py``) and the ``eval_layout.py`` run over it (``generated/NNN.png``,
+Reads the steering set (``page_synth.data.steer_set``) and the ``page_synth.evaluate`` run over it (``generated/NNN.png``,
 ``results.json``); writes ``steer_template_<t>.jpg`` into the run dir.
 
-    .venv/bin/python experiments/flux3_klein/steer_grid.py --steer data_flux3/steer_v2 --run runs/flux3_layout_v2/steer
+    python -m page_synth.sheets --steer data_flux3/steer_v2 --run runs/flux3_layout_v2/steer
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ GAP = 10
 
 
 class Prompt(BaseModel):
-    """What a sheet needs of a set's prompt (``build_steer_set.SteerRow`` or ``build_style_pairs.EvalRow``)."""
+    """What a sheet needs of a set's prompt (``page_synth.data.steer_set.SteerRow`` or ``page_synth.data.style_pairs.EvalRow``)."""
 
     template: int
     variant: str
@@ -34,7 +34,7 @@ class Sample(BaseModel):
 
 
 class Results(BaseModel):
-    """What a sheet needs of ``eval_layout.py``'s ``results.json``."""
+    """What a sheet needs of ``page_synth.evaluate``'s ``results.json``."""
 
     samples: list[Sample]
 
@@ -69,8 +69,8 @@ def stack(rows: list[Image.Image]) -> Image.Image:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--steer", type=Path, required=True, help="the steering set (build_steer_set.py)")
-    ap.add_argument("--run", type=Path, required=True, help="the eval_layout.py output dir of that set")
+    ap.add_argument("--steer", type=Path, required=True, help="the steering set (page_synth.data.steer_set)")
+    ap.add_argument("--run", type=Path, required=True, help="the page_synth.evaluate output dir of that set")
     args = ap.parse_args()
 
     with (args.steer / "metadata.jsonl").open(encoding="utf-8") as metadata:

@@ -1,7 +1,7 @@
 """Generate synthetic archive crops with ALTO/PAGE ground truth: any page template, any text, a chosen style.
 
 For each template (a real PAGE/ALTO page, replayed with diffu-page) the running text is replaced by new text
-(``refill``), the page is planned as training-scale crops (``page_plan``), and every crop goes through a
+(``refill``), the page is planned as training-scale crops (``page_synth.plan``), and every crop goes through a
 :class:`CropGenerator`: FLUX.3 Klein + a LoRA draws it, TrOCR reads every line back, and its labels are written with
 badly-read lines tagged ``unclear``. ``CropGenerator`` is the unit a Ray Data actor wraps: the pipeline is loaded
 once, then each call turns one crop plan into one image + labels. Writes ``<out>/<page>_<k>.jpg`` + ``.xml`` per crop
@@ -9,7 +9,7 @@ and ``<out>/summary.json``; ``--profile <dir>`` also records a torch profiler tr
 warm-up crop. Runs in the NeMo AutoModel environment, one GPU job, through scripts/spark_guard.sh:
 
     cd ~/Desktop/repos/Automodel && ~/Desktop/repos/diffu2/scripts/spark_guard.sh --need-gb 45 --name pages -- \\
-        .venv-managed/bin/python ~/Desktop/repos/diffu2/experiments/flux3_klein/generate_pages.py \\
+        python -m page_synth.generate \\
         --templates <page.xml ...> --text-from <page.xml ...> --lora <ckpt>/model --out <dir> \\
         --title "the court records of Jämtlands domsaga" --paper cream --ink "dark brown"
 """
@@ -22,14 +22,15 @@ from contextlib import nullcontext
 from pathlib import Path
 
 import torch
-from build_layout_crops import Provenance, ScanLook
 from diffu_page import load_xml_layout, refill, running_text
-from eval_layout import DEFAULT_MODEL, apply_nemo_lora, mean
-from page_blocks import LabelFormat, build_generator
-from page_plan import CropPlan, PageStyle, plan_page
 from PIL import Image
 from pydantic import BaseModel, ConfigDict
 from torch.profiler import ProfilerActivity, profile, record_function, schedule
+
+from page_synth.blocks import DEFAULT_MODEL, LabelFormat, apply_nemo_lora, build_generator, mean
+from page_synth.look import ScanLook
+from page_synth.plan import CropPlan, PageStyle, plan_page
+from page_synth.provenance import Provenance
 
 
 class GeneratedCrop(BaseModel):

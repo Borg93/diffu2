@@ -1,16 +1,16 @@
 #!/bin/bash
 # The v3 reference-style LoRA: FLUX.3 Klein draws a crop's text and layout in the hand, ink and paper of a reference
-# crop from another page of the same volume (build_style_pairs.py -> data_flux3/style_pairs_v3). Waits for the v2
+# crop from another page of the same volume (page_synth.data.style_pairs -> data_flux3/style_pairs_v3). Waits for the v2
 # steering test (run_steer.sh) to finish, then one GPU job at a time, each through scripts/spark_guard.sh:
 #   1. cache the pairs with NeMo's FLUX.3 image-edit encoder             data_flux3/cache_style_v3
 #   2. a 5-step training smoke run: fails fast, and its log shows memory and step time
 #   3. train the LoRA (flux3_style_ref_lora_v3.yaml)                     runs/flux3_style_ref_lora_v3
-#   4. the final checkpoint on the by-example set (+ steer_grid.py sheets) and the held-out crops, the middle
+#   4. the final checkpoint on the by-example set (+ page_synth.sheets) and the held-out crops, the middle
 #      checkpoint on the by-example set                                   runs/flux3_style_v3/eval_*
 # A failed eval is logged and skipped; failed caching or training stops the run. A rerun skips a finished cache.
 # Run detached:
 #
-#   setsid nohup experiments/flux3_klein/run_v3.sh >> runs/flux3_style_v3/run.log 2>&1 < /dev/null &
+#   setsid nohup jobs/flux3/run_v3.sh >> runs/flux3_style_v3/run.log 2>&1 < /dev/null &
 
 set -euo pipefail
 
@@ -22,12 +22,11 @@ MODEL="$HOME/Desktop/repos/flux3-models/flux-3-image-klein-base"
 GUARD="$REPO/scripts/spark_guard.sh"
 PAIRS="$REPO/data_flux3/style_pairs_v3"
 CACHE="$REPO/data_flux3/cache_style_v3"
-CONFIG="$REPO/experiments/flux3_klein/flux3_style_ref_lora_v3.yaml"
+CONFIG="$REPO/configs/flux3/flux3_style_ref_lora_v3.yaml"
 OUT="$REPO/runs/flux3_style_v3"
 CKPT="$REPO/runs/flux3_style_ref_lora_v3"
 export CUDA_VISIBLE_DEVICES=0
 export DIFFU_REPO="$REPO" FLUX3_MODEL="$MODEL"  # the training config's paths
-export PYTHONPATH="$REPO/experiments/flux3_klein${PYTHONPATH:+:$PYTHONPATH}"  # bucket_sampler.py: the dataloader
 
 mkdir -p "$OUT"
 cd "$AUTOMODEL"  # NeMo's examples/ are run from its repo root
@@ -44,7 +43,7 @@ train() {  # train <name> [config overrides ...]
 evaluate() {  # evaluate <name> <crops dir> <lora dir>
     local name=$1 crops=$2 lora=$3
     if "$GUARD" --need-gb 45 --name "flux-v3-eval-$name" --log "$OUT/guard.log" -- \
-        "$PY" "$REPO/experiments/flux3_klein/eval_layout.py" --crops "$crops" -n 1000 --steps 50 \
+        "$PY" -m page_synth.evaluate --crops "$crops" -n 1000 --steps 50 \
         --out "$OUT/eval_$name" --lora "$lora" > "$OUT/eval_$name.log" 2>&1; then
         tail -1 "$OUT/eval_$name.log"
     else
@@ -54,7 +53,7 @@ evaluate() {  # evaluate <name> <crops dir> <lora dir>
 
 step "waiting for the v2 steering test to finish"
 until [ -f "$REPO/runs/flux3_layout_v2/steer/DONE" ]; do
-    pgrep -f "flux3_klein/run_(v2|steer)\.s[h]" > /dev/null || { echo "the v2 run or steering test stopped"; exit 1; }
+    pgrep -f "run_(v2|steer)\.s[h]" > /dev/null || { echo "the v2 run or steering test stopped"; exit 1; }
     sleep 60
 done
 
@@ -65,7 +64,7 @@ if [ -f "$CACHE/metadata.json" ]; then
 else
     rm -rf "$CACHE"
     "$GUARD" --need-gb 30 --name flux-v3-cache --log "$OUT/guard.log" -- \
-        "$PY" "$REPO/experiments/flux3_klein/cache_style_pairs.py" --manifest "$PAIRS/train.jsonl" \
+        "$PY" -m page_synth.data.cache_pairs --manifest "$PAIRS/train.jsonl" \
         --out "$CACHE" --model "$MODEL" > "$OUT/cache.log" 2>&1
 fi
 
@@ -83,7 +82,7 @@ mapfile -t ckpts < <(ls -d "$CKPT"/epoch_*_step_* | sort -V)
 middle=${ckpts[$(( ${#ckpts[@]} / 2 ))]}
 final=${ckpts[-1]}
 evaluate "by_example_step_${final##*_}" "$PAIRS/by_example" "$final/model"
-"$REPO/.venv/bin/python" "$REPO/experiments/flux3_klein/steer_grid.py" \
+"$REPO/.venv/bin/python" -m page_synth.sheets \
     --steer "$PAIRS/by_example" --run "$OUT/eval_by_example_step_${final##*_}" || echo "contact sheets failed"
 evaluate "val_step_${final##*_}" "$PAIRS/val_eval" "$final/model"
 evaluate "by_example_step_${middle##*_}" "$PAIRS/by_example" "$middle/model"

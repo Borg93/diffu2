@@ -2,16 +2,16 @@
 
 Every v2 training crop becomes a target; its reference is a crop from another page of the same volume (the same
 scribe, as far as a volume tells), shrunk to ``REF_PIXELS``. The caption is the target's v2 caption rewritten as a
-FLUX.3 image-edit record (``caption_style.edit_caption``): it names no archive, paper or ink, so the hand can only
+FLUX.3 image-edit record (``page_synth.restyle.edit_caption``): it names no archive, paper or ink, so the hand can only
 come from the reference. Writes, under ``data_flux3/style_pairs_v3``:
 
-- ``train.jsonl``: the manifest NeMo's FLUX.3 image-edit encoder caches (``cache_style_pairs.py``), its media under
+- ``train.jsonl``: the manifest NeMo's FLUX.3 image-edit encoder caches (``page_synth.data.cache_pairs``), its media under
   ``targets/`` (hard links to the v2 crops: the encoder only reads files inside the manifest's dir) and ``refs/``;
-- ``val_eval/``: the 24 held-out v2 crops, each with a reference from its own volume (an ``eval_layout.py`` dir);
+- ``val_eval/``: the 24 held-out v2 crops, each with a reference from its own volume (an ``page_synth.evaluate`` dir);
 - ``by_example/``: the steering test's templates drawn with each archive's example crop as the reference, the
-  v3 counterpart of ``build_steer_set.py`` (an ``eval_layout.py`` dir that ``steer_grid.py`` lays out).
+  v3 counterpart of ``page_synth.data.steer_set`` (an ``page_synth.evaluate`` dir that ``page_synth.sheets`` lays out).
 
-    .venv/bin/python experiments/flux3_klein/build_style_pairs.py
+    python -m page_synth.data.style_pairs
 """
 
 from __future__ import annotations
@@ -24,13 +24,14 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from build_layout_crops import CropRecord, LineRecord, read_records
-from build_steer_set import ARCHIVES, SEED, archive_key, archive_style
-from caption_style import edit_caption
 from PIL import Image
 from pydantic import BaseModel
 
-REPO = Path(__file__).resolve().parents[2]
+from page_synth.caption import LineRecord
+from page_synth.data.steer_set import ARCHIVES, SEED, archive_key, archive_style
+from page_synth.records import CropRecord, read_records
+from page_synth.restyle import edit_caption
+
 REF_PIXELS = 512 * 1024  # a reference shows the hand smaller than the ~1 MP target, at half its tokens
 
 type Volume = tuple[str, str]  # (collection dir, volume dir)
@@ -58,7 +59,7 @@ class ManifestRow(BaseModel):
 
 
 class EvalRow(BaseModel):
-    """One crop of an ``eval_layout.py`` dir with a reference image."""
+    """One crop of an ``page_synth.evaluate`` dir with a reference image."""
 
     file_name: str
     caption: str
@@ -69,7 +70,7 @@ class EvalRow(BaseModel):
     seed: int | None = None
     template: int | None = None
     variant: str | None = None
-    example: str | None = None  # steer_grid.py shows it beside the generated crop
+    example: str | None = None  # page_synth.sheets shows it beside the generated crop
 
 
 def volume_of(record: CropRecord) -> Volume:
@@ -173,8 +174,8 @@ def training_pairs(train: list[Scan], out: Path, rng: random.Random) -> list[Man
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--crops", type=Path, default=REPO / "data_flux3/layout_crops_v2")
-    ap.add_argument("--out", type=Path, default=REPO / "data_flux3/style_pairs_v3")
+    ap.add_argument("--crops", type=Path, default=Path("data_flux3/layout_crops_v2"))
+    ap.add_argument("--out", type=Path, default=Path("data_flux3/style_pairs_v3"))
     ap.add_argument("--templates", type=int, nargs="+", default=[1, 17], help="val_eval rows for by_example/")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()

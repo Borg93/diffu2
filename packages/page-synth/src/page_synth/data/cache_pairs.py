@@ -1,11 +1,11 @@
-"""Cache the v3 reference pairs (``build_style_pairs.py``'s manifest) with NeMo AutoModel's FLUX.3 image-edit encoder.
+"""Cache the v3 reference pairs (``page_synth.data.style_pairs``'s manifest) with NeMo AutoModel's FLUX.3 image-edit encoder.
 
 NeMo's ``image-edit`` preprocessing CLI reads a Hugging Face dataset and materializes it into a manifest; ours is
 already one, so this hands it straight to the encoder that CLI calls (``Flux3ImageEditCacheEncoder``). Targets keep
-their exact bucket size (none is over ``TARGET_PIXELS``); the references were shrunk by ``build_style_pairs.py``.
+their exact bucket size (none is over ``TARGET_PIXELS``); the references were shrunk by ``page_synth.data.style_pairs``.
 Runs in the NeMo AutoModel environment, on the GPU:
 
-    cd ~/Desktop/repos/Automodel && .venv-managed/bin/python ~/Desktop/repos/diffu2/experiments/flux3_klein/cache_style_pairs.py \
+    cd ~/Desktop/repos/Automodel && python -m page_synth.data.cache_pairs \
         --manifest ~/Desktop/repos/diffu2/data_flux3/style_pairs_v3/train.jsonl --out ~/Desktop/repos/diffu2/data_flux3/cache_style_v3
 """
 

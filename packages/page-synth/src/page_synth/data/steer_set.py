@@ -7,10 +7,10 @@ on the same seed so only the words differ:
 - archive: the caption restyled as each of six archives, with that archive's commonest scan look and years;
 - look: the template's own archive with three scan looks (colour cream / greyscale / yellowed).
 
-The output is a crops dir for ``eval_layout.py`` (``metadata.jsonl`` + the template scans), plus a real crop of
-each archive under ``examples/`` that ``steer_grid.py`` shows beside the generated one.
+The output is a crops dir for ``page_synth.evaluate`` (``metadata.jsonl`` + the template scans), plus a real crop of
+each archive under ``examples/`` that ``page_synth.sheets`` shows beside the generated one.
 
-    .venv/bin/python experiments/flux3_klein/build_steer_set.py   # -> data_flux3/steer_v2
+    python -m page_synth.data.steer_set   # -> data_flux3/steer_v2
 """
 
 from __future__ import annotations
@@ -21,11 +21,14 @@ import shutil
 from collections import Counter
 from pathlib import Path
 
-from build_layout_crops import CropRecord, LineRecord, Provenance, ScanLook, read_records
-from caption_style import Style, restyle
 from pydantic import BaseModel
 
-REPO = Path(__file__).resolve().parents[2]
+from page_synth.caption import LineRecord
+from page_synth.look import ScanLook
+from page_synth.provenance import Provenance
+from page_synth.records import CropRecord, read_records
+from page_synth.restyle import Style, restyle
+
 ARCHIVES = (
     "JLF_jamtlands_domsaga",
     "RA_bergskollegium_stora_kopparbergs_bergslag",
@@ -43,7 +46,7 @@ SEED = 1000  # template t's variants all use SEED + t
 
 
 class SteerRow(BaseModel):
-    """One prompt of the steering test, in the shape ``eval_layout.py`` reads."""
+    """One prompt of the steering test, in the shape ``page_synth.evaluate`` reads."""
 
     file_name: str  # the template's scan (the eval's "real" side)
     caption: str
@@ -113,8 +116,8 @@ def variants(template: CropRecord, archives: dict[str, ArchiveStyle]) -> list[Va
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--crops", type=Path, default=REPO / "data_flux3/layout_crops_v2")
-    ap.add_argument("--out", type=Path, default=REPO / "data_flux3/steer_v2")
+    ap.add_argument("--crops", type=Path, default=Path("data_flux3/layout_crops_v2"))
+    ap.add_argument("--out", type=Path, default=Path("data_flux3/steer_v2"))
     ap.add_argument(
         "--templates", type=int, nargs="+", default=[1, 17], help="val_eval rows to use as templates"
     )

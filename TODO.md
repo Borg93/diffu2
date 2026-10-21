@@ -2,18 +2,15 @@
 
 What is known to be wrong or unfinished. Remove an item when it is done; add the commit that did it.
 
-## Repo structure (do after the v3 run finishes; queued jobs run today's script paths)
+## Repo structure
 
+- [x] Layout redesigned 2026-10-21: FLUX code is the `page-synth` package (core: geometry, look, provenance, caption, records; generator: plan, blocks, generate, evaluate, restyle, sheets; `nemo` dataloader configs; `data/` training-data builders), NeMo configs in `configs/flux3/`, job scripts in `jobs/flux3/`. No PYTHONPATH tricks; NeMo configs name `page_synth.nemo.*`. Verified: 400/400 v2 captions byte-identical, steering and v3 sets rebuild byte-identical, both NeMo configs resolve.
+- [ ] Delete `experiments/flux3_klein/eval_layout.py` and `run_v2.sh` once the running v2 job's evals have used them (~16:45 on 2026-10-21); then remove `experiments/`.
 - [ ] Decide what the repo is now: the FLUX page-synthesis pipeline as the core, diffu as the line-level model inside it, or diffu moved aside.
-- [ ] Move the generator out of `experiments/flux3_klein/` into a package (`packages/page-synth/`): caption grammar, crop planner (`page_plan.py`), Modular Diffusers blocks (`page_blocks.py`), generator CLI (`generate_pages.py`), with tests. It depends on `diffu-page`, never the reverse.
-- [ ] One import direction: experiments import packages only; no script imports another script (`page_blocks` → `eval_layout`, `page_plan` → `build_layout_crops` today).
-- [ ] Move the PAGE XML parser (`diffu.data.parse`) into `diffu-page`, so the FLUX side doesn't import the old diffu model package.
-- [ ] Record the FLUX environment: `diffu` and `diffu-page` were hand-installed into `~/Desktop/repos/Automodel/.venv-managed` with `uv pip install --no-deps -e`. Nothing recreates that today.
-- [ ] Split `experiments/flux3_klein/` into data / train / eval; keep only run scripts and configs at the top.
-- [ ] `scripts/`: about 25 diffu-era one-offs next to `spark_guard.sh`, which every GPU job needs. Give the guard a clear home, and keep or delete the rest.
-- [ ] `packages/diffu-runner`, `packages/diffu-studio`: diffu-era, unused by the FLUX side. Keep with a note, or remove.
-- [ ] Docs: `docs/` describes diffu only. Add `docs/FLUX.md` (the pipeline page, https://claude.ai/artifact/X47DU54cesTiH3qw854U7g) and say in the README which part is which.
-- [ ] Re-run the generator test from the new package and compare with the run before the move.
+- [ ] Record the FLUX environment: `diffu`, `diffu-page` and `page-synth` are hand-installed into `~/Desktop/repos/Automodel/.venv-managed` with `uv pip install --no-deps -e`. Nothing recreates that today.
+- [ ] Tests for page-synth (plan, restyle, blocks wiring, caption identity).
+- [ ] `scripts/`: ~25 diffu-era one-offs next to `spark_guard.sh`, which every GPU job needs. `packages/diffu-runner`, `diffu-studio`: diffu-era. Keep with a note or remove.
+- [ ] Docs: `docs/` describes diffu only. Add `docs/FLUX.md` (the pipeline page) and say in the README which part is which.
 
 ## Labels (ALTO / PAGE are only output formats; the label data is what must be right)
 
@@ -36,7 +33,7 @@ What is known to be wrong or unfinished. Remove an item when it is done; add the
 - [ ] Speed: about 2 minutes per crop at 50 steps with CFG. Measure fewer steps and a compiled transformer before using them.
 - [ ] Read tonight's profile (`runs/flux3_pages/smoke/profile/trace.json`, Perfetto; pytorch-skills:profile-model): which SDPA backend runs on sm_121 (flash/efficient/cudnn/math by kernel name), GPU idle vs busy, top kernels, text-encoder vs denoise vs VAE vs TrOCR share.
 - [ ] Ray Data at scale, the diffu-runner pattern: template/refill/plan as CPU map steps, `CropGenerator` as a stateful GPU actor (`map_batches`, concurrency = GPUs), TrOCR read-back co-located, Lance sink. Decide from the profile whether to batch same-bucket crops per forward pass.
-- [ ] Inference runs on our Ray cluster with Blackwell GPUs (not Leonardo). Re-profile there before fixing optimizations: GB10 is sm_121 with unified memory, so attention backends and memory differ. Measure FP8/NVFP4. Card model and VRAM per GPU still unknown.
+- [ ] Inference runs on our Ray cluster with Blackwell GPUs (not Leonardo). Re-profile there before fixing optimizations: GB10 is sm_121 with unified memory, so attention backends and memory differ. Measure FP8/NVFP4. 96 GB VRAM per GPU (RTX PRO 6000 Blackwell class, sm_120): several generator actors or large batches per card.
 - [ ] Style score: a classifier on real crops to measure whether a generated crop matches the requested archive or reference.
 - [ ] Caption grammar is shared by training and generation but lives in a data-building script (`build_layout_crops.py`).
 

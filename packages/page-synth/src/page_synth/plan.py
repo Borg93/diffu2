@@ -8,21 +8,13 @@ years) and a ``ScanLook`` (scan, paper, ink), as in every v2 caption. CPU only.
 
 from __future__ import annotations
 
-from build_layout_crops import (
-    Caption,
-    Crop,
-    CropSettings,
-    Line,
-    LineRecord,
-    Provenance,
-    Region,
-    ScanLook,
-    caption_for,
-    caption_order,
-    crops_for_page,
-)
 from diffu_page import Layout, LineBox
 from pydantic import BaseModel
+
+from page_synth.caption import Caption, LineRecord, caption_for, caption_order
+from page_synth.geometry import Crop, CropSettings, Line, Region, crops_for_page
+from page_synth.look import ScanLook
+from page_synth.provenance import Provenance
 
 # diffu-page region -> the PAGE type the v2 captions name as a role; running text and table cells name none
 ROLES = {

@@ -1,13 +1,11 @@
-# FLUX.3 Klein Base text-to-image LoRA, v2 data (layout_crops_v2: collection, years and scan type in the
-# captions, margin notes / headings / page numbers with their roles, bucket-exact crops); otherwise the
-# pilot recipe (flux3_layout_lora.yaml) with 1600 steps for the larger, style-labelled set.
+# FLUX.3 Klein Base text-to-image LoRA on archival page crops with layout captions (one GPU, the GB10).
 # Based on NeMo AutoModel's examples/diffusion/finetune/flux3_t2i_flow_lora.yaml (the validated T2I LoRA
 # recipe) with the overrides its FLUX.3 guide uses for few GPUs: native attention, activation checkpointing,
 # no FSDP2 prefetch. Paths come from the environment: DIFFU_REPO (this repo, required) and FLUX3_MODEL (the
-# model, default the Hub repo). run_v2.sh sets both; by hand, from the NeMo AutoModel repo root:
+# model, default the Hub repo). run_pilot.sh sets both; by hand, from the NeMo AutoModel repo root:
 #
 #   DIFFU_REPO=~/Desktop/repos/diffu2 uv run --no-sync torchrun --nproc-per-node=1 \
-#       examples/diffusion/finetune/finetune.py -c $DIFFU_REPO/experiments/flux3_klein/flux3_layout_lora_v2.yaml
+#       examples/diffusion/finetune/finetune.py -c $DIFFU_REPO/configs/flux3/flux3_layout_lora.yaml
 
 seed: 42
 
@@ -15,12 +13,11 @@ wandb:
   enable: false
   project: flux3-layout
   mode: offline
-  name: flux3_layout_lora_v2
+  name: flux3_layout_lora
 
 dist_env:
   backend: "nccl"
   init_method: "env://"
-  timeout_minutes: 30
 
 model:
   pretrained_model_name_or_path: ${FLUX3_MODEL,black-forest-labs/flux-3-image-klein-base}
@@ -113,17 +110,15 @@ step_scheduler:
   num_epochs: 1000
   local_batch_size: 1
   global_batch_size: 4
-  max_steps: 1600
+  max_steps: 1200
   ckpt_every_steps: 200
   log_remote_every_steps: 10
   save_checkpoint_every_epoch: false
 
 data:
   dataloader:
-    # bucket_sampler.py (on PYTHONPATH, see run_v2.sh): NeMo's builder with the aspect buckets interleaved,
-    # so 1,600 steps over 11k crops see every crop shape, not just the buckets first in line
-    _target_: bucket_sampler.InterleavedTextToImageDataloaderConfig
-    cache_dir: ${DIFFU_REPO}/data_flux3/cache_train_v2
+    _target_: nemo_automodel.components.datasets.diffusion.build_text_to_image_multiresolution_dataloader
+    cache_dir: ${DIFFU_REPO}/data_flux3/cache_train
     train_text_encoder: false
     num_workers: 2
     base_resolution: [1024, 1024]
@@ -133,7 +128,7 @@ data:
 
 checkpoint:
   enabled: true
-  checkpoint_dir: ${DIFFU_REPO}/runs/flux3_layout_lora_v2
+  checkpoint_dir: ${DIFFU_REPO}/runs/flux3_layout_lora
   model_save_format: torch_save
   save_consolidated: false
   restore_from: null

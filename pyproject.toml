@@ -79,6 +79,7 @@ torchvision = { index = "pytorch-cu130" }
 diffu-page = { workspace = true }
 diffu-runner = { workspace = true }
 diffu-studio = { workspace = true }
+page-synth = { workspace = true }
 
 # uv workspace: each package under packages/ is a member with its OWN pyproject + deps (diffu-page pulls
 # opencv, diffu-runner pulls ray). NOTE: `[tool.uv.workspace]` alone does NOT install members on `uv sync`
@@ -89,7 +90,7 @@ diffu-studio = { workspace = true }
 members = ["packages/*"]
 
 [dependency-groups]
-workspace = ["diffu-page", "diffu-runner", "diffu-studio"]  # ALL members, so bare `uv sync` builds them all
+workspace = ["diffu-page", "diffu-runner", "diffu-studio", "page-synth"]  # ALL members, so bare `uv sync` builds them all
 
 [tool.uv]
 default-groups = ["workspace"]
