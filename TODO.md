@@ -2,50 +2,124 @@
 
 What is known to be wrong or unfinished. Remove an item when it is done; add the commit that did it.
 
+## Direction (decided 2026-10-21)
+
+- FLUX.3 Klein (with our LoRAs) is the **research reference**: what quality is reachable, and the eval target.
+- **diffu is the deliverable**: our own weights, trained only on our data, using FLUX.3's architecture and
+  training recipe. The FLUX Kommunity License (§1a(iii), §4b) forbids distilling from FLUX.3, training on its
+  outputs, or reusing its weights or autoencoder for another image model. Allowed: diffusers'
+  `Flux3Transformer2DModel` (Apache-2.0 code) instantiated from a config with random init; Apache-2.0 text
+  encoders and VAEs.
+- Everything is diffusers-native (model classes, Modular Diffusers blocks and pipelines) and trained with NeMo
+  AutoModel. No custom model code where diffusers has the class; no backward compatibility with the old code.
+
 ## Repo structure
 
-- [x] Layout redesigned 2026-10-21: FLUX code is the `page-synth` package (core: geometry, look, provenance, caption, records; generator: plan, blocks, generate, evaluate, restyle, sheets; `nemo` dataloader configs; `data/` training-data builders), NeMo configs in `configs/flux3/`, job scripts in `jobs/flux3/`. No PYTHONPATH tricks; NeMo configs name `page_synth.nemo.*`. Verified: 400/400 v2 captions byte-identical, steering and v3 sets rebuild byte-identical, both NeMo configs resolve.
-- [ ] Delete `experiments/flux3_klein/eval_layout.py` and `run_v2.sh` once the running v2 job's evals have used them (~16:45 on 2026-10-21); then remove `experiments/`.
-- [ ] Decide what the repo is now: the FLUX page-synthesis pipeline as the core, diffu as the line-level model inside it, or diffu moved aside.
-- [ ] Record the FLUX environment: `diffu`, `diffu-page` and `page-synth` are hand-installed into `~/Desktop/repos/Automodel/.venv-managed` with `uv pip install --no-deps -e`. Nothing recreates that today.
-- [ ] Tests for page-synth (plan, restyle, blocks wiring, caption identity).
-- [ ] `scripts/`: ~25 diffu-era one-offs next to `spark_guard.sh`, which every GPU job needs. `packages/diffu-runner`, `diffu-studio`: diffu-era. Keep with a note or remove.
-- [ ] Docs: `docs/` describes diffu only. Add `docs/FLUX.md` (the pipeline page) and say in the README which part is which.
+Target (work happens on the `next` worktree, `~/Desktop/repos/diffu2-next`; main is frozen until tonight's
+queue, v2 → steering → generator smoke → v3, has finished, ~09:00 2026-10-22, because the queue imports
+page-synth through editable installs in the NeMo venv):
+
+```
+pyproject.toml        virtual uv workspace root: members, dev tools, ruff / pytest config
+packages/
+  page-synth/         pages: layout (from diffu-page), labels, plan, captions, Modular blocks and pipelines,
+                      generator, evaluation, training-data builders, NeMo dataloader configs
+  diffu/              the model (planned, see "diffu"): configs for Flux3Transformer2DModel, VAE blocks
+configs/flux3/        NeMo configs (FLUX.3 reference LoRAs);  configs/diffu/ later
+jobs/flux3/           GPU job scripts;  jobs/diffu/ later
+scripts/spark_guard.sh
+docs/                 README, PIPELINE.md (the page pipeline), DIFFU.md (the model plan)
+```
+
+- [ ] Move `diffu_page.layout` and `diffu_page.labels` into page-synth (`page_synth.layout`, `page_synth.labels`)
+      with their tests; drop the private re-exports in `layout/__init__.py`.
+- [ ] Remove the line-pasting era: the rest of diffu-page (compose, render, augment, upscale, htr, paper, profiles,
+      validate, overlay, dataset, generation, cli), `packages/diffu-runner` (its Ray Data pattern is rebuilt in
+      page-synth), `packages/diffu-studio` (the app: not wanted), the old diffu model `src/diffu` with its
+      `tests/`, `Makefile`, `slurm/`, diffu-era `scripts/` and `docs/`. Tag `diffu-mmdit-v1` first so the old
+      model stays reachable.
+- [ ] Root `pyproject.toml` becomes a virtual workspace root. diffusers pinned to the git commit that has Flux3
+      (`e04f0c5`, the NeMo venv's), so the repo env and the NeMo env run the same blocks.
+- [ ] Record the NeMo environment: page-synth (and later diffu) installed editable into
+      `~/Desktop/repos/Automodel/.venv-managed` (`uv pip install --no-deps -e`); a `jobs/setup_nemo_env.sh`
+      recreates it.
+- [ ] Delete `experiments/` once the running v2 job's evals have used it (~16:45 2026-10-21).
+- [ ] Tests for page-synth: plan, restyle, caption identity, pipeline wiring (CPU, no weights).
+- [ ] Docs: README says what the repo is (page pipeline + diffu model); `docs/PIPELINE.md` from the pipeline page.
+- [ ] Merge `next` into main after the queue: fast-forward, push, delete the branch and the worktree; rerun the
+      queue's commands from the new paths once to check them.
+
+## Modular Diffusers (checked against huggingface.co/blog/modular-diffusers and the diffusers source, 2026-10-21)
+
+- [ ] Text encoder as its own pipeline: pop `text_encoder` from the Flux3 blocks, encode prompts in batches,
+      feed `prompt_embeds` to the denoise pipeline. For Ray Data a separate stage that streams ahead of the GPU
+      denoiser; for training the same embeddings NeMo caches.
+- [ ] One `ComponentsManager` shared by the text-encoder, text2image (v2) and image_conditioned (v3) pipelines:
+      no double loads; offloading matters on the inference cluster's discrete-VRAM cards.
+- [ ] TrOCR through `load_components` from the read-back block's `ComponentSpec` (then fix its meta position
+      table), not the side loader `load_trocr`.
+- [ ] Self-contained blocks in page-synth (no imports of local scripts), publishable with
+      `save_pretrained(push_to_hub=True)` / `diffusers-cli custom_blocks`.
+- [ ] The base model is a component, not a constant: FLUX.3 Klein for the reference, diffu for ours, swapped with
+      `update_components`; the same blocks drive both.
+- Done right already: `get_workflow` + `sub_blocks.pop/insert`, standard block shape, automatic data flow (only
+  `crop_plan` is a pipeline input), `load_components(dtype={...})`, `update_components`.
+
+## diffu: FLUX.3 architecture, our weights (plan only, nothing implemented)
+
+- [ ] **Model**: `Flux3Transformer2DModel.from_config(...)`, random init. Sizes measured on the meta device:
+      diffu-S 0.66B (hidden 1536, 3 double + 10 single blocks), diffu-M 1.66B (2048, 4 + 16); Klein is 5.54B
+      (3072, 5 + 28). Start with S.
+- [ ] **Text encoder**: Qwen3.5-4B (Apache-2.0, Feb 2026, hidden 2560 like FLUX.3's Qwen3-VL-4B, so FLUX.3's 8
+      stacked layers = 20,480 carry over); Qwen3.5-2B as the cheaper alternative. Open: which layers to stack
+      (Qwen3.5 mixes linear- and full-attention layers). Exact spelling (å ä ö, historical forms) through a BPE
+      encoder is a risk; fallback: rendered glyphs as a reference image (old diffu's glyph strip, in 2D).
+- [ ] **VAE**: Qwen-Image's 16-channel VAE (Apache-2.0; passed our å ä ö reconstruction gate). Needs our own
+      encode / decode blocks: the Flux3 VAE blocks assume FLUX's 32-channel autoencoder and its batch-norm stats.
+      `in_channels` = 16 × 2 × 2 = 64.
+- [ ] **References**: up to N reference images in the sequence with the 4-axis RoPE (FLUX.3's in-context
+      conditioning) replace the old pooled DINO style vector, which gave generic style.
+- [ ] **Training**: NeMo AutoModel's flux3 recipe in pretrain mode. Check it accepts a random-init transformer
+      and a different VAE / text encoder; otherwise add a diffu processor. Progressive resolution 256² → 512² →
+      1024², aspect buckets, our captions. Recipe details (timestep shift, sampling, schedule, data mix) from
+      BFL's FLUX.3 technical report: find and read it.
+- [ ] **Data**: GT-Lejonet, 103,285 pages (~3M lines). Never FLUX.3 outputs.
+- [ ] **Compute**: estimated ~8×10¹⁹ FLOPs for diffu-S (10M samples at 256², 5M at 512², 2M at 1024²; GB10
+      measured at ~25 TFLOPS effective on the v2 LoRA). GB10 alone ~40 days: too slow, use it for smoke runs and
+      short ablations. Leonardo, 8 nodes (32 A100s): roughly 6–30 h. First a short GB10 run at 256² to see loss
+      and read-back CER fall, then book compute.
+- [ ] **Eval**: the same held-out crops and metrics as the FLUX.3 LoRAs (per-line CER, layout, style score), so
+      diffu and the reference are compared head to head.
 
 ## Labels (ALTO / PAGE are only output formats; the label data is what must be right)
 
-- [x] Reading order across columns: labels now follow the source blocks in page order, top to bottom in each (`CropPlan.reading_order`); the prompt keeps the training numbering. Checked on a refilled Bergskollegium spread.
-- [x] Line polygons: checked against the GT, not a defect. GT line polygons are line bands, median 1.6x the line pitch tall and 0.95 pitch above the baseline (80 random GT pages); our slots are 1.0x and 0.7. A traced ink outline matched the GT polygons worse than the slot (median IoU 0.37 vs 0.72, 1,933 lines). If labels should match the GT convention exactly, widen the slot, don't tighten it.
-- [ ] Narrow columns get no crops: a margin note narrows a multi_column page's columns to 590 px at training scale, under the builder's 640 px minimum, and narrow regions only join a wide one (the v2 training rule). Decide: crop narrow columns side by side, or keep such templates out.
-- Checked 2026-10-21: `test_labels.py` passes with `xmlschema` installed (22 tests); our ALTO is valid against the official ALTO v4 schema but can't carry line roles; our PAGE keeps roles on a round trip. PAGE schema checked only against 2013 (diffu-page's own test); the official repo is now at 2024.
+- [x] Reading order across columns: labels follow the source blocks in page order, top to bottom in each
+      (`CropPlan.reading_order`).
+- [x] Line polygons: checked against the GT, not a defect (GT bands are 1.6x the line pitch; our slots 1.0x;
+      slot IoU 0.72 vs traced ink 0.37). To match the GT convention, widen the slot.
+- [ ] Narrow columns get no crops (590 px < the 640 px minimum when a margin note narrows a multi_column page).
+      Decide: crop narrow columns side by side, or keep such templates out.
 
-## diffu-page: verify before relying on it
+## Layout (from diffu-page): verify before relying on it
 
-- [ ] Tune the sampler to the GT before using synthetic templates. Measured 2026-10-21 (300 GT pages vs 300 sampled): running-text lines per page median 30 (real) vs 9 (sampler); line pitch 0.029 vs 0.090 of page height; line width 0.82 of the text block vs exactly 1.00 (every synthetic line fills its column). 156 of 300 sampled pages have no running text by design (tables, ledgers, registers, landskap, blank). Margins weren't comparable (single-leaf replay re-pads at a fixed 3%). Until tuned: real templates only.
+- [ ] Tune the template sampler to the GT before using synthetic templates (2026-10-21, 300 vs 300 pages:
+      running-text lines per page 30 real vs 9 sampled; line pitch 0.029 vs 0.090 of page height; line width 0.82
+      vs 1.00 of the block). Until tuned: real templates only.
 - [ ] The `landskap` template gives no crops: the windowing rejects its short label lines.
-- [ ] `layout/__init__.py` re-exports many private names (old flat-module surface).
 
-## FLUX pipeline
+## FLUX.3 reference runs
 
-- [ ] Look at tonight's results: v2 eval, steering test (style by name), first generated crops (`runs/flux3_pages/smoke`).
+- [ ] Tonight's results: v2 eval, steering test (style by name), first generated crops (`runs/flux3_pages/smoke`).
 - [ ] Decide on v3 (style by example) from the steering results; its results land tomorrow morning.
-- [ ] Full pages: generate at 2–4 MP, or stitch windows that share a v3 reference.
-- [ ] Speed: about 2 minutes per crop at 50 steps with CFG. Measure fewer steps and a compiled transformer before using them.
-- [ ] Read tonight's profile (`runs/flux3_pages/smoke/profile/trace.json`, Perfetto; pytorch-skills:profile-model): which SDPA backend runs on sm_121 (flash/efficient/cudnn/math by kernel name), GPU idle vs busy, top kernels, text-encoder vs denoise vs VAE vs TrOCR share.
-- [ ] Ray Data at scale, the diffu-runner pattern: template/refill/plan as CPU map steps, `CropGenerator` as a stateful GPU actor (`map_batches`, concurrency = GPUs), TrOCR read-back co-located, Lance sink. Decide from the profile whether to batch same-bucket crops per forward pass.
-- [ ] Inference runs on our Ray cluster with Blackwell GPUs (not Leonardo). Re-profile there before fixing optimizations: GB10 is sm_121 with unified memory, so attention backends and memory differ. Measure FP8/NVFP4. 96 GB VRAM per GPU (RTX PRO 6000 Blackwell class, sm_120): several generator actors or large batches per card.
-- [ ] Style score: a classifier on real crops to measure whether a generated crop matches the requested archive or reference.
-- [ ] Caption grammar is shared by training and generation but lives in a data-building script (`build_layout_crops.py`).
+- [ ] Read tonight's profile (`runs/flux3_pages/smoke/profile/trace.json`; pytorch-skills:profile-model): SDPA
+      backend on sm_121, GPU idle vs busy, top kernels, text-encoder vs denoise vs VAE vs TrOCR share.
+- [ ] Full pages: generate at 2–4 MP, or stitch windows that share a reference.
+- [ ] Style score: a classifier on real crops that says whether a crop matches the requested archive or reference.
 
-## Modular Diffusers conventions (checked against huggingface.co/blog/modular-diffusers, 2026-10-21)
+## Inference at scale
 
-- [ ] Text encoder as its own pipeline: pop `text_encoder`, encode prompts in batches, feed `prompt_embeds` to the denoise pipeline (the blog's pattern). For Ray Data a separate stage that streams ahead of the GPU denoiser. Size the win from tonight's profile.
-- [ ] One `ComponentsManager` shared by the v2 text2image, v3 image_conditioned and text-encoder pipelines (no double loads; its offloading matters on the inference cluster's discrete-VRAM Blackwell cards, not on the unified-memory GB10).
-- [ ] Load TrOCR through `load_components` from the block's ComponentSpec, then fix its meta position table; today it bypasses the spec (`load_trocr`).
-- [ ] Self-contained blocks (no imports of local scripts) in the page-synth package, so they can be published with `save_pretrained(push_to_hub=True)` from the custom-block template.
-- Done right already: `get_workflow` + `sub_blocks.pop/insert`, standard block shape, automatic data flow (only `crop_plan` is a pipeline input), `load_components(dtype={...})` (`dtype=` is this diffusers version's name; the blog's `torch_dtype` is older), `update_components`.
-
-## diffu (line model)
-
-- [ ] Old-recipe baseline to step 12k, to tell whether the refactor helped; then resume the canvas run from step 10k.
-- [ ] Default recognizer `Riksarkivet/trocr-large-handwritten-hist-swe-3-char` is 404 on the Hub.
+- [ ] Ray Data entrypoint in page-synth: layout / refill / plan as CPU map steps, text encoding as its own
+      stage, the generator as a stateful GPU actor (`map_batches`, concurrency = GPUs), TrOCR read-back
+      co-located, Lance sink.
+- [ ] Runs on our Ray cluster's Blackwell GPUs (96 GB each, sm_120). Re-profile there before optimizing; measure
+      FP8 / NVFP4, fewer steps, a compiled transformer, several actors per card.
