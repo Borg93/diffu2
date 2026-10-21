@@ -253,6 +253,9 @@ Any scanned page as a template, not only pages with PAGE/ALTO ground truth.
 
 - [ ] Tonight's results: v2 eval, steering test (style by name), first generated crops (`runs/flux3_pages/smoke`).
 - [ ] Decide on v3 (style by example) from the steering results; its results land tomorrow morning.
+- [ ] v3b (queued after v3, `jobs/flux3/run_v3b.sh`): v3's pairs and references, half the captions also naming the
+      archive and look in words. Its by-example test names the template's own archive while the reference comes from
+      another: does the hand follow the picture or the words? 10,641 pairs (511 with stale captions left out).
 - [ ] Read tonight's profile (`runs/flux3_pages/smoke/profile/trace.json`; pytorch-skills:profile-model): SDPA
       backend on sm_121, GPU idle vs busy, top kernels, text-encoder vs denoise vs VAE vs TrOCR share.
 - [ ] Full pages: generate at 2–4 MP, or stitch windows that share a reference.

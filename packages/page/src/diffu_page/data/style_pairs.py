@@ -11,14 +11,22 @@ come from the reference. Writes, under ``data_flux3/style_pairs_v3``:
 - ``by_example/``: the steering test's templates drawn with each archive's example crop as the reference, the
   v3 counterpart of ``diffu_page.data.steer_set`` (a ``diffu_page.cli.evaluate`` dir that ``diffu_page.cli.sheets`` lays out).
 
+With ``--named-fraction`` (v3b), that share of the training captions also names the target's archive, years, scan,
+paper and ink (``named_edit_caption``), so the model gets the style in words and by example; the rest stay unnamed so
+the reference stays necessary. The references are picked as without it. The held-out and by-example captions then
+all name the template's own archive: a by-example crop whose hand follows its reference shows the picture wins over
+the words.
+
     python -m diffu_page.data.style_pairs
+    python -m diffu_page.data.style_pairs --named-fraction 0.5 --out data_flux3/style_pairs_v3b
 """
 
 from __future__ import annotations
 
+import json
 import random
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Annotated
 
@@ -29,7 +37,7 @@ from pydantic import BaseModel
 from diffu_page.captions.prompt import LineRecord
 from diffu_page.captions.provenance import collection_key
 from diffu_page.captions.records import CropRecord, read_records
-from diffu_page.captions.restyle import edit_caption
+from diffu_page.captions.restyle import StaleCaptionError, edit_caption, named_edit_caption
 from diffu_page.crops.grid import fit_to_grid
 from diffu_page.data.steer_set import ARCHIVES, DEFAULT_TEMPLATES, SEED, archive_style
 from diffu_page.output import console
@@ -39,6 +47,7 @@ app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 REF_PIXELS = 512 * 1024  # a reference shows the hand smaller than the ~1 MP target, at half its tokens
 
 type Volume = tuple[str, str]  # (collection dir, volume dir)
+type CaptionFor = Callable[[CropRecord], str]
 
 
 class Scan(BaseModel):
@@ -69,6 +78,13 @@ class ManifestRow(BaseModel):
     prompt: str
     media: list[Media]
     metadata: PairMetadata
+
+
+class TrainingSet(BaseModel):
+    """The manifest's pairs, and the targets left out because their caption predates the caption grammar."""
+
+    rows: list[ManifestRow]
+    stale: list[str]
 
 
 class EvalRow(BaseModel):
@@ -134,18 +150,20 @@ def eval_row(
     reference: Path,
     out: Path,
     *,
+    caption: CaptionFor,
     seed: int | None = None,
     template: int | None = None,
     variant: str | None = None,
 ) -> EvalRow:
     """An eval crop of ``target`` drawn in ``reference``'s hand; the target scan and the shrunk reference go to
     ``out``."""
+    text = caption(target.record)
     (out / "refs").mkdir(parents=True, exist_ok=True)
     link(target.path, out / target.record.file_name)
     shrink(reference, out / "refs" / reference.name)
     return EvalRow(
         file_name=target.record.file_name,
-        caption=edit_caption(target.record),
+        caption=text,
         lines=target.record.lines,
         width=target.record.width,
         height=target.record.height,
@@ -157,27 +175,44 @@ def eval_row(
     )
 
 
+class EvalSet(BaseModel):
+    """An eval dir's rows, and the crops left out because their caption predates the caption grammar."""
+
+    rows: list[EvalRow]
+    stale: list[str]
+
+
 def write_rows(path: Path, rows: Sequence[BaseModel]) -> None:
     """Write ``rows`` as JSON lines."""
     path.write_text("".join(row.model_dump_json() + "\n" for row in rows), encoding="utf-8")
 
 
-def training_pairs(train: list[Scan], out: Path, rng: random.Random) -> list[ManifestRow]:
-    """Every training crop that has another page in its volume, with a reference crop from that page."""
+def training_pairs(train: list[Scan], out: Path, rng: random.Random, caption: CaptionFor) -> TrainingSet:
+    """Every training crop that has another page in its volume, with a reference crop from that page.
+
+    A crop whose caption predates the caption grammar is left out after its reference is picked, so every other
+    crop gets the reference it gets without the skip.
+    """
     for sub in ("targets", "refs"):
         (out / sub).mkdir(parents=True, exist_ok=True)
     volumes = by_volume(train)
     manifest: list[ManifestRow] = []
+    stale: list[str] = []
     for scan in train:
         reference = pick_reference(scan, volumes, rng)
         if reference is None:
+            continue
+        try:
+            prompt = caption(scan.record)
+        except StaleCaptionError:
+            stale.append(scan.record.file_name)
             continue
         link(scan.path, out / "targets" / scan.record.file_name)
         shrink(reference.path, out / "refs" / reference.record.file_name)
         manifest.append(
             ManifestRow(
                 id=Path(scan.record.file_name).stem,
-                prompt=edit_caption(scan.record),
+                prompt=prompt,
                 media=[
                     Media(role="target", file_name=f"targets/{scan.record.file_name}"),
                     Media(role="context", file_name=f"refs/{reference.record.file_name}"),
@@ -185,18 +220,25 @@ def training_pairs(train: list[Scan], out: Path, rng: random.Random) -> list[Man
                 metadata=PairMetadata(row_index=len(manifest), reference=reference.record.file_name),
             )
         )
-    return manifest
+    return TrainingSet(rows=manifest, stale=stale)
 
 
 def held_out_rows(
-    held_out: list[Scan], volumes: dict[Volume, list[Scan]], out: Path, rng: random.Random
-) -> list[EvalRow]:
-    """Each held-out crop in the hand of another page of its volume (an unseen page when there is one)."""
-    return [
-        eval_row(scan, reference.path, out)
-        for scan in held_out
-        if (reference := pick_reference(scan, volumes, rng)) is not None
-    ]
+    held_out: list[Scan], volumes: dict[Volume, list[Scan]], out: Path, rng: random.Random, caption: CaptionFor
+) -> EvalSet:
+    """Each held-out crop in the hand of another page of its volume (an unseen page when there is one); a crop whose
+    caption predates the caption grammar is left out, as in ``training_pairs``."""
+    rows: list[EvalRow] = []
+    stale: list[str] = []
+    for scan in held_out:
+        reference = pick_reference(scan, volumes, rng)
+        if reference is None:
+            continue
+        try:
+            rows.append(eval_row(scan, reference.path, out, caption=caption))
+        except StaleCaptionError:
+            stale.append(scan.record.file_name)
+    return EvalSet(rows=rows, stale=stale)
 
 
 def by_example_rows(
@@ -206,6 +248,7 @@ def by_example_rows(
     volumes: dict[Volume, list[Scan]],
     out: Path,
     rng: random.Random,
+    caption: CaptionFor,
 ) -> list[EvalRow]:
     """The steering templates by example: in their own volume's hand, then in each steering archive's."""
     rows: list[EvalRow] = []
@@ -215,7 +258,7 @@ def by_example_rows(
         references = [(f"own volume ({collection_key(template.record.collection)})", own.path)] if own else []
         references += list(examples.items())
         rows += [
-            eval_row(template, path, out, seed=SEED + t, template=t, variant=f"reference: {label}")
+            eval_row(template, path, out, caption=caption, seed=SEED + t, template=t, variant=f"reference: {label}")
             for label, path in references
         ]
     return rows
@@ -230,24 +273,40 @@ def main(
     templates: Annotated[
         list[int] | None, typer.Option("--template", help="a val_eval row for by_example/ (repeat it)")
     ] = None,
+    named_fraction: Annotated[
+        float, typer.Option(min=0.0, max=1.0, help="share of training captions that also name the archive and look")
+    ] = 0.0,
     seed: int = 0,
 ) -> None:
     """Build the v3 reference pairs, the held-out set and the by-example steering set."""
     train, val, held_out = (load_split(crops, split) for split in ("train", "val", "val_eval"))
     rng = random.Random(seed)
-    manifest = training_pairs(train, out, rng)
-    write_rows(out / "train.jsonl", manifest)
+    words = random.Random(seed + 1)  # its own stream, so the references are the ones v3 picked
+
+    def pair_caption(record: CropRecord) -> str:
+        return named_edit_caption(record) if words.random() < named_fraction else edit_caption(record)
+
+    eval_caption = named_edit_caption if named_fraction > 0 else edit_caption
+    pairs = training_pairs(train, out, rng, pair_caption)
+    write_rows(out / "train.jsonl", pairs.rows)
     volumes = by_volume(val + train)
-    val_rows = held_out_rows(held_out, volumes, out / "val_eval", rng)
-    write_rows(out / "val_eval/metadata.jsonl", val_rows)
+    held = held_out_rows(held_out, volumes, out / "val_eval", rng, eval_caption)
+    write_rows(out / "val_eval/metadata.jsonl", held.rows)
     examples = {key: archive_style([s.record for s in train], key, crops).example for key in ARCHIVES}
     example_rows = by_example_rows(
-        held_out, templates or list(DEFAULT_TEMPLATES), examples, volumes, out / "by_example", rng
+        held_out, templates or list(DEFAULT_TEMPLATES), examples, volumes, out / "by_example", rng, eval_caption
     )
     write_rows(out / "by_example/metadata.jsonl", example_rows)
-    skipped = len(train) - len(manifest)
-    console.print(f"train: {len(manifest)} pairs ({skipped} crops skipped: no other page in their volume) -> {out}")
-    console.print(f"val_eval: {len(val_rows)} crops, by_example: {len(example_rows)} prompts")
+    stale = {"train": pairs.stale, "val_eval": held.stale}
+    (out / "stale.json").write_text(json.dumps(stale, indent=1), encoding="utf-8")
+    alone = len(train) - len(pairs.rows) - len(pairs.stale)
+    console.print(
+        f"train: {len(pairs.rows)} pairs -> {out} ({alone} crops skipped: no other page in their volume; "
+        f"{len(pairs.stale)} skipped: caption older than the caption grammar, see stale.json)"
+    )
+    console.print(
+        f"val_eval: {len(held.rows)} crops ({len(held.stale)} stale), by_example: {len(example_rows)} prompts"
+    )
 
 
 if __name__ == "__main__":

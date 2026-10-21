@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from typing import Any
 
 import pytest
 import xmlschema
@@ -99,4 +100,5 @@ def test_page_and_alto_carry_baselines() -> None:
 
 def test_export_refuses_an_unknown_format() -> None:
     with pytest.raises(ValueError, match="unknown format 'json'"):
-        export(_labels(), "json")  # pyrefly: ignore[bad-argument-type]
+        unknown: Any = "json"  # not a LabelFormat: the point of the test
+        export(_labels(), unknown)

@@ -11,7 +11,7 @@ from diffu_page.captions.look import ScanLook
 from diffu_page.captions.prompt import Caption, caption_for
 from diffu_page.captions.provenance import Provenance, provenance_of
 from diffu_page.captions.records import CropRecord
-from diffu_page.captions.restyle import StaleCaptionError, Style, edit_caption, restyle
+from diffu_page.captions.restyle import StaleCaptionError, Style, edit_caption, named_edit_caption, restyle
 from diffu_page.crops.geometry import Crop, CropSettings, crops_for_page
 from diffu_page.layout import load_xml_layout
 from diffu_page.plan import regions_of
@@ -66,6 +66,26 @@ def test_edit_caption_takes_only_the_paper_from_the_reference_and_names_no_style
     assert "Arjeplogs" not in caption
     assert "dark brown" not in caption
     assert "yellowed" not in caption
+
+
+def test_named_edit_caption_names_the_archive_and_look_beside_the_reference(crop: Crop) -> None:
+    provenance = provenance_of(COLLECTION, Path(PAGE))
+    record = _record(crop, caption_for(crop, provenance, LOOK))
+
+    caption = named_edit_caption(record)
+
+    paragraph, rows = caption[: caption.index(" [{")], json.loads(caption[caption.index(" [{") + 1 :])
+    assert paragraph.startswith(
+        f"Create a flat, evenly lit archival scan of a new handwritten page from {provenance.title}, dated "
+        f"{provenance.years}, in the hand, ink and paper of <ref_image_0>. The yellowed paper <paper_1> carries "
+    )
+    assert "cursive handwriting in dark brown ink" in paragraph
+    assert [(row["id"], row["from"]) for row in rows] == [
+        (row.id, "ref_image_0" if row.id == "paper_1" else "target") for row in record.layout
+    ]
+    assert {row["desc"].rsplit(", cursive script ", 1)[-1] for row in rows if row["id"].startswith("Sv_Text_")} == {
+        "in the reference's hand, in dark brown ink."
+    }
 
 
 def test_restyle_refuses_a_caption_an_older_provenance_rule_wrote(crop: Crop) -> None:

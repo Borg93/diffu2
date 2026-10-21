@@ -41,6 +41,7 @@ def studio(tiny_flux3: Path, tiny_diffu: Path, tmp_path: Path) -> Iterator[gr.Wo
 
 
 def test_studio_draws_one_plan_of_a_page_with_every_drawer(studio: gr.Workflow, two_column_page: Path) -> None:
+    assert studio.local_url is not None
     client = Client(studio.local_url, verbose=False)
 
     flux3_sheet, flux3_zip, diffu_sheet, diffu_zip = client.predict(

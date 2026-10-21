@@ -5,7 +5,8 @@ style comes from the crop's ``Provenance`` (archive, years) and ``ScanLook`` (sc
 the paragraph's opening sentence and its ink, the paper row, the ink of every line row and of every fragment row.
 ``restyle`` swaps those phrases for another style's (the v2 steering test: the same text and layout drawn as another
 archive); ``edit_caption`` rewrites the caption as a FLUX.3 image-edit record that takes the hand, ink and paper from
-a reference image instead (the v3 reference-style LoRA). Every phrase is built from a style's fields and must occur
+a reference image instead (the v3 reference-style LoRA); ``named_edit_caption`` does both, naming the archive and look
+in words beside the reference (v3b). Every phrase is built from a style's fields and must occur
 where the grammar writes it, so a change to the grammar fails loudly instead of leaving stale words behind.
 """
 
@@ -93,6 +94,23 @@ _FROM_REFERENCE = _Phrases(
 _WHOLE_IMAGE = [0, 0, 1000, 1000]
 
 
+def _from_reference_naming(style: Style) -> _Phrases:
+    """The image-edit phrases that also name ``style``'s archive, years, scan, paper and ink."""
+    words = _phrases(style)
+    scan = "greyscale archival scan" if style.look.greyscale else "archival scan"
+    when = f", dated {style.provenance.years}" if style.provenance.years else ""
+    return _Phrases(
+        opening=(
+            f"Create a flat, evenly lit {scan} of a new handwritten page from {style.provenance.title}{when}, in the "
+            f"hand, ink and paper of <ref_image_0>. The {style.look.paper} paper <paper_1>"
+        ),
+        ink_opening=words.ink_opening,
+        paper_row=words.paper_row,
+        ink_line=f"cursive script in the reference's hand, in {style.look.ink} ink.",
+        ink_fragment=words.ink_fragment,
+    )
+
+
 class EditRow(BaseModel):
     """One row of a FLUX.3 image-edit layout table, in the field order of its annotation."""
 
@@ -163,6 +181,16 @@ def edit_caption(record: CropRecord) -> str:
     The paragraph becomes an instruction citing the reference and the layout rows the edit table: the paper taken
     from the whole reference, every line and fragment new content.
     """
+    return _edit_record(record, _FROM_REFERENCE)
+
+
+def named_edit_caption(record: CropRecord) -> str:
+    """``edit_caption`` that also names the record's archive, years, scan, paper and ink: the style in words and by
+    example at once."""
+    return _edit_record(record, _from_reference_naming(Style.of(record)))
+
+
+def _edit_record(record: CropRecord, new: _Phrases) -> str:
     old = _phrases(Style.of(record))
     with _written_by_this_grammar(record):
         rows = [
@@ -171,9 +199,9 @@ def edit_caption(record: CropRecord) -> str:
                 source="ref_image_0" if row.id == "paper_1" else "target",
                 src_bbox=_WHOLE_IMAGE if row.id == "paper_1" else None,
                 tgt_bbox=row.bbox,
-                desc=_restyled_desc(row, old, _FROM_REFERENCE),
+                desc=_restyled_desc(row, old, new),
             )
             for row in record.layout
         ]
-        paragraph = _restyled_paragraph(_paragraph(record), old, _FROM_REFERENCE)
+        paragraph = _restyled_paragraph(_paragraph(record), old, new)
     return f"{paragraph} {_rows_json([row.model_dump(by_alias=True) for row in rows])}"

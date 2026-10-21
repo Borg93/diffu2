@@ -8,6 +8,8 @@ years) and a ``ScanLook`` (scan, paper, ink), as in every v2 caption. CPU only.
 
 from __future__ import annotations
 
+from operator import attrgetter
+
 from pydantic import BaseModel
 
 from diffu_page.captions.look import ScanLook
@@ -58,7 +60,7 @@ def regions_of(layout: Layout) -> list[Region]:
     for box in layout.boxes:
         if box.text.strip() and box.region != TABLE:
             grouped.setdefault((box.region, box.block), []).append(_line(box))
-    return [Region(lines=sorted(lines, key=lambda line: line.baseline_y)) for lines in grouped.values()]
+    return [Region(lines=sorted(lines, key=attrgetter("baseline_y"))) for lines in grouped.values()]
 
 
 def _reading_order(crop: Crop, block_rank: dict[str, int]) -> list[int]:

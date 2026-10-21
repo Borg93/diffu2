@@ -62,7 +62,7 @@ def _draw(pipe: ModularPipeline, reference: Image.Image | None = None) -> DrawnC
 def _alto_lines(labels_xml: str) -> list[str]:
     root = ET.fromstring(labels_xml)
     lines = [e for e in root.iter() if e.tag.endswith("TextLine")]
-    return [" ".join(s.get("CONTENT") for s in line.iter() if s.tag.endswith("String")) for line in lines]
+    return [" ".join(s.get("CONTENT", "") for s in line.iter() if s.tag.endswith("String")) for line in lines]
 
 
 def test_crop_pipeline_draws_a_plan_with_one_unclear_label_per_line(crop_pipe: ModularPipeline) -> None:
