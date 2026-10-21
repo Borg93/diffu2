@@ -36,8 +36,8 @@ Done 2026-10-21.
       call the old paths and `scripts/spark_guard.sh`).
 - [x] Tests for plan (reading order: body block before its margin notes) and restyle (restyled caption == the crop
       captioned in the target style; the v3 edit caption takes only the paper from the reference). 50 tests.
-- [ ] Delete `experiments/` once the running v2 job's evals have used it (~16:45 2026-10-21). Kept only for that
-      run, which started before the restructure.
+- [x] `experiments/` deleted on main (the local checkout keeps its copy until tonight's queue, which runs it), and
+      the training configs moved into diffu-train (`packages/train/configs/flux3/`).
 - [ ] Run `jobs/setup_nemo_env.sh` once to drop the stale page-synth / diffu-gen / old diffu installs from the NeMo
       environment and install diffu, diffu-page and diffu-train.
 - [x] `docs/PIPELINE.md`: the flow from page to labelled crops, training, and the training/generation consistency table.
@@ -221,6 +221,24 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
       slot IoU 0.72 vs traced ink 0.37). To match the GT convention, widen the slot.
 - [ ] Narrow columns get no crops (under the 640 px minimum when a margin note narrows a column). Decide: crop
       narrow columns side by side, or leave such pages out.
+
+## Templates from scans (YOLO26)
+
+Any scanned page as a template, not only pages with PAGE/ALTO ground truth.
+
+- [ ] `DetectLayoutStep` in diffu-page, an auto block beside `LoadLayoutStep` chosen by its input (a page image instead
+      of a PAGE/ALTO file). It runs Riksarkivet/yolo26s-handwritten-regions-2 to find text regions, then
+      `yolo26s-handwritten-lines_within_regions-2` to find the lines within each region: HTRflow's two stages. It
+      writes the same `Layout`, with line boxes from the masks and baselines estimated from each mask's lower edge, so
+      refill, crop planning, the captions' layout control and the labels run unchanged.
+- [ ] Region roles. These models have one class each (`textregion`, `textline`), so every region would be running
+      text. Map a model's classes to our roles (marginalia, heading, page-number, ...) through a table, so a
+      multi-class layout model drops in; until one exists, infer margin notes from geometry (narrow regions beside the
+      main column).
+- [ ] Check it on GT pages: detected lines against their PAGE lines (line recall, box IoU, baseline offset).
+- [ ] The weights are CC-BY-4.0, but `ultralytics`, which runs them, is AGPL-3.0. Internal use is fine (HTRflow
+      already depends on it); serving the studio publicly with it needs AGPL compliance or an Ultralytics licence.
+- [ ] Studio: an image input next to the template file.
 
 ## FLUX.3 reference runs
 

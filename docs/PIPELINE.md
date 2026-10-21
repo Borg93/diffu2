@@ -52,7 +52,7 @@ pipeline). All of them name and seed crops alike, so a page comes out the same f
 - `diffu_page.data.build_crops` cuts the GT pages into crops with captions; `steer_set`, `style_pairs` and
   `pick_eval` build the steering, v3 and evaluation sets.
 - NeMo caches latents and prompt embeddings once (its FLUX.3 processor; `diffu_train.cache_pairs` for v3's
-  pairs), then trains a LoRA with the configs in `configs/flux3/` and our interleaved bucket dataloader
+  pairs), then trains a LoRA with the configs in `packages/train/configs/flux3/` and our interleaved bucket dataloader
   (`diffu_train.nemo`).
 - Job scripts in `jobs/flux3/` run each GPU step through `jobs/spark_guard.sh`: one GPU job at a time on the DGX
   Spark, whose 128 GB of memory is shared by CPU and GPU.

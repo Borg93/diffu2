@@ -7,7 +7,7 @@
 # model, default the Hub repo). run_v2.sh sets both; by hand, from the NeMo AutoModel repo root:
 #
 #   DIFFU_REPO=~/Desktop/repos/diffu2 uv run --no-sync torchrun --nproc-per-node=1 \
-#       examples/diffusion/finetune/finetune.py -c $DIFFU_REPO/configs/flux3/flux3_layout_lora_v2.yaml
+#       examples/diffusion/finetune/finetune.py -c $DIFFU_REPO/packages/train/configs/flux3/flux3_layout_lora_v2.yaml
 
 seed: 42
 

@@ -19,14 +19,13 @@ what runs it. Everything that draws is a Modular Diffusers pipeline: our blocks 
 | --- | --- | --- | --- |
 | `src/diffu`, `tests/` | diffu | The model, laid out like a diffusers model (`modular_pipelines/diffu/`): FLUX.3's transformer with our own weights, a Qwen3.5 text encoder and the Qwen-Image VAE; `diffu-init` writes a new model repo | torch, diffusers |
 | `packages/page` | diffu-page | Archive pages as data (`layout/`, `crops/`, `captions/`, plans, labels, the training-data builders in `data/`), our blocks (`blocks/`), the page and crop pipelines (`pipeline.py`) and their CLIs: `diffu-generate`, `diffu-evaluate`, `diffu-sheets` | torch, diffusers, transformers |
-| `packages/train` | diffu-train | NeMo AutoModel glue: dataloader configs, v3 pair caching | NeMo AutoModel (its environment only) |
+| `packages/train` | diffu-train | NeMo AutoModel glue: the training configs (`configs/flux3/`), dataloader configs, v3 pair caching | NeMo AutoModel (its environment only) |
 | `packages/runner` | diffu-runner | Generation at scale on a Ray cluster: pages planned on CPU workers, crops drawn by GPU actors each holding a crop pipeline | ray |
 | `packages/studio` | diffu-studio | The page pipeline as a `gr.Workflow` canvas: a plan node feeding one draw node per drawer (a model and its LoRAs), so models draw the same page side by side; app view and REST endpoint included | gradio |
 
 Package names keep the `diffu-` prefix (imports `diffu_page`, ...) so they stay unique in NeMo's shared environment.
 
 ```
-configs/flux3/  NeMo AutoModel training configs
 jobs/           GPU job scripts (flux3/), spark_guard.sh (one GPU job at a time on the DGX Spark, 128 GB unified
                 memory), setup_nemo_env.sh (installs the members into NeMo's environment)
 docs/           PIPELINE.md
