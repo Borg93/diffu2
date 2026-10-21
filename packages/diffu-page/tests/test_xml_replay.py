@@ -84,3 +84,14 @@ def test_replay_reads_the_region_types_transkribus_writes_into_custom(tmp_path: 
         "No 12": "marginalia",
         "den fjarde maj artonhundra attiotva": "body",
     }
+
+
+def test_replay_keeps_the_block_each_line_came_from(tmp_path: Path):
+    xml = tmp_path / "p.xml"
+    xml.write_text(_TRANSKRIBUS_XML, encoding="utf-8")
+    layout = load_xml_layout(str(xml), single_page=False)
+    assert {box.text: box.block for box in layout.boxes} == {
+        "97.": "r1",
+        "No 12": "r2",
+        "den fjarde maj artonhundra attiotva": "r3",
+    }

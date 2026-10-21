@@ -29,6 +29,7 @@ class LineBox(BaseModel):
     rotation: float = 0.0  # small per-line skew in degrees (cosmetic realism)
     printed: bool = False  # render as TYPESET print (form headers / row numbers), not handwriting
     tag: str = ""  # editorial tag carried to the label: add (interlinear) | del (struck) | unclear
+    block: str = ""  # the source block a replayed line came from (its PAGE TextRegion / ALTO TextBlock id)
 
 
 class Rule(BaseModel):

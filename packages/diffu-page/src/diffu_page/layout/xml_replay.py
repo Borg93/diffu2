@@ -55,6 +55,16 @@ def _line_region(line: ET.Element, parents: dict[ET.Element, ET.Element]) -> str
     return "body"
 
 
+def _block_id(line: ET.Element, parents: dict[ET.Element, ET.Element]) -> str:
+    """The id of the region or block a ``TextLine`` sits in: lines of one block run as one column."""
+    cur = parents.get(line)
+    while cur is not None:
+        if _local_tag(cur.tag) in ("TextRegion", "TableCell", "TextBlock"):
+            return cur.get("id") or cur.get("ID") or ""
+        cur = parents.get(cur)
+    return ""
+
+
 def _region_type(region: ET.Element) -> str:
     """A ``TextRegion``'s PAGE type: its ``@type``, else the ``structure {type:...}`` in its Transkribus ``@custom``."""
     structure = _CUSTOM_STRUCTURE.search(region.get("custom") or "")
@@ -143,6 +153,7 @@ def _line_from_element(
         h=y1 - y0,
         baseline_y=int(y0 + spec.baseline_frac * (y1 - y0)),
         region=_line_region(el, parents),
+        block=_block_id(el, parents),
     )
 
 
