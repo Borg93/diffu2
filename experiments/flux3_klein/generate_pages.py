@@ -1,10 +1,12 @@
 """Generate synthetic archive crops with ALTO/PAGE ground truth: any page template, any text, a chosen style.
 
 For each template (a real PAGE/ALTO page, replayed with diffu-page) the running text is replaced by new text
-(``refill``), the page is planned as training-scale crops (``page_plan``), and every crop goes through the
-generator (``page_blocks``): FLUX.3 Klein + a LoRA draws it, TrOCR reads every line back, and its labels are
-written with badly-read lines tagged ``unclear``. Writes ``<out>/<page>_<k>.jpg`` + ``.xml`` per crop and
-``<out>/summary.json``. Runs in the NeMo AutoModel environment, one GPU job, through scripts/spark_guard.sh:
+(``refill``), the page is planned as training-scale crops (``page_plan``), and every crop goes through a
+:class:`CropGenerator`: FLUX.3 Klein + a LoRA draws it, TrOCR reads every line back, and its labels are written with
+badly-read lines tagged ``unclear``. ``CropGenerator`` is the unit a Ray Data actor wraps: the pipeline is loaded
+once, then each call turns one crop plan into one image + labels. Writes ``<out>/<page>_<k>.jpg`` + ``.xml`` per crop
+and ``<out>/summary.json``; ``--profile <dir>`` also records a torch profiler trace (Perfetto) of crops 2-3 after a
+warm-up crop. Runs in the NeMo AutoModel environment, one GPU job, through scripts/spark_guard.sh:
 
     cd ~/Desktop/repos/Automodel && ~/Desktop/repos/diffu2/scripts/spark_guard.sh --need-gb 45 --name pages -- \\
         .venv-managed/bin/python ~/Desktop/repos/diffu2/experiments/flux3_klein/generate_pages.py \\
@@ -15,15 +17,62 @@ written with badly-read lines tagged ``unclear``. Writes ``<out>/<page>_<k>.jpg`
 from __future__ import annotations
 
 import argparse
+import time
+from contextlib import nullcontext
 from pathlib import Path
 
 import torch
 from build_layout_crops import Provenance, ScanLook
 from diffu_page import load_xml_layout, refill, running_text
 from eval_layout import DEFAULT_MODEL, apply_nemo_lora, mean
-from page_blocks import build_generator
-from page_plan import PageStyle, plan_page
-from pydantic import BaseModel
+from page_blocks import LabelFormat, build_generator
+from page_plan import CropPlan, PageStyle, plan_page
+from PIL import Image
+from pydantic import BaseModel, ConfigDict
+from torch.profiler import ProfilerActivity, profile, record_function, schedule
+
+
+class GeneratedCrop(BaseModel):
+    """One drawn crop: its image, its labels and how well its lines read back."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    image: Image.Image
+    labels_xml: str
+    line_cers: list[float]
+    unclear_lines: int
+    seconds: float
+
+
+class CropGenerator:
+    """FLUX.3 Klein (+ LoRA) as a crop generator: loaded once, then one crop plan in, one crop out per call."""
+
+    def __init__(self, model: str, *, lora: str | None, steps: int, label_format: LabelFormat) -> None:
+        self._pipe = build_generator(model)
+        if lora:
+            print(
+                f"LoRA: {apply_nemo_lora(self._pipe.transformer, Path(lora))} modules from {lora}", flush=True
+            )
+        self._steps = steps
+        self._label_format = label_format
+
+    def __call__(self, plan: CropPlan, *, seed: int, image_name: str) -> GeneratedCrop:
+        start = time.perf_counter()
+        state = self._pipe(
+            crop_plan=plan,
+            num_inference_steps=self._steps,
+            generator=torch.Generator().manual_seed(seed),
+            label_format=self._label_format,
+            image_name=image_name,
+            output=["images", "line_cers", "labels_xml", "unclear_lines"],
+        )
+        return GeneratedCrop(
+            image=state["images"][0],
+            labels_xml=state["labels_xml"],
+            line_cers=state["line_cers"],
+            unclear_lines=state["unclear_lines"],
+            seconds=time.perf_counter() - start,
+        )
 
 
 class CropResult(BaseModel):
@@ -31,6 +80,7 @@ class CropResult(BaseModel):
     lines: int
     unclear_lines: int
     cer: float
+    seconds: float
 
 
 class PageResult(BaseModel):
@@ -64,7 +114,32 @@ def _parse_args() -> argparse.Namespace:
     ap.add_argument("--steps", type=int, default=50)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--format", choices=["alto", "page"], default="alto")
+    ap.add_argument("--profile", type=Path, default=None, help="write a profiler trace of crops 2-3 here")
     return ap.parse_args()
+
+
+def _trace_handler(out: Path):
+    def handle(prof: profile) -> None:
+        out.mkdir(parents=True, exist_ok=True)
+        prof.export_chrome_trace(str(out / "trace.json"))
+        table = prof.key_averages().table(sort_by="cuda_time_total", row_limit=40)
+        (out / "top_ops.txt").write_text(table, encoding="utf-8")
+        print(table, flush=True)
+
+    return handle
+
+
+def _profiler(out: Path | None):
+    """One warm-up crop, then two recorded ones (CPU + CUDA, shapes, memory), or nothing."""
+    if out is None:
+        return nullcontext(None)
+    return profile(
+        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+        schedule=schedule(wait=0, warmup=1, active=2, repeat=1),
+        on_trace_ready=_trace_handler(out),
+        record_shapes=True,
+        profile_memory=True,
+    )
 
 
 def main() -> None:
@@ -75,37 +150,35 @@ def main() -> None:
     )
     text = " ".join(running_text(load_xml_layout(str(path), single_page=False)) for path in args.text_from)
     args.out.mkdir(parents=True, exist_ok=True)
-    pipe = build_generator(args.model)
-    if args.lora:
-        print(
-            f"LoRA: {apply_nemo_lora(pipe.transformer, Path(args.lora))} modules from {args.lora}", flush=True
-        )
+    generate = CropGenerator(args.model, lora=args.lora, steps=args.steps, label_format=args.format)
 
     pages: list[PageResult] = []
-    for t, template in enumerate(args.templates):
-        layout = refill(load_xml_layout(str(template), single_page=False), [text])
-        crops: list[CropResult] = []
-        for k, plan in enumerate(plan_page(layout, style)):
-            name = f"{t:03d}_{template.stem}_{k}"
-            state = pipe(
-                crop_plan=plan,
-                num_inference_steps=args.steps,
-                generator=torch.Generator().manual_seed(args.seed + 1000 * t + k),
-                label_format=args.format,
-                image_name=f"{name}.jpg",
-                output=["images", "line_cers", "labels_xml", "unclear_lines"],
-            )
-            state["images"][0].save(args.out / f"{name}.jpg", quality=92)
-            (args.out / f"{name}.xml").write_text(state["labels_xml"], encoding="utf-8")
-            crop = CropResult(
-                image=f"{name}.jpg",
-                lines=len(plan.lines),
-                unclear_lines=state["unclear_lines"],
-                cer=mean(state["line_cers"]),
-            )
-            crops.append(crop)
-            print(f"{name}: {crop.lines} lines, CER {crop.cer:.3f}, {crop.unclear_lines} unclear", flush=True)
-        pages.append(PageResult(template=str(template), crops=crops))
+    with _profiler(args.profile) as prof:
+        for t, template in enumerate(args.templates):
+            layout = refill(load_xml_layout(str(template), single_page=False), [text])
+            crops: list[CropResult] = []
+            for k, plan in enumerate(plan_page(layout, style)):
+                name = f"{t:03d}_{template.stem}_{k}"
+                with record_function(f"crop {plan.width}x{plan.height}"):
+                    crop = generate(plan, seed=args.seed + 1000 * t + k, image_name=f"{name}.jpg")
+                if prof is not None:
+                    prof.step()
+                crop.image.save(args.out / f"{name}.jpg", quality=92)
+                (args.out / f"{name}.xml").write_text(crop.labels_xml, encoding="utf-8")
+                result = CropResult(
+                    image=f"{name}.jpg",
+                    lines=len(plan.lines),
+                    unclear_lines=crop.unclear_lines,
+                    cer=mean(crop.line_cers),
+                    seconds=crop.seconds,
+                )
+                crops.append(result)
+                print(
+                    f"{name}: {result.lines} lines, CER {result.cer:.3f}, {result.unclear_lines} unclear, "
+                    f"{result.seconds:.1f} s",
+                    flush=True,
+                )
+            pages.append(PageResult(template=str(template), crops=crops))
 
     summary = Summary(style=style, lora=args.lora, steps=args.steps, pages=pages)
     (args.out / "summary.json").write_text(summary.model_dump_json(indent=1), encoding="utf-8")

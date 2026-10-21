@@ -34,6 +34,8 @@ What is known to be wrong or unfinished. Remove an item when it is done; add the
 - [ ] Decide on v3 (style by example) from the steering results; its results land tomorrow morning.
 - [ ] Full pages: generate at 2–4 MP, or stitch windows that share a v3 reference.
 - [ ] Speed: about 2 minutes per crop at 50 steps with CFG. Measure fewer steps and a compiled transformer before using them.
+- [ ] Read tonight's profile (`runs/flux3_pages/smoke/profile/trace.json`, Perfetto; pytorch-skills:profile-model): which SDPA backend runs on sm_121 (flash/efficient/cudnn/math by kernel name), GPU idle vs busy, top kernels, text-encoder vs denoise vs VAE vs TrOCR share.
+- [ ] Ray Data at scale, the diffu-runner pattern: template/refill/plan as CPU map steps, `CropGenerator` as a stateful GPU actor (`map_batches`, concurrency = GPUs), TrOCR read-back co-located, Lance sink. Decide from the profile whether to batch same-bucket crops per forward pass.
 - [ ] Style score: a classifier on real crops to measure whether a generated crop matches the requested archive or reference.
 - [ ] Caption grammar is shared by training and generation but lives in a data-building script (`build_layout_crops.py`).
 
