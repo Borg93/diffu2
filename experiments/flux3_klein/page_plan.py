@@ -18,6 +18,7 @@ from build_layout_crops import (
     Region,
     ScanLook,
     caption_for,
+    caption_order,
     crops_for_page,
 )
 from diffu_page import Layout, LineBox
@@ -51,7 +52,12 @@ class CropPlan(BaseModel):
     width: int
     height: int
     caption: str
-    lines: list[LineRecord]  # boxes on 0-1000 of the crop, y first
+    lines: list[LineRecord]  # boxes on 0-1000 of the crop, y first, in the caption's numbering
+    reading_order: list[int]  # indices into ``lines``: block by block in page order, top to bottom in each
+
+
+def _source(box: LineBox) -> str:
+    return f"{box.region}|{box.block}"
 
 
 def _line(box: LineBox) -> Line:
@@ -61,6 +67,7 @@ def _line(box: LineBox) -> Line:
         baseline_y=box.baseline_y,
         text=box.text,
         role=ROLES.get(box.region, ""),
+        source=_source(box),
     )
 
 
@@ -74,9 +81,22 @@ def regions_of(layout: Layout) -> list[Region]:
     return [Region(lines=sorted(lines, key=lambda line: line.baseline_y)) for lines in grouped.values()]
 
 
-def _plan(crop: Crop, caption: Caption) -> CropPlan:
+def _reading_order(crop: Crop, block_rank: dict[str, int]) -> list[int]:
+    """The crop's lines (in caption numbering) in reading order: by their block's place on the page, then down."""
+    numbered = caption_order(crop.lines)
+    return sorted(
+        range(len(numbered)), key=lambda i: (block_rank[numbered[i].source], numbered[i].baseline_y)
+    )
+
+
+def _plan(crop: Crop, caption: Caption, block_rank: dict[str, int]) -> CropPlan:
     return CropPlan(
-        rect=crop.rect, width=crop.size[0], height=crop.size[1], caption=caption.text, lines=caption.lines
+        rect=crop.rect,
+        width=crop.size[0],
+        height=crop.size[1],
+        caption=caption.text,
+        lines=caption.lines,
+        reading_order=_reading_order(crop, block_rank),
     )
 
 
@@ -85,4 +105,7 @@ def plan_page(layout: Layout, style: PageStyle, settings: CropSettings | None = 
     crops = crops_for_page(
         regions_of(layout), (layout.spec.width, layout.spec.height), settings or CropSettings()
     )
-    return [_plan(crop, caption_for(crop, style.provenance, style.look)) for crop in crops]
+    block_rank = {
+        source: rank for rank, source in enumerate(dict.fromkeys(_source(box) for box in layout.boxes))
+    }
+    return [_plan(crop, caption_for(crop, style.provenance, style.look), block_rank) for crop in crops]

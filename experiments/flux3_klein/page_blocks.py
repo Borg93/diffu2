@@ -80,7 +80,8 @@ def line_labels(plan: CropPlan, line_cers: list[float], max_line_cer: float) -> 
     """The plan's lines as labels in crop pixels: the slot as the polygon, the baseline across it, and a line
     whose read-back error rate is over ``max_line_cer`` tagged ``unclear``."""
     labels: list[LineLabel] = []
-    for order, (line, line_cer) in enumerate(zip(plan.lines, line_cers, strict=True)):
+    order_of = {index: order for order, index in enumerate(plan.reading_order)}
+    for index, (line, line_cer) in enumerate(zip(plan.lines, line_cers, strict=True)):
         x0, y0, x1, y1 = (round(v) for v in pixel_box(line.bbox, (plan.width, plan.height)))
         baseline_y = round(y0 + SLOT_BASELINE * (y1 - y0))
         labels.append(
@@ -89,7 +90,7 @@ def line_labels(plan: CropPlan, line_cers: list[float], max_line_cer: float) -> 
                 polygon=[(x0, y0), (x1, y0), (x1, y1), (x0, y1)],
                 baseline=[(x0, baseline_y), (x1, baseline_y)],
                 region=_REGION_OF_ROLE.get(line.role, "body"),
-                order=order,
+                order=order_of[index],
                 tag="unclear" if line_cer > max_line_cer else "",
             )
         )

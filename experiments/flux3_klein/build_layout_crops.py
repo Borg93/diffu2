@@ -168,6 +168,7 @@ class Line(BaseModel):
     baseline_y: float
     text: str
     role: str = ""  # its region's PAGE type when ROLE_NAMES names it
+    source: str = ""  # the region / block it came from, when a caller tracks reading order by block
 
     @property
     def box(self) -> Box:
@@ -619,6 +620,11 @@ def _is_cut_off(line: Line, rect: Box, pitch: float) -> bool:
     return min(line.box[3], rect[3]) - max(line.box[1], rect[1]) > 0.25 * pitch
 
 
+def caption_order(lines: list[Line]) -> list[Line]:
+    """The order a caption numbers a crop's lines in (``Sv_Text_1``, ...): top to bottom, then left to right."""
+    return sorted(lines, key=lambda line: (line.baseline_y, line.box[0]))
+
+
 def caption_for(crop: Crop, provenance: Provenance, look: ScanLook) -> Caption:
     """The FLUX.3 layout prompt of a crop: one English paragraph citing every element as ``<id>``, a space, the
     layout rows as JSON.
@@ -630,10 +636,7 @@ def caption_for(crop: Crop, provenance: Provenance, look: ScanLook) -> Caption:
     its language code + ``_Text_`` + its index in reading order (``Sv_Text_1``). Lines cut by the top or bottom
     edge get a ``fragment_k`` row, so the model learns that unprompted ink appears only where a row says so.
     """
-    numbered = [
-        (f"Sv_Text_{i}", line)
-        for i, line in enumerate(sorted(crop.lines, key=lambda line: (line.baseline_y, line.box[0])), start=1)
-    ]
+    numbered = [(f"Sv_Text_{i}", line) for i, line in enumerate(caption_order(crop.lines), start=1)]
     fragments = [
         (f"fragment_{k}", line)
         for k, line in enumerate(sorted(crop.fragments, key=lambda line: line.baseline_y), 1)
