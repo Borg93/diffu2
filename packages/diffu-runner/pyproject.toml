@@ -7,7 +7,6 @@ requires-python = ">=3.12,<3.14"
 license = "Apache-2.0"
 authors = [{ name = "Gabriel Borg" }]
 dependencies = [
-    "diffu-gen",
     "diffu-page",
     "pydantic>=2",
     "ray[data]==2.59.0",  # pinned: the actor API is version-sensitive; match the cluster's Ray

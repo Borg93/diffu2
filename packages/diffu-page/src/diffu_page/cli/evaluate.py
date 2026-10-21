@@ -1,12 +1,12 @@
-"""Evaluate FLUX.3 (+ LoRAs) on held-out crops: draw each from its stored caption and read every line back.
+"""Evaluate a model (FLUX.3 + LoRAs, or diffu) on held-out crops: draw each from its stored caption with the crop
+pipeline (:func:`diffu_page.pipeline.crop_blocks`) and read every line back, beside the real crop's read-back.
 
-Every crop goes through the same :class:`diffu_gen.generator.CropGenerator` as page generation; a crop that names a
-``reference`` image is drawn conditioned on it (v3, style by example). A crop's optional ``seed`` overrides
-``--seed + index`` (the steering test draws every variant of a template from the same noise). Writes contact sheets
-(``[reference,] real, generated``), ``generated/NNN.png`` and ``results.json``; a crop that fails is recorded there
-and the rest still run.
+A crop that names a ``reference`` image is drawn conditioned on it (v3, style by example). A crop's optional ``seed``
+overrides ``--seed + index`` (the steering test draws every variant of a template from the same noise). Writes contact
+sheets (``[reference,] real, generated``), ``generated/NNN.png`` and ``results.json``; a crop that fails is recorded
+there and the rest still run.
 
-    page-synth-evaluate --crops data_flux3/layout_crops_v2/val_eval --lora v2=<ckpt>/model --out <dir> -n 24
+    diffu-evaluate --crops data_flux3/layout_crops_v2/val_eval --lora v2=<ckpt>/model --out <dir> -n 24
 """
 
 from __future__ import annotations
@@ -16,16 +16,17 @@ from statistics import fmean
 from typing import Annotated
 
 import typer
+from diffusers.modular_pipelines import ModularPipeline
 from PIL import Image, ImageDraw
 from pydantic import BaseModel
 
-from diffu_gen.cli.options import Lora, parse_lora
-from diffu_gen.generator import CropGenerator, GeneratorSettings
-from diffu_gen.modular.readback import pixel_box
-from diffu_gen.settings import settings
 from diffu_page.captions.prompt import LineRecord
+from diffu_page.cli.options import Lora, parse_lora
 from diffu_page.output import console, err_console
+from diffu_page.pipeline import DrawSettings, crop_blocks, draw_crop, load_pipeline
 from diffu_page.plan import CropPlan
+from diffu_page.readback import pixel_box, read_lines
+from diffu_page.settings import settings
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 
@@ -137,15 +138,23 @@ def _load(path: Path) -> Image.Image:
 
 
 def evaluate_crop(
-    generator: CropGenerator, crop: EvalCrop, *, index: int, seed: int, crops_dir: Path, out: Path
+    pipe: ModularPipeline,
+    crop: EvalCrop,
+    *,
+    index: int,
+    seed: int,
+    crops_dir: Path,
+    out: Path,
+    settings: DrawSettings,
 ) -> CropResult:
-    """Draw one held-out crop, read it and its real counterpart back, and save its contact sheet."""
+    """Draw one held-out crop with the crop pipeline, read it and its real counterpart back, and save its contact
+    sheet."""
     plan = crop.plan()
     reference = _load(crops_dir / crop.reference) if crop.reference else None
-    drawn = generator(plan, seed=seed, image_name=f"{index:03d}.png", reference=reference)
+    drawn = draw_crop(pipe, plan, name=f"{index:03d}", seed=seed, reference=reference, settings=settings)
     drawn.image.save(out / "generated" / f"{index:03d}.png")
     real = _load(crops_dir / crop.file_name).resize(drawn.image.size)
-    real_reads, real_cers = generator.read(real, plan)
+    real_reads, real_cers = read_lines(real, plan.lines, model=pipe.htr_model, processor=pipe.htr_processor)
     panels = [reference, real, drawn.image] if reference else [real, drawn.image]
     contact_sheet(panels, crop.lines).save(out / f"{index:03d}_{Path(crop.file_name).stem}.jpg")
     lines = zip(crop.lines, drawn.line_reads, drawn.line_cers, real_reads, real_cers, strict=True)
@@ -165,7 +174,7 @@ def evaluate(
         Path, typer.Option(help="a split dir of diffu_page.data.build_crops (or steer_set / style_pairs)")
     ],
     out: Annotated[Path, typer.Option(help="where the sheets, generated/ and results.json go")],
-    model: Annotated[Path, typer.Option(help="the FLUX.3 model directory")] = settings.flux3_model,
+    model: Annotated[Path, typer.Option(help="the model directory (FLUX.3 Klein or diffu)")] = settings.flux3_model,
     lora: Annotated[list[Lora] | None, typer.Option(parser=parse_lora, help="name=<NeMo LoRA model dir>")] = None,
     n: Annotated[int, typer.Option("-n", help="crops to evaluate")] = 16,
     steps: int = 50,
@@ -180,22 +189,24 @@ def evaluate(
     eval_crops = read_crops(crops, n)
     (out / "generated").mkdir(parents=True, exist_ok=True)
     loras = {adapter.name: adapter.path for adapter in lora or []}
-    generator_settings = GeneratorSettings(
+    draw_settings = DrawSettings(
         steps=steps, guidance_scale=guidance, text_layers=tuple(text_layer) if text_layer else None, device=device
     )
-    generator = CropGenerator(model, loras=loras, settings=generator_settings)
+    pipe = load_pipeline(model, crop_blocks, loras=loras, settings=draw_settings)
     samples: list[CropResult] = []
     failed: dict[int, str] = {}
     for k, crop in enumerate(eval_crops):
         crop_seed = crop.seed if crop.seed is not None else seed + k
         try:
-            samples.append(evaluate_crop(generator, crop, index=k, seed=crop_seed, crops_dir=crops, out=out))
-            console.print(
-                f"{k:3d} {crop.file_name}: gen CER {samples[-1].gen_cer:.3f}, real CER {samples[-1].real_cer:.3f}"
+            sample = evaluate_crop(
+                pipe, crop, index=k, seed=crop_seed, crops_dir=crops, out=out, settings=draw_settings
             )
         except Exception as error:  # one crop must not end a long evaluation; results.json records it
             failed[k] = f"{type(error).__name__}: {error}"
             err_console.print(f"{k:3d} {crop.file_name} failed: {failed[k]}")
+            continue
+        samples.append(sample)
+        console.print(f"{k:3d} {crop.file_name}: gen CER {sample.gen_cer:.3f}, real CER {sample.real_cer:.3f}")
     if not samples:
         err_console.print("no crop could be evaluated")
         raise typer.Exit(code=1)

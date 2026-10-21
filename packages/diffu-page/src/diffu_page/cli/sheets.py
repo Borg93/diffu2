@@ -2,10 +2,10 @@
 it was asked to look like.
 
 Reads the steering set (``diffu_page.data.steer_set`` or ``style_pairs``' by_example) and the
-``diffu_gen.cli.evaluate`` run over it (``generated/NNN.png``, ``results.json``); writes ``steer_template_<t>.jpg``
+``diffu_page.cli.evaluate`` run over it (``generated/NNN.png``, ``results.json``); writes ``steer_template_<t>.jpg``
 into the run dir.
 
-    page-synth-sheets --steer data_flux3/steer_v2 --run runs/flux3_layout_v2/steer
+    diffu-sheets --steer data_flux3/steer_v2 --run runs/flux3_layout_v2/steer
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ class Sample(BaseModel):
 
 
 class Results(BaseModel):
-    """What a sheet needs of ``diffu_gen.cli.evaluate``'s ``results.json``."""
+    """What a sheet needs of ``diffu_page.cli.evaluate``'s ``results.json``."""
 
     samples: list[Sample]
 
@@ -86,7 +86,7 @@ def _load(path: Path) -> Image.Image:
 @app.command()
 def sheets(
     steer: Annotated[Path, typer.Option(help="the steering set (diffu_page.data.steer_set)")],
-    run: Annotated[Path, typer.Option(help="the diffu_gen.cli.evaluate output dir of that set")],
+    run: Annotated[Path, typer.Option(help="the diffu_page.cli.evaluate output dir of that set")],
 ) -> None:
     """Lay out one contact sheet per template of a steering run."""
     with (steer / "metadata.jsonl").open(encoding="utf-8") as metadata:

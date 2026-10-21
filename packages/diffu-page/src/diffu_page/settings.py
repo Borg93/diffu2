@@ -1,4 +1,4 @@
-"""Where page-synth finds its models: typed settings, read from the environment once."""
+"""Where diffu-page finds its models: typed settings, read from the environment once."""
 
 from __future__ import annotations
 

@@ -1,5 +1,5 @@
 #!/bin/bash
-# The first GPU run of the page generator (diffu_gen.cli.generate): two real Bergskollegium pages refilled with the text of
+# The first GPU run of the page generator (diffu_page.cli.generate): two real Bergskollegium pages refilled with the text of
 # two others, every crop drawn with the final v2 LoRA in Bergskollegium's style, read back and labelled. Waits for the
 # v2 steering test (run_steer.sh), runs through jobs/spark_guard.sh, then hands the GPU to run_v3.sh. Run detached:
 #
@@ -26,7 +26,7 @@ step "1/2 generate pages with $lora"
 mkdir -p "$OUT"
 cd "$AUTOMODEL"
 if "$REPO/jobs/spark_guard.sh" --need-gb 45 --name flux-pages-smoke --log "$REPO/runs/flux3_pages/guard.log" -- \
-    .venv-managed/bin/python -m diffu_gen.cli.generate \
+    .venv-managed/bin/python -m diffu_page.cli.generate \
     --templates "$VOLUME/40004026_00128.xml" --templates "$VOLUME/40004026_00094.xml" \
     --text-from "$VOLUME/40004026_00339.xml" --text-from "$VOLUME/40004026_00200.xml" \
     --lora "v2=$lora" --out "$OUT" --profile "$OUT/profile" \

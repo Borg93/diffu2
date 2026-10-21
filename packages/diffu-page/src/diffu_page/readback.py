@@ -1,4 +1,4 @@
-"""Reading generated lines back with a Swedish HTR model, and the error rates that score them."""
+"""Reading drawn lines back with a Swedish HTR model, and the error rates that score them."""
 
 from __future__ import annotations
 

@@ -1,13 +1,13 @@
 """Generate synthetic archive crops with ALTO/PAGE ground truth: any page template, any text, a chosen style.
 
-For each template (a real PAGE/ALTO page) the running text is replaced by new text (``refill``), the page is planned
-as training-scale crops (``diffu_page.plan``), and every crop goes through a :class:`diffu_gen.generator.CropGenerator`:
-FLUX.3 + LoRAs draw it, TrOCR reads every line back, and its labels are written with badly read lines tagged
-``unclear``. Writes ``<out>/<page>_<k>.jpg`` + ``.xml`` per crop and ``<out>/summary.json``; a crop that fails is
-recorded there and the run goes on. ``--profile <dir>`` also records a torch profiler trace (Perfetto) of crops 2-3
-after a warm-up crop. One GPU job, through jobs/spark_guard.sh:
+Each template (a real PAGE/ALTO page) goes through the page pipeline (:func:`diffu_page.pipeline.page_blocks`): its
+running text is replaced by the new text, it is planned as training-scale crops, and every crop is drawn by the model
+(FLUX.3 + LoRAs, or diffu), read back line by line, and labelled with badly read lines tagged ``unclear``. Writes
+``<out>/<page>_<k>.jpg`` + ``.xml`` per crop and ``<out>/summary.json``; a page that fails is recorded there and the
+run goes on. ``--profile <dir>`` also records a torch profiler trace (Perfetto) of pages 2-3 after a warm-up page.
+One GPU job, through jobs/spark_guard.sh:
 
-    jobs/spark_guard.sh --need-gb 45 --name pages -- page-synth-generate \\
+    jobs/spark_guard.sh --need-gb 45 --name pages -- diffu-generate \\
         --templates <page.xml> --templates <page.xml> --text-from <page.xml> --lora v2=<ckpt>/model --out <dir> \\
         --title "the court records of Jämtlands domsaga" --paper cream --ink "dark brown"
 """
@@ -21,18 +21,20 @@ from statistics import fmean
 from typing import Annotated, Literal
 
 import typer
+from diffusers.modular_pipelines import ModularPipeline
 from pydantic import BaseModel
-from torch.profiler import ProfilerActivity, profile, record_function, schedule
+from torch.profiler import ProfilerActivity, profile, schedule
 
-from diffu_gen.cli.options import Lora, parse_lora
-from diffu_gen.generator import CropGenerator, GeneratorSettings
-from diffu_gen.settings import settings
+from diffu_page.blocks import DrawnCrop
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.provenance import Provenance
-from diffu_page.jobs import CropJob, PageJob, crop_jobs
+from diffu_page.cli.options import Lora, parse_lora
+from diffu_page.jobs import PageJob
 from diffu_page.layout import load_xml_layout, running_text
 from diffu_page.output import console, err_console
+from diffu_page.pipeline import DrawSettings, load_pipeline, page_blocks
 from diffu_page.plan import PageStyle
+from diffu_page.settings import settings
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 
@@ -45,11 +47,10 @@ class CropResult(BaseModel):
     lines: int
     unclear_lines: int
     cer: float
-    seconds: float
 
 
 class Summary(BaseModel):
-    """A run: its style, LoRAs and steps, every drawn crop, and every crop that failed with its error."""
+    """A run: its style, LoRAs and steps, every drawn crop, and every page that failed with its error."""
 
     style: PageStyle
     loras: dict[str, str]
@@ -58,36 +59,46 @@ class Summary(BaseModel):
     failed: dict[str, str]
 
 
-def _draw(generator: CropGenerator, job: CropJob, out: Path) -> CropResult:
-    with record_function(f"crop {job.plan.width}x{job.plan.height}"):
-        crop = generator(job.plan, seed=job.seed, image_name=f"{job.name}.jpg")
-    crop.image.save(out / f"{job.name}.jpg", quality=92)
-    (out / f"{job.name}.xml").write_text(crop.labels_xml, encoding="utf-8")
+def _save(crop: DrawnCrop, template: Path, out: Path) -> CropResult:
+    crop.image.save(out / f"{crop.name}.jpg", quality=92)
+    (out / f"{crop.name}.xml").write_text(crop.labels_xml, encoding="utf-8")
     return CropResult(
-        name=job.name,
-        template=str(job.template),
-        lines=len(job.plan.lines),
+        name=crop.name,
+        template=str(template),
+        lines=len(crop.plan.lines),
         unclear_lines=crop.unclear_lines,
         cer=fmean(crop.line_cers),
-        seconds=crop.seconds,
     )
 
 
-def draw_all(
-    generator: CropGenerator, jobs: list[CropJob], out: Path, prof: profile | None
+def draw_pages(
+    pipe: ModularPipeline, pages: list[PageJob], *, settings: DrawSettings, out: Path, prof: profile | None
 ) -> tuple[list[CropResult], dict[str, str]]:
-    """Every job drawn and saved; a crop that fails is recorded with its error and the rest still run."""
+    """Every page drawn by the page pipeline and its crops saved; a page that fails is recorded with its error and
+    the rest still run."""
     results: list[CropResult] = []
     failed: dict[str, str] = {}
-    for job in jobs:
+    for index, page in enumerate(pages):
+        name = page.name_at(index)
+        crops: list[DrawnCrop] = []
         try:
-            results.append(_draw(generator, job, out))
-            console.print(f"{job.name}: CER {results[-1].cer:.3f}, {results[-1].unclear_lines} unclear lines")
-        except Exception as error:  # one crop must not end a long run; the summary records it
-            failed[job.name] = f"{type(error).__name__}: {error}"
-            err_console.print(f"{job.name} failed: {failed[job.name]}")
+            crops = pipe(
+                template=page.template,
+                text=page.text,
+                style=page.style,
+                page_name=name,
+                seed=page.seed_at(index),
+                **settings.pipeline_inputs(),
+                output="crops",
+            )
+        except Exception as error:  # one page must not end a long run; the summary records it
+            failed[name] = f"{type(error).__name__}: {error}"
+            err_console.print(f"{name} failed: {failed[name]}")
         if prof is not None:
             prof.step()
+        for crop in crops:
+            results.append(_save(crop, page.template, out))
+            console.print(f"{crop.name}: CER {results[-1].cer:.3f}, {crop.unclear_lines} unclear lines")
     return results, failed
 
 
@@ -103,7 +114,7 @@ def _trace_handler(out: Path) -> Callable[[profile], None]:
 
 
 def _profiler(out: Path | None) -> AbstractContextManager[profile | None]:
-    """One warm-up crop, then two recorded ones (CPU + CUDA, shapes, memory), or nothing."""
+    """One warm-up page, then two recorded ones (CPU + CUDA, shapes, memory), or nothing."""
     if out is None:
         return nullcontext(None)
     return profile(
@@ -121,7 +132,7 @@ def generate(
     text_from: Annotated[list[Path], typer.Option(help="a PAGE/ALTO page whose text to write (repeat it)")],
     out: Annotated[Path, typer.Option(help="where the crops, labels and summary.json go")],
     title: Annotated[str, typer.Option(help="the archive, as the captions name it")],
-    model: Annotated[Path, typer.Option(help="the FLUX.3 model directory")] = settings.flux3_model,
+    model: Annotated[Path, typer.Option(help="the model directory (FLUX.3 Klein or diffu)")] = settings.flux3_model,
     lora: Annotated[list[Lora] | None, typer.Option(parser=parse_lora, help="name=<NeMo LoRA model dir>")] = None,
     years: str = "",
     greyscale: Annotated[bool, typer.Option("--greyscale/--colour")] = False,
@@ -137,7 +148,7 @@ def generate(
     label_format: Annotated[
         Literal["alto", "page"], typer.Option("--format")
     ] = "alto",  # Typer cannot read LabelFormat
-    profile_dir: Annotated[Path | None, typer.Option("--profile", help="write a trace of crops 2-3 here")] = None,
+    profile_dir: Annotated[Path | None, typer.Option("--profile", help="write a trace of pages 2-3 here")] = None,
 ) -> None:
     """Draw every crop of the templates, refilled with the text, in the given style."""
     style = PageStyle(
@@ -145,24 +156,23 @@ def generate(
     )
     text = " ".join(running_text(load_xml_layout(path)) for path in text_from)
     pages = [PageJob(template=template, text=text, style=style, seed=seed) for template in templates]
-    jobs = [job for index, page in enumerate(pages) for job in crop_jobs(page, index)]
-    out.mkdir(parents=True, exist_ok=True)
-    loras = {adapter.name: adapter.path for adapter in lora or []}
-    generator_settings = GeneratorSettings(
+    draw_settings = DrawSettings(
         steps=steps,
         guidance_scale=guidance,
         label_format=label_format,
         text_layers=tuple(text_layer) if text_layer else None,
         device=device,
     )
-    generator = CropGenerator(model, loras=loras, settings=generator_settings)
+    loras = {adapter.name: adapter.path for adapter in lora or []}
+    pipe = load_pipeline(model, page_blocks, loras=loras, settings=draw_settings)
+    out.mkdir(parents=True, exist_ok=True)
     with _profiler(profile_dir) as prof:
-        crops, failed = draw_all(generator, jobs, out, prof)
+        crops, failed = draw_pages(pipe, pages, settings=draw_settings, out=out, prof=prof)
     summary = Summary(
         style=style, loras={name: str(path) for name, path in loras.items()}, steps=steps, crops=crops, failed=failed
     )
     (out / "summary.json").write_text(summary.model_dump_json(indent=1), encoding="utf-8")
-    console.print(f"{len(crops)} crops drawn, {len(failed)} failed -> {out}")
+    console.print(f"{len(crops)} crops drawn, {len(failed)} pages failed -> {out}")
     if failed:
         raise typer.Exit(code=1)
 

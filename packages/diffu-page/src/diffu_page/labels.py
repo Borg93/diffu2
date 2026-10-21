@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from diffu_page.layout.model import ROLE_NAMES, RUNNING_TEXT, TABLE
 
 try:
-    _VERSION = version("page-synth")
+    _VERSION = version("diffu-page")
 except PackageNotFoundError:  # not installed (e.g. running from a source checkout)
     _VERSION = "0"
 

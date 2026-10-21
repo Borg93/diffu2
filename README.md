@@ -11,16 +11,16 @@ How the pieces fit together, and what keeps training and generation consistent: 
 
 ## Workspace
 
-A uv workspace: one member per concern, each with its own dependencies.
+A uv workspace, one member per role. Everything that draws is a Modular Diffusers pipeline: our blocks (diffu-page)
+around the model's own (FLUX.3 Klein from diffusers, or diffu), chosen by the model directory alone.
 
 | Member | What it is | Heavy dependencies |
 | --- | --- | --- |
-| `packages/diffu-page` | Archive pages as data: PAGE/ALTO reading (`layout/`), refill, crops (`crops/`), captions (`captions/`), plans, labels, the training-data builders (`data/`). CPU only. | none |
-| `packages/diffu-gen` | Generation with Modular Diffusers (`modular/`: blocks, pipelines, read-back), `CropGenerator`, settings, the `diffu-generate` / `diffu-evaluate` / `diffu-sheets` CLIs | torch, diffusers, transformers |
+| `packages/diffu-page` | Archive pages as data (`layout/`, `crops/`, `captions/`, plans, labels, the training-data builders in `data/`), our blocks (`blocks/`), the page and crop pipelines (`pipeline.py`) and their CLIs: `diffu-generate`, `diffu-evaluate`, `diffu-sheets` | torch, diffusers, transformers |
+| `packages/diffu` | The diffu model, laid out like a diffusers model: FLUX.3's transformer with our own weights, a Qwen3.5 text encoder and the Qwen-Image VAE (branch `diffu-model`) | torch, diffusers |
 | `packages/diffu-train` | NeMo AutoModel glue: dataloader configs, v3 pair caching | NeMo AutoModel (its environment only) |
-| `packages/diffu` | The diffu model: FLUX.3's architecture with our own weights | torch, diffusers |
-| `packages/diffu-runner` | Generation at scale on a Ray cluster: `CropGenerator`'s encode and draw stages as Ray Data actors | ray |
-| `packages/diffu-studio` | A Gradio app: a template, a text and a style in, crops with their labels out | gradio |
+| `packages/diffu-runner` | Generation at scale on a Ray cluster: pages planned on CPU workers, crops drawn by GPU actors each holding a crop pipeline | ray |
+| `packages/diffu-studio` | A Gradio app on the page pipeline: a template, a text and a style in, crops with their labels out | gradio |
 
 ```
 configs/flux3/  NeMo AutoModel training configs
@@ -35,7 +35,7 @@ conftest.py     test fixtures shared by the members (diffusers' tiny FLUX.3 test
 - **This repo** (`uv sync` builds every member): CPU checks and tests, `CUDA_VISIBLE_DEVICES="" uv run pytest`. The
   generation tests run diffusers' tiny FLUX.3 test model end to end on CPU.
 - **NeMo AutoModel** (`~/Desktop/repos/Automodel/.venv-managed`): training and the GPU jobs.
-  `jobs/setup_nemo_env.sh` installs diffu-page, diffu-gen and diffu-train into it.
+  `jobs/setup_nemo_env.sh` installs diffu-page and diffu-train into it.
 - `FLUX3_MODEL`: the FLUX.3 Klein directory (default `~/Desktop/repos/flux3-models/flux-3-image-klein-base`).
 
 ## Generate
@@ -48,22 +48,22 @@ cd ~/Desktop/repos/Automodel && ~/Desktop/repos/diffu2/jobs/spark_guard.sh --nee
     --title "the court records of Jämtlands domsaga" --paper cream --ink "dark brown"
 ```
 
-In Python:
+In Python, the page pipeline (a Modular Diffusers pipeline: call it with the page, get every crop back):
 
 ```python
 from pathlib import Path
 
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.provenance import Provenance
-from diffu_gen.generator import CropGenerator, GeneratorSettings
-from diffu_page.layout import load_xml_layout, refill
-from diffu_page.plan import PageStyle, plan_page
+from diffu_page.pipeline import DrawSettings, load_pipeline, page_blocks
+from diffu_page.plan import PageStyle
 
 style = PageStyle(
     provenance=Provenance(title="the court records of Jämtlands domsaga", years="1690–1700"),
     look=ScanLook(greyscale=False, paper="cream", ink="dark brown"),
 )
-generator = CropGenerator(model_dir, loras={"v2": lora_dir}, settings=GeneratorSettings(steps=50))
-for plan in plan_page(refill(load_xml_layout(Path("page.xml")), [text]), style):
-    crop = generator(plan, seed=0, image_name="crop.jpg")  # crop.image, crop.labels_xml, crop.line_cers
+settings = DrawSettings(steps=50)
+pipe = load_pipeline(model_dir, page_blocks, loras={"v2": lora_dir}, settings=settings)
+crops = pipe(template=Path("page.xml"), text=text, style=style, seed=0, **settings.pipeline_inputs(), output="crops")
+# each crop: .image, .labels_xml (ALTO), .line_reads, .line_cers, .unclear_lines
 ```

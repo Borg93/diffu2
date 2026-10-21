@@ -37,17 +37,29 @@ Done 2026-10-21.
       captioned in the target style; the v3 edit caption takes only the paper from the reference). 50 tests.
 - [ ] Delete `experiments/` once the running v2 job's evals have used it (~16:45 2026-10-21). Kept only for that
       run, which started before the restructure.
-- [ ] Run `jobs/setup_nemo_env.sh` once to drop the stale diffu / diffu-page installs from the NeMo environment
-      and install the three members.
+- [ ] Run `jobs/setup_nemo_env.sh` once to drop the stale page-synth / diffu-gen / old diffu installs from the NeMo
+      environment and install diffu-page and diffu-train.
 - [x] `docs/PIPELINE.md`: the flow from page to labelled crops, training, and the training/generation consistency table.
 
 ## Workspace (2026-10-21, branch `modular-structure`)
 
-- [x] page-synth split into uv workspace members by concern and dependency: diffu-page (CPU page data), diffu-gen
-      (Modular Diffusers generation, torch), diffu-train (NeMo glue). Pilot LoRA config pruned.
-- [ ] diffu-runner: rebuilt on the new pipeline (Ray Data, CropGenerator's encode / draw stages).
-- [ ] diffu: the model, rebuilt as FLUX.3's architecture with our own weights (see "diffu" below).
-- [ ] diffu-studio: the Gradio app, rebuilt on the new generator.
+- [x] Members by role: diffu-page (page data, our blocks, the page and crop pipelines, the CLIs), diffu (the model),
+      diffu-train (NeMo glue), diffu-runner (Ray), diffu-studio (Gradio). Pilot LoRA config pruned.
+- [x] Every step is a Modular Diffusers block (`diffu_page.blocks`): `LoadLayoutStep`, `RefillStep`, `PlanCropsStep`;
+      `CropPromptStep`, `ReferenceGridStep` before a model's own blocks; `LineReadbackStep`, `LabelExportStep` after;
+      `CropLoopStep` draws every crop of a page. The model is chosen by its directory (`pipeline.FAMILIES`, keyed by
+      the blocks its `modular_model_index.json` names), so FLUX.3 Klein and diffu run through the same blocks. The
+      generator class (`CropGenerator`) and diffu-gen are gone: the CLIs, the runner and the studio call pipelines.
+- [x] diffu-runner on the crop pipeline: pages planned with `PagePlanBlocks` on CPU workers, one crop per block, GPU
+      actors each holding a crop pipeline; Ray 2.59.0. Fixed: a page's crops shared a block, and an actor hands a
+      block on only when it has drawn all of it, so Ray Data stopped the CPU smoke run after 30 minutes without
+      progress (the same would hit a ~30-crop block on the cluster).
+- [x] diffu-studio: Gradio on the page pipeline (a template, a text and a style in; the crops and a zip with their
+      labels out).
+- [x] diffu: FLUX.3's architecture with our own weights, laid out like a diffusers model (see "diffu" below).
+- [ ] Page assembly: crops overlap (training windows share lines) and windows that would cut a line are dropped, so
+      pasting a page's crops back would draw lines twice and leave holes. Needs a tiling plan for generation and crops
+      drawn consistently with their neighbours (e.g. the neighbour as a reference image); see "Full pages".
 
 ## Code audit against writing-python (2026-10-21, branch `modular-structure`)
 
@@ -60,6 +72,12 @@ Done 2026-10-21.
 - [x] DRY: one collection key, one latent-grid rule, slot constants from geometry; pick(…, 1) crash; images closed;
       pathlib links; typed manifest metadata; docstrings; @override on framework hooks; no private cross-imports,
       relative imports, long functions or >3 positional args left.
+- [x] pyrefly checks imports again: `missing-import` was off, so an import of a module that no longer exists passed
+      the type check. Only NeMo and its torchdata (NeMo's environment only) are typed as Any (red-checked with a stale
+      `diffu_gen` import).
+- [x] ALTO `softwareVersion` asked for the version of `page-synth`, a package that no longer exists, and always
+      wrote "0".
+- [x] pytest `strict = true`; pytest-cov and `[tool.coverage.run]` for per-test coverage when pruning the suite.
 - [ ] Rebuild `data_flux3/layout_crops_v2` (and steer_v2, style_pairs_v3, val_eval) with the fixed archive names
       before any v2 retrain or new derived set: 521 records carry the raw folder name, and restyle now refuses them
       (`StaleCaptionError`).
@@ -67,24 +85,24 @@ Done 2026-10-21.
 
 ## Modular Diffusers (checked against huggingface.co/blog/modular-diffusers and the diffusers source, 2026-10-21)
 
-Tested end to end on CPU with diffusers' tiny FLUX.3 test model (`test_generator.py`, each test
-red-checked); not yet run on the GPU with FLUX.3 Klein.
+Tested end to end on CPU with diffusers' tiny FLUX.3 test model (`packages/diffu-page/tests/test_pipeline.py`, each
+test red-checked); not yet run on the GPU with FLUX.3 Klein.
 
-- [x] Text encoder as its own pipeline, crop drawing as another, declared like diffusers declares FLUX.3's blocks:
-      `modular.pipelines.CropTextBlocks` (crop prompt + FLUX.3's text encoder) and `CropBlocks` (reference VAE
-      encoder, denoise, decode, read-back, labels; workflows `text2image` / `image_conditioned`).
-      `CropGenerator.encode` / `draw` are the two stages.
-- [x] One `ComponentsManager` for both pipelines. One crop pipeline serves v2 and v3: FLUX.3's auto blocks choose
-      reference-conditioned denoising when an `image` is passed.
+- [x] Our blocks around the model's own, declared like diffusers declares FLUX.3's: `pipeline.crop_blocks` (crop
+      prompt, reference grid, the model's text encoder / VAE encoder / denoise / decode, read-back, labels; workflows
+      `text2image` / `image_conditioned`), `pipeline.page_blocks` (the plan steps, then the crop blocks once per crop),
+      `pipeline.PagePlanBlocks` (no model). The page pipeline draws every crop exactly as the crop pipeline draws it
+      (test).
+- [x] One crop pipeline serves v2 and v3: the model's auto blocks choose reference-conditioned denoising when an
+      `image` is passed.
 - [x] TrOCR loads through `load_components` from the read-back block's `ComponentSpec`;
-      `readback.materialize_position_tables` fixes its meta table. `load_pipelines` fails fast when a component
+      `readback.materialize_position_tables` fixes its meta table. `load_pipeline` fails fast when a component
       did not load (`load_components` only logs).
-- [x] LoRAs load with diffusers' FLUX.3 LoRA loader (`pipelines.load_nemo_lora`, alpha/r folded into lora_B), named
+- [x] LoRAs load with the model's own LoRA loader (`lora.load_nemo_lora`, alpha/r folded into lora_B), named
       adapters, `set_adapters`. NeMo is no longer needed at inference. All 21 module kinds of the real v2 checkpoint
       take the adapter.
-- [x] The base model is a constructor argument (`CropGenerator(model, ...)`), so diffu plugs in the same way.
 - [x] Training and inference see the same conditioning (checked 2026-10-21 on the real FLUX.3 text encoder, CPU): NeMo's
-      FLUX.3 cache encoder and our `CropTextBlocks` give bit-identical prompt embeddings on the same device (chat
+      FLUX.3 cache encoder and FLUX.3's text encoder block give bit-identical prompt embeddings on the same device (chat
       template, 80-token padding, position ids, layers 4…32); v2's GPU-made cache vs ours on CPU: mean per-token
       cosine 0.997, bf16 arithmetic differing by device. Latents: same VAE `mode()`, patchify, batch-norm normalization.
       RoPE ids and the reference stream: identical in NeMo's flux3 adapter and diffusers' blocks (image
@@ -97,10 +115,10 @@ red-checked); not yet run on the GPU with FLUX.3 Klein.
 - [ ] Publish the blocks to the Hub (`diffusers-cli custom_blocks`) if others should use them; they import diffu-page.
 - [ ] Guidance: we use 4.0, BFL's own code's default (the model card says 3.5). Sampling shift: diffusers 6.93, BFL's
       code 16.0 since 2026-10-17. Compare both on the eval set.
-- [ ] The text-encoder layer choice is `GeneratorSettings.text_layers` (FLUX.3's default when unset); diffu's encoder
-      will need its own.
+- [x] The text-encoder layer choice is `DrawSettings.text_layers` (the model's own when unset: FLUX.3 every 4th of
+      Qwen3-VL's; diffu 4, 12, 20, 28 of Qwen3.5's, from its repo).
 
-## diffu: FLUX.3 architecture, our weights (plan only, nothing implemented)
+## diffu: FLUX.3 architecture, our weights
 
 Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
 
@@ -134,22 +152,43 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
   our interleaved dataloader, consolidated diffusers export) → GB10 smoke run → diffu inference blocks → EMA /
   Self-Flow recipe subclass → Leonardo.
 
-- [ ] **Model**: `Flux3Transformer2DModel.from_config(...)`, random init. Sizes measured on the meta device:
-      diffu-S 0.66B (hidden 1536, 3 double + 10 single blocks), diffu-M 1.66B (2048, 4 + 16); Klein is 5.54B
-      (3072, 5 + 28). Start with S.
-- [ ] **Text encoder**: Qwen3.5-4B (Apache-2.0, Feb 2026, hidden 2560 like FLUX.3's Qwen3-VL-4B, so FLUX.3's 8
-      stacked layers = 20,480 carry over); Qwen3.5-2B as the cheaper alternative. Open: which layers to stack
-      (Qwen3.5 mixes linear- and full-attention layers). Exact spelling (å ä ö, historical forms) through a BPE
-      encoder is a risk; fallback: rendered glyphs as a reference image (old diffu's glyph strip, in 2D).
-- [ ] **VAE**: Qwen-Image's 16-channel VAE (Apache-2.0; passed our å ä ö reconstruction gate). Needs our own
-      encode / decode blocks: the Flux3 VAE blocks assume FLUX's 32-channel autoencoder and its batch-norm stats.
-      `in_channels` = 16 × 2 × 2 = 64.
-- [ ] **References**: up to N reference images in the sequence with the 4-axis RoPE (FLUX.3's in-context
-      conditioning) replace the old pooled DINO style vector, which gave generic style.
-- [ ] **Training**: NeMo AutoModel's flux3 recipe in pretrain mode. Check it accepts a random-init transformer
-      and a different VAE / text encoder; otherwise add a diffu processor. Progressive resolution 256² → 512² →
-      1024², aspect buckets, our captions. Recipe details (timestep shift, sampling, schedule, data mix) from
-      BFL's FLUX.3 technical report: find and read it.
+- [x] **Model** (`packages/diffu`, laid out like a diffusers model: `configs.py`, `init.py`, `latents.py`,
+      `modular_pipelines/diffu/` with encoders, decoders, `DiffuAutoBlocks`, `DiffuModularPipeline`):
+      `Flux3Transformer2DModel` from our presets with random adaLN-Zero init; FLUX.3's denoise blocks reused unchanged.
+      diffu-S 618.0M (hidden 1536, 2 per-mode + 12 joint: FLUX.3's per-mode share of depth), diffu-M 1636.7M (2048,
+      4 + 16); Klein is 5.54B. `diffu-init` writes a model repo that `from_pretrained` and NeMo's finetune mode load.
+      Start with S.
+- [x] **Text encoder**: Qwen3.5-4B (Apache-2.0), chat template with thinking off, 80-token windows, hidden layers 4,
+      12, 20 and 28 stacked (10,240 wide: the early orthographic, middle compositional and late layers; never 32, the
+      post-norm state). Its BPE hides 3 of 4 å/ä/ö inside merged subwords and no layer spells an unseen subword
+      linearly, so exact spelling may need the glyph map (below).
+  - [ ] Standardize each stacked layer per channel with statistics from ~1k prompts (a GPU pass), stored in the repo
+        and applied by both the text encoder step and the cache writer (layer RMS grows 16× from layer 4 to 32).
+- [x] **VAE**: Qwen-Image's 16-channel VAE (Apache-2.0) through our encode / decode steps (`diffu.latents`: its
+      per-channel mean/std, 2×2 patchify in FLUX.3's channel order, 64 channels). Reconstruction gate on 23 of the 24
+      held-out crops (CPU, 2026-10-21): read-back CER 0.107 real vs 0.106 reconstructed (gate |Δ| ≤ 0.01; per crop
+      −0.014 to +0.011).
+  - [ ] Measure the latent mean/std on our pages; if they differ from Qwen-Image's config, write them into the repo's
+        `vae/config.json` (`diffu.latents` reads only that).
+- [ ] **References**: FLUX.3's reference stream replaces the old pooled DINO style vector (which gave generic style).
+      A glyph map (each line's text rendered into its box, along the PAGE baseline) at l = −1 spells by construction
+      and fixes line length; a style reference (another region of the same volume) at l = −2. Both already pass
+      through `image=[glyph_map, style_ref]`, but FLUX.3's preprocessing center-crops each of several references to
+      the 16-px grid: render the glyph map at exactly the target's grid size. Renderer: Unifont covers all 158
+      characters of our transcriptions.
+- [ ] **Training**: NeMo finetune mode from `diffu-init`'s repo, no `peft:` (identical weights on every rank). Cache
+      writer for NeMo's layout using `diffu.modular_pipelines.diffu.encoders.prompt_embeds` and
+      `diffu.latents.encode_latents` (the inference steps, not NeMo's FLUX.3 encoder); YAML (logit-normal, shift ≈ 3
+      at 512² and ≈ 6 at 1 MP, fp32 weights / bf16 compute, `cfg_dropout_prob: 0` with the empty prompt swapped in by
+      our dataset, zero latents for a dropped reference); then an EMA / Self-Flow recipe subclass (per-token
+      timesteps through three forward pre-hooks; bit-identical to the stock forward with uniform timesteps).
+- [ ] **Staged experiments** (design study 2026-10-21): E1 GB10 smoke + overfit (~3–4 h) → E2 conditioning ablation
+      at 512² (text only / glyph map + style prompt / both) → E3 Self-Flow vs plain flow matching → E4 style reference
+      (swap-test copy rate ≤ 5 %) → E5 main run (~12 h on 32 A100s for diffu-S). Each judged on held-out read-back
+      CER (≥ 200 crops, bootstrap CIs) against the real crops and the FLUX.3 LoRA on the same crops.
+- [ ] **Sampling shift**: FLUX.3's 6.93 for now; sweep 3–7 (`Flux3SetTimestepsStep(shift=…)`), it costs nothing.
+- [ ] **Leonardo**: compute nodes have no internet; pre-fetch Qwen3.5-4B and the Qwen-Image VAE at the pinned
+      revisions (a local repo copy with the files loads from the copy).
 - [ ] **Data**: GT-Lejonet, 103,285 pages (~3M lines). Never FLUX.3 outputs.
 - [ ] **Compute**: estimated ~8×10¹⁹ FLOPs for diffu-S (10M samples at 256², 5M at 512², 2M at 1024²; GB10
       measured at ~25 TFLOPS effective on the v2 LoRA). GB10 alone ~40 days: too slow, use it for smoke runs and
@@ -183,8 +222,10 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
 
 ## Inference at scale
 
-- [ ] Ray Data entrypoint (diffu-runner): layout / refill / plan as CPU map steps, text encoding as its own
-      stage, the generator as a stateful GPU actor (`map_batches`, concurrency = GPUs), TrOCR read-back
-      co-located, Lance sink.
+- [x] Ray Data entrypoint (diffu-runner): layout / refill / plan as a CPU `flat_map` (`PagePlanBlocks`), one crop
+      per block, the crop pipeline as a stateful GPU actor (`map_batches`, concurrency = actors), TrOCR read-back
+      co-located, Parquet sink.
+- [ ] After profiling on the cluster: text encoding as its own stage (FLUX.3's text encoder takes one prompt per
+      call), a Lance sink if Parquet's per-file writes get in the way.
 - [ ] Runs on our Ray cluster's Blackwell GPUs (96 GB each, sm_120). Re-profile there before optimizing; measure
       FP8 / NVFP4, fewer steps, a compiled transformer, several actors per card.

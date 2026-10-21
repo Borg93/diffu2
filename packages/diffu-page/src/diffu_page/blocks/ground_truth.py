@@ -1,13 +1,5 @@
-"""Our Modular Diffusers blocks around FLUX.3's own: a crop plan in, a crop's ground truth out.
-
-- ``CropPromptStep`` turns a :class:`diffu_page.plan.CropPlan` into the prompt, the line boxes and the image size;
-- ``ReferenceGridStep`` resizes a reference image the way it was resized for v3 training;
-- ``LineReadbackStep`` reads every line box of the generated image with a Swedish HTR TrOCR;
-- ``LabelExportStep`` writes the crop's labels from the plan's boxes and words, each line tagged ``unclear`` when
-  its read-back error rate is over ``max_line_cer`` (its words may not be on the page as the label says).
-
-:mod:`diffu_gen.modular.pipelines` assembles them with FLUX.3's blocks.
-"""
+"""The crop steps that run after a model's own blocks: every line of the drawn crop read back with an HTR model, and
+the crop's labels written with the lines that read back badly tagged ``unclear``."""
 
 from __future__ import annotations
 
@@ -21,94 +13,17 @@ from diffusers.modular_pipelines import (
     OutputParam,
     PipelineState,
 )
-from PIL import Image
 from transformers import TrOCRProcessor, VisionEncoderDecoderModel
 
-from diffu_gen.modular.readback import HTR, pixel_box, read_lines
 from diffu_page.crops.geometry import SLOT_ABOVE_BASELINE, SLOT_BELOW_BASELINE
-from diffu_page.crops.grid import LARGEST_BUCKET_PIXELS, fit_to_grid
 from diffu_page.labels import LabelFormat, LineLabel, PageLabels, export
 from diffu_page.layout import RUNNING_TEXT
 from diffu_page.plan import CropPlan
-
-
-def training_grid(image: Image.Image) -> Image.Image:
-    """A reference image as NeMo's FLUX.3 cache encoder resized it for v3 training (see ``fit_to_grid``)."""
-    return fit_to_grid(image, LARGEST_BUCKET_PIXELS)
-
-
-class ReferenceGridStep(ModularPipelineBlocks):
-    """Puts a reference image on the grid the v3 LoRA was trained on.
-
-    NeMo's cache encoder squashed every training reference onto the 16-pixel grid, while FLUX.3's own preprocessing
-    pads a reference out to it with a reflected border. Resizing first makes FLUX.3's preprocessing a no-op, so a
-    reference is drawn from exactly as in training. Without a reference the step does nothing.
-    """
-
-    model_name = "flux3"
-
-    @property
-    @override
-    def description(self) -> str:
-        return "Resizes the reference image onto the 16-px grid the way NeMo's FLUX.3 cache encoder did in training."
-
-    @property
-    @override
-    def inputs(self) -> list[InputParam]:
-        return [InputParam("image", required=False, description="The reference image (PIL), if any.")]
-
-    @property
-    @override
-    def intermediate_outputs(self) -> list[OutputParam]:
-        return [OutputParam("image", description="The reference image on the training grid.")]
-
-    def __call__(self, components: ModularPipeline, state: PipelineState) -> tuple[ModularPipeline, PipelineState]:
-        block_state = self.get_block_state(state)
-        if block_state.image is not None:
-            block_state.image = training_grid(block_state.image)
-        self.set_block_state(state, block_state)
-        return components, state
-
-
-class CropPromptStep(ModularPipelineBlocks):
-    """A planned crop as the FLUX.3 inputs: its caption, its line boxes and its size."""
-
-    model_name = "flux3"
-
-    @property
-    @override
-    def description(self) -> str:
-        return "Turns a diffu_page.plan.CropPlan into the prompt, the line boxes (page_lines) and the image size."
-
-    @property
-    @override
-    def inputs(self) -> list[InputParam]:
-        return [InputParam("crop_plan", type_hint=CropPlan, required=True, description="The crop to draw.")]
-
-    @property
-    @override
-    def intermediate_outputs(self) -> list[OutputParam]:
-        return [
-            OutputParam("prompt", type_hint=str, description="The crop's layout caption."),
-            OutputParam("page_lines", type_hint=list, description="The crop's LineRecords (boxes on 0-1000)."),
-            OutputParam("height", type_hint=int, description="The crop's height in pixels."),
-            OutputParam("width", type_hint=int, description="The crop's width in pixels."),
-        ]
-
-    def __call__(self, components: ModularPipeline, state: PipelineState) -> tuple[ModularPipeline, PipelineState]:
-        block_state = self.get_block_state(state)
-        plan: CropPlan = block_state.crop_plan
-        block_state.prompt = plan.caption
-        block_state.page_lines = plan.lines
-        block_state.height, block_state.width = plan.height, plan.width
-        self.set_block_state(state, block_state)
-        return components, state
+from diffu_page.readback import HTR, pixel_box, read_lines
 
 
 class LineReadbackStep(ModularPipelineBlocks):
-    """Reads every line box of the generated image with an HTR model: the per-line CER against its text."""
-
-    model_name = "flux3"
+    """Reads every line box of the drawn image with an HTR model: the per-line CER against its text."""
 
     @property
     @override
@@ -174,8 +89,6 @@ def line_labels(plan: CropPlan, line_cers: list[float], max_line_cer: float) -> 
 
 class LabelExportStep(ModularPipelineBlocks):
     """The crop's ground truth: its lines in ALTO or PAGE XML, lines that read back badly tagged ``unclear``."""
-
-    model_name = "flux3"
 
     @property
     @override

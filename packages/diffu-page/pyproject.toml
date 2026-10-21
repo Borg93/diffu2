@@ -1,18 +1,30 @@
 [project]
 name = "diffu-page"
 version = "0.1.0"
-description = "Archive pages as data: PAGE/ALTO layouts, training-scale crops, their captions and labels, and the training-data builders. CPU only."
+description = "Archive pages as data and the page pipeline: PAGE/ALTO layouts, crops, captions and labels, and our Modular Diffusers blocks around a model's own (FLUX.3 Klein or diffu)."
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 license = "Apache-2.0"
 authors = [{ name = "Gabriel Borg" }]
 dependencies = [
+    "diffusers",
     "numpy>=1.26",
+    "peft>=0.17",
     "pillow>=11",
     "pydantic>=2",
+    "pydantic-settings>=2.15",
     "rich>=13",
+    "safetensors>=0.4",
+    "torch>=2.10",
+    "torchvision>=0.25",  # Qwen3-VL's processor (the FLUX.3 text encoder's tokenizer) needs it
+    "transformers>=5.18",
     "typer>=0.20",
 ]
+
+[project.scripts]
+diffu-generate = "diffu_page.cli.generate:app"  # pages from templates and text, through the page pipeline
+diffu-evaluate = "diffu_page.cli.evaluate:app"  # held-out crops, read-back CER against the real crops
+diffu-sheets = "diffu_page.cli.sheets:app"  # contact sheets of a steering run
 
 [build-system]
 requires = ["hatchling"]

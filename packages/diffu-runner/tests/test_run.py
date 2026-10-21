@@ -11,11 +11,11 @@ import pytest
 import ray
 from PIL import Image
 
-from diffu_gen.generator import GeneratorSettings
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.prompt import LineRecord
 from diffu_page.captions.provenance import Provenance
 from diffu_page.jobs import CropJob, PageJob, crop_jobs
+from diffu_page.pipeline import DrawSettings
 from diffu_page.plan import CropPlan, PageStyle
 from diffu_runner.run import RunConfig, draw_dataset, plan_dataset
 
@@ -60,7 +60,7 @@ def test_draw_dataset_draws_every_crop_and_keeps_a_failed_one_with_its_error(
     config = RunConfig(
         model=tiny_model,
         loras={},
-        generator=GeneratorSettings(steps=2, text_layers=(1,), device="cpu"),
+        settings=DrawSettings(steps=2, text_layers=(1,), device="cpu"),
         gpus_per_drawer=0,
     )
 

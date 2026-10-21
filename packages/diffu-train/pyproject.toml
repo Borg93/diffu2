@@ -8,7 +8,6 @@ license = "Apache-2.0"
 authors = [{ name = "Gabriel Borg" }]
 # NeMo AutoModel itself is not declared: it is installed from its own checkout (jobs/setup_nemo_env.sh).
 dependencies = [
-    "diffu-gen",
     "diffu-page",
     "typer>=0.20",
 ]

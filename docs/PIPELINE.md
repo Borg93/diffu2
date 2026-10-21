@@ -5,33 +5,46 @@ consistent. The module layout is in the [README](../README.md); open work is in 
 
 ## From a page to labelled crops
 
+Every step is a Modular Diffusers block; `diffu_page.pipeline` assembles our blocks around a model's own.
+
 ```
-PAGE/ALTO page ──► layout ──► refill ──► crops ──► caption ──► text pipeline ──► crop pipeline ──► image + labels
- (any real page)   (lines,     (any       (training-  (prompt:    (prompt            (draw, read back,
-                   regions,    text)      scale       style +     embeddings)        PAGE/ALTO labels)
-                   blocks)                windows)    line boxes)
+PAGE/ALTO page ──► LoadLayout ──► Refill ──► PlanCrops ──► per crop: CropPrompt ──► model's blocks ──► LineReadback ──► LabelExport
+ (any real page)   (lines,        (any       (training-   (caption,    (text encoder,     (HTR reads       (PAGE/ALTO,
+                   regions,       text)      scale        boxes,       VAE encoder,       every line)      unclear lines
+                   blocks)                   windows)     size)        denoise, decode)                    tagged)
 ```
 
-1. **Layout** (`diffu_page.layout`): a real PAGE or ALTO page read as its lines (`load_xml_layout`): each line's text,
-   outline, baseline, region role and source block, regions in Transkribus reading order. The training-crop builder
-   reads PAGE with the same code (`layout/page_xml.py`), so a page is planned for generation exactly where its
-   training crops were cut. PAGE and ALTO are only formats here: the layout is what the rest uses.
-2. **Refill** (`layout.refill`): the running-text lines get new text at the page's own writing density; margin
-   notes, headings and page numbers keep theirs.
-3. **Crops** (`diffu_page.crops`): the page is cut into the windows the LoRAs were trained on: whole lines, about
-   1 megapixel at a 64 px line pitch, NeMo bucket sizes, margin notes joined to the column beside them. Each window
-   is a `CropPlan`: its size, its caption and its lines with boxes (0–1000, y first) and reading order.
+1. **Layout** (`LoadLayoutStep`, `diffu_page.layout`): a real PAGE or ALTO page read as its lines
+   (`load_xml_layout`): each line's text, outline, baseline, region role and source block, regions in Transkribus
+   reading order. The training-crop builder reads PAGE with the same code (`layout/page_xml.py`), so a page is planned
+   for generation exactly where its training crops were cut. PAGE and ALTO are only formats here: the layout is what
+   the rest uses.
+2. **Refill** (`RefillStep`, `layout.refill`): the running-text lines get new text at the page's own writing density;
+   margin notes, headings and page numbers keep theirs.
+3. **Crops** (`PlanCropsStep`, `diffu_page.crops`, `diffu_page.plan`): the page is cut into the windows the models
+   were trained on: whole lines, about 1 megapixel at a 64 px line pitch, NeMo bucket sizes, margin notes joined to
+   the column beside them. Each window is a `CropPlan`: its size, its caption and its lines with boxes (0–1000, y
+   first) and reading order. Windows overlap by design (training windows share lines), so a page's crops are not a
+   tiling of the page.
 4. **Caption** (`diffu_page.captions`): FLUX.3's layout prompt. A paragraph names the archive, years, scan, paper and
    ink and cites every line; a JSON table gives each line's box and text. Training data and generation build it
    with the same code.
-5. **Generation** (`diffu_gen.generator.CropGenerator`, built on `diffu_gen.modular`): two Modular Diffusers
-   pipelines over one `ComponentsManager`:
-   - `CropTextBlocks`: the crop prompt, then FLUX.3's text encoder (Qwen3-VL). Plan in, prompt embeddings out.
-   - `CropBlocks`: the crop prompt, `ReferenceGridStep`, FLUX.3's reference VAE encoder (only with a reference
-     image), denoise and decode, then `LineReadbackStep` (TrOCR reads every line box) and `LabelExportStep` (ALTO or
-     PAGE labels; a line that reads back badly is tagged `unclear`). FLUX.3's auto blocks choose plain or
-     reference-conditioned denoising from the inputs, so v2 (style by name) and v3 (style by example) share it.
-   LoRAs load through diffusers' FLUX.3 LoRA loader as named adapters.
+5. **Drawing** (`diffu_page.pipeline`): a model directory names its blocks in `modular_model_index.json`, and
+   `FAMILIES` maps those to the model's blocks and pipeline class (FLUX.3 Klein: `Flux3AutoBlocks` without its prompt
+   upsampler, which would rewrite the quoted lines; diffu: `DiffuAutoBlocks`). Around them:
+   - `crop_blocks`: `CropPromptStep` (plan → prompt, boxes, size), `ReferenceGridStep` (a reference image on the
+     training grid), the model's text encoder, VAE encoder (only with a reference image), denoise and decode, then
+     `LineReadbackStep` (TrOCR reads every line box) and `LabelExportStep` (ALTO or PAGE labels; a line that reads back
+     badly is tagged `unclear`). The model's auto blocks choose plain or reference-conditioned denoising from the
+     inputs, so v2 (style by name) and v3 (style by example) share it.
+   - `page_blocks`: the plan steps, then `CropLoopStep`, which runs the crop blocks once per planned crop (crop k
+     from noise seed `seed + k`).
+   - `PagePlanBlocks`: the plan steps alone, no model.
+   LoRAs load through the model's own LoRA loader as named adapters (`diffu_page.lora`).
+
+Who runs what: `diffu-generate` and diffu-studio run the page pipeline; `diffu-evaluate` the crop pipeline;
+diffu-runner plans pages with `PagePlanBlocks` on CPU workers and draws one crop per block with the crop pipeline on
+GPU actors. All of them name and seed crops alike, so a page comes out the same from any of them.
 
 ## Training (NeMo AutoModel)
 
@@ -50,7 +63,7 @@ Checked 2026-10-21; each would silently cost quality if it drifted.
 | What | Training (NeMo) | Generation (Modular Diffusers) |
 | --- | --- | --- |
 | Caption | `diffu_page.captions` | the same code, from the `CropPlan` |
-| Prompt embeddings | NeMo's FLUX.3 encoder | `CropTextBlocks`: bit-identical on the same device |
+| Prompt embeddings | NeMo's FLUX.3 encoder | FLUX.3's text encoder block: bit-identical on the same device |
 | Latents | VAE `mode()`, 2×2 patchify, batch-norm stats | the same in FLUX.3's blocks |
 | Line geometry | `page_xml.read_page_line` (builder) | the same reader (replay): 60/60 GT pages planned as cut |
 | Reference image | written on the 16 px grid (`crops.grid`) | `ReferenceGridStep` (a no-op on such references) |

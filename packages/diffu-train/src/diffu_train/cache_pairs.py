@@ -21,9 +21,9 @@ from nemo_automodel.components.models.flux3.preprocessing import (
     Flux3ImageEditCacheEncoder,
 )
 
-from diffu_gen.settings import settings
 from diffu_page.crops.grid import LARGEST_BUCKET_PIXELS
 from diffu_page.output import console
+from diffu_page.settings import settings
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 

@@ -9,8 +9,8 @@ import pytest
 from PIL import Image
 from typer.testing import CliRunner
 
-from diffu_gen.cli.evaluate import EvalCrop, Results, app, read_crops
 from diffu_page.captions.prompt import LineRecord
+from diffu_page.cli.evaluate import EvalCrop, Results, app, read_crops
 
 LINES = [
     LineRecord(id="Sv_Text_1", text="Göteborgs poliskammare", role="", bbox=[0, 0, 500, 1000]),

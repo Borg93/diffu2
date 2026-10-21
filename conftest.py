@@ -35,6 +35,26 @@ def body_and_notes_page(tmp_path: Path) -> Path:
     return path
 
 
+@pytest.fixture
+def two_column_page(tmp_path: Path) -> Path:
+    """A 2500 x 1200 px page with two columns of three lines, planned as two crops of three lines each: the smallest
+    page whose crops a pipeline draws more than one of."""
+    columns = "".join(
+        f'<TextRegion id="{side}" type="paragraph">'
+        + "".join(_line(f"{side}{i}", x0, x0 + 1000, 300 + 100 * i, f"{side} line {i} of the text") for i in range(3))
+        + "</TextRegion>"
+        for side, x0 in (("left", 100), ("right", 1400))
+    )
+    path = tmp_path / "two_columns.xml"
+    path.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<PcGts xmlns="http://schema.primaresearch.org/PAGE/gts/pagecontent/2019-07-15">'
+        f'<Page imageFilename="two_columns.jpg" imageWidth="2500" imageHeight="1200">{columns}</Page></PcGts>',
+        encoding="utf-8",
+    )
+    return path
+
+
 TINY_FLUX3 = "hf-internal-testing/tiny-flux3-image-modular"
 TINY_FLUX3_REVISION = "9130f96f124d6c6fdd1beab63cfb6d2f1c8658a1"  # pinned: a changed fixture must not change results
 

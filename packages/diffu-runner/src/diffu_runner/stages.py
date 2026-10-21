@@ -14,8 +14,8 @@ import numpy as np
 from PIL import Image
 from pydantic import BaseModel
 
-from diffu_gen.generator import CropGenerator, GeneratorSettings
 from diffu_page.jobs import CropJob, PageJob, crop_jobs
+from diffu_page.pipeline import DrawSettings, crop_blocks, draw_crop, load_pipeline
 
 type Row = dict[str, object]
 
@@ -35,7 +35,8 @@ class DrawnRow(BaseModel):
 
 
 def page_rows(pages: list[PageJob]) -> list[Row]:
-    """A run's pages as Ray Data rows, each with its index in the run (the noise seeds of its crops depend on it)."""
+    """A run's pages as Ray Data rows, each with its index in the run (its crops' names and noise seeds depend on
+    it)."""
     return [{"index": index, "page": page.model_dump_json()} for index, page in enumerate(pages)]
 
 
@@ -59,22 +60,29 @@ def _reference(path: Path | None) -> Image.Image | None:
 
 
 class DrawActor:
-    """A Ray Data actor holding one :class:`CropGenerator`: loaded once, then each batch of crop rows drawn.
+    """A Ray Data actor holding one crop pipeline (:func:`diffu_page.pipeline.crop_blocks`): loaded once, then each
+    batch of crop rows drawn.
 
     Args:
-        model: The base model directory.
+        model: The model directory (FLUX.3 Klein or diffu).
         loras: NeMo LoRA checkpoint ``model/`` dirs by adapter name.
         settings: How every crop is drawn.
     """
 
-    def __init__(self, model: Path, loras: dict[str, Path], settings: GeneratorSettings) -> None:
-        self._generator = CropGenerator(model, loras=loras, settings=settings)
+    def __init__(self, model: Path, loras: dict[str, Path], settings: DrawSettings) -> None:
+        self._pipe = load_pipeline(model, crop_blocks, loras=loras, settings=settings)
+        self._settings = settings
 
     def _draw(self, job: CropJob) -> DrawnRow:
         start = time.perf_counter()
         try:
-            crop = self._generator(
-                job.plan, seed=job.seed, image_name=f"{job.name}.jpg", reference=_reference(job.reference)
+            crop = draw_crop(
+                self._pipe,
+                job.plan,
+                name=job.name,
+                seed=job.seed,
+                reference=_reference(job.reference),
+                settings=self._settings,
             )
         except Exception as error:  # flag, don't drop: a failed crop stays in the run with its error
             return DrawnRow(
@@ -96,7 +104,7 @@ class DrawActor:
             labels_xml=crop.labels_xml,
             line_cers=crop.line_cers,
             unclear_lines=crop.unclear_lines,
-            seconds=crop.seconds,
+            seconds=time.perf_counter() - start,
             error="",
         )
 

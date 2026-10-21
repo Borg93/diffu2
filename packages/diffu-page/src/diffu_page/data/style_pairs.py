@@ -7,9 +7,9 @@ come from the reference. Writes, under ``data_flux3/style_pairs_v3``:
 
 - ``train.jsonl``: the manifest NeMo's FLUX.3 image-edit encoder caches (``diffu_train.cache_pairs``), its media under
   ``targets/`` (hard links to the v2 crops: the encoder only reads files inside the manifest's dir) and ``refs/``;
-- ``val_eval/``: the 24 held-out v2 crops, each with a reference from its own volume (an ``diffu_gen.cli.evaluate`` dir);
+- ``val_eval/``: the 24 held-out v2 crops, each with a reference from its own volume (a ``diffu_page.cli.evaluate`` dir);
 - ``by_example/``: the steering test's templates drawn with each archive's example crop as the reference, the
-  v3 counterpart of ``diffu_page.data.steer_set`` (an ``diffu_gen.cli.evaluate`` dir that ``diffu_gen.cli.sheets`` lays out).
+  v3 counterpart of ``diffu_page.data.steer_set`` (a ``diffu_page.cli.evaluate`` dir that ``diffu_page.cli.sheets`` lays out).
 
     python -m diffu_page.data.style_pairs
 """
@@ -72,7 +72,7 @@ class ManifestRow(BaseModel):
 
 
 class EvalRow(BaseModel):
-    """One crop of an ``diffu_gen.cli.evaluate`` dir with a reference image."""
+    """One crop of a ``diffu_page.cli.evaluate`` dir with a reference image."""
 
     file_name: str
     caption: str
@@ -83,7 +83,7 @@ class EvalRow(BaseModel):
     seed: int | None = None
     template: int | None = None
     variant: str | None = None
-    example: str | None = None  # diffu_gen.cli.sheets shows it beside the generated crop
+    example: str | None = None  # diffu_page.cli.sheets shows it beside the generated crop
 
 
 def volume_of(record: CropRecord) -> Volume:

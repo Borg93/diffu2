@@ -7,8 +7,8 @@ on the same seed so only the words differ:
 - archive: the caption restyled as each of six archives, with that archive's commonest scan look and years;
 - look: the template's own archive with three scan looks (colour cream / greyscale / yellowed).
 
-The output is a crops dir for ``diffu_gen.cli.evaluate`` (``metadata.jsonl`` + the template scans), plus a real crop of
-each archive under ``examples/`` that ``diffu_gen.cli.sheets`` shows beside the generated one.
+The output is a crops dir for ``diffu_page.cli.evaluate`` (``metadata.jsonl`` + the template scans), plus a real crop of
+each archive under ``examples/`` that ``diffu_page.cli.sheets`` shows beside the generated one.
 
     python -m diffu_page.data.steer_set   # -> data_flux3/steer_v2
 """
@@ -50,7 +50,7 @@ DEFAULT_TEMPLATES = (1, 17)  # the val_eval rows the steering test uses
 
 
 class SteerRow(BaseModel):
-    """One prompt of the steering test, in the shape ``diffu_gen.cli.evaluate`` reads."""
+    """One prompt of the steering test, in the shape ``diffu_page.cli.evaluate`` reads."""
 
     file_name: str  # the template's scan (the eval's "real" side)
     caption: str
