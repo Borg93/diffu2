@@ -24,7 +24,7 @@ What is known to be wrong or unfinished. Remove an item when it is done; add the
 
 ## diffu-page: verify before relying on it
 
-- [ ] Compare template layouts (line pitch, lines per page, margins, kind mix) with the real GT pages before using synthetic templates for anything that matters. Until then: real templates only.
+- [ ] Tune the sampler to the GT before using synthetic templates. Measured 2026-10-21 (300 GT pages vs 300 sampled): running-text lines per page median 30 (real) vs 9 (sampler); line pitch 0.029 vs 0.090 of page height; line width 0.82 of the text block vs exactly 1.00 (every synthetic line fills its column). 156 of 300 sampled pages have no running text by design (tables, ledgers, registers, landskap, blank). Margins weren't comparable (single-leaf replay re-pads at a fixed 3%). Until tuned: real templates only.
 - [ ] The `landskap` template gives no crops: the windowing rejects its short label lines.
 - [ ] `layout/__init__.py` re-exports many private names (old flat-module surface).
 
