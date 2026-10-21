@@ -41,6 +41,22 @@ Done 2026-10-21.
       (page-synth's editable install already points at this checkout).
 - [x] `docs/PIPELINE.md`: the flow from page to labelled crops, training, and the training/generation consistency table.
 
+## Code audit against writing-python (2026-10-21, branch `modular-structure`)
+
+- [x] One PAGE reader for training and generation (the replay took a line's last Word's outline, estimated baselines
+      ~0.3 pitch off and ignored Transkribus reading order); 60/60 GT pages now planned exactly as the builder cut
+      them. One region vocabulary (PAGE's types).
+- [x] Pruned the synthetic template engine (templates, sampler, flow, edits), PageSpec, compositor-only fields,
+      words / printed / JSON export, and the tests that only covered them.
+- [x] Typer + Rich CLIs with exit codes; typed settings; a failed crop or page no longer ends a run.
+- [x] DRY: one collection key, one latent-grid rule, slot constants from geometry; pick(…, 1) crash; images closed;
+      pathlib links; typed manifest metadata; docstrings; @override on framework hooks; no private cross-imports,
+      relative imports, long functions or >3 positional args left.
+- [ ] Rebuild `data_flux3/layout_crops_v2` (and steer_v2, style_pairs_v3, val_eval) with the fixed archive names
+      before any v2 retrain or new derived set: 521 records carry the raw folder name, and restyle now refuses them
+      (`StaleCaptionError`).
+- [ ] After tonight's queue: delete the one-off job chains in `jobs/flux3/` that have run (steer, pages smoke, v3).
+
 ## Modular Diffusers (checked against huggingface.co/blog/modular-diffusers and the diffusers source, 2026-10-21)
 
 Tested end to end on CPU with diffusers' tiny FLUX.3 test model (`test_generator.py`, each test
@@ -145,15 +161,8 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
       (`CropPlan.reading_order`).
 - [x] Line polygons: checked against the GT, not a defect (GT bands are 1.6x the line pitch; our slots 1.0x;
       slot IoU 0.72 vs traced ink 0.37). To match the GT convention, widen the slot.
-- [ ] Narrow columns get no crops (590 px < the 640 px minimum when a margin note narrows a multi_column page).
-      Decide: crop narrow columns side by side, or keep such templates out.
-
-## Layout (from diffu-page): verify before relying on it
-
-- [ ] Tune the template sampler to the GT before using synthetic templates (2026-10-21, 300 vs 300 pages:
-      running-text lines per page 30 real vs 9 sampled; line pitch 0.029 vs 0.090 of page height; line width 0.82
-      vs 1.00 of the block). Until tuned: real templates only.
-- [ ] The `landskap` template gives no crops: the windowing rejects its short label lines.
+- [ ] Narrow columns get no crops (under the 640 px minimum when a margin note narrows a column). Decide: crop
+      narrow columns side by side, or leave such pages out.
 
 ## FLUX.3 reference runs
 

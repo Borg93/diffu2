@@ -7,14 +7,15 @@ consistent. The module layout is in the [README](../README.md); open work is in 
 
 ```
 PAGE/ALTO page ──► layout ──► refill ──► crops ──► caption ──► text pipeline ──► crop pipeline ──► image + labels
- (any template)    (lines,     (any       (training-  (prompt:    (prompt            (draw, read back,
+ (any real page)   (lines,     (any       (training-  (prompt:    (prompt            (draw, read back,
                    regions,    text)      scale       style +     embeddings)        PAGE/ALTO labels)
                    blocks)                windows)    line boxes)
 ```
 
-1. **Layout** (`page_synth.layout`): a real PAGE or ALTO page is replayed as line boxes with their region type and
-   source block (`load_xml_layout`), or a template builds one (`build_layout`). PAGE and ALTO are only formats here:
-   the layout is what the rest uses.
+1. **Layout** (`page_synth.layout`): a real PAGE or ALTO page read as its lines (`load_xml_layout`): each line's text,
+   outline, baseline, region role and source block, regions in Transkribus reading order. The training-crop builder
+   reads PAGE with the same code (`layout/page_xml.py`), so a page is planned for generation exactly where its
+   training crops were cut. PAGE and ALTO are only formats here: the layout is what the rest uses.
 2. **Refill** (`layout.refill`): the running-text lines get new text at the page's own writing density; margin
    notes, headings and page numbers keep theirs.
 3. **Crops** (`page_synth.crops`): the page is cut into the windows the LoRAs were trained on: whole lines, about
@@ -51,6 +52,7 @@ Checked 2026-10-21; each would silently cost quality if it drifted.
 | Caption | `page_synth.captions` | the same code, from the `CropPlan` |
 | Prompt embeddings | NeMo's FLUX.3 encoder | `CropTextBlocks`: bit-identical on the same device |
 | Latents | VAE `mode()`, 2×2 patchify, batch-norm stats | the same in FLUX.3's blocks |
-| Reference image | squashed onto the 16 px grid | `ReferenceGridStep` resizes it the same way |
+| Line geometry | `page_xml.read_page_line` (builder) | the same reader (replay): 60/60 GT pages planned as cut |
+| Reference image | written on the 16 px grid (`crops.grid`) | `ReferenceGridStep` (a no-op on such references) |
 | Position ids | image (0, h·0.5, w·0.5, 0), reference l = −1, text (0, 0, 0, i) | the same |
 | No-prompt input | none: `cfg_dropout_prob: 0` (NeMo would use zeros) | the empty prompt |
