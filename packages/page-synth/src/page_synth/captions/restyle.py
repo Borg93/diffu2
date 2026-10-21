@@ -47,6 +47,7 @@ class Style(BaseModel):
 
     @classmethod
     def of(cls, record: CropRecord) -> Style:
+        """The style a crop record's caption names."""
         return cls(provenance=record.provenance, look=record.look)
 
 

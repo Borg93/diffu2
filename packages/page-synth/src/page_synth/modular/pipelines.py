@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import override
 
 import torch
 from diffusers import ComponentsManager
@@ -60,10 +61,12 @@ class CropTextBlocks(SequentialPipelineBlocks):
     block_names = CROP_TEXT_BLOCKS.keys()
 
     @property
+    @override
     def description(self) -> str:
         return "Encodes a crop plan's layout caption with FLUX.3's text encoder (Qwen3-VL), as given (no upsampler)."
 
     @property
+    @override
     def outputs(self) -> list[OutputParam]:
         return [OutputParam.template("prompt_embeds"), OutputParam.template("negative_prompt_embeds")]
 
@@ -85,6 +88,7 @@ class CropBlocks(SequentialPipelineBlocks):
     }
 
     @property
+    @override
     def description(self) -> str:
         return (
             "Draws a planned crop with FLUX.3 from its prompt embeddings (reference-conditioned when an `image` is "
@@ -92,6 +96,7 @@ class CropBlocks(SequentialPipelineBlocks):
         )
 
     @property
+    @override
     def outputs(self) -> list[OutputParam]:
         return [
             OutputParam.template("images"),

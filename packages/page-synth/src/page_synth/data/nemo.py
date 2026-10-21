@@ -43,7 +43,7 @@ class InterleavedBucketSampler(Sampler[list[int]]):
         return len(self._buckets)
 
     @override
-    def __iter__(self) -> Iterator[list[int]]:  # pyrefly: ignore[bad-override] -- NeMo is not in this env
+    def __iter__(self) -> Iterator[list[int]]:
         batches = list(self._buckets)
         order = torch.randperm(len(batches), generator=torch.Generator().manual_seed(self._buckets.seed + self._epoch))
         self._yielded, self._resume_at = self._resume_at, 0
@@ -51,13 +51,16 @@ class InterleavedBucketSampler(Sampler[list[int]]):
             self._yielded += 1
             yield batches[index]
 
+    @override
     def set_epoch(self, epoch: int) -> None:
         self._epoch = epoch
         self._buckets.set_epoch(epoch)
 
+    @override
     def state_dict(self) -> dict[str, int]:
         return {"epoch": self._epoch, "batches_yielded": self._yielded}
 
+    @override
     def load_state_dict(self, state: dict[str, int]) -> None:
         self.set_epoch(state["epoch"])
         self._resume_at = state["batches_yielded"]
@@ -105,7 +108,7 @@ class InterleavedTextToImageDataloaderConfig(TextToImageDataloaderConfig):
         _require_shuffle(self.shuffle)
 
     @override
-    def build(self, *, dp_rank: int, dp_world_size: int, batch_size: int) -> DiffusionDataloaderBuild:  # pyrefly: ignore[bad-override] -- NeMo is not in this env
+    def build(self, *, dp_rank: int, dp_world_size: int, batch_size: int) -> DiffusionDataloaderBuild:
         return interleaved(super().build(dp_rank=dp_rank, dp_world_size=dp_world_size, batch_size=batch_size))
 
 
@@ -121,5 +124,5 @@ class InterleavedImageEditDataloaderConfig(ImageEditDataloaderConfig):
         _require_shuffle(self.shuffle)
 
     @override
-    def build(self, *, dp_rank: int, dp_world_size: int, batch_size: int) -> DiffusionDataloaderBuild:  # pyrefly: ignore[bad-override] -- NeMo is not in this env
+    def build(self, *, dp_rank: int, dp_world_size: int, batch_size: int) -> DiffusionDataloaderBuild:
         return interleaved(super().build(dp_rank=dp_rank, dp_world_size=dp_world_size, batch_size=batch_size))

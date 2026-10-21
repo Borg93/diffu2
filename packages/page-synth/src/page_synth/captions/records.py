@@ -28,10 +28,12 @@ class CropRecord(BaseModel):
 
     @property
     def provenance(self) -> Provenance:
+        """The archive and years the crop's caption names, from its collection and page path."""
         return provenance_of(self.collection, Path(self.page))
 
     @property
     def look(self) -> ScanLook:
+        """The scan, paper and ink the crop's caption names."""
         return ScanLook(greyscale=self.greyscale, paper=self.paper, ink=self.ink)
 
 

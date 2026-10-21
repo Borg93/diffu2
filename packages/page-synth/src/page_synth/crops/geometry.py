@@ -54,6 +54,8 @@ class CropSettings(BaseModel):
 
 
 class Line(BaseModel):
+    """A text line on a page: its outline and baseline height (page px), its text, role and source block."""
+
     polygon: list[tuple[float, float]]
     baseline_y: float
     text: str
@@ -62,19 +64,24 @@ class Line(BaseModel):
 
     @property
     def box(self) -> Box:
+        """The line's bounding box."""
         xs, ys = zip(*self.polygon, strict=True)
         return min(xs), min(ys), max(xs), max(ys)
 
     @property
     def middle_x(self) -> float:
+        """The x of the line's middle."""
         return (self.box[0] + self.box[2]) / 2
 
 
 class Region(BaseModel):
+    """A text region's lines."""
+
     lines: list[Line]
 
     @property
     def box(self) -> Box:
+        """The bounding box of the region's lines."""
         boxes = [line.box for line in self.lines]
         return (
             min(b[0] for b in boxes),
@@ -94,6 +101,7 @@ class Column(BaseModel):
 
     @classmethod
     def of(cls, region: Region) -> Column:
+        """A column anchored on a wide region."""
         box = region.box
         return cls(anchor=box, left=box[0], right=box[2], lines=list(region.lines))
 
@@ -102,9 +110,11 @@ class Column(BaseModel):
         return max(0.0, max(self.anchor[1], box[1]) - min(self.anchor[3], box[3]))
 
     def width_with(self, box: Box) -> float:
+        """The column's width if ``box`` joined it."""
         return max(self.right, box[2]) - min(self.left, box[0])
 
     def add(self, region: Region) -> None:
+        """Join a narrow region's lines to the column."""
         self.lines.extend(region.lines)
         self.left = min(self.left, region.box[0])
         self.right = max(self.right, region.box[2])
@@ -127,6 +137,7 @@ class ColumnFrame(BaseModel):
 
     @property
     def scale(self) -> float:
+        """Crop pixels per page pixel."""
         return self.bucket[0] / (self.right - self.left)
 
     @property
@@ -175,6 +186,7 @@ class Crop(BaseModel):
         return _place((x - x0) / (x1 - x0), (y - y0) / (y1 - y0))
 
     def cut_edge(self, line: Line) -> str:
+        """The edge (``top`` or ``bottom``) that cuts a line off the crop."""
         return "top" if line.baseline_y < self.rect[1] else "bottom"
 
 

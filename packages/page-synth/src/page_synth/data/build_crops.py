@@ -56,10 +56,12 @@ class Page(BaseModel):
 
     @property
     def id(self) -> str:
+        """A stable id from the page's path."""
         return hashlib.sha1(str(self.path).encode()).hexdigest()[:12]
 
     @property
     def provenance(self) -> Provenance:
+        """The archive and years the page's captions name."""
         return provenance_of(self.collection, self.path)
 
 

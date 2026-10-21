@@ -33,6 +33,8 @@ class LineRecord(BaseModel):
 
 
 class Caption(BaseModel):
+    """A crop's FLUX.3 layout prompt with the layout rows and line records it was written from."""
+
     text: str  # the prompt: the caption paragraph, a space and the layout rows as JSON
     layout: list[LayoutRow]
     lines: list[LineRecord]

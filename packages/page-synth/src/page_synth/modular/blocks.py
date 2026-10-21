@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+from typing import override
+
 from diffusers.modular_pipelines import (
     ComponentSpec,
     InputParam,
@@ -46,14 +48,17 @@ class ReferenceGridStep(ModularPipelineBlocks):
     model_name = "flux3"
 
     @property
+    @override
     def description(self) -> str:
         return "Resizes the reference image onto the 16-px grid the way NeMo's FLUX.3 cache encoder did in training."
 
     @property
+    @override
     def inputs(self) -> list[InputParam]:
         return [InputParam("image", required=False, description="The reference image (PIL), if any.")]
 
     @property
+    @override
     def intermediate_outputs(self) -> list[OutputParam]:
         return [OutputParam("image", description="The reference image on the training grid.")]
 
@@ -71,14 +76,17 @@ class CropPromptStep(ModularPipelineBlocks):
     model_name = "flux3"
 
     @property
+    @override
     def description(self) -> str:
         return "Turns a page_synth.plan.CropPlan into the prompt, the line boxes (page_lines) and the image size."
 
     @property
+    @override
     def inputs(self) -> list[InputParam]:
         return [InputParam("crop_plan", type_hint=CropPlan, required=True, description="The crop to draw.")]
 
     @property
+    @override
     def intermediate_outputs(self) -> list[OutputParam]:
         return [
             OutputParam("prompt", type_hint=str, description="The crop's layout caption."),
@@ -103,10 +111,12 @@ class LineReadbackStep(ModularPipelineBlocks):
     model_name = "flux3"
 
     @property
+    @override
     def description(self) -> str:
         return "Crops each line's box from the generated image and reads it with TrOCR (per-line CER)."
 
     @property
+    @override
     def expected_components(self) -> list[ComponentSpec]:
         return [
             ComponentSpec("htr_model", VisionEncoderDecoderModel, pretrained_model_name_or_path=HTR),
@@ -114,6 +124,7 @@ class LineReadbackStep(ModularPipelineBlocks):
         ]
 
     @property
+    @override
     def inputs(self) -> list[InputParam]:
         return [
             InputParam("images", required=True, description="The generated images (PIL)."),
@@ -121,6 +132,7 @@ class LineReadbackStep(ModularPipelineBlocks):
         ]
 
     @property
+    @override
     def intermediate_outputs(self) -> list[OutputParam]:
         return [
             OutputParam("line_reads", type_hint=list, description="What the recognizer read in each line box."),
@@ -166,10 +178,12 @@ class LabelExportStep(ModularPipelineBlocks):
     model_name = "flux3"
 
     @property
+    @override
     def description(self) -> str:
         return "Writes the crop's labels (ALTO or PAGE XML) from its plan, flagging lines the read-back failed."
 
     @property
+    @override
     def inputs(self) -> list[InputParam]:
         return [
             InputParam("crop_plan", type_hint=CropPlan, required=True),
@@ -180,6 +194,7 @@ class LabelExportStep(ModularPipelineBlocks):
         ]
 
     @property
+    @override
     def intermediate_outputs(self) -> list[OutputParam]:
         return [
             OutputParam("labels_xml", type_hint=str, description="The crop's labels."),

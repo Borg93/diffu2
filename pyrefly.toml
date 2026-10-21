@@ -15,3 +15,6 @@ replace-imports-with-any = [
 
 [errors]
 missing-import = false
+# Every class we override comes from diffusers or NeMo, which are typed as Any above, so pyrefly can never see the
+# parent and reports each @override as overriding nothing. @override stays on them as documentation.
+bad-override = false
