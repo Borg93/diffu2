@@ -1,6 +1,6 @@
 # FLUX.3 Klein Base reference-style LoRA (v3): draw a crop's text and layout in the hand, ink and paper of a
-# reference crop from another page of the same volume (page_synth.data.style_pairs -> data_flux3/style_pairs_v3, cached by
-# page_synth.data.cache_pairs). The captions are FLUX.3 image-edit records that name no archive or look, so the style can
+# reference crop from another page of the same volume (diffu_page.data.style_pairs -> data_flux3/style_pairs_v3, cached by
+# diffu_train.cache_pairs). The captions are FLUX.3 image-edit records that name no archive or look, so the style can
 # only come from the reference. Otherwise the v2 recipe (flux3_layout_lora_v2.yaml).
 # Based on NeMo AutoModel's examples/diffusion/finetune/flux3_i2i_flow.yaml with the image-editing LoRA block of
 # its FLUX.3 guide (docs/model-coverage/diffusion/black-forest-labs/flux3-image-klein.mdx), which also trains the
@@ -107,9 +107,9 @@ step_scheduler:
 
 data:
   dataloader:
-    # page_synth.data.nemo: NeMo's image-edit loader with the (target, reference)
+    # diffu_train.nemo: NeMo's image-edit loader with the (target, reference)
     # shape buckets interleaved, so 1,600 steps over 11k pairs see every crop shape
-    _target_: page_synth.data.nemo.InterleavedImageEditDataloaderConfig
+    _target_: diffu_train.nemo.InterleavedImageEditDataloaderConfig
     cache_dir: ${DIFFU_REPO}/data_flux3/cache_style_v3
     quantization: 16
     base_resolution: [1024, 1024]

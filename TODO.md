@@ -17,7 +17,7 @@ What is known to be wrong or unfinished. Remove an item when it is done; add the
 
 Done 2026-10-21.
 
-- [x] `diffu_page.layout` and `diffu_page.labels` moved into page-synth (`page_synth.layout`, `page_synth.labels`)
+- [x] diffu-page's layout and labels kept, the rest of the old diffu-page removed
       with their tests; `layout/__init__.py` exports only public names. Checked: 331 crop plans (4,488 lines) from 60
       random GT pages are byte-identical before and after.
 - [x] Removed the line-pasting era: the rest of diffu-page, `diffu-runner`, `diffu-studio`, the old model `src/diffu`
@@ -25,11 +25,11 @@ Done 2026-10-21.
       `diffu-mmdit-v1`.
 - [x] Root `pyproject.toml` is a virtual workspace root; diffusers pinned to `e04f0c5` (the NeMo environment's FLUX.3
       commit); ruff bans `dataclasses.dataclass` (NeMo's dataloader configs are the one exception).
-- [x] `jobs/setup_nemo_env.sh` installs page-synth into the NeMo environment (and removes the old diffu, diffu-page).
+- [x] `jobs/setup_nemo_env.sh` installs diffu-page, diffu-gen and diffu-train into the NeMo environment.
 - [x] README says what the repo is and how it is laid out.
-- [x] page-synth grouped by pipeline stage (branch `modular-structure`): `layout/` (+ `page_xml.py`, the one PAGE/ALTO
+- [x] Grouped by pipeline stage (branch `modular-structure`): `layout/` (+ `page_xml.py`, the one PAGE/ALTO
       XML reader, shared by the layout replay and the crop builder), `crops/`, `captions/`, `modular/`,
-      `generator.py`, `labels.py`, `cli/` (also the `page-synth-generate` / `-evaluate` / `-sheets` commands),
+      `generator.py`, `labels.py`, `cli/` (the `diffu-generate` / `-evaluate` / `-sheets` commands),
       `data/` (incl. `nemo.py`). `jobs/spark_guard.sh` (was `scripts/`); `.gitignore` trimmed; `.rayignore` dropped.
       Checked: the 331 crop plans byte-identical again; all `_target_`s of the three NeMo configs resolve in NeMo's
       environment. Merge after tonight's queue (its scripts call main's paths and `scripts/spark_guard.sh`).
@@ -38,8 +38,16 @@ Done 2026-10-21.
 - [ ] Delete `experiments/` once the running v2 job's evals have used it (~16:45 2026-10-21). Kept only for that
       run, which started before the restructure.
 - [ ] Run `jobs/setup_nemo_env.sh` once to drop the stale diffu / diffu-page installs from the NeMo environment
-      (page-synth's editable install already points at this checkout).
+      and install the three members.
 - [x] `docs/PIPELINE.md`: the flow from page to labelled crops, training, and the training/generation consistency table.
+
+## Workspace (2026-10-21, branch `modular-structure`)
+
+- [x] page-synth split into uv workspace members by concern and dependency: diffu-page (CPU page data), diffu-gen
+      (Modular Diffusers generation, torch), diffu-train (NeMo glue). Pilot LoRA config pruned.
+- [ ] diffu-runner: rebuilt on the new pipeline (Ray Data, CropGenerator's encode / draw stages).
+- [ ] diffu: the model, rebuilt as FLUX.3's architecture with our own weights (see "diffu" below).
+- [ ] diffu-studio: the Gradio app, rebuilt on the new generator.
 
 ## Code audit against writing-python (2026-10-21, branch `modular-structure`)
 
@@ -86,7 +94,7 @@ red-checked); not yet run on the GPU with FLUX.3 Klein.
       resizes a reference exactly as training did, before FLUX.3's VAE encoder (test red-checked).
 - [x] CFG null: NeMo's dropout zeroes the text embeddings, FLUX.3 (BFL, diffusers) uses the empty prompt's. Our LoRA
       configs set `cfg_dropout_prob: 0.0`, so v2/v3 are consistent; diffu must pick one null for training and inference.
-- [ ] Publish the blocks to the Hub (`diffusers-cli custom_blocks`) if others should use them; they import page-synth.
+- [ ] Publish the blocks to the Hub (`diffusers-cli custom_blocks`) if others should use them; they import diffu-page.
 - [ ] Guidance: we use 4.0, BFL's own code's default (the model card says 3.5). Sampling shift: diffusers 6.93, BFL's
       code 16.0 since 2026-10-17. Compare both on the eval set.
 - [ ] The text-encoder layer choice is `GeneratorSettings.text_layers` (FLUX.3's default when unset); diffu's encoder
@@ -175,7 +183,7 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
 
 ## Inference at scale
 
-- [ ] Ray Data entrypoint in page-synth: layout / refill / plan as CPU map steps, text encoding as its own
+- [ ] Ray Data entrypoint (diffu-runner): layout / refill / plan as CPU map steps, text encoding as its own
       stage, the generator as a stateful GPU actor (`map_batches`, concurrency = GPUs), TrOCR read-back
       co-located, Lance sink.
 - [ ] Runs on our Ray cluster's Blackwell GPUs (96 GB each, sm_120). Re-profile there before optimizing; measure

@@ -11,8 +11,10 @@ supported-markers = [
 
 [manifest]
 members = [
+    "diffu-gen",
+    "diffu-page",
+    "diffu-train",
     "diffu-workspace",
-    "page-synth",
 ]
 
 [[package]]
@@ -187,6 +189,75 @@ nvtx = [
 ]
 
 [[package]]
+name = "diffu-gen"
+version = "0.1.0"
+source = { editable = "packages/diffu-gen" }
+dependencies = [
+    { name = "diffu-page" },
+    { name = "diffusers" },
+    { name = "peft" },
+    { name = "pydantic-settings" },
+    { name = "rich" },
+    { name = "safetensors" },
+    { name = "torch" },
+    { name = "torchvision" },
+    { name = "transformers" },
+    { name = "typer" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "diffu-page", editable = "packages/diffu-page" },
+    { name = "diffusers", git = "https://github.com/huggingface/diffusers?rev=e04f0c5f24392fcd34b32d18d0ce03668f9bcd50" },
+    { name = "peft", specifier = ">=0.17" },
+    { name = "pydantic-settings", specifier = ">=2.15" },
+    { name = "rich", specifier = ">=13" },
+    { name = "safetensors", specifier = ">=0.4" },
+    { name = "torch", specifier = ">=2.10", index = "https://download.pytorch.org/whl/cu130" },
+    { name = "torchvision", specifier = ">=0.25", index = "https://download.pytorch.org/whl/cu130" },
+    { name = "transformers", specifier = ">=5.18" },
+    { name = "typer", specifier = ">=0.20" },
+]
+
+[[package]]
+name = "diffu-page"
+version = "0.1.0"
+source = { editable = "packages/diffu-page" }
+dependencies = [
+    { name = "numpy" },
+    { name = "pillow" },
+    { name = "pydantic" },
+    { name = "rich" },
+    { name = "typer" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "pillow", specifier = ">=11" },
+    { name = "pydantic", specifier = ">=2" },
+    { name = "rich", specifier = ">=13" },
+    { name = "typer", specifier = ">=0.20" },
+]
+
+[[package]]
+name = "diffu-train"
+version = "0.1.0"
+source = { editable = "packages/diffu-train" }
+dependencies = [
+    { name = "diffu-gen" },
+    { name = "diffu-page" },
+    { name = "typer" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "diffu-gen", editable = "packages/diffu-gen" },
+    { name = "diffu-page", editable = "packages/diffu-page" },
+    { name = "typer", specifier = ">=0.20" },
+]
+
+[[package]]
 name = "diffu-workspace"
 version = "0.1.0"
 source = { virtual = "." }
@@ -199,7 +270,9 @@ dev = [
     { name = "xmlschema" },
 ]
 workspace = [
-    { name = "page-synth" },
+    { name = "diffu-gen" },
+    { name = "diffu-page" },
+    { name = "diffu-train" },
 ]
 
 [package.metadata]
@@ -211,7 +284,11 @@ dev = [
     { name = "ruff", specifier = ">=0.17.1" },
     { name = "xmlschema", specifier = ">=4.3.2" },
 ]
-workspace = [{ name = "page-synth", editable = "packages/page-synth" }]
+workspace = [
+    { name = "diffu-gen", editable = "packages/diffu-gen" },
+    { name = "diffu-page", editable = "packages/diffu-page" },
+    { name = "diffu-train", editable = "packages/diffu-train" },
+]
 
 [[package]]
 name = "diffusers"
@@ -610,41 +687,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d7/f1/e7a6dd94a8d4a5626c03e4e99c87f241ba9e350cd9e6d75123f992427270/packaging-26.2.tar.gz", hash = "sha256:ff452ff5a3e828ce110190feff1178bb1f2ea2281fa2075aadb987c2fb221661", size = 228134, upload-time = "2026-04-24T20:15:23.917Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/df/b2/87e62e8c3e2f4b32e5fe99e0b86d576da1312593b39f47d8ceef365e95ed/packaging-26.2-py3-none-any.whl", hash = "sha256:5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e", size = 100195, upload-time = "2026-04-24T20:15:22.081Z" },
-]
-
-[[package]]
-name = "page-synth"
-version = "0.1.0"
-source = { editable = "packages/page-synth" }
-dependencies = [
-    { name = "diffusers" },
-    { name = "numpy" },
-    { name = "peft" },
-    { name = "pillow" },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
-    { name = "rich" },
-    { name = "safetensors" },
-    { name = "torch" },
-    { name = "torchvision" },
-    { name = "transformers" },
-    { name = "typer" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "diffusers", git = "https://github.com/huggingface/diffusers?rev=e04f0c5f24392fcd34b32d18d0ce03668f9bcd50" },
-    { name = "numpy", specifier = ">=1.26" },
-    { name = "peft", specifier = ">=0.17" },
-    { name = "pillow", specifier = ">=11" },
-    { name = "pydantic", specifier = ">=2" },
-    { name = "pydantic-settings", specifier = ">=2.15" },
-    { name = "rich", specifier = ">=13" },
-    { name = "safetensors", specifier = ">=0.4" },
-    { name = "torch", specifier = ">=2.10", index = "https://download.pytorch.org/whl/cu130" },
-    { name = "torchvision", specifier = ">=0.25", index = "https://download.pytorch.org/whl/cu130" },
-    { name = "transformers", specifier = ">=5.18" },
-    { name = "typer", specifier = ">=0.20" },
 ]
 
 [[package]]

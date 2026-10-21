@@ -120,9 +120,9 @@ step_scheduler:
 
 data:
   dataloader:
-    # page_synth.data.nemo: NeMo's builder with the aspect buckets interleaved,
+    # diffu_train.nemo: NeMo's builder with the aspect buckets interleaved,
     # so 1,600 steps over 11k crops see every crop shape, not just the buckets first in line
-    _target_: page_synth.data.nemo.InterleavedTextToImageDataloaderConfig
+    _target_: diffu_train.nemo.InterleavedTextToImageDataloaderConfig
     cache_dir: ${DIFFU_REPO}/data_flux3/cache_train_v2
     train_text_encoder: false
     num_workers: 2
