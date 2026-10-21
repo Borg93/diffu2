@@ -15,10 +15,15 @@ What is known to be wrong or unfinished. Remove an item when it is done; add the
 - [ ] Docs: `docs/` describes diffu only. Add `docs/FLUX.md` (the pipeline page, https://claude.ai/artifact/X47DU54cesTiH3qw854U7g) and say in the README which part is which.
 - [ ] Re-run the generator test from the new package and compare with the run before the move.
 
+## Labels (ALTO / PAGE are only output formats; the label data is what must be right)
+
+- [ ] Reading order across columns: a crop covering two columns numbers its lines by height across both, so the labels interleave the columns. Order by column (source block), then top to bottom. (Found 2026-10-21 on a refilled Bergskollegium spread.)
+- [ ] Line polygons are the prompt's slots, not the ink: generous rectangles that overlap their neighbours. Measure the generated ink per line (the read-back already crops each line) for tight polygons and baselines.
+- [ ] The planner returns no crops for a synthetic multi_column page once it has a margin note (7 crops without one).
+- Checked 2026-10-21: `test_labels.py` passes with `xmlschema` installed (22 tests); our ALTO is valid against the official ALTO v4 schema but can't carry line roles; our PAGE keeps roles on a round trip. PAGE schema checked only against 2013 (diffu-page's own test); the official repo is now at 2024.
+
 ## diffu-page: verify before relying on it
 
-- [ ] Install `xmlschema` and run `packages/diffu-page/tests/test_labels.py` (it has never run here).
-- [ ] Validate exported ALTO and PAGE against the official schemas and htrflow's reader; check a round trip (export → read back: boxes, text, reading order).
 - [ ] Compare template layouts (line pitch, lines per page, margins, kind mix) with the real GT pages before using synthetic templates for anything that matters. Until then: real templates only.
 - [ ] The `landskap` template gives no crops: the windowing rejects its short label lines.
 - [ ] `layout/__init__.py` re-exports many private names (old flat-module surface).
