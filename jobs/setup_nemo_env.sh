@@ -14,7 +14,7 @@ AUTOMODEL="${1:-$HOME/Desktop/repos/Automodel}"
 PY="$AUTOMODEL/.venv-managed/bin/python"
 
 uv pip uninstall --python "$PY" diffu page-synth diffu-gen 2>/dev/null || true  # earlier layouts (the old diffu too)
-for member in diffu diffu-page diffu-train; do
-    uv pip install --python "$PY" --no-deps -e "$REPO/packages/$member"
+for project in "$REPO" "$REPO/packages/page" "$REPO/packages/train"; do  # diffu (the root), diffu-page, diffu-train
+    uv pip install --python "$PY" --no-deps -e "$project"
 done
 "$PY" -c "import diffu.init, diffu_page.pipeline, diffu_train.nemo; print('diffu, diffu-page, diffu-train installed')"

@@ -32,7 +32,8 @@ Done 2026-10-21.
       `generator.py`, `labels.py`, `cli/` (the `diffu-generate` / `-evaluate` / `-sheets` commands),
       `data/` (incl. `nemo.py`). `jobs/spark_guard.sh` (was `scripts/`); `.gitignore` trimmed; `.rayignore` dropped.
       Checked: the 331 crop plans byte-identical again; all `_target_`s of the three NeMo configs resolve in NeMo's
-      environment. Merge after tonight's queue (its scripts call main's paths and `scripts/spark_guard.sh`).
+      environment. On GitHub's main since 2026-10-21; the local checkout follows after tonight's queue (its scripts
+      call the old paths and `scripts/spark_guard.sh`).
 - [x] Tests for plan (reading order: body block before its margin notes) and restyle (restyled caption == the crop
       captioned in the target style; the v3 edit caption takes only the paper from the reference). 50 tests.
 - [ ] Delete `experiments/` once the running v2 job's evals have used it (~16:45 2026-10-21). Kept only for that
@@ -89,7 +90,7 @@ Done 2026-10-21.
 
 ## Modular Diffusers (checked against huggingface.co/blog/modular-diffusers and the diffusers source, 2026-10-21)
 
-Tested end to end on CPU with diffusers' tiny FLUX.3 test model (`packages/diffu-page/tests/test_pipeline.py`, each
+Tested end to end on CPU with diffusers' tiny FLUX.3 test model (`packages/page/tests/test_pipeline.py`, each
 test red-checked); not yet run on the GPU with FLUX.3 Klein.
 
 - [x] Our blocks around the model's own, declared like diffusers declares FLUX.3's: `pipeline.crop_blocks` (crop
@@ -162,7 +163,7 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
   our interleaved dataloader, consolidated diffusers export) → GB10 smoke run → diffu inference blocks → EMA /
   Self-Flow recipe subclass → Leonardo.
 
-- [x] **Model** (`packages/diffu`, laid out like a diffusers model: `configs.py`, `init.py`, `latents.py`,
+- [x] **Model** (the root package, `src/diffu`, laid out like a diffusers model: `configs.py`, `init.py`, `latents.py`,
       `modular_pipelines/diffu/` with encoders, decoders, `DiffuAutoBlocks`, `DiffuModularPipeline`):
       `Flux3Transformer2DModel` from our presets with random adaLN-Zero init; FLUX.3's denoise blocks reused unchanged.
       diffu-S 618.0M (hidden 1536, 2 per-mode + 12 joint: FLUX.3's per-mode share of depth), diffu-M 1636.7M (2048,

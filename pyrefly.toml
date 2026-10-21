@@ -1,4 +1,4 @@
-project-includes = ["packages/*/src/**/*.py"]
+project-includes = ["src/**/*.py", "packages/*/src/**/*.py"]
 project-excludes = ["**/.git/**", "**/__pycache__/**", "**/.venv/**"]
 
 # The ML libraries' stubs don't model their dynamic attributes (diffusers block state, transformers configs), so they

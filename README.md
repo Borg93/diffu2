@@ -9,18 +9,21 @@ so the same pipeline can run on a model we may ship. The old from-scratch line m
 
 How the pieces fit together, and what keeps training and generation consistent: [docs/PIPELINE.md](docs/PIPELINE.md).
 
-## Workspace
+## Layout
 
-A uv workspace, one member per role. Everything that draws is a Modular Diffusers pipeline: our blocks (diffu-page)
-around the model's own (FLUX.3 Klein from diffusers, or diffu), chosen by the model directory alone.
+The repo's root project is **diffu**, the model; the uv workspace members under `packages/` are the page pipeline and
+what runs it. Everything that draws is a Modular Diffusers pipeline: our blocks (diffu-page) around the model's own
+(FLUX.3 Klein from diffusers, or diffu), chosen by the model directory alone.
 
-| Member | What it is | Heavy dependencies |
-| --- | --- | --- |
-| `packages/diffu-page` | Archive pages as data (`layout/`, `crops/`, `captions/`, plans, labels, the training-data builders in `data/`), our blocks (`blocks/`), the page and crop pipelines (`pipeline.py`) and their CLIs: `diffu-generate`, `diffu-evaluate`, `diffu-sheets` | torch, diffusers, transformers |
-| `packages/diffu` | The diffu model, laid out like a diffusers model (`modular_pipelines/diffu/`): FLUX.3's transformer with our own weights, a Qwen3.5 text encoder and the Qwen-Image VAE; `diffu-init` writes a new model repo | torch, diffusers |
-| `packages/diffu-train` | NeMo AutoModel glue: dataloader configs, v3 pair caching | NeMo AutoModel (its environment only) |
-| `packages/diffu-runner` | Generation at scale on a Ray cluster: pages planned on CPU workers, crops drawn by GPU actors each holding a crop pipeline | ray |
-| `packages/diffu-studio` | The page pipeline as a `gr.Workflow` canvas: a plan node feeding one draw node per drawer (a model and its LoRAs), so models draw the same page side by side; app view and REST endpoint included | gradio |
+| Where | Package | What it is | Heavy dependencies |
+| --- | --- | --- | --- |
+| `src/diffu`, `tests/` | diffu | The model, laid out like a diffusers model (`modular_pipelines/diffu/`): FLUX.3's transformer with our own weights, a Qwen3.5 text encoder and the Qwen-Image VAE; `diffu-init` writes a new model repo | torch, diffusers |
+| `packages/page` | diffu-page | Archive pages as data (`layout/`, `crops/`, `captions/`, plans, labels, the training-data builders in `data/`), our blocks (`blocks/`), the page and crop pipelines (`pipeline.py`) and their CLIs: `diffu-generate`, `diffu-evaluate`, `diffu-sheets` | torch, diffusers, transformers |
+| `packages/train` | diffu-train | NeMo AutoModel glue: dataloader configs, v3 pair caching | NeMo AutoModel (its environment only) |
+| `packages/runner` | diffu-runner | Generation at scale on a Ray cluster: pages planned on CPU workers, crops drawn by GPU actors each holding a crop pipeline | ray |
+| `packages/studio` | diffu-studio | The page pipeline as a `gr.Workflow` canvas: a plan node feeding one draw node per drawer (a model and its LoRAs), so models draw the same page side by side; app view and REST endpoint included | gradio |
+
+Package names keep the `diffu-` prefix (imports `diffu_page`, ...) so they stay unique in NeMo's shared environment.
 
 ```
 configs/flux3/  NeMo AutoModel training configs
@@ -32,7 +35,7 @@ conftest.py     test fixtures shared by the members (pages, diffusers' tiny FLUX
 
 ## Environments
 
-- **This repo** (`uv sync` builds every member): CPU checks and tests, `CUDA_VISIBLE_DEVICES="" uv run pytest`. The
+- **This repo** (`uv sync` builds diffu and every member): CPU checks and tests, `CUDA_VISIBLE_DEVICES="" uv run pytest`. The
   generation tests run diffusers' tiny FLUX.3 test model end to end on CPU.
 - **NeMo AutoModel** (`~/Desktop/repos/Automodel/.venv-managed`): training and the GPU jobs.
   `jobs/setup_nemo_env.sh` installs diffu, diffu-page and diffu-train into it.

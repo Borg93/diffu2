@@ -1,16 +1,33 @@
 [project]
-name = "diffu-workspace"
+name = "diffu"
 version = "0.1.0"
-description = "Synthetic archive pages with ground truth for HTR and VLM training: the page pipeline and the diffu model."
+description = "diffu: our page model, FLUX.3's architecture (diffusers' Flux3Transformer2DModel and Modular Diffusers blocks) with our own weights, a Qwen3.5 text encoder and the Qwen-Image VAE."
 readme = "README.md"
 requires-python = ">=3.12,<3.14"  # 3.14 breaks pydantic's `from __future__ import annotations` models
 license = "Apache-2.0"
 authors = [{ name = "Gabriel Borg" }]
-dependencies = []
+dependencies = [
+    "diffusers",
+    "pydantic>=2",
+    "rich>=13",
+    "safetensors>=0.4",
+    "torch>=2.10",
+    "transformers>=5.18",
+    "typer>=0.20",
+]
 
-# A virtual workspace root: nothing to build here, the code lives in the members under packages/.
+[project.scripts]
+diffu-init = "diffu.init:app"  # a diffu model repo with freshly initialised weights
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/diffu"]
+
+# The repo's root project is the diffu model; the members under packages/ are the page pipeline and what runs it.
 [tool.uv]
-package = false
 default-groups = ["workspace", "dev"]
 environments = ["sys_platform == 'linux'"]  # CUDA wheels are Linux-only
 
@@ -35,7 +52,7 @@ url = "https://download.pytorch.org/whl/cu130"
 explicit = true
 
 [dependency-groups]
-workspace = ["diffu", "diffu-page", "diffu-train", "diffu-runner", "diffu-studio"]  # every member; diffu-train's modules import NeMo at runtime
+workspace = ["diffu-page", "diffu-train", "diffu-runner", "diffu-studio"]  # every member; diffu-train's modules import NeMo at runtime
 dev = [
     "ruff>=0.17.1",
     "pyrefly>=1.4",
@@ -60,10 +77,10 @@ ignore = ["E501"]
 known-first-party = ["diffu", "diffu_page", "diffu_train", "diffu_runner", "diffu_studio"]
 
 [tool.pytest.ini_options]
-testpaths = ["packages"]
+testpaths = ["tests", "packages"]
 addopts = "-q --import-mode=importlib"
 strict = true
 
 [tool.coverage.run]  # per-test coverage when pruning: production lines only, never the tests'
-source = ["packages/diffu/src", "packages/diffu-page/src", "packages/diffu-runner/src", "packages/diffu-studio/src", "packages/diffu-train/src"]
-omit = ["packages/*/tests/*", "conftest.py"]
+source = ["src", "packages/page/src", "packages/runner/src", "packages/studio/src", "packages/train/src"]
+omit = ["tests/*", "packages/*/tests/*", "conftest.py"]

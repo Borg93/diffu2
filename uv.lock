@@ -16,7 +16,6 @@ members = [
     "diffu-runner",
     "diffu-studio",
     "diffu-train",
-    "diffu-workspace",
 ]
 
 [[package]]
@@ -279,7 +278,7 @@ nvtx = [
 [[package]]
 name = "diffu"
 version = "0.1.0"
-source = { editable = "packages/diffu" }
+source = { editable = "." }
 dependencies = [
     { name = "diffusers" },
     { name = "pydantic" },
@@ -288,6 +287,21 @@ dependencies = [
     { name = "torch" },
     { name = "transformers" },
     { name = "typer" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pyrefly" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "ruff" },
+    { name = "xmlschema" },
+]
+workspace = [
+    { name = "diffu-page" },
+    { name = "diffu-runner" },
+    { name = "diffu-studio" },
+    { name = "diffu-train" },
 ]
 
 [package.metadata]
@@ -301,10 +315,25 @@ requires-dist = [
     { name = "typer", specifier = ">=0.20" },
 ]
 
+[package.metadata.requires-dev]
+dev = [
+    { name = "pyrefly", specifier = ">=1.4" },
+    { name = "pytest", specifier = ">=9.1.1" },
+    { name = "pytest-cov", specifier = ">=7" },
+    { name = "ruff", specifier = ">=0.17.1" },
+    { name = "xmlschema", specifier = ">=4.3.2" },
+]
+workspace = [
+    { name = "diffu-page", editable = "packages/page" },
+    { name = "diffu-runner", editable = "packages/runner" },
+    { name = "diffu-studio", editable = "packages/studio" },
+    { name = "diffu-train", editable = "packages/train" },
+]
+
 [[package]]
 name = "diffu-page"
 version = "0.1.0"
-source = { editable = "packages/diffu-page" }
+source = { editable = "packages/page" }
 dependencies = [
     { name = "diffu" },
     { name = "diffusers" },
@@ -323,7 +352,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "diffu", editable = "packages/diffu" },
+    { name = "diffu", editable = "." },
     { name = "diffusers", git = "https://github.com/huggingface/diffusers?rev=e04f0c5f24392fcd34b32d18d0ce03668f9bcd50" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "peft", specifier = ">=0.17" },
@@ -341,7 +370,7 @@ requires-dist = [
 [[package]]
 name = "diffu-runner"
 version = "0.1.0"
-source = { editable = "packages/diffu-runner" }
+source = { editable = "packages/runner" }
 dependencies = [
     { name = "diffu-page" },
     { name = "pydantic" },
@@ -352,7 +381,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "diffu-page", editable = "packages/diffu-page" },
+    { name = "diffu-page", editable = "packages/page" },
     { name = "pydantic", specifier = ">=2" },
     { name = "ray", extras = ["data"], specifier = "==2.59.0" },
     { name = "rich", specifier = ">=13" },
@@ -362,7 +391,7 @@ requires-dist = [
 [[package]]
 name = "diffu-studio"
 version = "0.1.0"
-source = { editable = "packages/diffu-studio" }
+source = { editable = "packages/studio" }
 dependencies = [
     { name = "diffu-page" },
     { name = "gradio" },
@@ -372,7 +401,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "diffu-page", editable = "packages/diffu-page" },
+    { name = "diffu-page", editable = "packages/page" },
     { name = "gradio", specifier = ">=6" },
     { name = "pydantic", specifier = ">=2" },
     { name = "typer", specifier = ">=0.20" },
@@ -381,7 +410,7 @@ requires-dist = [
 [[package]]
 name = "diffu-train"
 version = "0.1.0"
-source = { editable = "packages/diffu-train" }
+source = { editable = "packages/train" }
 dependencies = [
     { name = "diffu-page" },
     { name = "typer" },
@@ -389,47 +418,8 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "diffu-page", editable = "packages/diffu-page" },
+    { name = "diffu-page", editable = "packages/page" },
     { name = "typer", specifier = ">=0.20" },
-]
-
-[[package]]
-name = "diffu-workspace"
-version = "0.1.0"
-source = { virtual = "." }
-
-[package.dev-dependencies]
-dev = [
-    { name = "pyrefly" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-    { name = "ruff" },
-    { name = "xmlschema" },
-]
-workspace = [
-    { name = "diffu" },
-    { name = "diffu-page" },
-    { name = "diffu-runner" },
-    { name = "diffu-studio" },
-    { name = "diffu-train" },
-]
-
-[package.metadata]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pyrefly", specifier = ">=1.4" },
-    { name = "pytest", specifier = ">=9.1.1" },
-    { name = "pytest-cov", specifier = ">=7" },
-    { name = "ruff", specifier = ">=0.17.1" },
-    { name = "xmlschema", specifier = ">=4.3.2" },
-]
-workspace = [
-    { name = "diffu", editable = "packages/diffu" },
-    { name = "diffu-page", editable = "packages/diffu-page" },
-    { name = "diffu-runner", editable = "packages/diffu-runner" },
-    { name = "diffu-studio", editable = "packages/diffu-studio" },
-    { name = "diffu-train", editable = "packages/diffu-train" },
 ]
 
 [[package]]
