@@ -8,6 +8,9 @@ from pathlib import Path
 from pydantic import BaseModel
 
 YEARS = re.compile(r"(1[5-9]\d\d)(?:\s*[-–]\s*(1[5-9]\d\d))?(-tal|-luku)?")
+# Folder names that went through a Mac SMB share carry the "SFM" encoding of characters Windows forbids at the end of
+# a name: a trailing space as U+F028, a trailing period as U+F029 (two GT collection folders end in U+F028).
+_SFM_DECODE = str.maketrans({"": " ", "": "."})
 
 
 # The GT collection folder (minus "GT-" and the export date) -> the name its captions use: the style handle
@@ -89,7 +92,7 @@ def provenance_of(collection: str, page_xml: Path) -> Provenance:
 
 def collection_title(collection: str) -> str:
     """The caption name of a GT collection folder (its slug for a collection COLLECTION_TITLES lacks)."""
-    key = re.sub(r"^GT-|_\d{8}$", "", collection)
+    key = re.sub(r"^GT-|_\d{8}$", "", collection.translate(_SFM_DECODE).strip())
     return COLLECTION_TITLES.get(key, key.replace("_", " "))
 
 

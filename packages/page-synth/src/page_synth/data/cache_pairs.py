@@ -20,7 +20,7 @@ from nemo_automodel.components.models.flux3.preprocessing import (
     Flux3ImageEditCacheEncoder,
 )
 
-from page_synth.pipelines import FLUX3_KLEIN
+from page_synth.modular.pipelines import FLUX3_KLEIN
 
 TARGET_PIXELS = 1024 * 1024  # the largest v2 bucket (1024 x 1024)
 

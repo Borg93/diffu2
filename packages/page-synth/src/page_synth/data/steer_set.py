@@ -7,8 +7,8 @@ on the same seed so only the words differ:
 - archive: the caption restyled as each of six archives, with that archive's commonest scan look and years;
 - look: the template's own archive with three scan looks (colour cream / greyscale / yellowed).
 
-The output is a crops dir for ``page_synth.evaluate`` (``metadata.jsonl`` + the template scans), plus a real crop of
-each archive under ``examples/`` that ``page_synth.sheets`` shows beside the generated one.
+The output is a crops dir for ``page_synth.cli.evaluate`` (``metadata.jsonl`` + the template scans), plus a real crop of
+each archive under ``examples/`` that ``page_synth.cli.sheets`` shows beside the generated one.
 
     python -m page_synth.data.steer_set   # -> data_flux3/steer_v2
 """
@@ -23,11 +23,11 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from page_synth.caption import LineRecord
-from page_synth.look import ScanLook
-from page_synth.provenance import Provenance
-from page_synth.records import CropRecord, read_records
-from page_synth.restyle import Style, restyle
+from page_synth.captions.look import ScanLook
+from page_synth.captions.prompt import LineRecord
+from page_synth.captions.provenance import Provenance
+from page_synth.captions.records import CropRecord, read_records
+from page_synth.captions.restyle import Style, restyle
 
 ARCHIVES = (
     "JLF_jamtlands_domsaga",
@@ -46,7 +46,7 @@ SEED = 1000  # template t's variants all use SEED + t
 
 
 class SteerRow(BaseModel):
-    """One prompt of the steering test, in the shape ``page_synth.evaluate`` reads."""
+    """One prompt of the steering test, in the shape ``page_synth.cli.evaluate`` reads."""
 
     file_name: str  # the template's scan (the eval's "real" side)
     caption: str

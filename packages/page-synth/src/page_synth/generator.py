@@ -1,6 +1,6 @@
 """The crop generator: one crop plan in, one image with its labels out. The unit a Ray Data actor wraps.
 
-Loaded once (both pipelines of :mod:`page_synth.pipelines`, plus LoRAs), then called per crop. ``encode`` and
+Loaded once (both pipelines of :mod:`page_synth.modular.pipelines`, plus LoRAs), then called per crop. ``encode`` and
 ``draw`` are the two stages; ``__call__`` runs both, a Ray job can run them as separate actors.
 """
 
@@ -13,10 +13,10 @@ import torch
 from PIL import Image
 from pydantic import BaseModel, ConfigDict
 
-from page_synth.blocks import LabelFormat
-from page_synth.pipelines import load_nemo_lora, load_pipelines
-from page_synth.plan import CropPlan
-from page_synth.readback import read_lines
+from page_synth.crops.plan import CropPlan
+from page_synth.modular.blocks import LabelFormat
+from page_synth.modular.pipelines import load_nemo_lora, load_pipelines
+from page_synth.modular.readback import read_lines
 
 
 class PromptEmbeddings(BaseModel):

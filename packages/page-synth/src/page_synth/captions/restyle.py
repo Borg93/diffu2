@@ -15,10 +15,10 @@ import json
 
 from pydantic import BaseModel, Field
 
-from page_synth.caption import LayoutRow
-from page_synth.look import ScanLook
-from page_synth.provenance import Provenance
-from page_synth.records import CropRecord
+from page_synth.captions.look import ScanLook
+from page_synth.captions.prompt import LayoutRow
+from page_synth.captions.provenance import Provenance
+from page_synth.captions.records import CropRecord
 
 
 class Style(BaseModel):

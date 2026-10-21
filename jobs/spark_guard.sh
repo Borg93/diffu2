@@ -14,7 +14,7 @@
 #     the job before your services);
 #   - the peak memory in use is logged, to size the next run.
 #
-#   scripts/spark_guard.sh --need-gb 40 --name canvas --log runs/canvas/guard.log -- uv run diffu-train ...
+#   jobs/spark_guard.sh --need-gb 40 --name canvas --log runs/canvas/guard.log -- uv run diffu-train ...
 #
 # Exit codes: the job's own; 3 if another guarded job holds the lock; 4 if too little memory is free;
 # 137 if the watchdog killed it. Sources: natolambert/dgx-spark-setup (scripts/oom_protection.sh) and the

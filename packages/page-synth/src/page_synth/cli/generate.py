@@ -1,13 +1,13 @@
 """Generate synthetic archive crops with ALTO/PAGE ground truth: any page template, any text, a chosen style.
 
 For each template (a real PAGE/ALTO page) the running text is replaced by new text (``refill``), the page is planned
-as training-scale crops (``page_synth.plan``), and every crop goes through a :class:`page_synth.generator.CropGenerator`:
+as training-scale crops (``page_synth.crops.plan``), and every crop goes through a :class:`page_synth.generator.CropGenerator`:
 FLUX.3 + LoRAs draw it, TrOCR reads every line back, and its labels are written with badly read lines tagged
 ``unclear``. Writes ``<out>/<page>_<k>.jpg`` + ``.xml`` per crop and ``<out>/summary.json``; ``--profile <dir>`` also
 records a torch profiler trace (Perfetto) of crops 2-3 after a warm-up crop. One GPU job, through
-scripts/spark_guard.sh:
+jobs/spark_guard.sh:
 
-    scripts/spark_guard.sh --need-gb 45 --name pages -- python -m page_synth.generate \\
+    jobs/spark_guard.sh --need-gb 45 --name pages -- python -m page_synth.cli.generate \\
         --templates <page.xml ...> --text-from <page.xml ...> --lora v2=<ckpt>/model --out <dir> \\
         --title "the court records of Jämtlands domsaga" --paper cream --ink "dark brown"
 """
@@ -22,13 +22,13 @@ from pathlib import Path
 from pydantic import BaseModel
 from torch.profiler import ProfilerActivity, profile, record_function, schedule
 
+from page_synth.captions.look import ScanLook
+from page_synth.captions.provenance import Provenance
+from page_synth.crops.plan import PageStyle, plan_page
 from page_synth.generator import CropGenerator, GeneratorSettings
 from page_synth.layout import load_xml_layout, refill, running_text
-from page_synth.look import ScanLook
-from page_synth.pipelines import FLUX3_KLEIN
-from page_synth.plan import PageStyle, plan_page
-from page_synth.provenance import Provenance
-from page_synth.readback import mean
+from page_synth.modular.pipelines import FLUX3_KLEIN
+from page_synth.modular.readback import mean
 
 
 class CropResult(BaseModel):

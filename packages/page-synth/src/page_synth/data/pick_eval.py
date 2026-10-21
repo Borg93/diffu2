@@ -14,7 +14,7 @@ import argparse
 import os
 from pathlib import Path
 
-from page_synth.records import CropRecord, read_records
+from page_synth.captions.records import CropRecord, read_records
 
 
 def has_role(record: CropRecord) -> bool:

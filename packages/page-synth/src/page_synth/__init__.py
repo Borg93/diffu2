@@ -1,2 +1,2 @@
-"""FLUX.3 page synthesis: the crop geometry, scan look, provenance and caption grammar shared by LoRA training
-data and generation, and the generator built on them."""
+"""Synthetic archive pages with ground truth: a page layout cut into crops, each crop's prompt, the Modular Diffusers
+generator that draws it and reads it back, and its PAGE/ALTO labels."""

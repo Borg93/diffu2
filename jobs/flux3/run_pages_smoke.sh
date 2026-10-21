@@ -1,7 +1,7 @@
 #!/bin/bash
-# The first GPU run of the page generator (page_synth.generate): two real Bergskollegium pages refilled with the text of
+# The first GPU run of the page generator (page_synth.cli.generate): two real Bergskollegium pages refilled with the text of
 # two others, every crop drawn with the final v2 LoRA in Bergskollegium's style, read back and labelled. Waits for the
-# v2 steering test (run_steer.sh), runs through scripts/spark_guard.sh, then hands the GPU to run_v3.sh. Run detached:
+# v2 steering test (run_steer.sh), runs through jobs/spark_guard.sh, then hands the GPU to run_v3.sh. Run detached:
 #
 #   setsid nohup jobs/flux3/run_pages_smoke.sh >> runs/flux3_pages/run.log 2>&1 < /dev/null &
 
@@ -25,8 +25,8 @@ lora="$(ls -d "$REPO"/runs/flux3_layout_lora_v2/epoch_*_step_* | sort -V | tail 
 step "1/2 generate pages with $lora"
 mkdir -p "$OUT"
 cd "$AUTOMODEL"
-if "$REPO/scripts/spark_guard.sh" --need-gb 45 --name flux-pages-smoke --log "$REPO/runs/flux3_pages/guard.log" -- \
-    .venv-managed/bin/python -m page_synth.generate \
+if "$REPO/jobs/spark_guard.sh" --need-gb 45 --name flux-pages-smoke --log "$REPO/runs/flux3_pages/guard.log" -- \
+    .venv-managed/bin/python -m page_synth.cli.generate \
     --templates "$VOLUME/40004026_00128.xml" "$VOLUME/40004026_00094.xml" \
     --text-from "$VOLUME/40004026_00339.xml" "$VOLUME/40004026_00200.xml" \
     --lora "v2=$lora" --out "$OUT" --profile "$OUT/profile" \

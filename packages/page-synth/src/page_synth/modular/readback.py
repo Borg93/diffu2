@@ -6,7 +6,7 @@ import torch
 from PIL import Image
 from transformers import TrOCRProcessor, VisionEncoderDecoderModel
 
-from page_synth.caption import LineRecord
+from page_synth.captions.prompt import LineRecord
 
 HTR = "Riksarkivet/trocr-base-handwritten-hist-swe-2"
 

@@ -10,11 +10,11 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from page_synth.caption import Caption, LineRecord, caption_for, caption_order
-from page_synth.geometry import Crop, CropSettings, Line, Region, crops_for_page
+from page_synth.captions.look import ScanLook
+from page_synth.captions.prompt import Caption, LineRecord, caption_for, caption_order
+from page_synth.captions.provenance import Provenance
+from page_synth.crops.geometry import Crop, CropSettings, Line, Region, crops_for_page
 from page_synth.layout import Layout, LineBox
-from page_synth.look import ScanLook
-from page_synth.provenance import Provenance
 
 # layout region -> the PAGE type the v2 captions name as a role; running text and table cells name none
 ROLES = {

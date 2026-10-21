@@ -1,11 +1,11 @@
 """Our Modular Diffusers blocks around FLUX.3's own: a crop plan in, a crop's ground truth out.
 
-- ``CropPromptStep`` turns a :class:`page_synth.plan.CropPlan` into the prompt, the line boxes and the image size;
+- ``CropPromptStep`` turns a :class:`page_synth.crops.plan.CropPlan` into the prompt, the line boxes and the image size;
 - ``LineReadbackStep`` reads every line box of the generated image with a Swedish HTR TrOCR;
 - ``LabelExportStep`` writes the crop's labels from the plan's boxes and words, each line tagged ``unclear`` when
   its read-back error rate is over ``max_line_cer`` (its words may not be on the page as the label says).
 
-:mod:`page_synth.pipelines` assembles them with FLUX.3's blocks.
+:mod:`page_synth.modular.pipelines` assembles them with FLUX.3's blocks.
 """
 
 from __future__ import annotations
@@ -22,13 +22,13 @@ from diffusers.modular_pipelines import (
 )
 from transformers import TrOCRProcessor, VisionEncoderDecoderModel
 
+from page_synth.crops.plan import ROLES, CropPlan
 from page_synth.labels import LineLabel, PageLabels, export
-from page_synth.plan import ROLES, CropPlan
-from page_synth.readback import HTR, pixel_box, read_lines
+from page_synth.modular.readback import HTR, pixel_box, read_lines
 
 type LabelFormat = Literal["alto", "page"]
 
-SLOT_BASELINE = 0.7  # a line slot runs 0.7 line pitch above its baseline and 0.3 below (page_synth.geometry)
+SLOT_BASELINE = 0.7  # a line slot runs 0.7 line pitch above its baseline and 0.3 below (page_synth.crops.geometry)
 _REGION_OF_ROLE = {role: region for region, role in reversed(ROLES.items())}  # the first region naming each role
 
 
@@ -39,7 +39,7 @@ class CropPromptStep(ModularPipelineBlocks):
 
     @property
     def description(self) -> str:
-        return "Turns a page_synth.plan.CropPlan into the prompt, the line boxes (page_lines) and the image size."
+        return "Turns a page_synth.crops.plan.CropPlan into the prompt, the line boxes (page_lines) and the image size."
 
     @property
     def inputs(self) -> list[InputParam]:

@@ -14,24 +14,23 @@ Two parts:
 
 ## Layout
 
+The package follows the pipeline: a page **layout** is cut into **crops**, each crop gets a **caption** (its prompt),
+the **modular** pipelines draw it, read every line back and write its **labels**.
+
 ```
 packages/page-synth/src/page_synth/
-  layout/              page layouts: replay a PAGE/ALTO page, templates, refill with new text
-  labels.py            the label data and its PAGE / ALTO exporters
-  geometry.py, plan.py the page cut into training-scale crops
-  caption.py, look.py, provenance.py, records.py
-                       the caption grammar (layout boxes + style) shared by training data and generation
-  blocks.py            our Modular Diffusers blocks: crop prompt, HTR read-back, label export
-  pipelines.py         the text pipeline and the crop pipeline over one ComponentsManager; LoRA loading
-  generator.py         CropGenerator: one crop plan in, one image + labels out (the Ray Data actor unit)
-  generate.py          CLI: pages from templates and text
-  evaluate.py          CLI: held-out crops, read-back CER against the real crops
-  sheets.py, restyle.py
-  data/                training-data builders (crops, steering set, v3 reference pairs, NeMo caching)
-  nemo.py              NeMo AutoModel dataloader configs (interleaved aspect buckets)
-configs/flux3/         NeMo AutoModel training configs
-jobs/flux3/            GPU job scripts; jobs/setup_nemo_env.sh installs page-synth into NeMo's environment
-scripts/spark_guard.sh one GPU job at a time on the DGX Spark (128 GB unified memory)
+  layout/       page layouts: replay a PAGE/ALTO page (page_xml.py, the one XML reader), templates, refill with text
+  crops/        geometry.py (the crop windows), plan.py (a page as CropPlans)
+  captions/     prompt.py (the FLUX.3 layout prompt), look.py, provenance.py, records.py, restyle.py
+  modular/      blocks.py (our Modular Diffusers blocks), pipelines.py (CropTextBlocks, CropBlocks, loading, LoRAs),
+                readback.py (TrOCR read-back and CER)
+  generator.py  CropGenerator: one crop plan in, one image + labels out
+  labels.py     the label data and its PAGE / ALTO exporters
+  cli/          generate.py, evaluate.py, sheets.py (also the page-synth-generate / -evaluate / -sheets commands)
+  data/         training and evaluation sets (crops, steering set, v3 reference pairs), NeMo caching and dataloaders
+configs/flux3/  NeMo AutoModel training configs
+jobs/           GPU job scripts (flux3/), spark_guard.sh (one GPU job at a time on the DGX Spark, 128 GB unified
+                memory), setup_nemo_env.sh (installs page-synth into NeMo's environment)
 ```
 
 ## Environments
@@ -45,8 +44,8 @@ scripts/spark_guard.sh one GPU job at a time on the DGX Spark (128 GB unified me
 ## Generate
 
 ```bash
-cd ~/Desktop/repos/Automodel && ~/Desktop/repos/diffu2/scripts/spark_guard.sh --need-gb 45 --name pages -- \
-    .venv-managed/bin/python -m page_synth.generate \
+cd ~/Desktop/repos/Automodel && ~/Desktop/repos/diffu2/jobs/spark_guard.sh --need-gb 45 --name pages -- \
+    .venv-managed/bin/page-synth-generate \
     --templates page_a.xml page_b.xml --text-from other_page.xml \
     --lora v2=runs/flux3_layout_lora_v2/epoch_0_step_1599/model --out runs/pages \
     --title "the court records of Jämtlands domsaga" --paper cream --ink "dark brown"
@@ -55,11 +54,11 @@ cd ~/Desktop/repos/Automodel && ~/Desktop/repos/diffu2/scripts/spark_guard.sh --
 In Python:
 
 ```python
+from page_synth.captions.look import ScanLook
+from page_synth.captions.provenance import Provenance
+from page_synth.crops.plan import PageStyle, plan_page
 from page_synth.generator import CropGenerator, GeneratorSettings
 from page_synth.layout import load_xml_layout, refill
-from page_synth.look import ScanLook
-from page_synth.plan import PageStyle, plan_page
-from page_synth.provenance import Provenance
 
 style = PageStyle(
     provenance=Provenance(title="the court records of Jämtlands domsaga", years="1690–1700"),

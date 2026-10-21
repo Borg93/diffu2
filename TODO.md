@@ -27,11 +27,18 @@ Done 2026-10-21.
       commit); ruff bans `dataclasses.dataclass` (NeMo's dataloader configs are the one exception).
 - [x] `jobs/setup_nemo_env.sh` installs page-synth into the NeMo environment (and removes the old diffu, diffu-page).
 - [x] README says what the repo is and how it is laid out.
+- [x] page-synth grouped by pipeline stage (branch `modular-structure`): `layout/` (+ `page_xml.py`, the one PAGE/ALTO
+      XML reader, shared by the layout replay and the crop builder), `crops/`, `captions/`, `modular/`,
+      `generator.py`, `labels.py`, `cli/` (also the `page-synth-generate` / `-evaluate` / `-sheets` commands),
+      `data/` (incl. `nemo.py`). `jobs/spark_guard.sh` (was `scripts/`); `.gitignore` trimmed; `.rayignore` dropped.
+      Checked: the 331 crop plans byte-identical again; all `_target_`s of the three NeMo configs resolve in NeMo's
+      environment. Merge after tonight's queue (its scripts call main's paths and `scripts/spark_guard.sh`).
+- [x] Tests for plan (reading order: body block before its margin notes) and restyle (restyled caption == the crop
+      captioned in the target style; the v3 edit caption takes only the paper from the reference). 50 tests.
 - [ ] Delete `experiments/` once the running v2 job's evals have used it (~16:45 2026-10-21). Kept only for that
       run, which started before the restructure.
 - [ ] Run `jobs/setup_nemo_env.sh` once to drop the stale diffu / diffu-page installs from the NeMo environment
       (page-synth's editable install already points at this checkout).
-- [ ] Tests for plan and restyle (the generator, layout, labels, refill, sampler and XML replay are covered).
 - [ ] `docs/PIPELINE.md` from the pipeline page, once the generator has run on the GPU.
 
 ## Modular Diffusers (checked against huggingface.co/blog/modular-diffusers and the diffusers source, 2026-10-21)
@@ -39,8 +46,10 @@ Done 2026-10-21.
 Tested end to end on CPU with diffusers' tiny FLUX.3 test model (`test_generator.py`, each test
 red-checked); not yet run on the GPU with FLUX.3 Klein.
 
-- [x] Text encoder as its own pipeline: `pipelines.text_blocks()` (crop prompt + FLUX.3's text encoder) and
-      `pipelines.crop_blocks()` (everything else), `CropGenerator.encode` / `draw` as the two Ray stages.
+- [x] Text encoder as its own pipeline, crop drawing as another, declared like diffusers declares FLUX.3's blocks:
+      `modular.pipelines.CropTextBlocks` (crop prompt + FLUX.3's text encoder) and `CropBlocks` (reference VAE
+      encoder, denoise, decode, read-back, labels; workflows `text2image` / `image_conditioned`).
+      `CropGenerator.encode` / `draw` are the two stages.
 - [x] One `ComponentsManager` for both pipelines. One crop pipeline serves v2 and v3: FLUX.3's auto blocks choose
       reference-conditioned denoising when an `image` is passed.
 - [x] TrOCR loads through `load_components` from the read-back block's `ComponentSpec`;
@@ -50,6 +59,12 @@ red-checked); not yet run on the GPU with FLUX.3 Klein.
       adapters, `set_adapters`. NeMo is no longer needed at inference. All 21 module kinds of the real v2 checkpoint
       take the adapter.
 - [x] The base model is a constructor argument (`CropGenerator(model, ...)`), so diffu plugs in the same way.
+- [x] Training and inference see the same conditioning (checked 2026-10-21 on the real FLUX.3 text encoder, CPU): NeMo's
+      FLUX.3 cache encoder and our `CropTextBlocks` give bit-identical prompt embeddings on the same device (same chat
+      template, 80-token padding, position ids, layers 4…32). v2's cache (made on the GPU) vs ours on CPU: mean
+      per-token cosine 0.997 (bf16 arithmetic differs by device; inference runs on the GPU like the cache). The
+      latents: same VAE `mode()`, patchify and batch-norm normalization; our 16-aligned references pass both resizes
+      unchanged. Not yet checked: the reference tokens' RoPE positions in NeMo's v3 training vs diffusers' blocks.
 - [ ] Publish the blocks to the Hub (`diffusers-cli custom_blocks`) if others should use them; they import page-synth.
 - [ ] Guidance: we use 4.0 (what the LoRAs were evaluated with); FLUX.3's blocks recommend 3.5 (and scheduler shift
       6.93). Compare on the eval set.
@@ -83,6 +98,11 @@ red-checked); not yet run on the GPU with FLUX.3 Klein.
       diffu and the reference are compared head to head.
 
 ## Labels (ALTO / PAGE are only output formats; the label data is what must be right)
+
+- [x] Caption archive names: two GT collection folders end in U+F028 (a trailing space as macOS SMB encodes it), so
+      `collection_title` fell back to the raw folder name: 521 of v2's 11,329 training captions (RA arjeplogs
+      tingslag, RA carl fredrik pahlmans resejournaler) name "RA … 20260220\uf028". Fixed on `modular-structure`
+      (+ test). v3's captions name no archive (unaffected); a v2 retrain would learn the right names.
 
 - [x] Reading order across columns: labels follow the source blocks in page order, top to bottom in each
       (`CropPlan.reading_order`).

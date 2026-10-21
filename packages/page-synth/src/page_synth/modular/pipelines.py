@@ -1,10 +1,11 @@
 """The crop generator as two Modular Diffusers pipelines over one :class:`ComponentsManager`.
 
-FLUX.3's own blocks (``Flux3AutoBlocks``) with the prompt upsampler popped (it would rewrite the quoted lines) and
-split at the text encoder, the pattern of huggingface.co/blog/modular-diffusers:
+FLUX.3's own steps (from ``Flux3AutoBlocks``) without the prompt upsampler (it would rewrite the quoted lines), split
+at the text encoder (the pattern of huggingface.co/blog/modular-diffusers) and declared like diffusers declares
+FLUX.3's own blocks, as :class:`CropTextBlocks` and :class:`CropBlocks`:
 
 - the **text pipeline**: ``CropPromptStep`` -> FLUX.3's text encoder (Qwen3-VL). A crop plan in, its prompt
-  embeddings out. On a Ray cluster it is its own stage, encoding ahead of the GPU denoiser.
+  embeddings out.
 - the **crop pipeline**: ``CropPromptStep`` -> reference VAE encoder (only when an ``image`` is passed) -> denoise ->
   decode -> ``LineReadbackStep`` -> ``LabelExportStep``. The plan and the embeddings in, the image, the per-line
   read-back and the labels out. FLUX.3's auto blocks pick text-to-image or reference-conditioned denoising from the
@@ -24,33 +25,82 @@ from pathlib import Path
 import torch
 from diffusers import ComponentsManager
 from diffusers.guiders import ClassifierFreeGuidance
-from diffusers.modular_pipelines import Flux3AutoBlocks, ModularPipeline, SequentialPipelineBlocks
+from diffusers.modular_pipelines import Flux3AutoBlocks, ModularPipeline, OutputParam, SequentialPipelineBlocks
+from diffusers.modular_pipelines.modular_pipeline_utils import InsertableDict
 from pydantic import BaseModel, ConfigDict
 from safetensors.torch import load_file
 
-from page_synth.blocks import CropPromptStep, LabelExportStep, LineReadbackStep
-from page_synth.readback import materialize_position_tables
+from page_synth.modular.blocks import CropPromptStep, LabelExportStep, LineReadbackStep
+from page_synth.modular.readback import materialize_position_tables
 
 FLUX3_KLEIN = Path(os.environ.get("FLUX3_MODEL", Path.home() / "Desktop/repos/flux3-models/flux-3-image-klein-base"))
 _NEMO_PREFIX = "base_model.model."
 
 
-def text_blocks() -> SequentialPipelineBlocks:
-    """A crop plan in, FLUX.3's prompt embeddings out."""
-    return SequentialPipelineBlocks.from_blocks_dict(
-        {"crop_prompt": CropPromptStep(), "text_encoder": Flux3AutoBlocks().sub_blocks["text_encoder"]}
-    )
+_FLUX3 = Flux3AutoBlocks().sub_blocks  # FLUX.3's own steps, by name
+
+CROP_TEXT_BLOCKS = InsertableDict([("crop_prompt", CropPromptStep()), ("text_encoder", _FLUX3["text_encoder"])])
+
+CROP_BLOCKS = InsertableDict(
+    [
+        ("crop_prompt", CropPromptStep()),
+        ("vae_encoder", _FLUX3["vae_encoder"]),
+        ("denoise", _FLUX3["denoise"]),
+        ("decode", _FLUX3["decode"]),
+        ("line_readback", LineReadbackStep()),
+        ("label_export", LabelExportStep()),
+    ]
+)
 
 
-def crop_blocks() -> SequentialPipelineBlocks:
-    """A crop plan and its prompt embeddings in, the crop's image, read-back and labels out."""
-    blocks = Flux3AutoBlocks()
-    blocks.sub_blocks.pop("prompt_upsampler")
-    blocks.sub_blocks.pop("text_encoder")
-    blocks.sub_blocks.insert("crop_prompt", CropPromptStep(), 0)
-    blocks.sub_blocks.insert("line_readback", LineReadbackStep(), len(blocks.sub_blocks))
-    blocks.sub_blocks.insert("label_export", LabelExportStep(), len(blocks.sub_blocks))
-    return blocks
+class CropTextBlocks(SequentialPipelineBlocks):
+    """A crop plan in, FLUX.3's prompt embeddings out: the text-encoder stage."""
+
+    model_name = "flux3"
+    block_classes = CROP_TEXT_BLOCKS.values()
+    block_names = CROP_TEXT_BLOCKS.keys()
+
+    @property
+    def description(self) -> str:
+        return "Encodes a crop plan's layout caption with FLUX.3's text encoder (Qwen3-VL), as given (no upsampler)."
+
+    @property
+    def outputs(self) -> list[OutputParam]:
+        return [OutputParam.template("prompt_embeds"), OutputParam.template("negative_prompt_embeds")]
+
+
+class CropBlocks(SequentialPipelineBlocks):
+    """A crop plan and its prompt embeddings in, the crop's image, read-back and labels out.
+
+    FLUX.3's VAE encoder and denoise steps are auto blocks: an ``image`` input (a reference crop) switches them to
+    reference-conditioned denoising, so one pipeline draws both the v2 (style by name) and v3 (style by example)
+    crops.
+    """
+
+    model_name = "flux3"
+    block_classes = CROP_BLOCKS.values()
+    block_names = CROP_BLOCKS.keys()
+    _workflow_map = {
+        "text2image": {"crop_plan": True, "prompt_embeds": True},
+        "image_conditioned": {"crop_plan": True, "prompt_embeds": True, "image": True},
+    }
+
+    @property
+    def description(self) -> str:
+        return (
+            "Draws a planned crop with FLUX.3 from its prompt embeddings (reference-conditioned when an `image` is "
+            "given), reads every line back with TrOCR and writes the crop's ALTO/PAGE labels."
+        )
+
+    @property
+    def outputs(self) -> list[OutputParam]:
+        return [
+            OutputParam.template("images"),
+            OutputParam("line_reads", type_hint=list, description="What the recognizer read in each line box."),
+            OutputParam("line_cers", type_hint=list, description="Per-line CER against the line's text."),
+            OutputParam("labels_xml", type_hint=str, description="The crop's labels."),
+            OutputParam("unclear_lines", type_hint=int, description="Lines over max_line_cer."),
+        ]
 
 
 class Pipelines(BaseModel):
@@ -77,10 +127,10 @@ def load_pipelines(model: Path, *, guidance_scale: float, device: str = "cuda") 
         RuntimeError: If a component failed to load.
     """
     components = ComponentsManager()
-    text = text_blocks().init_pipeline(str(model), components_manager=components, collection="text")
+    text = CropTextBlocks().init_pipeline(str(model), components_manager=components, collection="text")
     text.load_components(dtype=torch.bfloat16)
     _require_loaded(text)
-    crop = crop_blocks().init_pipeline(str(model), components_manager=components, collection="crop")
+    crop = CropBlocks().init_pipeline(str(model), components_manager=components, collection="crop")
     crop.load_components(dtype={"vae": torch.float32, "default": torch.bfloat16})
     _require_loaded(crop)
     crop.update_components(guider=ClassifierFreeGuidance(guidance_scale=guidance_scale))

@@ -6,9 +6,9 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from page_synth.caption import LayoutRow, LineRecord
-from page_synth.look import ScanLook
-from page_synth.provenance import Provenance, provenance_of
+from page_synth.captions.look import ScanLook
+from page_synth.captions.prompt import LayoutRow, LineRecord
+from page_synth.captions.provenance import Provenance, provenance_of
 
 
 class CropRecord(BaseModel):

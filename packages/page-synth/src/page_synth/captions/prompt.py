@@ -7,9 +7,9 @@ from collections import Counter, defaultdict
 
 from pydantic import BaseModel
 
-from page_synth.geometry import Crop, Line
-from page_synth.look import ScanLook
-from page_synth.provenance import Provenance
+from page_synth.captions.look import ScanLook
+from page_synth.captions.provenance import Provenance
+from page_synth.crops.geometry import Crop, Line
 
 NUMBER_WORDS = ("no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten")
 

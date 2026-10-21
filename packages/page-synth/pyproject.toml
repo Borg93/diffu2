@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12,<3.14"
 license = "Apache-2.0"
 authors = [{ name = "Gabriel Borg" }]
-# page_synth.nemo and page_synth.data.cache_pairs also import NeMo AutoModel; they run only in its environment.
+# page_synth.data.nemo and page_synth.data.cache_pairs also import NeMo AutoModel; they run only in its environment.
 dependencies = [
     "diffusers",
     "numpy>=1.26",
@@ -18,6 +18,11 @@ dependencies = [
     "torchvision>=0.25",  # Qwen3-VL's processor (the FLUX.3 text encoder's tokenizer) needs it
     "transformers>=5.18",
 ]
+
+[project.scripts]
+page-synth-generate = "page_synth.cli.generate:main"  # pages from templates and text
+page-synth-evaluate = "page_synth.cli.evaluate:main"  # held-out crops, read-back CER against the real crops
+page-synth-sheets = "page_synth.cli.sheets:main"  # contact sheets of a steering run
 
 [build-system]
 requires = ["hatchling"]

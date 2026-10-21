@@ -107,9 +107,9 @@ step_scheduler:
 
 data:
   dataloader:
-    # page_synth.nemo: NeMo's image-edit loader with the (target, reference)
+    # page_synth.data.nemo: NeMo's image-edit loader with the (target, reference)
     # shape buckets interleaved, so 1,600 steps over 11k pairs see every crop shape
-    _target_: page_synth.nemo.InterleavedImageEditDataloaderConfig
+    _target_: page_synth.data.nemo.InterleavedImageEditDataloaderConfig
     cache_dir: ${DIFFU_REPO}/data_flux3/cache_style_v3
     quantization: 16
     base_resolution: [1024, 1024]

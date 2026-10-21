@@ -5,7 +5,7 @@ Every crop goes through the same :class:`page_synth.generator.CropGenerator` as 
 ``--seed + index`` (the steering test draws every variant of a template from the same noise). Writes contact sheets
 (``[reference,] real, generated``), ``generated/NNN.png`` and ``results.json``.
 
-    python -m page_synth.evaluate --crops data_flux3/layout_crops_v2/val_eval --lora v2=<ckpt>/model --out <dir> -n 24
+    python -m page_synth.cli.evaluate --crops data_flux3/layout_crops_v2/val_eval --lora v2=<ckpt>/model --out <dir> -n 24
 """
 
 from __future__ import annotations
@@ -16,12 +16,12 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 from pydantic import BaseModel
 
-from page_synth.caption import LineRecord
-from page_synth.generate import lora_arg
+from page_synth.captions.prompt import LineRecord
+from page_synth.cli.generate import lora_arg
+from page_synth.crops.plan import CropPlan
 from page_synth.generator import CropGenerator, GeneratorSettings
-from page_synth.pipelines import FLUX3_KLEIN
-from page_synth.plan import CropPlan
-from page_synth.readback import mean, pixel_box
+from page_synth.modular.pipelines import FLUX3_KLEIN
+from page_synth.modular.readback import mean, pixel_box
 
 SHEET_GAP = 8  # px between the panels of a contact sheet
 

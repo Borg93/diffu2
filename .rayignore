@@ -1,7 +1,0 @@
-# Ray packages the working directory on ray.init(); actors use the installed packages, so none of this rides along.
-.venv/
-.git/
-runs/
-data_flux3/
-data_raw/
-*.log

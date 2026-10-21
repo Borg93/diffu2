@@ -17,9 +17,9 @@ from huggingface_hub import snapshot_download
 from PIL import Image
 from safetensors.torch import save_file
 
-from page_synth.caption import LineRecord
+from page_synth.captions.prompt import LineRecord
+from page_synth.crops.plan import CropPlan
 from page_synth.generator import CropGenerator, GeneratorSettings
-from page_synth.plan import CropPlan
 
 TINY_FLUX3 = "hf-internal-testing/tiny-flux3-image-modular"
 TINY_SETTINGS = GeneratorSettings(steps=2, guidance_scale=4.0, text_layers=(1,), device="cpu")

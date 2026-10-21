@@ -1,4 +1,8 @@
-"""Namespace-agnostic PAGE XML reading: elements by local tag, Coords/Baseline points, a TextLine's transcription."""
+"""Namespace-agnostic PAGE/ALTO XML reading: elements by local tag, Coords/Baseline points, a TextLine's transcription.
+
+Shared by the layout replay (:mod:`page_synth.layout.xml_replay`) and the training-crop builder
+(:mod:`page_synth.data.build_crops`).
+"""
 
 from __future__ import annotations
 

@@ -34,12 +34,12 @@ from typing import TextIO
 from PIL import Image
 from pydantic import BaseModel
 
-from page_synth.caption import ROLE_NAMES, caption_for
-from page_synth.data.page_xml import iter_local, local_name, page_line_text, parse_points
-from page_synth.geometry import CropSettings, Line, Region, crops_for_page
-from page_synth.look import scan_look
-from page_synth.provenance import Provenance, provenance_of
-from page_synth.records import CropRecord
+from page_synth.captions.look import scan_look
+from page_synth.captions.prompt import ROLE_NAMES, caption_for
+from page_synth.captions.provenance import Provenance, provenance_of
+from page_synth.captions.records import CropRecord
+from page_synth.crops.geometry import CropSettings, Line, Region, crops_for_page
+from page_synth.layout.page_xml import iter_local, local_name, page_line_text, parse_points
 
 Image.MAX_IMAGE_PIXELS = None  # archival spreads exceed PIL's decompression-bomb default
 

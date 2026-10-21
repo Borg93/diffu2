@@ -2,8 +2,7 @@
 
 Reads TextLine geometry + transcription, region semantics (TextRegion@type, or the ``structure {type:...}`` that
 Transkribus writes into ``@custom`` / TableRegion) and separator furniture, namespace-agnostic across PAGE (PRImA)
-and ALTO. The renderer/compositor consume the result identically to a template-built layout — that's the LineBox
-seam.
+and ALTO. The result is a :class:`Layout` like a template-built one.
 """
 
 from __future__ import annotations
@@ -13,6 +12,7 @@ import xml.etree.ElementTree as ET
 
 from page_synth.layout.flow import _normalize_line_heights
 from page_synth.layout.model import Layout, LineBox, PageSpec, Rule
+from page_synth.layout.page_xml import local_name, parse_points
 from page_synth.layout.templates import LeafPrefer, to_single_leaf
 
 # PAGE ``TextRegion@type`` -> our region vocabulary (the reverse of labels._PAGE_REGION_TYPE); an absent or
@@ -33,11 +33,6 @@ _PAGE_TYPE_REGION: dict[str, str] = {
 _CUSTOM_STRUCTURE = re.compile(r"structure \{type:([^;}]+)")
 
 
-def _local_tag(tag: str) -> str:
-    """Local name of a possibly namespaced XML tag (``{ns}TextLine`` -> ``TextLine``)."""
-    return tag.rsplit("}", 1)[-1]
-
-
 def _line_region(line: ET.Element, parents: dict[ET.Element, ET.Element]) -> str:
     """Semantic region name for a ``TextLine`` from its nearest enclosing region ancestor.
 
@@ -46,7 +41,7 @@ def _line_region(line: ET.Element, parents: dict[ET.Element, ET.Element]) -> str
     """
     cur = parents.get(line)
     while cur is not None:
-        tag = _local_tag(cur.tag)
+        tag = local_name(cur.tag)
         if tag in ("TableRegion", "TableCell"):
             return "table"
         if tag == "TextRegion":
@@ -59,7 +54,7 @@ def _block_id(line: ET.Element, parents: dict[ET.Element, ET.Element]) -> str:
     """The id of the region or block a ``TextLine`` sits in: lines of one block run as one column."""
     cur = parents.get(line)
     while cur is not None:
-        if _local_tag(cur.tag) in ("TextRegion", "TableCell", "TextBlock"):
+        if local_name(cur.tag) in ("TextRegion", "TableCell", "TextBlock"):
             return cur.get("id") or cur.get("ID") or ""
         cur = parents.get(cur)
     return ""
@@ -77,13 +72,13 @@ def _separator_rules(root: ET.Element) -> list[Rule]:
     vertical — collapsed to the mid-line."""
     rules: list[Rule] = []
     for el in root.iter():
-        if _local_tag(el.tag) != "SeparatorRegion":
+        if local_name(el.tag) != "SeparatorRegion":
             continue
-        coords = next((c for c in el if _local_tag(c.tag) == "Coords"), None)
+        coords = next((c for c in el if local_name(c.tag) == "Coords"), None)
         points = coords.get("points") if coords is not None else None
         if not points:
             continue
-        xy = [(int(p.split(",")[0]), int(p.split(",")[1])) for p in points.split() if "," in p]
+        xy = [(int(x), int(y)) for x, y in parse_points(points)]
         if len(xy) < 2:
             continue
         xs = [p[0] for p in xy]
@@ -100,7 +95,7 @@ def _separator_rules(root: ET.Element) -> list[Rule]:
 
 def _page_dims(root: ET.Element) -> tuple[int, int] | None:
     """The real canvas size from the ``Page`` element (PAGE or ALTO attributes), if it carries one."""
-    page = next((e for e in root.iter() if _local_tag(e.tag) == "Page"), None)
+    page = next((e for e in root.iter() if local_name(e.tag) == "Page"), None)
     if page is None:
         return None
     w = page.get("WIDTH") or page.get("imageWidth")
@@ -115,14 +110,14 @@ def _line_text_and_coords(el: ET.Element) -> tuple[str, list[tuple[int, int]]]:
     text = ""
     coords_pts: list[tuple[int, int]] = []
     for child in el.iter():
-        t = _local_tag(child.tag)
+        t = local_name(child.tag)
         points = child.get("points")
         content = child.get("CONTENT")
         if t == "Unicode" and child.text:
             text = child.text.strip()
             continue
         if t == "Coords" and points:  # PAGE
-            coords_pts = [(int(xy[0]), int(xy[1])) for xy in (p.split(",") for p in points.split())]
+            coords_pts = [(int(x), int(y)) for x, y in parse_points(points)]
             continue
         if t == "String" and content:  # ALTO line text on the String element
             text = f"{text} {content}".strip()
@@ -179,7 +174,7 @@ def load_xml_layout(
 
     boxes: list[LineBox] = []
     for el in root.iter():
-        if _local_tag(el.tag) != "TextLine":
+        if local_name(el.tag) != "TextLine":
             continue
         line = _line_from_element(el, parents, spec)
         if line is not None:

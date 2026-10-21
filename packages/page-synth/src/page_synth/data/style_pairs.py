@@ -2,14 +2,14 @@
 
 Every v2 training crop becomes a target; its reference is a crop from another page of the same volume (the same
 scribe, as far as a volume tells), shrunk to ``REF_PIXELS``. The caption is the target's v2 caption rewritten as a
-FLUX.3 image-edit record (``page_synth.restyle.edit_caption``): it names no archive, paper or ink, so the hand can only
+FLUX.3 image-edit record (``page_synth.captions.restyle.edit_caption``): it names no archive, paper or ink, so the hand can only
 come from the reference. Writes, under ``data_flux3/style_pairs_v3``:
 
 - ``train.jsonl``: the manifest NeMo's FLUX.3 image-edit encoder caches (``page_synth.data.cache_pairs``), its media under
   ``targets/`` (hard links to the v2 crops: the encoder only reads files inside the manifest's dir) and ``refs/``;
-- ``val_eval/``: the 24 held-out v2 crops, each with a reference from its own volume (an ``page_synth.evaluate`` dir);
+- ``val_eval/``: the 24 held-out v2 crops, each with a reference from its own volume (an ``page_synth.cli.evaluate`` dir);
 - ``by_example/``: the steering test's templates drawn with each archive's example crop as the reference, the
-  v3 counterpart of ``page_synth.data.steer_set`` (an ``page_synth.evaluate`` dir that ``page_synth.sheets`` lays out).
+  v3 counterpart of ``page_synth.data.steer_set`` (an ``page_synth.cli.evaluate`` dir that ``page_synth.cli.sheets`` lays out).
 
     python -m page_synth.data.style_pairs
 """
@@ -27,10 +27,10 @@ from typing import Any
 from PIL import Image
 from pydantic import BaseModel
 
-from page_synth.caption import LineRecord
+from page_synth.captions.prompt import LineRecord
+from page_synth.captions.records import CropRecord, read_records
+from page_synth.captions.restyle import edit_caption
 from page_synth.data.steer_set import ARCHIVES, SEED, archive_key, archive_style
-from page_synth.records import CropRecord, read_records
-from page_synth.restyle import edit_caption
 
 REF_PIXELS = 512 * 1024  # a reference shows the hand smaller than the ~1 MP target, at half its tokens
 
@@ -59,7 +59,7 @@ class ManifestRow(BaseModel):
 
 
 class EvalRow(BaseModel):
-    """One crop of an ``page_synth.evaluate`` dir with a reference image."""
+    """One crop of an ``page_synth.cli.evaluate`` dir with a reference image."""
 
     file_name: str
     caption: str
@@ -70,7 +70,7 @@ class EvalRow(BaseModel):
     seed: int | None = None
     template: int | None = None
     variant: str | None = None
-    example: str | None = None  # page_synth.sheets shows it beside the generated crop
+    example: str | None = None  # page_synth.cli.sheets shows it beside the generated crop
 
 
 def volume_of(record: CropRecord) -> Volume:
