@@ -5,8 +5,10 @@
 # comes from another archive: a hand that follows the reference shows the picture wins over the words. One GPU job at
 # a time, each through jobs/spark_guard.sh:
 #   1. cache the pairs with NeMo's FLUX.3 image-edit encoder             data_flux3/cache_style_v3b
+#      and the 64 validation pairs                                      data_flux3/cache_style_v3b_val
 #   2. a 5-step training smoke run: fails fast, and its log shows memory and step time
-#   3. train the LoRA (v3's config, its cache and checkpoint dirs)      runs/flux3_style_ref_lora_v3b
+#   3. train the LoRA (v3's config, its cache and checkpoint dirs), val_loss on the validation pairs every 100
+#      steps (same pairs, same noise each time: it tracks the model)    runs/flux3_style_ref_lora_v3b
 #   4. the final checkpoint on the by-example set (+ diffu_page.cli.sheets) and the held-out crops, the middle
 #      checkpoint on the by-example set                                   runs/flux3_style_v3b/eval_*
 # A failed eval is logged and skipped; failed caching or training stops the run. A rerun skips a finished cache.
@@ -24,6 +26,7 @@ MODEL="$HOME/Desktop/repos/flux3-models/flux-3-image-klein-base"
 GUARD="$REPO/jobs/spark_guard.sh"
 PAIRS="$REPO/data_flux3/style_pairs_v3b"
 CACHE="$REPO/data_flux3/cache_style_v3b"
+VAL_CACHE="$REPO/data_flux3/cache_style_v3b_val"  # 64 val-split pairs (style_pairs --val-pairs 64)
 CONFIG="$REPO/packages/train/configs/flux3/flux3_style_ref_lora_v3.yaml"
 OUT="$REPO/runs/flux3_style_v3b"
 CKPT="$REPO/runs/flux3_style_ref_lora_v3b"
@@ -65,6 +68,15 @@ else
         --out "$CACHE" --model "$MODEL" > "$OUT/cache.log" 2>&1
 fi
 
+if [ -f "$VAL_CACHE/metadata.json" ]; then
+    echo "already cached: $VAL_CACHE"
+else
+    rm -rf "$VAL_CACHE"
+    "$GUARD" --need-gb 30 --name flux-v3b-cache-val --log "$OUT/guard.log" -- \
+        "$PY" -m diffu_train.cache_pairs --manifest "$PAIRS/val/val.jsonl" \
+        --out "$VAL_CACHE" --model "$MODEL" > "$OUT/cache_val.log" 2>&1
+fi
+
 step "2/4 a 5-step smoke run"
 rm -rf "$OUT/smoke_ckpt"  # NeMo resumes from a checkpoint it finds there: a rerun would train 0 steps
 train smoke --step_scheduler.max_steps 5 --step_scheduler.ckpt_every_steps 1000 --lr_scheduler.lr_warmup_steps 1 \
@@ -73,7 +85,12 @@ grep -a "\[TRAIN\] step=" "$OUT/smoke.log" | tail -1
 tail -1 "$OUT/guard.log"
 
 step "3/4 train the LoRA"
-train lora --checkpoint.checkpoint_dir "$CKPT"
+train lora --checkpoint.checkpoint_dir "$CKPT" --step_scheduler.val_every_steps 100 \
+    --data.validation_dataloader._target_ \
+    nemo_automodel.components.datasets.diffusion.image_edit_dataset.ImageEditDataloaderConfig \
+    --data.validation_dataloader.cache_dir "$VAL_CACHE" --data.validation_dataloader.quantization 16 \
+    --data.validation_dataloader.shuffle false --data.validation_dataloader.drop_last false \
+    --data.validation_dataloader.num_workers 2
 
 step "4/4 evaluate the final and middle checkpoints"
 mapfile -t ckpts < <(ls -d "$CKPT"/epoch_*_step_* | sort -V)

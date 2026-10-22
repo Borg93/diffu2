@@ -266,6 +266,11 @@ Any scanned page as a template, not only pages with PAGE/ALTO ground truth.
       (~100 GB of weights, gradients and optimizer state): Leonardo, 4x A100 with FSDP, and ~100k+ crops to be worth
       it. Last resort after v3/v3b and a bigger LoRA (rank 64-128, longer); never shippable (license), so compute
       is better spent on diffu.
+- [ ] LR schedule: in v2 and v3 the LoRA's B weights stop growing after ~1000 of 1600 steps (|B| 21.4 -> 21.8):
+      the cosine decay to min_lr 1e-5 ends learning early. Try a constant LR after warmup (the diffusers Klein
+      trainer's default) or a higher min_lr, judged by val_loss.
+- [ ] val_loss: v3b is the first run with NeMo's validation loss (64 val-split pairs, fixed noise, every 100 steps,
+      in trackio). Give every training job one.
 - [ ] Job scripts: the 5-step smoke runs need `--lr_scheduler.lr_warmup_steps 1` and an empty checkpoint dir (both
       fixed 2026-10-21, `069bd47`, `4a8d3b4`); keep any new job script on that pattern.
 - [ ] v3b (queued after v3, `jobs/flux3/run_v3b.sh`): v3's pairs and references, half the captions also naming the

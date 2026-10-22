@@ -17,8 +17,11 @@ the reference stays necessary. The references are picked as without it. The held
 all name the template's own archive: a by-example crop whose hand follows its reference shows the picture wins over
 the words.
 
+With ``--val-pairs N``, ``val/val.jsonl`` holds N pairs from the val split's pages, captioned as the training pairs
+are: the held-out set NeMo scores ``val_loss`` on during training.
+
     python -m diffu_page.data.style_pairs
-    python -m diffu_page.data.style_pairs --named-fraction 0.5 --out data_flux3/style_pairs_v3b
+    python -m diffu_page.data.style_pairs --named-fraction 0.5 --val-pairs 64 --out data_flux3/style_pairs_v3b
 """
 
 from __future__ import annotations
@@ -182,6 +185,11 @@ class EvalSet(BaseModel):
     stale: list[str]
 
 
+def renumbered(row: ManifestRow, index: int) -> ManifestRow:
+    """``row`` at ``index`` of a manifest (NeMo requires the row indices to count from 0)."""
+    return row.model_copy(update={"metadata": row.metadata.model_copy(update={"row_index": index})})
+
+
 def write_rows(path: Path, rows: Sequence[BaseModel]) -> None:
     """Write ``rows`` as JSON lines."""
     path.write_text("".join(row.model_dump_json() + "\n" for row in rows), encoding="utf-8")
@@ -276,6 +284,7 @@ def main(
     named_fraction: Annotated[
         float, typer.Option(min=0.0, max=1.0, help="share of training captions that also name the archive and look")
     ] = 0.0,
+    val_pairs: Annotated[int, typer.Option(min=0, help="pairs from the val split for NeMo's val_loss")] = 0,
     seed: int = 0,
 ) -> None:
     """Build the v3 reference pairs, the held-out set and the by-example steering set."""
@@ -289,6 +298,10 @@ def main(
     eval_caption = named_edit_caption if named_fraction > 0 else edit_caption
     pairs = training_pairs(train, out, rng, pair_caption)
     write_rows(out / "train.jsonl", pairs.rows)
+    if val_pairs:
+        validation = training_pairs(val, out / "val", random.Random(seed + 2), pair_caption).rows
+        spread = validation[:: max(1, len(validation) // val_pairs)][:val_pairs]  # the split is sorted by collection
+        write_rows(out / "val" / "val.jsonl", [renumbered(row, k) for k, row in enumerate(spread)])
     volumes = by_volume(val + train)
     held = held_out_rows(held_out, volumes, out / "val_eval", rng, eval_caption)
     write_rows(out / "val_eval/metadata.jsonl", held.rows)
