@@ -38,8 +38,8 @@ Done 2026-10-21.
       captioned in the target style; the v3 edit caption takes only the paper from the reference). 50 tests.
 - [x] `experiments/` deleted on main (the local checkout keeps its copy until tonight's queue, which runs it), and
       the training configs moved into diffu-train (`packages/train/configs/flux3/`).
-- [ ] Run `jobs/setup_nemo_env.sh` once to drop the stale page-synth / diffu-gen / old diffu installs from the NeMo
-      environment and install diffu, diffu-page and diffu-train.
+- [x] Run `jobs/setup_nemo_env.sh` once to drop the stale page-synth / diffu-gen / old diffu installs from the NeMo
+      environment and install diffu, diffu-page and diffu-train (2026-10-21 21:50, with the local checkout on main).
 - [x] `docs/PIPELINE.md`: the flow from page to labelled crops, training, and the training/generation consistency table.
 
 ## Workspace (2026-10-21, branch `modular-structure`)
@@ -210,6 +210,15 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
 - [ ] **Leonardo**: compute nodes have no internet; pre-fetch Qwen3.5-4B and the Qwen-Image VAE at the pinned
       revisions (a local repo copy with the files loads from the copy).
 - [ ] **Data**: GT-Lejonet, 103,285 pages (~3M lines). Never FLUX.3 outputs.
+  - [ ] Crops from every page, not 40 per collection: ~6 crops per page (v2: 1,866 pages -> 11,329 crops), so
+        ~600k crops. `build_crops` reads PAGE only: wire the ALTO reader (`layout/xml_replay.py`) into it for the
+        100k+ ALTO pages, each with its scan image.
+  - [ ] Augmentation that stays true to the scan, 2-4 variants per crop (~1-2M): shifted windows, line pitch
+        56-72 px, other bucket shapes, greyscale copies. No flips or rotations; refilled text is not a training
+        target (no real image).
+  - [ ] Rebuild with the fixed archive names first (the 521 stale captions, see Code audit).
+- [ ] **E5 on Leonardo**: no job or config yet: an sbatch script (cineca-hpc skill), the full-data config, the
+      offline model prefetch below.
 - [ ] **Compute**: estimated ~8×10¹⁹ FLOPs for diffu-S (10M samples at 256², 5M at 512², 2M at 1024²; GB10
       measured at ~25 TFLOPS effective on the v2 LoRA). GB10 alone ~40 days: too slow, use it for smoke runs and
       short ablations. Leonardo, 8 nodes (32 A100s): roughly 6–30 h. First a short GB10 run at 256² to see loss
@@ -253,6 +262,12 @@ Any scanned page as a template, not only pages with PAGE/ALTO ground truth.
 
 - [ ] Tonight's results: v2 eval, steering test (style by name), first generated crops (`runs/flux3_pages/smoke`).
 - [ ] Decide on v3 (style by example) from the steering results; its results land tomorrow morning.
+- [ ] Full fine-tune of FLUX.3 Klein instead of a LoRA: possible (NeMo's finetune mode), not on the GB10
+      (~100 GB of weights, gradients and optimizer state): Leonardo, 4x A100 with FSDP, and ~100k+ crops to be worth
+      it. Last resort after v3/v3b and a bigger LoRA (rank 64-128, longer); never shippable (license), so compute
+      is better spent on diffu.
+- [ ] Job scripts: the 5-step smoke runs need `--lr_scheduler.lr_warmup_steps 1` and an empty checkpoint dir (both
+      fixed 2026-10-21, `069bd47`, `4a8d3b4`); keep any new job script on that pattern.
 - [ ] v3b (queued after v3, `jobs/flux3/run_v3b.sh`): v3's pairs and references, half the captions also naming the
       archive and look in words. Its by-example test names the template's own archive while the reference comes from
       another: does the hand follow the picture or the words? 10,641 pairs (511 with stale captions left out).
