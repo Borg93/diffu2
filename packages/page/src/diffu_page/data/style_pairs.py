@@ -28,8 +28,10 @@ from __future__ import annotations
 
 import json
 import random
+import re
 from collections import defaultdict
 from collections.abc import Callable, Sequence
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
 
@@ -51,6 +53,7 @@ REF_PIXELS = 512 * 1024  # a reference shows the hand smaller than the ~1 MP tar
 
 type Volume = tuple[str, str]  # (collection dir, volume dir)
 type CaptionFor = Callable[[CropRecord], str]
+type Picker = Callable[[Scan, dict[Volume, list[Scan]], random.Random], Scan | None]
 
 
 class Scan(BaseModel):
@@ -148,6 +151,44 @@ def pick_reference(scan: Scan, volumes: dict[Volume, list[Scan]], rng: random.Ra
     return rng.choice(others) if others else None
 
 
+def page_number(record: CropRecord) -> int | None:
+    """The scan number a page file ends in (``.../40004026_00128.xml`` -> 128), or None."""
+    match = re.search(r"(\d+)$", Path(record.page).stem)
+    return int(match.group(1)) if match else None
+
+
+def pick_same_hand(scan: Scan, volumes: dict[Volume, list[Scan]], rng: random.Random) -> Scan | None:
+    """A crop of ``scan``'s own page that shares none of its lines; else one of the facing page (scan number one
+    off); else None. Another page of the volume may be another scribe or another kind of document (v3's pairs);
+    the same page or its facing page almost never is."""
+    volume = volumes[volume_of(scan.record)]
+    texts = {line.text for line in scan.record.lines}
+    same_page = [
+        other
+        for other in volume
+        if other.record.page == scan.record.page and not texts & {line.text for line in other.record.lines}
+    ]
+    if same_page:
+        return rng.choice(same_page)
+    number = page_number(scan.record)
+    facing = [
+        other
+        for other in volume
+        if number is not None and (n := page_number(other.record)) is not None and abs(n - number) == 1
+    ]
+    return rng.choice(facing) if facing else None
+
+
+class ReferenceSource(StrEnum):
+    """Where a pair's reference comes from: another page of the volume (v3), or the same page or its facing page."""
+
+    VOLUME = "volume"
+    PAGE = "page"
+
+
+PICKERS: dict[ReferenceSource, Picker] = {ReferenceSource.VOLUME: pick_reference, ReferenceSource.PAGE: pick_same_hand}
+
+
 def eval_row(
     target: Scan,
     reference: Path,
@@ -195,7 +236,9 @@ def write_rows(path: Path, rows: Sequence[BaseModel]) -> None:
     path.write_text("".join(row.model_dump_json() + "\n" for row in rows), encoding="utf-8")
 
 
-def training_pairs(train: list[Scan], out: Path, rng: random.Random, caption: CaptionFor) -> TrainingSet:
+def training_pairs(
+    train: list[Scan], out: Path, rng: random.Random, caption: CaptionFor, pick: Picker = pick_reference
+) -> TrainingSet:
     """Every training crop that has another page in its volume, with a reference crop from that page.
 
     A crop whose caption predates the caption grammar is left out after its reference is picked, so every other
@@ -207,7 +250,7 @@ def training_pairs(train: list[Scan], out: Path, rng: random.Random, caption: Ca
     manifest: list[ManifestRow] = []
     stale: list[str] = []
     for scan in train:
-        reference = pick_reference(scan, volumes, rng)
+        reference = pick(scan, volumes, rng)
         if reference is None:
             continue
         try:
@@ -232,14 +275,19 @@ def training_pairs(train: list[Scan], out: Path, rng: random.Random, caption: Ca
 
 
 def held_out_rows(
-    held_out: list[Scan], volumes: dict[Volume, list[Scan]], out: Path, rng: random.Random, caption: CaptionFor
+    held_out: list[Scan],
+    volumes: dict[Volume, list[Scan]],
+    out: Path,
+    rng: random.Random,
+    caption: CaptionFor,
+    pick: Picker = pick_reference,
 ) -> EvalSet:
     """Each held-out crop in the hand of another page of its volume (an unseen page when there is one); a crop whose
     caption predates the caption grammar is left out, as in ``training_pairs``."""
     rows: list[EvalRow] = []
     stale: list[str] = []
     for scan in held_out:
-        reference = pick_reference(scan, volumes, rng)
+        reference = pick(scan, volumes, rng)
         if reference is None:
             continue
         try:
@@ -257,12 +305,13 @@ def by_example_rows(
     out: Path,
     rng: random.Random,
     caption: CaptionFor,
+    pick: Picker = pick_reference,
 ) -> list[EvalRow]:
     """The steering templates by example: in their own volume's hand, then in each steering archive's."""
     rows: list[EvalRow] = []
     for t in templates:
         template = held_out[t]
-        own = pick_reference(template, volumes, rng)
+        own = pick(template, volumes, rng)
         references = [(f"own volume ({collection_key(template.record.collection)})", own.path)] if own else []
         references += list(examples.items())
         rows += [
@@ -285,6 +334,9 @@ def main(
         float, typer.Option(min=0.0, max=1.0, help="share of training captions that also name the archive and look")
     ] = 0.0,
     val_pairs: Annotated[int, typer.Option(min=0, help="pairs from the val split for NeMo's val_loss")] = 0,
+    reference: Annotated[
+        ReferenceSource, typer.Option(help="volume: another page of the volume; page: the same or the facing page")
+    ] = ReferenceSource.VOLUME,
     seed: int = 0,
 ) -> None:
     """Build the v3 reference pairs, the held-out set and the by-example steering set."""
@@ -296,25 +348,26 @@ def main(
         return named_edit_caption(record) if words.random() < named_fraction else edit_caption(record)
 
     eval_caption = named_edit_caption if named_fraction > 0 else edit_caption
-    pairs = training_pairs(train, out, rng, pair_caption)
+    pick = PICKERS[reference]
+    pairs = training_pairs(train, out, rng, pair_caption, pick)
     write_rows(out / "train.jsonl", pairs.rows)
     if val_pairs:
-        validation = training_pairs(val, out / "val", random.Random(seed + 2), pair_caption).rows
+        validation = training_pairs(val, out / "val", random.Random(seed + 2), pair_caption, pick).rows
         spread = validation[:: max(1, len(validation) // val_pairs)][:val_pairs]  # the split is sorted by collection
         write_rows(out / "val" / "val.jsonl", [renumbered(row, k) for k, row in enumerate(spread)])
     volumes = by_volume(val + train)
-    held = held_out_rows(held_out, volumes, out / "val_eval", rng, eval_caption)
+    held = held_out_rows(held_out, volumes, out / "val_eval", rng, eval_caption, pick)
     write_rows(out / "val_eval/metadata.jsonl", held.rows)
     examples = {key: archive_style([s.record for s in train], key, crops).example for key in ARCHIVES}
     example_rows = by_example_rows(
-        held_out, templates or list(DEFAULT_TEMPLATES), examples, volumes, out / "by_example", rng, eval_caption
+        held_out, templates or list(DEFAULT_TEMPLATES), examples, volumes, out / "by_example", rng, eval_caption, pick
     )
     write_rows(out / "by_example/metadata.jsonl", example_rows)
     stale = {"train": pairs.stale, "val_eval": held.stale}
     (out / "stale.json").write_text(json.dumps(stale, indent=1), encoding="utf-8")
     alone = len(train) - len(pairs.rows) - len(pairs.stale)
     console.print(
-        f"train: {len(pairs.rows)} pairs -> {out} ({alone} crops skipped: no other page in their volume; "
+        f"train: {len(pairs.rows)} pairs -> {out} ({alone} crops skipped: no reference to pick ({reference.value}); "
         f"{len(pairs.stale)} skipped: caption older than the caption grammar, see stale.json)"
     )
     console.print(

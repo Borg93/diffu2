@@ -10,12 +10,12 @@ import pytest
 from PIL import Image
 
 from diffu_page.captions.look import ScanLook
-from diffu_page.captions.prompt import caption_for
+from diffu_page.captions.prompt import LineRecord, caption_for
 from diffu_page.captions.provenance import Provenance, provenance_of
 from diffu_page.captions.records import CropRecord
 from diffu_page.captions.restyle import edit_caption
 from diffu_page.crops.geometry import Crop, CropSettings, crops_for_page
-from diffu_page.data.style_pairs import Scan, training_pairs
+from diffu_page.data.style_pairs import Scan, by_volume, pick_same_hand, training_pairs
 from diffu_page.layout import load_xml_layout
 from diffu_page.plan import regions_of
 
@@ -68,3 +68,41 @@ def test_training_pairs_leave_out_a_stale_caption_and_keep_every_other_reference
     assert {row.media[0].file_name: row.metadata.reference for row in pairs.rows} == {
         target: reference for target, reference in references.items() if target != "targets/3.jpg"
     }
+
+
+def _scan(page: int, texts: list[str]) -> Scan:
+    """A crop of scan ``page`` of one volume, holding lines with ``texts``."""
+    lines = [LineRecord(id=f"Sv_Text_{k}", text=text, role="", bbox=[0, 0, 100, 1000]) for k, text in enumerate(texts)]
+    record = CropRecord(
+        file_name=f"{page}_{texts[0]}.jpg",
+        caption="",
+        collection=COLLECTION,
+        page=f"{VOLUME}/40004026_{page:05d}.xml",
+        width=64,
+        height=64,
+        **LOOK.model_dump(),
+        layout=[],
+        lines=lines,
+    )
+    return Scan(record=record, path=Path(record.file_name))
+
+
+def test_same_hand_reference_is_a_crop_of_the_page_sharing_no_line() -> None:
+    target, overlapping, apart, facing = (
+        _scan(10, ["a", "b"]),
+        _scan(10, ["b", "c"]),
+        _scan(10, ["d"]),
+        _scan(11, ["e"]),
+    )
+
+    reference = pick_same_hand(target, by_volume([target, overlapping, apart, facing]), random.Random(0))
+
+    assert reference is apart
+
+
+def test_same_hand_reference_falls_back_to_the_facing_page() -> None:
+    target, facing, farther = _scan(20, ["a"]), _scan(21, ["b"]), _scan(23, ["c"])
+
+    reference = pick_same_hand(target, by_volume([target, facing, farther]), random.Random(0))
+
+    assert reference is facing
