@@ -38,7 +38,7 @@ train() {  # train <name> [config overrides ...]
     local name=$1
     shift
     "$GUARD" --need-gb 60 --name "flux-v3b-$name" --log "$OUT/guard.log" -- \
-        "$TORCHRUN" --nproc-per-node=1 examples/diffusion/finetune/finetune.py -c "$CONFIG" \
+        "$TORCHRUN" --nproc-per-node=1 examples/diffusion/finetune/finetune.py -c "$CONFIG" --trackio.name "flux3_v3b_$name" \
         --data.dataloader.cache_dir "$CACHE" "$@" \
         > "$OUT/$name.log" 2>&1
 }

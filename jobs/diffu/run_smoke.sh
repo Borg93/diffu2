@@ -34,7 +34,7 @@ train() {  # train <name> [config overrides ...]
     local name=$1
     shift
     "$GUARD" --need-gb 40 --name "diffu-$name" --log "$OUT/guard.log" -- \
-        "$TORCHRUN" --nproc-per-node=1 examples/diffusion/finetune/finetune.py -c "$CONFIG" "$@" \
+        "$TORCHRUN" --nproc-per-node=1 examples/diffusion/finetune/finetune.py -c "$CONFIG" --trackio.name "diffu_s_$name" "$@" \
         > "$OUT/$name.log" 2>&1
 }
 

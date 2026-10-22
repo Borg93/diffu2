@@ -11,6 +11,12 @@
 
 seed: 42
 
+# Metrics to the local trackio project "diffu" (~/.cache/huggingface/trackio; no Space): `trackio list runs --project
+# diffu`. The job scripts name each run (--trackio.name).
+trackio:
+  project: diffu
+  name: flux3_layout_v2
+
 wandb:
   enable: false
   project: flux3-layout

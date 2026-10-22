@@ -54,6 +54,11 @@ pipeline). All of them name and seed crops alike, so a page comes out the same f
 - NeMo caches latents and prompt embeddings once (its FLUX.3 processor; `diffu_train.cache_pairs` for v3's
   pairs), then trains a LoRA with the configs in `packages/train/configs/flux3/` and our interleaved bucket dataloader
   (`diffu_train.nemo`).
+- Every training config logs to the local trackio project `diffu` (`~/.cache/huggingface/trackio`, no Space); the
+  job scripts name the runs (`flux3_v3b_lora`, `diffu_s_train`, ...). Read them with the trackio CLI:
+  `trackio list runs --project diffu --json`, `trackio get metric --project diffu --run <run> --metric loss --json`,
+  `trackio show --project diffu`. trackio is installed in NeMo's environment (2026-10-22); logs of runs before that
+  are replayed into the project from their NeMo log.
 - Job scripts in `jobs/flux3/` run each GPU step through `jobs/spark_guard.sh`: one GPU job at a time on the DGX
   Spark, whose 128 GB of memory is shared by CPU and GPU.
 
