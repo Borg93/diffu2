@@ -340,17 +340,69 @@ Any scanned page as a template, not only pages with PAGE/ALTO ground truth.
 - [ ] The tokenizer warns that FLUX.3 Klein's Qwen3-VL tokenizer has "an incorrect regex pattern" (transformers;
       `fix_mistral_regex=True`). Training and generation load it alike, so they agree; check whether BFL's pipeline
       sets the flag before changing it.
-- [x] Read the profile (`runs/flux3_pages/smoke/profile/trace.json`, 2.8 GB: two 1472x640 crops, 50 steps, base
-      FLUX.3 on the GB10; pytorch-skills:profile-model as a streaming pass, session scratchpad profile/analyze_trace.py,
-      32 s). GPU-bound: the GPU is busy 99.5% of the run, the CPU waits on a full command buffer. Denoising is 97.5% of
-      the kernel time (2.66 s a step with guidance's two passes), text encoding 0.4%, the VAE decode 0.5%, TrOCR's
-      read-back 1.6%. In denoising: matmuls 41% (mostly cutlass_80 sm80 kernels, one GEMM alone 23%; nvjet_sm121 10%),
-      elementwise 38% (bf16 add 12%, mul, copies, RoPE's neg, norms), copies 9%, flash attention 8% (SDPA's flash
-      backend for 7,624 calls, efficient for 146). So: fuse the elementwise half (torch.compile of the transformer
-      blocks), fewer steps (the second pass's 28-step test is queued), then FP8 and the matmul kernels on the cluster's
-      sm_120; the text encoder, VAE and read-back are not worth optimizing yet.
+- [x] Read the profile (`runs/flux3_pages/smoke/profile/trace.json`, 2.8 GB: two 1472x640 crops, 50 steps, FLUX.3
+      Klein Base **with the v2 LoRA unfused** (`jobs/flux3/run_pages_smoke.sh` passes `--lora v2=...`), torch 2.10 from
+      the NeMo env, which warns that the GB10's capability 12.1 is outside its build; pytorch-skills:profile-model as a
+      streaming pass, session scratchpad profile/analyze_trace.py, 32 s). GPU-bound: the GPU is busy 99.5% of the run.
+      Denoising is 97.5% of the kernel time (2.66 s a step with guidance's two passes), text encoding 0.4%, the VAE
+      decode 0.5%, TrOCR's read-back 1.6%. Matmuls 41% (cutlass_80 sm80 kernels, one GEMM 23%; nvjet_sm121 10%),
+      elementwise 38%, copies 9%, flash attention 8% (SDPA flash for 7,624 calls, efficient for 146). Corrected by the
+      docs/speed audit: ~92k of the 141k aten::mm calls are the unfused LoRA's thin GEMMs (cutlass_80_wmma 7.8 s +
+      the second cutlass_80_tensorop row 6.7 s), plus PEFT's scale-and-add over every adapted output: the LoRA is an
+      estimated 15-20% of GPU time; base GEMMs ~33%, other elementwise ~25%, cat/copies ~10%. Re-baseline on the repo's
+      torch 2.14.1 before optimizing (see Inference speed).
 - [ ] Full pages: generate at 2–4 MP, or stitch windows that share a reference.
 - [ ] Style score: a classifier on real crops that says whether a crop matches the requested archive or reference.
+
+## Audits of 23 Oct 2026 (four parallel read-only audits: writing-python/testing-python, the diffusers skills, BFL's FLUX skills, the official docs and inference speed)
+
+Fixed (branch `labels-blocks`, each with a red-checked test): labels group lines by role and template block (a crop's
+two columns stay two regions); ReferenceGuidance extends diffusers' CFG, cannot leak its hook after a raised pass,
+refuses a reference-free crop; the HTR read-back pinned to revision aa79fcb; DrawSettings' guidance doc.
+
+Captions (BFL; each needs a control probe on base FLUX.3, same crops and seeds, before it changes training data):
+- [ ] The `paper_1` row takes the paper `from` ref_image_0 over the whole canvas: in FLUX.3's annotation format a
+      full-canvas source box means the reference *is* the scene (the upsampler read it so). Try a new-content paper row
+      and "on the same paper <paper_1> as <ref_image_0>" in the paragraph; rows without "the reference's".
+- [ ] Ink by colour only (one hex from the darker half, implying contrast 120 vs 103 real): describe it physically
+      (a dark and a pale hex, hairline upstrokes, heavier downstrokes, ink soaked into the fibres) in the first pass
+      and the training captions; if it reaches the second pass's numbers, the second pass can go.
+- [ ] "cursive" is FLUX.3's word for modern handwriting: name the script and the pen (e.g. Swedish Kurrent, a
+      broad-edged quill, looped ascenders, long s), probe against the described caption.
+- [ ] Lines cut by a crop's top edge are captioned as whole lines with their full text (2,438 of 143,941 rows, 21% of
+      crops): count a line whole only if its x-height band is inside, else a fragment row.
+- [ ] Colour names and hexes come from different measurements (6% of v3d prompts disagree); the microfilm look is
+      named as a colour mode, not a capture; fragment rows use a negation; the reference is shrunk to 0.5 MP (FLUX.3
+      takes 1 MP).
+- [ ] Second-pass prompt: BFL's own Klein edit shape (scope first, every line quoted; C1q in tonight's probe), only
+      artifacts the example shows, no stacked hedges.
+
+Code (writing-python, diffusers):
+- [ ] Captions are made by rewriting generated prose (restyle `_replace_once`, `StaleCaptionError`): render reference
+      captions directly from their parts.
+- [ ] One row model for the eval-dir rows (EvalRow, SteerRow, EvalCrop, Prompt are four copies); one Style
+      (PageStyle and restyle.Style are the same model).
+- [ ] `by_example_rows` does not catch StaleCaptionError (one stale template aborts the build after train.jsonl).
+- [ ] Positional-argument bundles (`crop_hands`, `plan_page`'s dead `settings`, `_plan`, CaptionDropout), studio graph
+      built from dicts, an unclosed file (probe_set.py:107), a dead constant (xml_replay `_TABLE_CONTAINERS`),
+      `@override` on Sampler methods that override nothing (nemo.py), duplicated `load_rgb`/`jpeg` helpers,
+      `sys.maxsize` as "all rows", the runner's `int(str(...))` round-trip.
+- [ ] Tests: exact-value asserts in the edit-caption tests (test_restyle), `pick`'s role-line rule never exercised,
+      a subset twin (tests/test_diffu.py size test), pytest-timeout so a hung Ray test fails alone.
+- [ ] diffu samples at FLUX.3's shift 6.93 but trains with flow_shift 6.0: write diffu's scheduler config.
+- [ ] Guider edge: `stop` < 1 leaves the step state of the previous call (diffusers' own guider shares it); CropLoopStep
+      re-implements ModularPipeline.__call__'s state seeding (the page-equals-crop test is the tripwire); diffu's index
+      has Hub components with an empty subfolder; the NeMo LoRA scale assumes plain LoRA (raise on rslora/patterns).
+
+Inference speed (ranked; re-profile on torch 2.14.1 first, one change at a time, gated on CER and the hand metrics):
+- [ ] 1. Fuse the LoRA (`fuse_lora` + `unload_lora_weights` after `set_adapters`; re-fuse from a kept base copy or
+      hotswap for per-hand swaps): est. 15-20% on the GB10; prerequisite for compile, FP8 and QKV fusion.
+- [ ] 2. Regional compile (`transformer.compile_repeated_blocks(fullgraph=True, dynamic=True)`): ~1.5x in diffusers'
+      benchmarks; fuses the elementwise share.
+- [ ] 3. FP8 rowwise (torchao, after fusing), with an INT8 A/B on sm_120; BFL ships fp8r and nvfp4 checkpoints.
+- [ ] Sweeps: CFG `stop` 0.6-0.8; steps 50/40/30 x shift 6.93/16 x guidance 3.5/4.0 (we use 4.0 with 6.93, which matches
+      neither diffusers' 3.5/6.93 nor BFL's code 4.0/16); cuDNN attention (BFL's reference forces it).
+- [ ] FLUX.3 Klein distilled (16 steps, no CFG, ~6x) for FLUX.3 research runs; base-trained LoRAs on it are unverified.
 
 ## Inference at scale
 
