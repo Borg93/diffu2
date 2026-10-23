@@ -458,11 +458,14 @@ Data checks (23 Oct evening, the user's question: any leakage or anything weird?
 - [ ] Held-out volumes for v3d: the split is by page, so 23 of the 24 val_eval volumes (50 of 52 val) are also in
       training. Fine for new text in a known hand; it cannot show a trained model copying an unseen writer from one
       image. Hold out whole volumes (different eras and scans) for v3d's eval.
-- [ ] The read-back model (Riksarkivet/trocr-base-handwritten-hist-swe-2) was trained on lines of most of our
+- [x] The read-back model (Riksarkivet/trocr-base-handwritten-hist-swe-2) was trained on lines of most of our
       collections (Pahlman, Bergskollegium, Bergmästaren i Nora, Finnish court records, Svea and Göta hovrätt,
-      Sollentuna, Krigshovrätten, Trolldomskommissionen, the Stockholm city archives): its CER is optimistic and it may
-      read a memorised line where the drawing slipped, so the slip filter is weaker there. CER is information only;
-      test the filter by drawing lines with altered text and checking it reads the drawing, not its memory.
+      Sollentuna, Krigshovrätten, Trolldomskommissionen, the Stockholm city archives). Tested (scratchpad
+      leak/htr_memory.py, CPU bf16): the middle 40-70% of 114 real lines painted out in the paper's colour; it wrote
+      back 0 of 124 painted-out words (>= 5 letters), on collections it trained on (Pahlman, Bergskollegium) and not
+      (Väse, Arjeplog); the reads shrink to 0.71-0.73 of their length. It reads the pixels, so the slip filter holds.
+      Its CER is lower on its own collections: mean 0.012 / 0.041 against 0.136 / 0.189 (its card's held-out 0.025 /
+      0.048), so CER compares only within a collection.
 - [ ] Writing no label asks for (scratchpad hand/unlabelled.py: ink outside every box the caption names, grown by
       half a line): Pahlman's LoRA writes the caption's "1825–1826" as a running header in 2 of 8 windows (marks in 4
       of 8; untrained FLUX.3 none; real windows have untranscribed page numbers there, which is where it learned the
