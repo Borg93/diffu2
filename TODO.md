@@ -351,9 +351,32 @@ Any scanned page as a template, not only pages with PAGE/ALTO ground truth.
       the realism test's new Bergskollegium document drawn in the hand (runs/realism_test/H, CER 0.085 and 0.040).
       Costs: legibility (harder cursive and some drawing slips: lines to tag unclear or drop by read-back CER) and
       darker ink than the real (the second pass's job). The hand is in by step 350 (~50 min of training).
-- [ ] More hands overnight (queue_tonight.sh): Pahlman's travel journals 1824-26, Bergskollegium Stora Kopparbergs
-      bergslag 1743 (microfilm), Landskapshandlingar 16th c. (microfilm); final checkpoint and base FLUX.3 on 8 held-out
-      windows each (runs/flux3_hand_<name>). If they hold: one LoRA per volume (230 volumes in the ground truth).
+- [x] Pahlman's travel journals 1825-26, the same recipe (runs/flux3_hand_pahlman; 292 windows of 37 pages, 18 of
+      3 pages held out; 8 scored): untrained FLUX.3 CER 0.019, slant gap 14.0 deg, pen width 0.29, letter size 0.26,
+      spacing 0.51, ink dE 16.0, paper dE 5.1; step 700: 0.049, 4.0, 0.12, 0.27, 0.26, 24.3, 2.1. Slant closer in 8 of
+      8 windows. By eye Pahlman's thin leaning hand with his dashes at sentence ends. It also writes text no label
+      asks for: the caption's date range "1825–1826" as a running header at the top right (2 of 8 windows), where the
+      journal's real pages carry page numbers the ground truth does not transcribe (see Data checks).
+- [ ] Per-hand LoRAs on Bergskollegium Stora Kopparbergs bergslag 1743 (microfilm) and Landskapshandlingar 16th c.
+      (microfilm): queue_tonight3.sh, after the reference tests. If they hold: one LoRA per volume (230 volumes).
+- [x] The chain on the per-hand drawing (runs/realism_test H -> HC, the second pass in C's wording at 28 steps, 67-73 s
+      a window -> HC_pid; means of 2 windows; CER / ink stands out / ink varies / ink dE / paper dE to the example):
+      H 0.062/122/14.4/25/17, HC 0.076/112/16.7/23/16, HC_pid 0.084/116/18.1/27/18 (real crops 103/17.2, the example
+      102/18.9). The second pass adds the ink's unevenness, not this page's colour: H's ink and paper are the
+      volume's average. For a volume's own hand the second pass is optional; it earns its time where the ink must
+      match one page, or on untrained drawings.
+- [x] Reference guidance probe (runs/refguide_probe; untrained FLUX.3, the described captions and seeds of the control
+      runs/probe_described/described, its first 11 crops; scratchpad refguide/compare_refguide.py). Carry-over from
+      the example (paper yellowness / ink lightness / ink yellowness / slant) at reference scale 1, 2, 3.5:
+      0.84/0.41/0.66/0.32, 0.93/0.53/0.72/0.38, 1.00/0.63/0.74/0.47; median distance to the example's hand (slant,
+      pen width, letter size, spacing, ink dE, paper dE): 5/0.30/0.69/0.21/12.4/3.3, 6/0.30/0.56/0.18/12.6/2.1,
+      4/0.18/0.55/0.15/11.1/1.65; CER 0.027, 0.031, 0.025. Peak 53 GB, ~3.5 min a crop (three passes). By eye: at
+      3.5 the example's mottled paper, grain and heavier strokes arrive, the letterforms stay FLUX.3's neat cursive.
+      It carries the page around the letters, not the hand: keep it for paper and ink (maybe instead of the second
+      pass), not as a way to copy a writer. 11 crops: carry-over steps of ~0.05 are near noise; the trend is monotonic.
+- [ ] Per-hand LoRA from few pages (queue_tonight4.sh, after queue_tonight3): the 1715 recipe on the windows of 4 and
+      of 10 of its 36 training pages (data_flux3/hand_overstat_p4, _p10; 23 and 44 windows), 350 steps, checkpoints
+      175 and 350 on the same 8 held-out windows, beside the 36-page LoRA's eval_step_349.
 - [ ] The tokenizer warns that FLUX.3 Klein's Qwen3-VL tokenizer has "an incorrect regex pattern" (transformers;
       `fix_mistral_regex=True`). Training and generation load it alike, so they agree; check whether BFL's pipeline
       sets the flag before changing it.
@@ -420,6 +443,32 @@ Inference speed (ranked; re-profile on torch 2.14.1 first, one change at a time,
 - [ ] Sweeps: CFG `stop` 0.6-0.8; steps 50/40/30 x shift 6.93/16 x guidance 3.5/4.0 (we use 4.0 with 6.93, which matches
       neither diffusers' 3.5/6.93 nor BFL's code 4.0/16); cuDNN attention (BFL's reference forces it).
 - [ ] FLUX.3 Klein distilled (16 steps, no CFG, ~6x) for FLUX.3 research runs; base-trained LoRAs on it are unverified.
+
+Data checks (23 Oct evening, the user's question: any leakage or anything weird?):
+- [x] Per-hand LoRAs: training and held-out pages disjoint (1715: 36 vs 4 pages; Pahlman: 37 vs 3); held-out lines
+      also in training: 3 of 224 set phrases (signature, "Öfwerståthålls wägnar") and 0 of 209. The realism example
+      page (1244_cac (29)) is held out. Tonight's reference tests run untrained FLUX.3, and no probe reference shares
+      a line with its target. diffu E1 trains on real crops only (layout_crops_v2/train; its 24 held-out pages share
+      no page and no line > 25 chars with training). v2b: train/val/val_eval page-disjoint; 20 of 6,120 val lines
+      repeat in training, all set phrases ("Wy Gustaf Adolph. Giöre witterligitt").
+- [x] v3d's pairs: 85 of 10,766 targets had a facing-page reference holding some of their own lines (consecutive
+      scans overlap: Strödda kamerala A0073405_00018/_00019 show the same physical lines; the rest account formulas).
+      Fixed in `pick_same_hand` (3d4b0c6, red-checked).
+- [ ] Rebuild data_flux3/style_pairs_v3d with the fix before v3d trains (85 references change).
+- [ ] Held-out volumes for v3d: the split is by page, so 23 of the 24 val_eval volumes (50 of 52 val) are also in
+      training. Fine for new text in a known hand; it cannot show a trained model copying an unseen writer from one
+      image. Hold out whole volumes (different eras and scans) for v3d's eval.
+- [ ] The read-back model (Riksarkivet/trocr-base-handwritten-hist-swe-2) was trained on lines of most of our
+      collections (Pahlman, Bergskollegium, Bergmästaren i Nora, Finnish court records, Svea and Göta hovrätt,
+      Sollentuna, Krigshovrätten, Trolldomskommissionen, the Stockholm city archives): its CER is optimistic and it may
+      read a memorised line where the drawing slipped, so the slip filter is weaker there. CER is information only;
+      test the filter by drawing lines with altered text and checking it reads the drawing, not its memory.
+- [ ] Writing no label asks for (scratchpad hand/unlabelled.py: ink outside every box the caption names, grown by
+      half a line): Pahlman's LoRA writes the caption's "1825–1826" as a running header in 2 of 8 windows (marks in 4
+      of 8; untrained FLUX.3 none; real windows have untranscribed page numbers there, which is where it learned the
+      place). The 1715 LoRA's outside ink is the clerk's flourishes, as on the real pages. Options: keep digits of the
+      date out of the caption (the era in words), caption untranscribed marks as their own rows, and check every drawn
+      window for outside ink (inpaint or drop) before its labels are written.
 
 ## Inference at scale
 
