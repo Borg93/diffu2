@@ -10,7 +10,12 @@ from typing import Any
 import pytest
 import xmlschema
 
+from diffu_page.blocks.ground_truth import line_labels
+from diffu_page.captions.look import ScanLook
+from diffu_page.captions.provenance import Provenance
 from diffu_page.labels import LineLabel, PageLabels, export, to_alto, to_page_xml
+from diffu_page.layout import load_xml_layout
+from diffu_page.plan import PageStyle, plan_page
 
 _PAGE_SCHEMA = Path(__file__).parent / "schemas" / "page2013.xsd"
 
@@ -61,6 +66,26 @@ def test_page_xml_lists_the_regions_in_reading_order_with_their_page_types() -> 
 
     assert order == ["page-number", "body", "table"]
     assert types == {"page-number": "page-number", "body": "paragraph", "table": "other"}
+
+
+def test_page_xml_of_a_planned_crop_keeps_each_body_block_its_own_region(wide_and_narrow_body_page: Path) -> None:
+    style = PageStyle(
+        provenance=Provenance(title="the archive", years=""), look=ScanLook(greyscale=False, paper="cream", ink="brown")
+    )
+    plan = plan_page(load_xml_layout(wide_and_narrow_body_page), style)[0]
+    labels = PageLabels(width=plan.width, height=plan.height, lines=line_labels(plan, [0.0] * len(plan.lines), 1.0))
+
+    root = ET.fromstring(to_page_xml(labels))
+
+    regions = {
+        region.get("id"): [line.get("id") for line in region if _local(line) == "TextLine"]
+        for region in root.iter()
+        if _local(region) == "TextRegion"
+    }
+    assert regions == {
+        "body_1": ["body_1_l0", "body_1_l1", "body_1_l2"],
+        "body_2": ["body_2_l3", "body_2_l4", "body_2_l5"],
+    }
 
 
 def test_page_xml_tags_an_unclear_line_the_way_transkribus_does() -> None:

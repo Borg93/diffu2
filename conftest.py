@@ -63,6 +63,26 @@ def two_column_page(tmp_path: Path) -> Path:
     return path
 
 
+@pytest.fixture
+def wide_and_narrow_body_page(tmp_path: Path) -> Path:
+    """A 1700 x 900 px page: a wide body block of three lines and beside it a narrow one, too narrow to be cropped
+    alone, so both are planned into one crop (as the two pages of a spread can be)."""
+    blocks = "".join(
+        f'<TextRegion id="{side}" type="paragraph">'
+        + "".join(_line(f"{side}{i}", x0, x1, 300 + 100 * i, f"{side} line {i}") for i in range(3))
+        + "</TextRegion>"
+        for side, x0, x1 in (("wide", 100, 1100), ("narrow", 1200, 1500))
+    )
+    path = tmp_path / "wide_and_narrow.xml"
+    path.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<PcGts xmlns="http://schema.primaresearch.org/PAGE/gts/pagecontent/2019-07-15">'
+        f'<Page imageFilename="wide_and_narrow.jpg" imageWidth="1700" imageHeight="900">{blocks}</Page></PcGts>',
+        encoding="utf-8",
+    )
+    return path
+
+
 TINY_FLUX3 = "hf-internal-testing/tiny-flux3-image-modular"
 TINY_FLUX3_REVISION = "9130f96f124d6c6fdd1beab63cfb6d2f1c8658a1"  # pinned: a changed fixture must not change results
 

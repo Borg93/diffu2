@@ -82,6 +82,7 @@ def line_labels(plan: CropPlan, line_cers: list[float], max_line_cer: float) -> 
                 polygon=[(x0, y0), (x1, y0), (x1, y1), (x0, y1)],
                 baseline=[(x0, baseline_y), (x1, baseline_y)],
                 region=line.role or RUNNING_TEXT,
+                block=line.block,
                 order=order_of[index],
                 tag="unclear" if line_cer > max_line_cer else "",
             )

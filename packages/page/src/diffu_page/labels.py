@@ -6,6 +6,7 @@ tag); PAGE and ALTO XML are only serializations of it, each a ``PageLabels -> st
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable
 from importlib.metadata import PackageNotFoundError, version
 from typing import Literal
@@ -25,14 +26,26 @@ type LabelFormat = Literal["alto", "page"]
 
 
 class LineLabel(BaseModel):
-    """One text line: transcription, polygon, baseline polyline, region, reading-order index and tag."""
+    """One text line: transcription, polygon, baseline polyline, region, source block, reading-order index and tag.
+
+    The lines of one region and block form one ``TextRegion``/``TextBlock``: two columns of running text stay two."""
 
     text: str
     polygon: list[Point]
     baseline: list[Point] = Field(default_factory=list)  # left to right; empty if unknown
     region: str = RUNNING_TEXT  # a role's PAGE type (see ROLE_NAMES), "table" or "body"
+    block: str = ""  # the template block the line came from; "" for labels made before blocks were kept
     order: int = 0
     tag: str = ""  # "unclear" when the line read back badly
+
+
+class LabelRegion(BaseModel):
+    """One exported region: its id, unique in the page (the kind alone when it is the page's only region of that
+    kind, else numbered in reading order), its kind and its lines in reading order."""
+
+    id: str
+    kind: str
+    lines: list[LineLabel]
 
 
 class PageLabels(BaseModel):
@@ -62,14 +75,22 @@ def _page_type(region: str) -> str:
     return "other" if region == TABLE else "paragraph"
 
 
-def _ordered_regions(labels: PageLabels) -> list[tuple[str, list[LineLabel]]]:
-    """Group lines by region, sort each region's lines by reading-order index, and return the regions
-    themselves in reading order (by their first line's order). One source of truth for every exporter."""
-    groups: dict[str, list[LineLabel]] = {}
+def _ordered_regions(labels: PageLabels) -> list[LabelRegion]:
+    """Group lines by region and block, sort each group's lines by reading-order index, and return the groups in
+    reading order (by their first line's order). One source of truth for every exporter."""
+    groups: dict[tuple[str, str], list[LineLabel]] = {}
     for line in labels.lines:
-        groups.setdefault(line.region, []).append(line)
-    ordered = {region: sorted(lines, key=lambda ln: ln.order) for region, lines in groups.items()}
-    return sorted(ordered.items(), key=lambda kv: kv[1][0].order)
+        groups.setdefault((line.region, line.block), []).append(line)
+    ordered = sorted((sorted(lines, key=lambda ln: ln.order) for lines in groups.values()), key=lambda ls: ls[0].order)
+    per_kind = Counter(lines[0].region for lines in ordered)
+    numbered: Counter[str] = Counter()
+    regions: list[LabelRegion] = []
+    for lines in ordered:
+        kind = lines[0].region
+        numbered[kind] += 1
+        region_id = kind if per_kind[kind] == 1 else f"{kind}_{numbered[kind]}"
+        regions.append(LabelRegion(id=region_id, kind=kind, lines=lines))
+    return regions
 
 
 _PAGE_NS = "http://schema.primaresearch.org/PAGE/gts/pagecontent/2019-07-15"
@@ -103,19 +124,19 @@ def to_page_xml(labels: PageLabels) -> str:
     TextEquiv) per line."""
     regions = _ordered_regions(labels)
     refs = "\n".join(
-        f'        <RegionRefIndexed index="{i}" regionRef="{_esc(region)}"/>' for i, (region, _) in enumerate(regions)
+        f'        <RegionRefIndexed index="{i}" regionRef="{_esc(region.id)}"/>' for i, region in enumerate(regions)
     )
     reading_order = (
         f'    <ReadingOrder>\n      <OrderedGroup id="ro">\n{refs}\n      </OrderedGroup>\n    </ReadingOrder>\n'
     )
     blocks: list[str] = []
-    for region, lines in regions:
-        rx, ry, rw, rh = _bbox([p for ln in lines for p in ln.polygon])
+    for region in regions:
+        rx, ry, rw, rh = _bbox([p for ln in region.lines for p in ln.polygon])
         rcoords = _pts([(rx, ry), (rx + rw, ry), (rx + rw, ry + rh), (rx, ry + rh)])
         blocks.append(
-            f'    <TextRegion id="{_esc(region)}" type="{_page_type(region)}">\n'
+            f'    <TextRegion id="{_esc(region.id)}" type="{_page_type(region.kind)}">\n'
             f'      <Coords points="{rcoords}"/>\n'
-            + "\n".join(_page_text_line(region, ln) for ln in lines)
+            + "\n".join(_page_text_line(region.id, ln) for ln in region.lines)
             + "\n    </TextRegion>"
         )
     return (
@@ -159,15 +180,16 @@ def _alto_description(image: str) -> str:
     )
 
 
-def _alto_reading_order(regions: list[tuple[str, list[LineLabel]]]) -> str:
+def _alto_reading_order(regions: list[LabelRegion]) -> str:
     """ALTO ``<ReadingOrder>``: a nested ``OrderedGroup`` per region, an ``ElementRef`` per line (REF =
     the line's ``TextLine`` ID) — the htrflow shape, so a reader can recover line sequence without geometry."""
     groups: list[str] = []
-    for region, lines in regions:
+    for region in regions:
         refs = "\n".join(
-            f'        <ElementRef ID="ro_{_esc(region)}_l{ln.order}" REF="{_esc(region)}_l{ln.order}"/>' for ln in lines
+            f'        <ElementRef ID="ro_{_esc(region.id)}_l{ln.order}" REF="{_esc(region.id)}_l{ln.order}"/>'
+            for ln in region.lines
         )
-        groups.append(f'      <OrderedGroup ID="ro_{_esc(region)}">\n{refs}\n      </OrderedGroup>')
+        groups.append(f'      <OrderedGroup ID="ro_{_esc(region.id)}">\n{refs}\n      </OrderedGroup>')
     return (
         '  <ReadingOrder>\n    <OrderedGroup ID="ro">\n'
         + "\n".join(groups)
@@ -195,11 +217,11 @@ def to_alto(labels: PageLabels) -> str:
     ``PC``/``WC`` confidences are 1.0 — this is ground truth, not a recognition guess."""
     regions = _ordered_regions(labels)
     blocks: list[str] = []
-    for region, lines in regions:
-        bx, by, bw, bh = _bbox([p for ln in lines for p in ln.polygon])
+    for region in regions:
+        bx, by, bw, bh = _bbox([p for ln in region.lines for p in ln.polygon])
         blocks.append(
-            f'      <TextBlock ID="{_esc(region)}" HPOS="{bx}" VPOS="{by}" WIDTH="{bw}" HEIGHT="{bh}" CS="false">\n'
-            + "\n".join(_alto_text_line(region, ln) for ln in lines)
+            f'      <TextBlock ID="{_esc(region.id)}" HPOS="{bx}" VPOS="{by}" WIDTH="{bw}" HEIGHT="{bh}" CS="false">\n'
+            + "\n".join(_alto_text_line(region.id, ln) for ln in region.lines)
             + "\n      </TextBlock>"
         )
     return (

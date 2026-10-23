@@ -24,12 +24,13 @@ class LayoutRow(BaseModel):
 
 
 class LineRecord(BaseModel):
-    """A crop's text line for evaluation: its layout row id, transcription, PAGE role and box."""
+    """A crop's text line: its layout row id, transcription, PAGE role, box and the template block it came from."""
 
     id: str
     text: str
     role: str
     bbox: list[int]
+    block: str = ""  # "" in records written before blocks were kept: their labels group lines by role alone
 
 
 class Caption(BaseModel):
@@ -86,7 +87,8 @@ def caption_for(crop: Crop, provenance: Provenance, look: ScanLook) -> Caption:
         text=f"{' '.join(sentences)} {rows}",
         layout=layout,
         lines=[
-            LineRecord(id=row_id, text=line.text, role=line.role, bbox=crop.slot(line)) for row_id, line in numbered
+            LineRecord(id=row_id, text=line.text, role=line.role, bbox=crop.slot(line), block=line.source)
+            for row_id, line in numbered
         ],
     )
 
