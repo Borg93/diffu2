@@ -309,7 +309,11 @@ Any scanned page as a template, not only pages with PAGE/ALTO ground truth.
       darkness 0.02 -> 0.50, ink hue 0.01 -> 0.70; a real crop of the same hand 0.93, 0.98, 0.90; CER 0.036 ->
       0.041), not the slant (0.15 -> 0.18; real 0.75) or the letterforms. The ink stays flat and opaque (contrast
       to the paper 149 -> 146 grey levels, variation inside strokes 9.5 -> 9.2; real crops 103 and 17): the
-      "pasted on" look is a separate problem. The contradicting part lands at ~14:55.
+      "pasted on" look is a separate problem. Third part, captions describing a different reference than the
+      image: the drawings follow the words (carry-over from the words' look: paper colour 0.83, ink darkness 0.77,
+      ink hue 0.97) and not the image (-0.73, -0.29, -0.86); slant follows neither (0.02, 0.06); CER 0.043. The
+      caption decides the colours; the reference image barely counts. A described caption is a reliable colour
+      control, and a wrong one overrides the image.
 - [ ] Realism test after the probe (runs/realism_test, script in the session scratchpad): a new document drawn
       with our caption, with FLUX.3's prompt upsampler (black-forest-labs/flux-3-image-klein-pup, Apache-2.0,
       i2i_bbox with our line boxes locked), as a second FLUX.3 edit pass over the drawing, and through NVIDIA PiD
