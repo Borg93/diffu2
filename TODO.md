@@ -330,13 +330,20 @@ Any scanned page as a template, not only pages with PAGE/ALTO ground truth.
       sharpness the pass blurs (17.8); 11-26 s a window at 4x. None of them changes the hand: the same round hand,
       slant 36-44 deg, in every variant. Next: the second pass and PiD as page-pipeline blocks (edit caption
       written from the measured look, no upsampler), checked on more windows and with fewer steps.
-- [ ] Per-hand LoRA pilot (the user's call, 23 Oct 15:50, after "it's not following the reference image"):
-      can FLUX.3 learn one hand from its own pages, where one example image does not carry it? Text to image, no
-      example; data_flux3/hand_overstat (the 1715 letter book's windows of layout_crops_v2b: 160 of 36 pages to
-      train, 16 of 4 other pages held out, the realism example's page among them); v2's recipe, 700 steps of 2,
-      constant LR (session scratchpad hand/: subset.py, flux3_hand_lora_overstat.yaml, run_hand.sh; trackio
-      flux3_hand_overstat). Drawings: the final checkpoint on the 16 held-out windows and the realism document
-      (variant H), base FLUX.3 and the middle checkpoint on 8. If it takes the hand: a LoRA per scribe or volume.
+- [x] Per-hand LoRA pilot (the user's call, 23 Oct 15:50, after "it's not following the reference image"): FLUX.3
+      Klein Base text to image, trained only on the 1715 Överståthållarämbetet letter book's own pages (160 windows of
+      36 pages; v2's recipe, 700 steps of 2, constant LR; session scratchpad hand/). It learns the hand. On 8 held-out
+      windows of 4 other pages (same captions and seeds; median distance to the real hand, lower is closer):
+      untrained FLUX.3 CER 0.015, slant gap 11.0 deg, pen width 0.25, letter size 0.26, spacing 0.24, ink dE 16.1,
+      paper dE 5.0; step 350: 0.056, 2.0, 0.16, 0.51, 0.12, 24.3, 6.2; step 700: 0.061, 2.5, 0.15, 0.33, 0.12, 22.5, 6.1.
+      All 16 held-out windows at step 700: CER 0.073 against 0.036 for the real windows. By eye: the clerk's chancery
+      cursive, flourished month headings, raised abbreviations, names in a rounder Latin hand as on the real pages;
+      the realism test's new Bergskollegium document drawn in the hand (runs/realism_test/H, CER 0.085 and 0.040).
+      Costs: legibility (harder cursive and some drawing slips: lines to tag unclear or drop by read-back CER) and
+      darker ink than the real (the second pass's job). The hand is in by step 350 (~50 min of training).
+- [ ] More hands overnight (queue_tonight.sh): Pahlman's travel journals 1824-26, Bergskollegium Stora Kopparbergs
+      bergslag 1743 (microfilm), Landskapshandlingar 16th c. (microfilm); final checkpoint and base FLUX.3 on 8 held-out
+      windows each (runs/flux3_hand_<name>). If they hold: one LoRA per volume (230 volumes in the ground truth).
 - [ ] The tokenizer warns that FLUX.3 Klein's Qwen3-VL tokenizer has "an incorrect regex pattern" (transformers;
       `fix_mistral_regex=True`). Training and generation load it alike, so they agree; check whether BFL's pipeline
       sets the flag before changing it.
