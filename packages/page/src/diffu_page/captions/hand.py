@@ -250,8 +250,8 @@ def _hex(colour: np.ndarray) -> str:
     return f"#{red:02X}{green:02X}{blue:02X}"
 
 
-def _lab(hex_colour: str) -> tuple[float, float, float]:
-    """CIE L*a*b* (D65) of an sRGB hex colour."""
+def lab(hex_colour: str) -> tuple[float, float, float]:
+    """CIE L*a*b* (D65) of an sRGB hex colour: lightness L* (0-100), then a* (green-red) and b* (blue-yellow)."""
     rgb = [int(hex_colour[i : i + 2], 16) / 255 for i in (1, 3, 5)]
     linear = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in rgb]
     x = (0.4124 * linear[0] + 0.3576 * linear[1] + 0.1805 * linear[2]) / 0.95047
@@ -265,4 +265,4 @@ def _lab(hex_colour: str) -> tuple[float, float, float]:
 
 
 def _delta_e(a: str, b: str) -> float:
-    return math.dist(_lab(a), _lab(b))
+    return math.dist(lab(a), lab(b))

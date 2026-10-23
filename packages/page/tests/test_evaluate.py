@@ -11,9 +11,9 @@ import pytest
 from PIL import Image
 from typer.testing import CliRunner
 
-from diffu_page.captions.hand import HandDistance, hand_distance, hand_look
+from diffu_page.captions.hand import HandDistance, HandLook, hand_distance, hand_look
 from diffu_page.captions.prompt import LineRecord
-from diffu_page.cli.evaluate import EvalCrop, Hands, Results, app, read_crops
+from diffu_page.cli.evaluate import EvalCrop, Hands, Results, app, carry_over, read_crops
 
 LINES = [
     LineRecord(id="Sv_Text_1", text="Göteborgs poliskammare", role="", bbox=[0, 0, 500, 1000]),
@@ -113,6 +113,21 @@ def test_evaluate_measures_each_drawn_hand_beside_its_real_crop_and_its_referenc
 def _median_of_measured(values: list[float | None]) -> float | None:
     measured = [value for value in values if value is not None]
     return median(measured) if measured else None
+
+
+def _hand(ink: str, slant: float) -> HandLook:
+    return HandLook(slant=slant, stroke=0.07, letters=0.3, density=0.12, paper="#F0E0C0", ink=ink)
+
+
+def test_carry_over_is_the_slope_of_the_hands_on_their_references() -> None:
+    references = [_hand("#202020", 10.0), _hand("#606060", 20.0), _hand("#A0A0A0", 30.0)]
+    hands = [_hand(reference.ink, slant) for reference, slant in zip(references, (15.0, 20.0, 25.0), strict=True)]
+
+    carried = carry_over(list(zip(references, hands, strict=True)))
+
+    assert carried.model_dump() == pytest.approx(
+        {"paper_lightness": None, "paper_yellowness": None, "ink_lightness": 1.0, "ink_yellowness": None, "slant": 0.5}
+    )
 
 
 def test_read_crops_refuses_a_set_where_only_some_crops_name_a_reference(tmp_path: Path) -> None:
