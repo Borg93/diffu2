@@ -19,7 +19,7 @@ from diffu_page.crops.geometry import SLOT_ABOVE_BASELINE, SLOT_BELOW_BASELINE
 from diffu_page.labels import LabelFormat, LineLabel, PageLabels, export
 from diffu_page.layout import RUNNING_TEXT
 from diffu_page.plan import CropPlan
-from diffu_page.readback import HTR, pixel_box, read_lines
+from diffu_page.readback import HTR, HTR_REVISION, pixel_box, read_lines
 
 
 class LineReadbackStep(ModularPipelineBlocks):
@@ -34,8 +34,10 @@ class LineReadbackStep(ModularPipelineBlocks):
     @override
     def expected_components(self) -> list[ComponentSpec]:
         return [
-            ComponentSpec("htr_model", VisionEncoderDecoderModel, pretrained_model_name_or_path=HTR),
-            ComponentSpec("htr_processor", TrOCRProcessor, pretrained_model_name_or_path=HTR),
+            ComponentSpec(
+                "htr_model", VisionEncoderDecoderModel, pretrained_model_name_or_path=HTR, revision=HTR_REVISION
+            ),
+            ComponentSpec("htr_processor", TrOCRProcessor, pretrained_model_name_or_path=HTR, revision=HTR_REVISION),
         ]
 
     @property

@@ -9,6 +9,7 @@ from transformers import TrOCRProcessor, VisionEncoderDecoderModel
 from diffu_page.captions.prompt import LineRecord
 
 HTR = "Riksarkivet/trocr-base-handwritten-hist-swe-2"
+HTR_REVISION = "aa79fcb1850bf3155ebc442570d6c6bfc0ac8100"  # every CER and unclear tag read by the same weights
 
 
 def levenshtein(a: str, b: str) -> int:
