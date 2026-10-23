@@ -201,22 +201,20 @@ def page_number(record: CropRecord) -> int | None:
 
 
 def pick_same_hand(scan: Scan, volumes: dict[Volume, list[Scan]], rng: random.Random) -> Scan | None:
-    """A crop of ``scan``'s own page that shares none of its lines; else one of the facing page (scan number one
-    off); else None. Another page of the volume may be another scribe or another kind of document (v3's pairs);
-    the same page or its facing page almost never is."""
+    """A crop of ``scan``'s own page, else of the facing page (scan number one off), that shares none of its lines;
+    else None. Another page of the volume may be another scribe or another kind of document (v3's pairs); the same
+    page or its facing page almost never is. Consecutive scans can overlap (one sheet photographed in two parts),
+    so a facing crop is checked for shared lines too: a reference holding the target's own lines teaches copying."""
     volume = volumes[volume_of(scan.record)]
     texts = {line.text for line in scan.record.lines}
-    same_page = [
-        other
-        for other in volume
-        if other.record.page == scan.record.page and not texts & {line.text for line in other.record.lines}
-    ]
+    apart = [other for other in volume if not texts & {line.text for line in other.record.lines}]
+    same_page = [other for other in apart if other.record.page == scan.record.page]
     if same_page:
         return rng.choice(same_page)
     number = page_number(scan.record)
     facing = [
         other
-        for other in volume
+        for other in apart
         if number is not None and (n := page_number(other.record)) is not None and abs(n - number) == 1
     ]
     return rng.choice(facing) if facing else None

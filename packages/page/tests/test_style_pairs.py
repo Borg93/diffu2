@@ -101,9 +101,17 @@ def test_same_hand_reference_is_a_crop_of_the_page_sharing_no_line() -> None:
     assert reference is apart
 
 
-def test_same_hand_reference_falls_back_to_the_facing_page() -> None:
-    target, facing, farther = _scan(20, ["a"]), _scan(21, ["b"]), _scan(23, ["c"])
+def test_same_hand_reference_falls_back_to_a_facing_page_crop_sharing_no_line() -> None:
+    """Consecutive scans can overlap (one sheet photographed in two parts), so a crop of the facing scan may hold the
+    target's own lines."""
+    target, overlapped, facing, farther = (
+        _scan(20, ["a", "b"]),
+        _scan(21, ["b", "c"]),
+        _scan(21, ["d"]),
+        _scan(23, ["e"]),
+    )
+    volumes = by_volume([target, overlapped, facing, farther])
 
-    reference = pick_same_hand(target, by_volume([target, facing, farther]), random.Random(0))
+    references = [pick_same_hand(target, volumes, random.Random(seed)) for seed in range(8)]
 
-    assert reference is facing
+    assert references == [facing] * 8
