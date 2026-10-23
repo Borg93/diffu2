@@ -28,7 +28,10 @@ PAGE/ALTO page ──► LoadLayout ──► Refill ──► PlanCrops ──�
    tiling of the page.
 4. **Caption** (`diffu_page.captions`): FLUX.3's layout prompt. A paragraph names the archive, years, scan, paper and
    ink and cites every line; a JSON table gives each line's box and text. Training data and generation build it
-   with the same code.
+   with the same code. A page drawn from a reference crop (`plan.Reference`, style by example) is captioned as the
+   reference pairs were (`restyle.reference_caption`): the style's words give way to `<ref_image_0>`, plain (v3, v3c)
+   or with the reference's hand, ink and paper described as measured (`captions.hand`: slant, pen width, letter
+   size, spacing, colours as hex; v3d). The form must be the one the LoRA in use was trained on.
 5. **Drawing** (`diffu_page.pipeline`): a model directory names its blocks in `modular_model_index.json`, and
    `FAMILIES` maps those to the model's blocks and pipeline class (FLUX.3 Klein: `Flux3AutoBlocks` without its prompt
    upsampler, which would rewrite the quoted lines; diffu: `DiffuAutoBlocks`). Around them:
@@ -37,8 +40,9 @@ PAGE/ALTO page ──► LoadLayout ──► Refill ──► PlanCrops ──�
      `LineReadbackStep` (TrOCR reads every line box) and `LabelExportStep` (ALTO or PAGE labels; a line that reads back
      badly is tagged `unclear`). The model's auto blocks choose plain or reference-conditioned denoising from the
      inputs, so v2 (style by name) and v3 (style by example) share it.
-   - `page_blocks`: the plan steps, then `CropLoopStep`, which runs the crop blocks once per planned crop (crop k
-     from noise seed `seed + k`).
+   - `page_blocks`: the plan steps, `LoadReferenceStep` (the page's reference crop as the crops' `image`, so a
+     reference only ever reaches the crops beside the captions planned for it), then `CropLoopStep`, which runs the
+     crop blocks once per planned crop (crop k from noise seed `seed + k`).
    - `PagePlanBlocks`: the plan steps alone, no model.
    LoRAs load through the model's own LoRA loader as named adapters (`diffu_page.lora`).
 
@@ -50,10 +54,15 @@ pipeline). All of them name and seed crops alike, so a page comes out the same f
 ## Training (NeMo AutoModel)
 
 - `diffu_page.data.build_crops` cuts the GT pages into crops with captions; `steer_set`, `style_pairs` and
-  `pick_eval` build the steering, v3 and evaluation sets.
+  `pick_eval` build the steering, v3 and evaluation sets (`style_pairs --caption described` for v3d's captions;
+  `probe_set` the control probe that checks whether such words steer the base model at all).
 - NeMo caches latents and prompt embeddings once (its FLUX.3 processor; `diffu_train.cache_pairs` for v3's
-  pairs), then trains a LoRA with the configs in `packages/train/configs/flux3/` and our interleaved bucket dataloader
-  (`diffu_train.nemo`).
+  pairs, with the empty prompt beside them), then trains a LoRA with the configs in `packages/train/configs/flux3/`
+  and our interleaved bucket dataloader (`diffu_train.nemo`), which can train a share of the pairs on the empty prompt
+  (`caption_dropout`, `diffu_train.dropout`) and scores `val_loss` on held-out pairs every 100 steps.
+- `diffu-evaluate` scores every drawn crop for CER and for how closely its hand follows its real crop's and its
+  reference's (`HandFidelity`: each drawing against its own reference and against the other references, which is
+  chance); `diffu_page.cli.hands` scores a finished run's saved drawings the same way, without the GPU.
 - Every training config logs to the local trackio project `diffu` (`~/.cache/huggingface/trackio`, no Space); the
   job scripts name the runs (`flux3_v3b_lora`, `diffu_s_train`, ...). Read them with the trackio CLI:
   `trackio list runs --project diffu --json`, `trackio get metric --project diffu --run <run> --metric loss --json`,
@@ -64,14 +73,15 @@ pipeline). All of them name and seed crops alike, so a page comes out the same f
 
 ## What keeps training and generation consistent
 
-Checked 2026-10-21; each would silently cost quality if it drifted.
+Checked 2026-10-21 (reference rows 2026-10-23); each would silently cost quality if it drifted.
 
 | What | Training (NeMo) | Generation (Modular Diffusers) |
 | --- | --- | --- |
-| Caption | `diffu_page.captions` | the same code, from the `CropPlan` |
+| Caption | `diffu_page.captions` | the same code, from the `CropPlan`; from a reference, the same `reference_caption` call as its training pair (`test_plan`) |
 | Prompt embeddings | NeMo's FLUX.3 encoder | FLUX.3's text encoder block: bit-identical on the same device |
 | Latents | VAE `mode()`, 2×2 patchify, batch-norm stats | the same in FLUX.3's blocks |
 | Line geometry | `page_xml.read_page_line` (builder) | the same reader (replay): 60/60 GT pages planned as cut |
-| Reference image | written on the 16 px grid (`crops.grid`) | `ReferenceGridStep` (a no-op on such references) |
+| Reference image | shrunk to 0.5 MP on the 16 px grid (`crops.grid.as_reference`) | `ReferenceGridStep`, the same function: a no-op on such references, a full crop shrunk to the trained size (it was kept at 1 MP before 2026-10-23) |
+| Reference look (described captions) | measured at the reference size (`captions.hand.measure_reference`) | the same function |
 | Position ids | image (0, h·0.5, w·0.5, 0), reference l = −1, text (0, 0, 0, i) | the same |
-| No-prompt input | none: `cfg_dropout_prob: 0` (NeMo would use zeros) | the empty prompt |
+| No-prompt input | v3d: a tenth of the pairs on the empty prompt as NeMo encodes a caption (`diffu_train.dropout`), bit-identical to diffusers' unconditional input; earlier runs none (`cfg_dropout_prob: 0`; NeMo's own would use zeros) | the empty prompt |

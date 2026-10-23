@@ -2,17 +2,20 @@
 pipeline (:func:`diffu_page.pipeline.crop_blocks`) and read every line back, beside the real crop's read-back.
 
 A crop that names a ``reference`` image is drawn conditioned on it (v3, style by example). A crop's optional ``seed``
-overrides ``--seed + index`` (the steering test draws every variant of a template from the same noise). Writes contact
-sheets (``[reference,] real, generated``), ``generated/NNN.png`` and ``results.json``; a crop that fails is recorded
-there and the rest still run.
+overrides ``--seed + index`` (the steering test draws every variant of a template from the same noise). Every drawn
+hand is measured beside the real crop's (``diffu_page.captions.hand``) and, when the crop lists its reference's line
+boxes (``reference_lines``), beside the reference's: the summary's medians show whether the drawings take their hand
+from the reference at all (``HandFidelity``). Writes contact sheets (``[reference,] real, generated``),
+``generated/NNN.png`` and ``results.json``; a crop that fails is recorded there and the rest still run.
 
     diffu-evaluate --crops data_flux3/layout_crops_v2/val_eval --lora v2=<ckpt>/model --out <dir> -n 24
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
-from statistics import fmean
+from statistics import fmean, median
 from typing import Annotated
 
 import typer
@@ -20,8 +23,10 @@ from diffusers.modular_pipelines import ModularPipeline
 from PIL import Image, ImageDraw
 from pydantic import BaseModel
 
+from diffu_page.captions.hand import Box, HandDistance, HandLook, hand_distance, hand_look
 from diffu_page.captions.prompt import LineRecord
 from diffu_page.cli.options import Lora, parse_lora
+from diffu_page.crops.grid import as_reference
 from diffu_page.output import console, err_console
 from diffu_page.pipeline import DrawSettings, crop_blocks, draw_crop, load_pipeline
 from diffu_page.plan import CropPlan
@@ -42,6 +47,7 @@ class EvalCrop(BaseModel):
     height: int
     lines: list[LineRecord]
     reference: str | None = None
+    reference_lines: list[list[int]] | None = None  # the reference's line boxes, to measure its hand
     seed: int | None = None
     variant: str | None = None
 
@@ -67,6 +73,87 @@ class LineResult(BaseModel):
     real_cer: float
 
 
+class Hands(BaseModel):
+    """A drawn crop's hand beside its real crop's, both measured in the crop's line boxes, and beside its
+    reference's, measured in the reference's at the reference size; and how far apart they are."""
+
+    drawn: HandLook
+    real: HandLook
+    reference: HandLook | None = None
+    to_real: HandDistance
+    to_reference: HandDistance | None = None
+    real_to_reference: HandDistance | None = None  # the pair's own gap: how alike the two real hands are
+
+
+def crop_hands(
+    drawn: Image.Image,
+    real: Image.Image,
+    lines: Sequence[LineRecord],
+    reference: Image.Image | None = None,
+    reference_lines: Sequence[Box] | None = None,
+) -> Hands:
+    """The hands of a drawn crop, its real crop and, given its line boxes, its reference."""
+    boxes = [line.bbox for line in lines]
+    drawn_hand, real_hand = hand_look(drawn, boxes), hand_look(real, boxes)
+    if reference is None or not reference_lines:
+        return Hands(drawn=drawn_hand, real=real_hand, to_real=hand_distance(drawn_hand, real_hand))
+    reference_hand = hand_look(as_reference(reference), reference_lines)
+    return Hands(
+        drawn=drawn_hand,
+        real=real_hand,
+        reference=reference_hand,
+        to_real=hand_distance(drawn_hand, real_hand),
+        to_reference=hand_distance(drawn_hand, reference_hand),
+        real_to_reference=hand_distance(real_hand, reference_hand),
+    )
+
+
+class HandFidelity(BaseModel):
+    """Medians over the drawn crops of each ``HandDistance`` measure: a drawn hand's distance to its real crop's;
+    over the crops with a measured reference, its distance to its own reference's, to the other crops' references
+    (chance: no lower than this when the reference's hand is ignored), and the real crop's distance to its
+    reference's."""
+
+    to_real: HandDistance
+    to_reference: HandDistance | None = None
+    to_other_references: HandDistance | None = None
+    real_to_reference: HandDistance | None = None
+
+
+def _median(values: list[float | None]) -> float | None:
+    present = [value for value in values if value is not None]
+    return median(present) if present else None
+
+
+def _medians(distances: list[HandDistance]) -> HandDistance:
+    return HandDistance.model_validate(
+        {field: _median([getattr(distance, field) for distance in distances]) for field in HandDistance.model_fields}
+    )
+
+
+def hand_fidelity(hands: Sequence[Hands]) -> HandFidelity:
+    """The medians of ``hands`` (at least one)."""
+    fidelity = HandFidelity(to_real=_medians([hand.to_real for hand in hands]))
+    referenced = [hand for hand in hands if hand.reference is not None]
+    if not referenced:
+        return fidelity
+    others = [
+        hand_distance(hand.drawn, other.reference)
+        for hand in referenced
+        for other in referenced
+        if other is not hand and other.reference is not None
+    ]
+    return fidelity.model_copy(
+        update={
+            "to_reference": _medians([hand.to_reference for hand in referenced if hand.to_reference is not None]),
+            "to_other_references": _medians(others) if others else None,
+            "real_to_reference": _medians(
+                [hand.real_to_reference for hand in referenced if hand.real_to_reference is not None]
+            ),
+        }
+    )
+
+
 class CropResult(BaseModel):
     """One evaluated crop, by its index in the eval set."""
 
@@ -76,15 +163,18 @@ class CropResult(BaseModel):
     gen_cer: float
     real_cer: float
     lines: list[LineResult]
+    hands: Hands | None = None  # None in a results.json written before hands were measured
 
 
 class Summary(BaseModel):
-    """The run's mean CERs over the drawn crops, and its settings."""
+    """The run's mean CERs over the drawn crops, how closely their hands follow (``HandFidelity``), and its
+    settings."""
 
     n: int
     failed: int
     gen_cer: float
     real_cer: float
+    hands: HandFidelity | None = None
     loras: dict[str, str]
     guidance: float
     steps: int
@@ -165,6 +255,7 @@ def evaluate_crop(
         gen_cer=fmean(drawn.line_cers),
         real_cer=fmean(real_cers),
         lines=[LineResult(text=ln.text, gen=g, gen_cer=gc, real=r, real_cer=rc) for ln, g, gc, r, rc in lines],
+        hands=crop_hands(drawn.image, real, crop.lines, reference, crop.reference_lines),
     )
 
 
@@ -215,6 +306,7 @@ def evaluate(
         failed=len(failed),
         gen_cer=fmean(s.gen_cer for s in samples),
         real_cer=fmean(s.real_cer for s in samples),
+        hands=hand_fidelity(measured) if (measured := [s.hands for s in samples if s.hands is not None]) else None,
         loras={name: str(path) for name, path in loras.items()},
         guidance=guidance,
         steps=steps,

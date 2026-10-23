@@ -6,15 +6,9 @@ from __future__ import annotations
 from typing import override
 
 from diffusers.modular_pipelines import InputParam, ModularPipeline, ModularPipelineBlocks, OutputParam, PipelineState
-from PIL import Image
 
-from diffu_page.crops.grid import LARGEST_BUCKET_PIXELS, fit_to_grid
+from diffu_page.crops.grid import as_reference
 from diffu_page.plan import CropPlan
-
-
-def training_grid(image: Image.Image) -> Image.Image:
-    """A reference image as NeMo's FLUX.3 cache encoder resized it for v3 training (see ``fit_to_grid``)."""
-    return fit_to_grid(image, LARGEST_BUCKET_PIXELS)
 
 
 class CropPromptStep(ModularPipelineBlocks):
@@ -51,17 +45,18 @@ class CropPromptStep(ModularPipelineBlocks):
 
 
 class ReferenceGridStep(ModularPipelineBlocks):
-    """Puts a reference image on the grid the v3 LoRA was trained on.
+    """Puts a reference image at the size and on the grid the v3 LoRAs were trained on (``as_reference``).
 
-    NeMo's cache encoder squashed every training reference onto the 16-pixel grid, while FLUX.3's own preprocessing
-    pads a reference out to it with a reflected border. Resizing first makes FLUX.3's preprocessing a no-op, so a
-    reference is drawn from exactly as in training. Without a reference the step does nothing.
+    The training references were shrunk to the reference size (half a target's pixels) and NeMo's cache encoder
+    squashed them onto the 16-pixel grid, while FLUX.3's own preprocessing would keep a 1 MP crop at 1 MP and pad it
+    out to the grid with a reflected border. Resizing here first makes FLUX.3's preprocessing a no-op, so a reference
+    of any size is drawn from as in training. Without a reference the step does nothing.
     """
 
     @property
     @override
     def description(self) -> str:
-        return "Resizes the reference image onto the 16-px grid the way NeMo's FLUX.3 cache encoder did in training."
+        return "Resizes the reference image to the reference size and 16-px grid it was trained at (as_reference)."
 
     @property
     @override
@@ -76,6 +71,6 @@ class ReferenceGridStep(ModularPipelineBlocks):
     def __call__(self, components: ModularPipeline, state: PipelineState) -> tuple[ModularPipeline, PipelineState]:
         block_state = self.get_block_state(state)
         if block_state.image is not None:
-            block_state.image = training_grid(block_state.image)
+            block_state.image = as_reference(block_state.image)
         self.set_block_state(state, block_state)
         return components, state

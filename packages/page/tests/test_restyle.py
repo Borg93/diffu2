@@ -1,4 +1,5 @@
-"""Restyling a crop's caption: another archive's style (the steering test), or a reference image's (v3)."""
+"""Restyling a crop's caption: another archive's style (the steering test), or a reference image's, named or described
+(v3, v3b, v3d)."""
 
 from __future__ import annotations
 
@@ -7,11 +8,20 @@ from pathlib import Path
 
 import pytest
 
+from diffu_page.captions.hand import HandLook, ReferenceLook
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.prompt import Caption, caption_for
 from diffu_page.captions.provenance import Provenance, provenance_of
 from diffu_page.captions.records import CropRecord
-from diffu_page.captions.restyle import StaleCaptionError, Style, edit_caption, named_edit_caption, restyle
+from diffu_page.captions.restyle import (
+    CaptionParts,
+    StaleCaptionError,
+    Style,
+    described_edit_caption,
+    edit_caption,
+    named_edit_caption,
+    restyle,
+)
 from diffu_page.crops.geometry import Crop, CropSettings, crops_for_page
 from diffu_page.layout import load_xml_layout
 from diffu_page.plan import regions_of
@@ -48,7 +58,7 @@ def test_restyle_writes_the_caption_the_crop_gets_in_the_target_style(crop: Crop
         look=ScanLook(greyscale=True, paper="light grey", ink="black"),
     )
 
-    restyled = restyle(record, target)
+    restyled = restyle(CaptionParts.of(record), target)
 
     assert restyled == caption_for(crop, target.provenance, target.look).text
 
@@ -56,7 +66,7 @@ def test_restyle_writes_the_caption_the_crop_gets_in_the_target_style(crop: Crop
 def test_edit_caption_takes_only_the_paper_from_the_reference_and_names_no_style(crop: Crop) -> None:
     record = _record(crop, caption_for(crop, provenance_of(COLLECTION, Path(PAGE)), LOOK))
 
-    caption = edit_caption(record)
+    caption = edit_caption(CaptionParts.of(record))
 
     rows = json.loads(caption[caption.index(" [{") + 1 :])
     assert [(row["id"], row["from"]) for row in rows] == [
@@ -72,7 +82,7 @@ def test_named_edit_caption_names_the_archive_and_look_beside_the_reference(crop
     provenance = provenance_of(COLLECTION, Path(PAGE))
     record = _record(crop, caption_for(crop, provenance, LOOK))
 
-    caption = named_edit_caption(record)
+    caption = named_edit_caption(CaptionParts.of(record))
 
     paragraph, rows = caption[: caption.index(" [{")], json.loads(caption[caption.index(" [{") + 1 :])
     assert paragraph.startswith(
@@ -88,9 +98,34 @@ def test_named_edit_caption_names_the_archive_and_look_beside_the_reference(crop
     }
 
 
+def test_described_edit_caption_describes_the_reference_in_place_of_the_crop_style(crop: Crop) -> None:
+    record = _record(crop, caption_for(crop, provenance_of(COLLECTION, Path(PAGE)), LOOK))
+    reference = ReferenceLook(
+        scan=ScanLook(greyscale=True, paper="light grey", ink="black"),
+        hand=HandLook(slant=33.0, stroke=0.05, letters=0.3, density=0.2, paper="#C8C8C8", ink="#202020"),
+    )
+
+    caption = described_edit_caption(CaptionParts.of(record), reference)
+
+    paragraph, rows = caption[: caption.index(" [{")], json.loads(caption[caption.index(" [{") + 1 :])
+    assert paragraph.startswith(
+        "Create a flat, evenly lit greyscale archival scan of a new handwritten page in the hand, ink and paper of "
+        "<ref_image_0>: right-slanted cursive, about 35 degrees, with fine pen strokes and medium-sized, closely "
+        "packed letters, in black ink (#202020) on light grey paper (#C8C8C8). The paper <paper_1> carries "
+    )
+    assert "cursive handwriting in black ink" in paragraph
+    assert [(row["id"], row["from"], row["desc"]) for row in rows if row["id"] == "paper_1"] == [
+        ("paper_1", "ref_image_0", "Aged light grey paper (#C8C8C8) of a bound archival volume, in a greyscale scan.")
+    ]
+    assert {row["desc"].rsplit('", ', 1)[-1] for row in rows if row["id"].startswith("Sv_Text_")} == {
+        "right-slanted cursive in the reference's hand, in black ink."
+    }
+    assert [word for word in ("Arjeplogs", "yellowed", "dark brown") if word in caption] == []
+
+
 def test_restyle_refuses_a_caption_an_older_provenance_rule_wrote(crop: Crop) -> None:
     raw_folder_name = Provenance(title="RA arjeplogs tingslag 20260220", years="1690–1700")  # before collection_key
     record = _record(crop, caption_for(crop, raw_folder_name, LOOK))
 
     with pytest.raises(StaleCaptionError, match="crop.jpg: its caption was not written by the current caption grammar"):
-        restyle(record, Style.of(record))
+        restyle(CaptionParts.of(record), Style.of(record))

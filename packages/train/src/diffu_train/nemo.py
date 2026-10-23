@@ -12,21 +12,27 @@ Use it from a NeMo config with this folder on PYTHONPATH, for text-to-image or i
     data:
       dataloader:
         _target_: diffu_train.nemo.InterleavedTextToImageDataloaderConfig  # or InterleavedImageEditDataloaderConfig
+
+The image-edit config also takes ``caption_dropout``: that share of the pairs trains on the empty prompt
+(``diffu_train.dropout``), read from the ``empty_prompt.pt`` that ``diffu_train.cache_pairs`` writes into the cache.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass  # noqa: TID251 -- NeMo builds dataloaders only from dataclass configs
-from typing import override
+from pathlib import Path
+from typing import Any, override
 
 import torch
 from nemo_automodel.components.datasets.diffusion.collate_fns import TextToImageDataloaderConfig
 from nemo_automodel.components.datasets.diffusion.image_edit_dataset import ImageEditDataloaderConfig
 from nemo_automodel.components.datasets.diffusion.loader import DiffusionDataloaderBuild
 from nemo_automodel.components.datasets.diffusion.sampler import SequentialBucketSampler
-from torch.utils.data import Sampler
+from torch.utils.data import Dataset, Sampler
 from torchdata.stateful_dataloader import StatefulDataLoader
+
+from diffu_train.dropout import CaptionDropout, EmptyPrompt
 
 
 class InterleavedBucketSampler(Sampler[list[int]]):
@@ -66,8 +72,16 @@ class InterleavedBucketSampler(Sampler[list[int]]):
         self._resume_at = state["batches_yielded"]
 
 
-def interleaved(built: DiffusionDataloaderBuild) -> DiffusionDataloaderBuild:
-    """``built`` with its batches shuffled across buckets: the same dataset, collate and worker settings.
+type DatasetWrap = Callable[[Dataset[Any]], Dataset[Any]]
+
+
+def _as_built(dataset: Dataset[Any]) -> Dataset[Any]:
+    return dataset
+
+
+def interleaved(built: DiffusionDataloaderBuild, wrap: DatasetWrap = _as_built) -> DiffusionDataloaderBuild:
+    """``built`` with its batches shuffled across buckets: the same collate and worker settings, its dataset passed
+    through ``wrap`` (the buckets stay those of the dataset NeMo built).
 
     Raises:
         TypeError: If NeMo built something other than a ``SequentialBucketSampler``.
@@ -77,7 +91,7 @@ def interleaved(built: DiffusionDataloaderBuild) -> DiffusionDataloaderBuild:
     loader = built.dataloader
     sampler = InterleavedBucketSampler(built.sampler)
     dataloader = StatefulDataLoader(
-        loader.dataset,
+        wrap(loader.dataset),
         batch_sampler=sampler,
         collate_fn=loader.collate_fn,
         num_workers=loader.num_workers,
@@ -114,15 +128,24 @@ class InterleavedTextToImageDataloaderConfig(TextToImageDataloaderConfig):
 
 @dataclass
 class InterleavedImageEditDataloaderConfig(ImageEditDataloaderConfig):
-    """NeMo's image-edit (target + reference image) dataloader config, with the buckets interleaved.
+    """NeMo's image-edit (target + reference image) dataloader config, with the buckets interleaved and
+    ``caption_dropout`` of the pairs trained on the empty prompt (``diffu_train.dropout``; 0 trains every caption).
 
     Raises:
-        ValueError: If ``shuffle`` is off: interleaving is a shuffle.
+        ValueError: If ``shuffle`` is off (interleaving is a shuffle), or ``caption_dropout`` is not in [0, 1).
     """
+
+    caption_dropout: float = 0.0
 
     def __post_init__(self) -> None:
         _require_shuffle(self.shuffle)
+        if not 0.0 <= self.caption_dropout < 1.0:
+            raise ValueError(f"caption_dropout is a share of the pairs in [0, 1), got {self.caption_dropout}")
 
     @override
     def build(self, *, dp_rank: int, dp_world_size: int, batch_size: int) -> DiffusionDataloaderBuild:
-        return interleaved(super().build(dp_rank=dp_rank, dp_world_size=dp_world_size, batch_size=batch_size))
+        built = super().build(dp_rank=dp_rank, dp_world_size=dp_world_size, batch_size=batch_size)
+        if not self.caption_dropout:
+            return interleaved(built)
+        empty = EmptyPrompt.load(Path(self.cache_dir))
+        return interleaved(built, lambda dataset: CaptionDropout(dataset, empty, self.caption_dropout))

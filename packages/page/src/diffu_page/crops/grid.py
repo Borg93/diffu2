@@ -12,6 +12,7 @@ from diffu_page.crops.geometry import BUCKETS
 
 LATENT_GRID = 16  # px: 8x VAE downsampling, then 2x2 patches
 LARGEST_BUCKET_PIXELS = max(width * height for width, height in BUCKETS)  # NeMo caches images under this many
+REF_PIXELS = 512 * 1024  # a reference image's size: the hand smaller than in the ~1 MP target, at half its tokens
 
 
 def fit_to_grid(image: Image.Image, max_pixels: int) -> Image.Image:
@@ -21,3 +22,9 @@ def fit_to_grid(image: Image.Image, max_pixels: int) -> Image.Image:
     width = max(LATENT_GRID, int(image.width * scale) // LATENT_GRID * LATENT_GRID)
     height = max(LATENT_GRID, int(image.height * scale) // LATENT_GRID * LATENT_GRID)
     return image.convert("RGB").resize((width, height), Image.Resampling.LANCZOS)
+
+
+def as_reference(image: Image.Image) -> Image.Image:
+    """``image`` as a reference image is drawn from, in training and generation alike: on the grid under
+    ``REF_PIXELS`` (an image already there is unchanged)."""
+    return fit_to_grid(image, REF_PIXELS)

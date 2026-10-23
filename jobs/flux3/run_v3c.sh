@@ -10,6 +10,7 @@
 #   3. train the LoRA (v3's config with the overrides below)            runs/flux3_style_ref_lora_v3c
 #   4. the final and middle checkpoints on the by-example set, the final on the held-out crops
 #                                                                         runs/flux3_style_v3c/eval_*
+# TRACKIO_TAG=<tag> names a rerun's trackio runs apart (flux3_v3c_lora_<tag>): trackio keeps a run per start, by name.
 # Run detached:
 #
 #   setsid nohup jobs/flux3/run_v3c.sh >> runs/flux3_style_v3c/run.log 2>&1 < /dev/null &
@@ -39,7 +40,7 @@ train() {  # train <name> [config overrides ...]
     local name=$1
     shift
     "$GUARD" --need-gb 60 --name "flux-v3c-$name" --log "$OUT/guard.log" -- \
-        "$TORCHRUN" --nproc-per-node=1 examples/diffusion/finetune/finetune.py -c "$CONFIG" --trackio.name "flux3_v3c_$name" \
+        "$TORCHRUN" --nproc-per-node=1 examples/diffusion/finetune/finetune.py -c "$CONFIG" --trackio.name "flux3_v3c_${name}${TRACKIO_TAG:+_$TRACKIO_TAG}" \
         --data.dataloader.cache_dir "$CACHE" "$@" \
         > "$OUT/$name.log" 2>&1
 }

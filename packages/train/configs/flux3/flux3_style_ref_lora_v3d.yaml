@@ -1,0 +1,144 @@
+# FLUX.3 Klein Base reference-style LoRA (v3d): v3c's same-hand pairs (a reference crop from the target's own page
+# or its facing page), each caption describing the reference's measured hand, ink and paper in words
+# (diffu_page.data.style_pairs --reference page --caption described -> data_flux3/style_pairs_v3d, from the crops
+# rebuilt with today's archive names, data_flux3/layout_crops_v2b). Why: FLUX.3 guides only the caption (classifier-free
+# guidance contrasts the caption with the empty prompt; the reference is in both branches), and BFL's guidance is to
+# state a style's visible properties in the caption (hand, stroke, hex colours) rather than leave them to the
+# reference. v3 and v3b drew black, bold ink whatever the reference's. Also:
+#   - caption dropout 0.1 (diffu_train.dropout): a tenth of the pairs train on the real empty prompt, the one
+#     guidance contrasts with at generation (diffusers' FLUX.3 Klein trainer: --caption_dropout, 0.1 recommended);
+#   - a constant learning rate after 100 warmup steps: v3's cosine decay stopped the LoRA learning at ~800 steps;
+#   - 3,000 steps, a checkpoint every 500, val_loss every 100 steps on 64 val-split pairs (NeMo's validation).
+# Otherwise v3's recipe (flux3_style_ref_lora_v3.yaml). Paths come from the environment: DIFFU_REPO (this repo,
+# required) and FLUX3_MODEL (the model, default the Hub repo). jobs/flux3/run_v3d.sh sets both and runs it.
+
+seed: 42
+
+# Metrics to the local trackio project "diffu" (~/.cache/huggingface/trackio; no Space): `trackio list runs --project
+# diffu`. The job scripts name each run (--trackio.name).
+trackio:
+  project: diffu
+  name: flux3_style_v3d
+
+wandb:
+  enable: false
+  project: flux3-layout
+  mode: offline
+  name: flux3_style_ref_lora_v3d
+
+dist_env:
+  backend: "nccl"
+  init_method: "env://"
+  timeout_minutes: 30
+
+model:
+  pretrained_model_name_or_path: ${FLUX3_MODEL,black-forest-labs/flux-3-image-klein-base}
+  model_type: "flux3"
+  mode: "finetune"
+  cache_dir: null
+  attention_backend: "native"  # torch SDPA; flash-attn isn't built for this aarch64 / sm_121 box
+
+# Rank 32 as in v2. The guide's image-editing target list: attention + feed-forward of every block (the image,
+# text and reference streams), the image and reference embedders, the output and the text projector.
+peft:
+  _target_: nemo_automodel.components._peft.lora.PeftConfig
+  dim: 32
+  alpha: 32
+  dropout: 0.0
+  lora_dtype: bfloat16
+  target_modules:
+    - "*.to_q"
+    - "*.to_k"
+    - "*.to_v"
+    - "*.to_out.0"
+    - "*.ff.linear_in"
+    - "*.ff.linear_out"
+    - "x_embedders.image"
+    - "proj_out"
+    - "context_embedder"
+    - "x_embedders.image_cond"
+
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 1e-4
+  weight_decay: 1e-4
+  betas: [0.9, 0.999]
+  foreach: false
+  fused: true
+
+performance:
+  check_loss: false
+  grad_clip_foreach: true
+
+lr_scheduler:
+  lr_decay_style: constant
+  lr_warmup_steps: 100
+
+fsdp:
+  dp_size: 1
+  tp_size: 1
+  cp_size: 1
+  pp_size: 1
+  activation_checkpointing: true
+  cpu_offload: false
+  defer_fsdp_grad_sync: true
+  enable_compile: false
+  enable_fsdp2_prefetch: false
+
+# The recipe's flow matching: uniform timesteps with FLUX.3's fixed shift 6.93, no CFG dropout (as v2).
+flow_matching:
+  adapter_type: "flux3"
+  timestep_sampling: "uniform"
+  logit_mean: 0.0
+  logit_std: 1.0
+  flow_shift: 6.93
+  mix_uniform_ratio: 0.0
+  sigma_min: 0.0
+  sigma_max: 1.0
+  num_train_timesteps: 1000
+  cfg_dropout_prob: 0.0
+  i2v_prob: 0.0
+  use_loss_weighting: false
+  log_interval: 25
+  summary_log_interval: 10
+
+# One pair per micro-batch (pairs differ in target size, reference size and caption length); 4 per optimizer step.
+step_scheduler:
+  num_epochs: 1000
+  local_batch_size: 1
+  global_batch_size: 4
+  max_steps: 3000
+  ckpt_every_steps: 500
+  val_every_steps: 100
+  log_remote_every_steps: 10
+  save_checkpoint_every_epoch: false
+
+data:
+  dataloader:
+    # diffu_train.nemo: NeMo's image-edit loader with the (target, reference) shape buckets interleaved, so every
+    # stretch of training sees every crop shape; a tenth of the pairs on the empty prompt (empty_prompt.pt, written
+    # into the cache by diffu_train.cache_pairs)
+    _target_: diffu_train.nemo.InterleavedImageEditDataloaderConfig
+    cache_dir: ${DIFFU_REPO}/data_flux3/cache_style_v3d
+    caption_dropout: 0.1
+    quantization: 16
+    base_resolution: [1024, 1024]
+    num_workers: 2
+    dynamic_batch_size: false
+    shuffle: true
+    drop_last: false
+  # the 64 val-split pairs val_loss is scored on, every caption kept (NeMo's own loader: no dropout), in a fixed order
+  validation_dataloader:
+    _target_: nemo_automodel.components.datasets.diffusion.image_edit_dataset.ImageEditDataloaderConfig
+    cache_dir: ${DIFFU_REPO}/data_flux3/cache_style_v3d_val
+    quantization: 16
+    num_workers: 2
+    shuffle: false
+    drop_last: false
+
+checkpoint:
+  enabled: true
+  checkpoint_dir: ${DIFFU_REPO}/runs/flux3_style_ref_lora_v3d
+  model_save_format: torch_save
+  save_consolidated: false
+  restore_from: null

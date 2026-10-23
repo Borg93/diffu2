@@ -27,7 +27,7 @@ from diffu_page.captions.look import ScanLook
 from diffu_page.captions.prompt import LineRecord
 from diffu_page.captions.provenance import Provenance, collection_key
 from diffu_page.captions.records import CropRecord, read_records
-from diffu_page.captions.restyle import Style, restyle
+from diffu_page.captions.restyle import CaptionParts, Style, restyle
 from diffu_page.output import console
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
@@ -120,7 +120,7 @@ def steer_row(template: CropRecord, variant: Variant, index: int) -> SteerRow:
     """The steering prompt drawing ``template`` as ``variant``, from template ``index``'s noise."""
     return SteerRow(
         file_name=template.file_name,
-        caption=restyle(template, variant.style),
+        caption=restyle(CaptionParts.of(template), variant.style),
         lines=template.lines,
         width=template.width,
         height=template.height,

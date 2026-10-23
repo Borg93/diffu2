@@ -2,7 +2,10 @@
 
 Each template (a real PAGE/ALTO page) goes through the page pipeline (:func:`diffu_page.pipeline.page_blocks`): its
 running text is replaced by the new text, it is planned as training-scale crops, and every crop is drawn by the model
-(FLUX.3 + LoRAs, or diffu), read back line by line, and labelled with badly read lines tagged ``unclear``. Writes
+(FLUX.3 + LoRAs, or diffu), read back line by line, and labelled with badly read lines tagged ``unclear``. With
+``--reference`` (a crop to draw in the hand of, for the v3 LoRAs) every crop is drawn from it and captioned as the
+LoRA was trained (``--reference-caption``: ``described`` measures the crop's hand, so it needs the crop's
+``metadata.jsonl`` from ``diffu_page.data.build_crops`` beside it). Writes
 ``<out>/<page>_<k>.jpg`` + ``.xml`` per crop and ``<out>/summary.json``; a page that fails is recorded there and the
 run goes on. ``--profile <dir>`` also records a torch profiler trace (Perfetto) of pages 2-3 after a warm-up page.
 One GPU job, through jobs/spark_guard.sh:
@@ -28,12 +31,13 @@ from torch.profiler import ProfilerActivity, profile, schedule
 from diffu_page.blocks import DrawnCrop
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.provenance import Provenance
+from diffu_page.captions.restyle import ReferenceCaption
 from diffu_page.cli.options import Lora, parse_lora
 from diffu_page.jobs import PageJob
 from diffu_page.layout import load_xml_layout, running_text
 from diffu_page.output import console, err_console
 from diffu_page.pipeline import DrawSettings, load_pipeline, page_blocks
-from diffu_page.plan import PageStyle
+from diffu_page.plan import PageStyle, Reference
 from diffu_page.settings import settings
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
@@ -86,6 +90,7 @@ def draw_pages(
                 template=page.template,
                 text=page.text,
                 style=page.style,
+                reference=page.reference,
                 page_name=name,
                 seed=page.seed_at(index),
                 **settings.pipeline_inputs(),
@@ -126,6 +131,14 @@ def _profiler(out: Path | None) -> AbstractContextManager[profile | None]:
     )
 
 
+def page_reference(image: Path | None, caption: ReferenceCaption) -> Reference | None:
+    """The reference to draw every page from: for a described caption, a crop with its line boxes
+    (``Reference.of_crop``)."""
+    if image is None:
+        return None
+    return Reference.of_crop(image, caption) if caption is ReferenceCaption.DESCRIBED else Reference(image=image)
+
+
 @app.command()
 def generate(
     templates: Annotated[list[Path], typer.Option(help="a PAGE/ALTO page whose layout to use (repeat it)")],
@@ -138,6 +151,13 @@ def generate(
     greyscale: Annotated[bool, typer.Option("--greyscale/--colour")] = False,
     paper: str = "cream",
     ink: str = "dark brown",
+    reference: Annotated[
+        Path | None, typer.Option(help="a crop to draw every page in the hand, ink and paper of (the v3 LoRAs)")
+    ] = None,
+    reference_caption: Annotated[
+        ReferenceCaption,
+        typer.Option(help="the caption form the LoRA was trained on: plain (v3, v3c), described (v3d)"),
+    ] = ReferenceCaption.PLAIN,
     steps: int = 50,
     guidance: float = 4.0,
     seed: int = 0,
@@ -155,7 +175,10 @@ def generate(
         provenance=Provenance(title=title, years=years), look=ScanLook(greyscale=greyscale, paper=paper, ink=ink)
     )
     text = " ".join(running_text(load_xml_layout(path)) for path in text_from)
-    pages = [PageJob(template=template, text=text, style=style, seed=seed) for template in templates]
+    drawn_from = page_reference(reference, reference_caption)
+    pages = [
+        PageJob(template=template, text=text, style=style, seed=seed, reference=drawn_from) for template in templates
+    ]
     draw_settings = DrawSettings(
         steps=steps,
         guidance_scale=guidance,

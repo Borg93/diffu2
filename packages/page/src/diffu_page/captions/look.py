@@ -65,17 +65,17 @@ def scan_look(img: Image.Image) -> ScanLook:
 
 def _paper_colour(saturation: float, value: float) -> str:
     if saturation < NEUTRAL_PAPER:
-        return _band(value, NEUTRAL_PAPERS)
-    return _band(saturation, TINTED_PAPERS)
+        return band_name(value, NEUTRAL_PAPERS)
+    return band_name(saturation, TINTED_PAPERS)
 
 
 def _ink_colour(hue: float, saturation: float, value: float) -> str:
     low, high = BROWN_INK_HUES
     if saturation < BROWN_INK_SATURATION or not low <= hue <= high:
-        return _band(value, GREY_INKS)
-    return _band(value, BROWN_INKS)
+        return band_name(value, GREY_INKS)
+    return band_name(value, BROWN_INKS)
 
 
-def _band(level: float, bands: tuple[tuple[float, str], ...]) -> str:
+def band_name(level: float, bands: tuple[tuple[float, str], ...]) -> str:
     """The name of the first band ``level`` is below; the last band's limit is infinite."""
     return next(name for limit, name in bands if level < limit)

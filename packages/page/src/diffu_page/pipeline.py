@@ -5,11 +5,12 @@ in ``modular_model_index.json``; :data:`FAMILIES` maps those to the model's bloc
 chosen by its directory alone. Three sets of blocks are built:
 
 - :class:`PagePlanBlocks` (no model): ``LoadLayoutStep`` -> ``RefillStep`` -> ``PlanCropsStep``. A template page, a
-  text and a style in; the crops to draw out.
+  text, a style and optionally a reference crop in; the crops to draw out, captioned for the reference if there is one.
 - :func:`crop_blocks`: ``CropPromptStep`` -> ``ReferenceGridStep`` -> the model's text encoder, VAE encoder, denoise
   and decode -> ``LineReadbackStep`` -> ``LabelExportStep``. A crop plan in; its image, per-line read-back and labels
   out. The model's auto blocks pick text-to-image or reference-conditioned denoising from the inputs (``image``).
-- :func:`page_blocks`: the plan steps, then ``CropLoopStep`` running the crop blocks once per planned crop.
+- :func:`page_blocks`: the plan steps, ``LoadReferenceStep`` (the reference's image, the crops' ``image``), then
+  ``CropLoopStep`` running the crop blocks once per planned crop.
 
 ``diffu-generate`` and diffu-studio run the page pipeline; ``diffu-evaluate`` and diffu-runner's GPU actors run the
 crop pipeline, after diffu-runner has planned the pages on CPU workers with :class:`PagePlanBlocks`.
@@ -38,6 +39,7 @@ from diffu_page.blocks import (
     LabelExportStep,
     LineReadbackStep,
     LoadLayoutStep,
+    LoadReferenceStep,
     PlanCropsStep,
     ReferenceGridStep,
     RefillStep,
@@ -124,7 +126,8 @@ def crop_blocks(family: ModelFamily) -> CropBlocks:
 
 
 class PagePlanBlocks(SequentialPipelineBlocks):
-    """A template page, a text and a style in; the crops to draw out. No model: CPU only."""
+    """A template page, a text, a style and optionally a reference crop in; the crops to draw out. No model: CPU
+    only."""
 
     block_classes = [LoadLayoutStep, RefillStep, PlanCropsStep]
     block_names = ["load_layout", "refill", "plan_crops"]
@@ -146,7 +149,7 @@ class PageBlocks(SequentialPipelineBlocks):
 
     _workflow_map = {
         "text2image": {"template": True, "text": True, "style": True},
-        "image_conditioned": {"template": True, "text": True, "style": True, "image": True},
+        "image_conditioned": {"template": True, "text": True, "style": True, "reference": True},
     }
 
     @property
@@ -164,9 +167,11 @@ class PageBlocks(SequentialPipelineBlocks):
 
 
 def page_blocks(family: ModelFamily) -> PageBlocks:
-    """The plan steps, then ``family``'s crop blocks once per planned crop."""
+    """The plan steps, the reference's image, then ``family``'s crop blocks once per planned crop."""
     draw_crops = CropLoopStep.from_blocks_dict({"draw_crop": crop_blocks(family)})
-    return PageBlocks.from_blocks_dict({**PagePlanBlocks().sub_blocks, "draw_crops": draw_crops})
+    return PageBlocks.from_blocks_dict(
+        {**PagePlanBlocks().sub_blocks, "load_reference": LoadReferenceStep(), "draw_crops": draw_crops}
+    )
 
 
 class DrawSettings(BaseModel):

@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from diffu_page.blocks import crop_identity
 from diffu_page.pipeline import PagePlanBlocks
-from diffu_page.plan import CropPlan, PageStyle
+from diffu_page.plan import CropPlan, PageStyle, Reference
 
 SEED_STRIDE = 1000  # page i of a run draws crop k from noise seed  seed + SEED_STRIDE * i + k
 
@@ -22,14 +22,15 @@ SEED_STRIDE = 1000  # page i of a run draws crop k from noise seed  seed + SEED_
 class PageJob(BaseModel):
     """A template page to redraw: its PAGE/ALTO file, the text to write into it, the style and the noise seed.
 
-    ``reference`` is a crop whose hand, ink and paper to draw in (style by example) instead of the style's archive.
+    ``reference`` is a crop whose hand, ink and paper to draw in (style by example) instead of the style's archive;
+    the crops are then captioned as its LoRA was trained.
     """
 
     template: Path
     text: str
     style: PageStyle
     seed: int = 0
-    reference: Path | None = None
+    reference: Reference | None = None
 
     def name_at(self, index: int) -> str:
         """The page's name as page ``index`` of a run."""
@@ -41,7 +42,7 @@ class PageJob(BaseModel):
 
 
 class CropJob(BaseModel):
-    """One crop to draw: its name, its page's template, its plan, its noise seed and its reference."""
+    """One crop to draw: its name, its page's template, its plan, its noise seed and its reference image."""
 
     name: str
     template: Path
@@ -54,9 +55,12 @@ def crop_jobs(page: PageJob, index: int) -> list[CropJob]:
     """Page ``index`` of a run, planned into its crops by :class:`PagePlanBlocks` and named and seeded as the page
     pipeline names and seeds them."""
     planner = PagePlanBlocks().init_pipeline()
-    plans = planner(template=page.template, text=page.text, style=page.style, output="crop_plans")
+    plans = planner(
+        template=page.template, text=page.text, style=page.style, reference=page.reference, output="crop_plans"
+    )
+    image = page.reference.image if page.reference else None
     jobs: list[CropJob] = []
     for k, plan in enumerate(plans):
         name, seed = crop_identity(page.name_at(index), page.seed_at(index), k)
-        jobs.append(CropJob(name=name, template=page.template, plan=plan, seed=seed, reference=page.reference))
+        jobs.append(CropJob(name=name, template=page.template, plan=plan, seed=seed, reference=image))
     return jobs

@@ -68,4 +68,6 @@ settings = DrawSettings(steps=50)
 pipe = load_pipeline(model_dir, page_blocks, loras={"v2": lora_dir}, settings=settings)
 crops = pipe(template=Path("page.xml"), text=text, style=style, seed=0, **settings.pipeline_inputs(), output="crops")
 # each crop: .image, .labels_xml (ALTO), .line_reads, .line_cers, .unclear_lines
+# with a reference-style LoRA, add the crop to draw in the hand of, captioned as that LoRA was trained:
+#   reference=Reference.of_crop(Path("crop.jpg"), ReferenceCaption.PLAIN)  (diffu_page.plan, diffu_page.captions.restyle)
 ```

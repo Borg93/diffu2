@@ -13,9 +13,9 @@ from diffu_page.captions.look import ScanLook
 from diffu_page.captions.prompt import LineRecord, caption_for
 from diffu_page.captions.provenance import Provenance, provenance_of
 from diffu_page.captions.records import CropRecord
-from diffu_page.captions.restyle import edit_caption
+from diffu_page.captions.restyle import CaptionParts, edit_caption
 from diffu_page.crops.geometry import Crop, CropSettings, crops_for_page
-from diffu_page.data.style_pairs import Scan, by_volume, pick_same_hand, training_pairs
+from diffu_page.data.style_pairs import Scan, by_volume, pick_pairs, pick_reference, pick_same_hand, training_pairs
 from diffu_page.layout import load_xml_layout
 from diffu_page.plan import regions_of
 
@@ -57,17 +57,18 @@ def _scans(crop: Crop, directory: Path, stale: str) -> list[Scan]:
     return scans
 
 
-def test_training_pairs_leave_out_a_stale_caption_and_keep_every_other_reference(crop: Crop, tmp_path: Path) -> None:
+def test_training_pairs_leave_out_a_stale_caption_and_keep_every_other_pair(crop: Crop, tmp_path: Path) -> None:
     scans = _scans(crop, tmp_path / "crops", stale="3.jpg")
-    unchecked = training_pairs(scans, tmp_path / "unchecked", random.Random(0), caption=lambda record: record.file_name)
+    pairs = pick_pairs(scans, by_volume(scans), rng=random.Random(0), pick=pick_reference)
 
-    pairs = training_pairs(scans, tmp_path / "pairs", random.Random(0), caption=edit_caption)
+    built = training_pairs(pairs, tmp_path / "pairs", lambda pair: edit_caption(CaptionParts.of(pair.target.record)))
 
-    references = {row.media[0].file_name: row.metadata.reference for row in unchecked.rows}
-    assert pairs.stale == ["3.jpg"]
-    assert {row.media[0].file_name: row.metadata.reference for row in pairs.rows} == {
-        target: reference for target, reference in references.items() if target != "targets/3.jpg"
-    }
+    assert built.stale == ["3.jpg"]
+    assert [(row.media[0].file_name, row.metadata.reference) for row in built.rows] == [
+        (f"targets/{pair.target.record.file_name}", pair.reference.record.file_name)
+        for pair in pairs
+        if pair.target.record.file_name != "3.jpg"
+    ]
 
 
 def _scan(page: int, texts: list[str]) -> Scan:

@@ -1,13 +1,20 @@
 """The style words of a v2 layout caption: swap in another archive's, or hand them to a reference image.
 
-A caption from ``diffu_page.data.build_crops.caption_for`` is a paragraph, a space and the crop's layout rows as JSON. Its
-style comes from the crop's ``Provenance`` (archive, years) and ``ScanLook`` (scan, paper, ink), in fixed phrases:
-the paragraph's opening sentence and its ink, the paper row, the ink of every line row and of every fragment row.
-``restyle`` swaps those phrases for another style's (the v2 steering test: the same text and layout drawn as another
-archive); ``edit_caption`` rewrites the caption as a FLUX.3 image-edit record that takes the hand, ink and paper from
-a reference image instead (the v3 reference-style LoRA); ``named_edit_caption`` does both, naming the archive and look
-in words beside the reference (v3b). Every phrase is built from a style's fields and must occur
-where the grammar writes it, so a change to the grammar fails loudly instead of leaving stale words behind.
+A caption from ``diffu_page.captions.prompt.caption_for`` is a paragraph, a space and the crop's layout rows as JSON.
+Its style comes from the crop's ``Provenance`` (archive, years) and ``ScanLook`` (scan, paper, ink), in fixed phrases:
+the paragraph's opening sentence and its ink, the paper row, the ink of every line row and of every fragment row. Each
+function here rewrites those phrases of a :class:`CaptionParts` (a training record's caption, or a planned crop's):
+
+- ``restyle``: another style's archive and look (the v2 steering test: the same text and layout as another archive);
+- ``edit_caption``: a FLUX.3 image-edit record that takes the hand, ink and paper from ``<ref_image_0>`` and names
+  none of them (v3, v3c);
+- ``named_edit_caption``: that record naming the archive and look in words as well (v3b);
+- ``described_edit_caption``: that record describing the reference's measured hand, ink and paper (v3d): BFL's
+  captions state a style's visible features, and FLUX.3 takes its style from the caption more than from a reference.
+
+Training captions (from records) and generation captions (from crop plans) go through the same functions, so a crop
+is drawn from exactly the caption grammar it was trained on. Every phrase is built from a style's fields and must
+occur where the grammar writes it, so a change to the grammar fails loudly instead of leaving stale words behind.
 """
 
 from __future__ import annotations
@@ -15,9 +22,11 @@ from __future__ import annotations
 import json
 from collections.abc import Generator
 from contextlib import contextmanager
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
+from diffu_page.captions.hand import ReferenceLook, hand_words, slant_words
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.prompt import LayoutRow
 from diffu_page.captions.provenance import Provenance
@@ -29,15 +38,12 @@ class StaleCaptionError(ValueError):
     grammar or provenance rule, and its crops need rebuilding (``diffu_page.data.build_crops``)."""
 
 
-@contextmanager
-def _written_by_this_grammar(record: CropRecord) -> Generator[None]:
-    try:
-        yield
-    except ValueError as error:
-        raise StaleCaptionError(
-            f"{record.file_name}: its caption was not written by the current caption grammar ({error}); "
-            "rebuild the crops with diffu_page.data.build_crops"
-        ) from error
+class ReferenceCaption(StrEnum):
+    """How a caption drawn from a reference image speaks of the reference's style; it must be the form the LoRA was
+    trained on."""
+
+    PLAIN = "plain"  # only by <ref_image_0> (edit_caption: v3, v3c)
+    DESCRIBED = "described"  # the reference's measured hand, ink and paper in words too (described_edit_caption: v3d)
 
 
 class Style(BaseModel):
@@ -50,6 +56,31 @@ class Style(BaseModel):
     def of(cls, record: CropRecord) -> Style:
         """The style a crop record's caption names."""
         return cls(provenance=record.provenance, look=record.look)
+
+
+class CaptionParts(BaseModel):
+    """A v2 caption and what it was written from: its layout rows and the style it names."""
+
+    name: str  # what an error names it by: a crop's file name, or a planned crop's
+    text: str
+    layout: list[LayoutRow]
+    style: Style
+
+    @classmethod
+    def of(cls, record: CropRecord) -> CaptionParts:
+        """A training record's caption."""
+        return cls(name=record.file_name, text=record.caption, layout=record.layout, style=Style.of(record))
+
+
+@contextmanager
+def _written_by_this_grammar(parts: CaptionParts) -> Generator[None]:
+    try:
+        yield
+    except ValueError as error:
+        raise StaleCaptionError(
+            f"{parts.name}: its caption was not written by the current caption grammar ({error}); "
+            "rebuild the crops with diffu_page.data.build_crops"
+        ) from error
 
 
 class _Phrases(BaseModel):
@@ -111,6 +142,25 @@ def _from_reference_naming(style: Style) -> _Phrases:
     )
 
 
+def _from_reference_describing(reference: ReferenceLook) -> _Phrases:
+    """The image-edit phrases that describe the reference's look: the hand first (BFL: what matters most leads),
+    then the ink and paper by name and hex; every line row in the reference's hand and ink."""
+    scan, hand = reference.scan, reference.hand
+    kind = "greyscale archival scan" if scan.greyscale else "archival scan"
+    greyscale = ", in a greyscale scan." if scan.greyscale else "."
+    return _Phrases(
+        opening=(
+            f"Create a flat, evenly lit {kind} of a new handwritten page in the hand, ink and paper of <ref_image_0>: "
+            f"{hand_words(hand)}, in {scan.ink} ink ({hand.ink}) on {scan.paper} paper ({hand.paper}). "
+            f"The paper <paper_1>"
+        ),
+        ink_opening=f"cursive handwriting in {scan.ink} ink",
+        paper_row=f"Aged {scan.paper} paper ({hand.paper}) of a bound archival volume{greyscale}",
+        ink_line=f"{slant_words(hand.slant)} in the reference's hand, in {scan.ink} ink.",
+        ink_fragment=f"handwritten line in {scan.ink} ink, cut off",
+    )
+
+
 class EditRow(BaseModel):
     """One row of a FLUX.3 image-edit layout table, in the field order of its annotation."""
 
@@ -127,16 +177,16 @@ def _rows_json(rows: list[dict[str, object]]) -> str:
     return json.dumps(rows, ensure_ascii=False)
 
 
-def _paragraph(record: CropRecord) -> str:
+def _paragraph(parts: CaptionParts) -> str:
     """The caption's paragraph: everything before the layout rows ``caption_for`` appended as JSON.
 
     Raises:
-        ValueError: If the caption doesn't end in the record's own layout rows.
+        ValueError: If the caption doesn't end in its own layout rows.
     """
-    rows = f" {_rows_json([row.model_dump() for row in record.layout])}"
-    if not record.caption.endswith(rows):
-        raise ValueError(f"the caption of {record.file_name} doesn't end in its layout rows")
-    return record.caption.removesuffix(rows)
+    rows = f" {_rows_json([row.model_dump() for row in parts.layout])}"
+    if not parts.text.endswith(rows):
+        raise ValueError(f"the caption of {parts.name} doesn't end in its layout rows")
+    return parts.text.removesuffix(rows)
 
 
 def _replace_once(text: str, old: str, new: str) -> str:
@@ -166,33 +216,54 @@ def _restyled_desc(row: LayoutRow, old: _Phrases, new: _Phrases) -> str:
     return row.desc.removesuffix(old.ink_line) + new.ink_line
 
 
-def restyle(record: CropRecord, target: Style) -> str:
-    """The record's caption naming ``target``'s archive, years, scan, paper and ink instead of its own."""
-    old, new = _phrases(Style.of(record)), _phrases(target)
-    with _written_by_this_grammar(record):
-        rows = [row.model_copy(update={"desc": _restyled_desc(row, old, new)}) for row in record.layout]
-        paragraph = _restyled_paragraph(_paragraph(record), old, new)
+def restyle(parts: CaptionParts, target: Style) -> str:
+    """The caption naming ``target``'s archive, years, scan, paper and ink instead of its own."""
+    old, new = _phrases(parts.style), _phrases(target)
+    with _written_by_this_grammar(parts):
+        rows = [row.model_copy(update={"desc": _restyled_desc(row, old, new)}) for row in parts.layout]
+        paragraph = _restyled_paragraph(_paragraph(parts), old, new)
     return f"{paragraph} {_rows_json([row.model_dump() for row in rows])}"
 
 
-def edit_caption(record: CropRecord) -> str:
-    """The record's caption as a FLUX.3 image-edit record: its text and layout drawn in ``<ref_image_0>``'s hand.
+def edit_caption(parts: CaptionParts) -> str:
+    """The caption as a FLUX.3 image-edit record: its text and layout drawn in ``<ref_image_0>``'s hand.
 
     The paragraph becomes an instruction citing the reference and the layout rows the edit table: the paper taken
     from the whole reference, every line and fragment new content.
     """
-    return _edit_record(record, _FROM_REFERENCE)
+    return _edit(parts, _FROM_REFERENCE)
 
 
-def named_edit_caption(record: CropRecord) -> str:
-    """``edit_caption`` that also names the record's archive, years, scan, paper and ink: the style in words and by
+def named_edit_caption(parts: CaptionParts) -> str:
+    """``edit_caption`` that also names the caption's archive, years, scan, paper and ink: the style in words and by
     example at once."""
-    return _edit_record(record, _from_reference_naming(Style.of(record)))
+    return _edit(parts, _from_reference_naming(parts.style))
 
 
-def _edit_record(record: CropRecord, new: _Phrases) -> str:
-    old = _phrases(Style.of(record))
-    with _written_by_this_grammar(record):
+def described_edit_caption(parts: CaptionParts, reference: ReferenceLook) -> str:
+    """``edit_caption`` that describes the reference's hand, ink and paper as measured (``reference_look``)."""
+    return _edit(parts, _from_reference_describing(reference))
+
+
+def reference_caption(parts: CaptionParts, form: ReferenceCaption, reference: ReferenceLook | None) -> str:
+    """The caption drawn from a reference image in ``form``, the form the LoRA in use was trained on: training pairs
+    (``diffu_page.data.style_pairs``) and planned crops (``diffu_page.plan``) are both captioned here.
+
+    Raises:
+        ValueError: If ``form`` describes the reference and its measured look (``reference``) is missing.
+    """
+    match form:
+        case ReferenceCaption.PLAIN:
+            return edit_caption(parts)
+        case ReferenceCaption.DESCRIBED:
+            if reference is None:
+                raise ValueError(f"{parts.name}: a described caption needs the reference's measured look")
+            return described_edit_caption(parts, reference)
+
+
+def _edit(parts: CaptionParts, new: _Phrases) -> str:
+    old = _phrases(parts.style)
+    with _written_by_this_grammar(parts):
         rows = [
             EditRow(
                 id=row.id,
@@ -201,7 +272,7 @@ def _edit_record(record: CropRecord, new: _Phrases) -> str:
                 tgt_bbox=row.bbox,
                 desc=_restyled_desc(row, old, new),
             )
-            for row in record.layout
+            for row in parts.layout
         ]
-        paragraph = _restyled_paragraph(_paragraph(record), old, new)
+        paragraph = _restyled_paragraph(_paragraph(parts), old, new)
     return f"{paragraph} {_rows_json([row.model_dump(by_alias=True) for row in rows])}"

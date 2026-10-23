@@ -2,8 +2,8 @@
 
 The tiny model draws noise, so every line reads back badly: what is checked is the wiring (a plan in, an image of the
 plan's size with one label per line out; a reference image drawn from as it was resized for training; the page
-pipeline drawing every planned crop exactly as the crop pipeline draws it) and that a NeMo LoRA loads at its trained
-strength.
+pipeline drawing every planned crop exactly as the crop pipeline draws it, from the page's reference when it has one)
+and that a NeMo LoRA loads at its trained strength.
 """
 
 from __future__ import annotations
@@ -19,14 +19,15 @@ import torch
 from diffusers.modular_pipelines import ModularPipeline
 from PIL import Image
 
-from diffu_page.blocks import DrawnCrop, training_grid
+from diffu_page.blocks import DrawnCrop
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.prompt import LineRecord
 from diffu_page.captions.provenance import Provenance
+from diffu_page.crops.grid import REF_PIXELS, as_reference
 from diffu_page.layout import load_xml_layout, refill
 from diffu_page.lora import load_nemo_lora
 from diffu_page.pipeline import DrawSettings, crop_blocks, draw_crop, load_pipeline, model_family, page_blocks
-from diffu_page.plan import CropPlan, PageStyle, plan_page
+from diffu_page.plan import CropPlan, PageStyle, Reference, plan_page
 
 TINY_SETTINGS = DrawSettings(steps=2, guidance_scale=4.0, text_layers=(1,), device="cpu")
 LORA_MODULE = "single_transformer_blocks.0.attn.to_q"
@@ -96,18 +97,35 @@ def _off_grid_reference() -> Image.Image:
     return Image.linear_gradient("L").resize((50, 34)).convert("RGB")
 
 
-def test_training_grid_squashes_a_reference_onto_the_16_px_grid() -> None:
+def test_as_reference_squashes_a_small_reference_onto_the_16_px_grid() -> None:
     reference = _off_grid_reference()
 
-    gridded = training_grid(reference)
+    gridded = as_reference(reference)
 
     assert gridded.size == (48, 32)
     assert gridded.tobytes() == reference.resize((48, 32), Image.Resampling.LANCZOS).tobytes()
 
 
+def test_as_reference_shrinks_a_full_crop_to_the_size_references_were_trained_at() -> None:
+    crop = Image.linear_gradient("L").resize((1472, 640)).convert("RGB")  # a 0.94 MP training-bucket crop
+
+    reference = as_reference(crop)
+
+    assert reference.size == (1088, 464)
+    assert reference.width * reference.height <= REF_PIXELS
+
+
+def test_as_reference_leaves_a_reference_sized_image_unchanged() -> None:
+    reference = as_reference(Image.linear_gradient("L").resize((1472, 640)).convert("RGB"))
+
+    again = as_reference(reference)
+
+    assert (again.size, again.tobytes()) == (reference.size, reference.tobytes())
+
+
 def test_crop_pipeline_draws_from_a_reference_as_resized_for_training(crop_pipe: ModularPipeline) -> None:
     reference = _off_grid_reference()
-    as_trained = _draw(crop_pipe, training_grid(reference))
+    as_trained = _draw(crop_pipe, as_reference(reference))
 
     crop = _draw(crop_pipe, reference)
 
@@ -119,13 +137,19 @@ def _identity(crop: DrawnCrop) -> tuple[str, CropPlan, str, str]:
     return crop.name, crop.plan, hashlib.sha256(crop.image.tobytes()).hexdigest(), crop.labels_xml
 
 
+@pytest.mark.parametrize("drawn_from_reference", [pytest.param(False, id="style"), pytest.param(True, id="reference")])
 def test_page_pipeline_draws_every_crop_as_the_crop_pipeline_draws_it(
-    tiny_flux3: Path, crop_pipe: ModularPipeline, two_column_page: Path
+    tiny_flux3: Path, crop_pipe: ModularPipeline, two_column_page: Path, tmp_path: Path, drawn_from_reference: bool
 ) -> None:
+    reference = None
+    if drawn_from_reference:
+        _off_grid_reference().save(tmp_path / "reference.png")
+        reference = Reference(image=tmp_path / "reference.png")
     page_pipe = load_pipeline(tiny_flux3, page_blocks, loras={}, settings=TINY_SETTINGS)
-    plans = plan_page(refill(load_xml_layout(two_column_page), [TEXT]), STYLE)
+    plans = plan_page(refill(load_xml_layout(two_column_page), [TEXT]), STYLE, reference=reference)
+    image = _off_grid_reference() if drawn_from_reference else None
     expected = [
-        draw_crop(crop_pipe, plan, name=f"p_{k}", seed=7 + k, reference=None, settings=TINY_SETTINGS)
+        draw_crop(crop_pipe, plan, name=f"p_{k}", seed=7 + k, reference=image, settings=TINY_SETTINGS)
         for k, plan in enumerate(plans)
     ]
 
@@ -133,6 +157,7 @@ def test_page_pipeline_draws_every_crop_as_the_crop_pipeline_draws_it(
         template=two_column_page,
         text=TEXT,
         style=STYLE,
+        reference=reference,
         page_name="p",
         seed=7,
         **TINY_SETTINGS.pipeline_inputs(),
