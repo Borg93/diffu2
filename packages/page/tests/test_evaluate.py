@@ -44,10 +44,21 @@ def _crop(name: str, reference: str | None = None, reference_lines: list[list[in
     )
 
 
-def _evaluate(tiny_flux3: Path, crops: Path, out: Path) -> int:
+def _evaluate(tiny_flux3: Path, crops: Path, out: Path, *options: str) -> int:
     args = ["--crops", str(crops), "--out", str(out), "--model", str(tiny_flux3), "-n", "2", "--steps", "2"]
-    result = CliRunner().invoke(app, [*args, "--text-layer", "1", "--device", "cpu"])
+    result = CliRunner().invoke(app, [*args, "--text-layer", "1", "--device", "cpu", *options])
     return result.exit_code
+
+
+def _referenced_set(crops_dir: Path) -> tuple[Path, list[Image.Image]]:
+    """Two crops, each with its own reference image (gradients at two angles) and the reference's line boxes."""
+    crops = _eval_set(
+        crops_dir, [_crop("a.jpg", "ref_a.png", REFERENCE_LINES), _crop("b.jpg", "ref_b.png", REFERENCE_LINES)]
+    )
+    references = [Image.linear_gradient("L").rotate(angle).convert("RGB") for angle in (30, 120)]
+    for name, reference in zip(("ref_a.png", "ref_b.png"), references, strict=True):
+        reference.save(crops / name)
+    return crops, references
 
 
 def test_evaluate_scores_every_crop_into_results(tiny_flux3: Path, tmp_path: Path) -> None:
@@ -76,13 +87,7 @@ def test_evaluate_records_a_failed_crop_and_scores_the_rest(tiny_flux3: Path, tm
 def test_evaluate_measures_each_drawn_hand_beside_its_real_crop_and_its_reference(
     tiny_flux3: Path, tmp_path: Path
 ) -> None:
-    crops = _eval_set(
-        tmp_path / "crops",
-        [_crop("a.jpg", "ref_a.png", REFERENCE_LINES), _crop("b.jpg", "ref_b.png", REFERENCE_LINES)],
-    )
-    references = [Image.linear_gradient("L").rotate(angle).convert("RGB") for angle in (30, 120)]
-    for name, reference in zip(("ref_a.png", "ref_b.png"), references, strict=True):
-        reference.save(crops / name)
+    crops, references = _referenced_set(tmp_path / "crops")
 
     exit_code = _evaluate(tiny_flux3, crops, tmp_path / "out")
 
@@ -108,6 +113,19 @@ def test_evaluate_measures_each_drawn_hand_beside_its_real_crop_and_its_referenc
     assert results.summary.hands.to_other_references == HandDistance.model_validate(
         {field: _median_of_measured([getattr(d, field) for d in chance]) for field in HandDistance.model_fields}
     )
+
+
+def test_evaluate_guides_toward_each_crops_reference_when_asked(tiny_flux3: Path, tmp_path: Path) -> None:
+    crops, _ = _referenced_set(tmp_path / "crops")
+    _evaluate(tiny_flux3, crops, tmp_path / "caption")
+
+    exit_code = _evaluate(tiny_flux3, crops, tmp_path / "reference", "--reference-guidance", "3")
+
+    results = Results.model_validate_json((tmp_path / "reference" / "results.json").read_text())
+    drawn = [(tmp_path / run / "generated" / "000.png").read_bytes() for run in ("caption", "reference")]
+    assert exit_code == 0
+    assert results.summary.reference_guidance == 3.0
+    assert drawn[1] != drawn[0]
 
 
 def _median_of_measured(values: list[float | None]) -> float | None:

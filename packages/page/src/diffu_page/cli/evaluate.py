@@ -228,6 +228,7 @@ class Summary(BaseModel):
     hands: HandFidelity | None = None
     loras: dict[str, str]
     guidance: float
+    reference_guidance: float = 1.0  # 1 in results written before it was an option
     steps: int
 
 
@@ -321,6 +322,9 @@ def evaluate(
     n: Annotated[int, typer.Option("-n", help="crops to evaluate")] = 16,
     steps: int = 50,
     guidance: float = 4.0,
+    reference_guidance: Annotated[
+        float, typer.Option(help="how hard guidance also pushes toward each crop's reference image (1: none)")
+    ] = 1.0,
     seed: int = 0,
     text_layer: Annotated[
         list[int] | None, typer.Option(help="a text-encoder layer to stack (repeat it; default: the model's own)")
@@ -332,7 +336,11 @@ def evaluate(
     (out / "generated").mkdir(parents=True, exist_ok=True)
     loras = {adapter.name: adapter.path for adapter in lora or []}
     draw_settings = DrawSettings(
-        steps=steps, guidance_scale=guidance, text_layers=tuple(text_layer) if text_layer else None, device=device
+        steps=steps,
+        guidance_scale=guidance,
+        reference_guidance_scale=reference_guidance,
+        text_layers=tuple(text_layer) if text_layer else None,
+        device=device,
     )
     pipe = load_pipeline(model, crop_blocks, loras=loras, settings=draw_settings)
     samples: list[CropResult] = []
@@ -360,6 +368,7 @@ def evaluate(
         hands=hand_fidelity(measured) if (measured := [s.hands for s in samples if s.hands is not None]) else None,
         loras={name: str(path) for name, path in loras.items()},
         guidance=guidance,
+        reference_guidance=reference_guidance,
         steps=steps,
     )
     (out / "results.json").write_text(
