@@ -314,10 +314,29 @@ Any scanned page as a template, not only pages with PAGE/ALTO ground truth.
       ink hue 0.97) and not the image (-0.73, -0.29, -0.86); slant follows neither (0.02, 0.06); CER 0.043. The
       caption decides the colours; the reference image barely counts. A described caption is a reliable colour
       control, and a wrong one overrides the image.
-- [ ] Realism test after the probe (runs/realism_test, script in the session scratchpad): a new document drawn
-      with our caption, with FLUX.3's prompt upsampler (black-forest-labs/flux-3-image-klein-pup, Apache-2.0,
-      i2i_bbox with our line boxes locked), as a second FLUX.3 edit pass over the drawing, and through NVIDIA PiD
-      (the pinned from-clean path of the former diffu_page.upscale, removed in d5ec683).
+- [x] Realism test (runs/realism_test, scripts in the session scratchpad; measures.json, figures on the status
+      page): one new document (Bergskollegium E3_5 1691-92 template 00128, text of 00339 + 00200, the 1715
+      Överståthållarämbetet letter book as the example), two windows, same seeds, base FLUX.3. A, our caption: ink
+      stands out 158 grey levels (paper minus ink; the example 102, real crops 103), varies 8.5 inside the strokes
+      (18.9; 17.2), ink colour dE 38 to the example, CER 0.016. B, FLUX.3's prompt upsampler (pup, i2i_bbox, boxes
+      locked): reads the example as the page to edit (described its date, signature, page number and the
+      operator's glove, "keep identical pixel for pixel"); the drawings copied the glove and, in the tall window,
+      "1715", "708" and ghost lines of the example's writing (CER 0.30); it changed 21 of 42 line texts (restored);
+      1.6-4.4 min a window. Out. C, a second FLUX.3 edit pass over A ("keep every word and line, change only how
+      the page looks", the example's measured ink/paper hex): ink 86 / 16.5 / dE 7, CER 0.025, but "1000:de" became
+      "1000cde", the paper more stained than the example's (dE 8 -> 11); a second draw, ~2 min a window. PiD (pinned
+      from-clean path of the former diffu_page.upscale, decoder and Gemma weights downloaded 23 Oct, load checked:
+      456 tensors, none missing): alone it sharpens and leaves the ink flat (160); after C it restores the
+      sharpness the pass blurs (17.8); 11-26 s a window at 4x. None of them changes the hand: the same round hand,
+      slant 36-44 deg, in every variant. Next: the second pass and PiD as page-pipeline blocks (edit caption
+      written from the measured look, no upsampler), checked on more windows and with fewer steps.
+- [ ] Per-hand LoRA pilot (the user's call, 23 Oct 15:50, after "it's not following the reference image"):
+      can FLUX.3 learn one hand from its own pages, where one example image does not carry it? Text to image, no
+      example; data_flux3/hand_overstat (the 1715 letter book's windows of layout_crops_v2b: 160 of 36 pages to
+      train, 16 of 4 other pages held out, the realism example's page among them); v2's recipe, 700 steps of 2,
+      constant LR (session scratchpad hand/: subset.py, flux3_hand_lora_overstat.yaml, run_hand.sh; trackio
+      flux3_hand_overstat). Drawings: the final checkpoint on the 16 held-out windows and the realism document
+      (variant H), base FLUX.3 and the middle checkpoint on 8. If it takes the hand: a LoRA per scribe or volume.
 - [ ] The tokenizer warns that FLUX.3 Klein's Qwen3-VL tokenizer has "an incorrect regex pattern" (transformers;
       `fix_mistral_regex=True`). Training and generation load it alike, so they agree; check whether BFL's pipeline
       sets the flag before changing it.
