@@ -304,6 +304,16 @@ Any scanned page as a template, not only pages with PAGE/ALTO ground truth.
       E1, v3c from zero (the control for v3d: same-hand references without the description; trackio
       `flux3_v3c_lora_rerun`), and v3c at guidance 2.5 and 3.5 (`run_guidance_v3c.sh`). v3c's first run was stopped
       at step 280 of 3,000 to give v3d the GPU (val_loss 0.6333 at step 99, 0.6273 at 199, as v3b at those steps).
+- [x] Control probe, first two parts (base FLUX.3, v3c's 21 held-out crops, same seeds): captions that describe
+      the reference's measured look carry its colours with no training (carry-over paper colour 0.36 -> 0.86, ink
+      darkness 0.02 -> 0.50, ink hue 0.01 -> 0.70; a real crop of the same hand 0.93, 0.98, 0.90; CER 0.036 ->
+      0.041), not the slant (0.15 -> 0.18; real 0.75) or the letterforms. The ink stays flat and opaque (contrast
+      to the paper 149 -> 146 grey levels, variation inside strokes 9.5 -> 9.2; real crops 103 and 17): the
+      "pasted on" look is a separate problem. The contradicting part lands at ~14:55.
+- [ ] Realism test after the probe (runs/realism_test, script in the session scratchpad): a new document drawn
+      with our caption, with FLUX.3's prompt upsampler (black-forest-labs/flux-3-image-klein-pup, Apache-2.0,
+      i2i_bbox with our line boxes locked), as a second FLUX.3 edit pass over the drawing, and through NVIDIA PiD
+      (the pinned from-clean path of the former diffu_page.upscale, removed in d5ec683).
 - [ ] The tokenizer warns that FLUX.3 Klein's Qwen3-VL tokenizer has "an incorrect regex pattern" (transformers;
       `fix_mistral_regex=True`). Training and generation load it alike, so they agree; check whether BFL's pipeline
       sets the flag before changing it.
