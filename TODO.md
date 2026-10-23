@@ -340,8 +340,15 @@ Any scanned page as a template, not only pages with PAGE/ALTO ground truth.
 - [ ] The tokenizer warns that FLUX.3 Klein's Qwen3-VL tokenizer has "an incorrect regex pattern" (transformers;
       `fix_mistral_regex=True`). Training and generation load it alike, so they agree; check whether BFL's pipeline
       sets the flag before changing it.
-- [ ] Read tonight's profile (`runs/flux3_pages/smoke/profile/trace.json`; pytorch-skills:profile-model): SDPA
-      backend on sm_121, GPU idle vs busy, top kernels, text-encoder vs denoise vs VAE vs TrOCR share.
+- [x] Read the profile (`runs/flux3_pages/smoke/profile/trace.json`, 2.8 GB: two 1472x640 crops, 50 steps, base
+      FLUX.3 on the GB10; pytorch-skills:profile-model as a streaming pass, session scratchpad profile/analyze_trace.py,
+      32 s). GPU-bound: the GPU is busy 99.5% of the run, the CPU waits on a full command buffer. Denoising is 97.5% of
+      the kernel time (2.66 s a step with guidance's two passes), text encoding 0.4%, the VAE decode 0.5%, TrOCR's
+      read-back 1.6%. In denoising: matmuls 41% (mostly cutlass_80 sm80 kernels, one GEMM alone 23%; nvjet_sm121 10%),
+      elementwise 38% (bf16 add 12%, mul, copies, RoPE's neg, norms), copies 9%, flash attention 8% (SDPA's flash
+      backend for 7,624 calls, efficient for 146). So: fuse the elementwise half (torch.compile of the transformer
+      blocks), fewer steps (the second pass's 28-step test is queued), then FP8 and the matmul kernels on the cluster's
+      sm_120; the text encoder, VAE and read-back are not worth optimizing yet.
 - [ ] Full pages: generate at 2–4 MP, or stitch windows that share a reference.
 - [ ] Style score: a classifier on real crops that says whether a crop matches the requested archive or reference.
 
