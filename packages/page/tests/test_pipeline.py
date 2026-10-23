@@ -1,9 +1,9 @@
 """The page and crop pipelines end to end on CPU: diffusers' tiny FLUX.3 test model, the real HTR read-back, no GPU.
 
 The tiny model draws noise, so every line reads back badly: what is checked is the wiring (a plan in, an image of the
-plan's size with one label per line out; a reference image drawn from as it was resized for training; the page
-pipeline drawing every planned crop exactly as the crop pipeline draws it, from the page's reference when it has one)
-and that a NeMo LoRA loads at its trained strength.
+plan's size with one label per line out; a reference image drawn from as it was resized for training, and guided
+toward when asked; the page pipeline drawing every planned crop exactly as the crop pipeline draws it, from the page's
+reference when it has one) and that a NeMo LoRA loads at its trained strength.
 """
 
 from __future__ import annotations
@@ -91,6 +91,19 @@ def test_crop_pipeline_conditions_a_crop_on_its_reference_image(crop_pipe: Modul
 
     assert crop.image.size == (64, 32)
     assert crop.image.tobytes() != plain.image.tobytes()
+
+
+def test_crop_pipeline_guided_toward_its_reference_draws_otherwise_than_guided_by_the_caption_alone(
+    tiny_flux3: Path, crop_pipe: ModularPipeline
+) -> None:
+    reference = Image.new("RGB", (48, 32), "white")
+    settings = TINY_SETTINGS.model_copy(update={"reference_guidance_scale": 3.0})
+    guided_pipe = load_pipeline(tiny_flux3, crop_blocks, loras={}, settings=settings)
+    caption_guided = _draw(crop_pipe, reference)
+
+    reference_guided = draw_crop(guided_pipe, _plan(), name="000", seed=0, reference=reference, settings=settings)
+
+    assert reference_guided.image.tobytes() != caption_guided.image.tobytes()
 
 
 def _off_grid_reference() -> Image.Image:
