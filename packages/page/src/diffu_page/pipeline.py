@@ -19,15 +19,12 @@ crop pipeline, after diffu-runner has planned the pages on CPU workers with :cla
 from __future__ import annotations
 
 import json
-import math
 from collections.abc import Callable
 from pathlib import Path
 from typing import override
 
 import torch
 from diffusers import Flux3AutoBlocks, Flux3ModularPipeline
-from diffusers.guiders import ClassifierFreeGuidance
-from diffusers.guiders.guider_utils import BaseGuidance
 from diffusers.modular_pipelines import ModularPipeline, OutputParam, SequentialPipelineBlocks
 from PIL import Image
 from pydantic import BaseModel, ConfigDict
@@ -182,7 +179,7 @@ class DrawSettings(BaseModel):
 
     Attributes:
         steps: Denoising steps per crop.
-        guidance_scale: Classifier-free guidance scale; 1 or less samples without guidance.
+        guidance_scale: Classifier-free guidance scale; exactly 1 samples without guidance (one pass a step).
         reference_guidance_scale: How hard guidance also pushes toward the reference image (:mod:`diffu_page.guidance`,
             a third pass per step); 1 guides the caption alone.
         label_format: ``alto`` or ``page``.
@@ -216,13 +213,6 @@ def _require_loaded(pipe: ModularPipeline) -> None:
         raise RuntimeError(f"components failed to load (see the log above): {missing}")
 
 
-def _guider(settings: DrawSettings) -> BaseGuidance:
-    """Diffusers' own classifier-free guidance unless the reference is guided too."""
-    if math.isclose(settings.reference_guidance_scale, 1.0):
-        return ClassifierFreeGuidance(guidance_scale=settings.guidance_scale)
-    return ReferenceGuidance(guidance_scale=settings.guidance_scale, reference_scale=settings.reference_guidance_scale)
-
-
 def load_pipeline(model: Path, blocks: BlocksFor, *, loras: dict[str, Path], settings: DrawSettings) -> ModularPipeline:
     """``blocks`` built for the model at ``model``, its components loaded (VAE in float32, the rest in bfloat16) on
     ``settings.device``, the guider at ``settings.guidance_scale`` (and ``settings.reference_guidance_scale``) and every
@@ -236,7 +226,10 @@ def load_pipeline(model: Path, blocks: BlocksFor, *, loras: dict[str, Path], set
     pipe = family.pipeline(blocks=blocks(family), pretrained_model_name_or_path=str(model))
     pipe.load_components(dtype={"vae": torch.float32, "default": torch.bfloat16})
     _require_loaded(pipe)
-    pipe.update_components(guider=_guider(settings))
+    guider = ReferenceGuidance(
+        guidance_scale=settings.guidance_scale, reference_scale=settings.reference_guidance_scale
+    )
+    pipe.update_components(guider=guider)
     pipe.to(settings.device)
     materialize_position_tables(pipe.htr_model)
     for name, lora_dir in loras.items():
