@@ -330,6 +330,16 @@ Any scanned page as a template, not only pages with PAGE/ALTO ground truth.
       sharpness the pass blurs (17.8); 11-26 s a window at 4x. None of them changes the hand: the same round hand,
       slant 36-44 deg, in every variant. Next: the second pass and PiD as page-pipeline blocks (edit caption
       written from the measured look, no upsampler), checked on more windows and with fewer steps.
+- [x] Second-pass control probe (runs/realism_test, measures.json; same windows and seeds as A; means of 2 windows:
+      CER / ink stands out / ink varies / ink dE to the example; the example 102 / 18.9 / 0): A 0.016/158/8.5/38;
+      C0, redrawn with no look words, 0.026/153/10.2/39 (redrawing alone does nothing: the words do it); C1, our look
+      words directly, 0.020/135/12.3/29; C2, C1 at 28 steps, 0.021/133/12.1/27 (28 steps as good as 50); C1q, BFL's
+      Klein edit shape with every line quoted, 0.025/120/18.7/21 (the most natural in-stroke variation); C, the
+      prompt upsampler's wording of the same instruction (plain i2i), 0.025/86/16.5/7: by far the strongest. It states
+      the edit as an instruction ("Render the writing as faded brown iron-gall ink in the exact color #81674E...
+      Replace the plain background with an aged cream sheet in #FAECD6..."), ours described the target. Next: C's
+      wording as a template (no 9B model), at 28 steps, over the per-hand drawings (H's ink 122 / 14.4 is better than
+      A's, but its ink and paper are the volume's, dE 25 and 17 to this example).
 - [x] Per-hand LoRA pilot (the user's call, 23 Oct 15:50, after "it's not following the reference image"): FLUX.3
       Klein Base text to image, trained only on the 1715 Överståthållarämbetet letter book's own pages (160 windows of
       36 pages; v2's recipe, 700 steps of 2, constant LR; session scratchpad hand/). It learns the hand. On 8 held-out
