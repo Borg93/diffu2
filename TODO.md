@@ -12,6 +12,18 @@ What is known to be wrong or unfinished. Remove an item when it is done; add the
   encoders and VAEs.
 - Everything is diffusers-native (model classes, Modular Diffusers blocks and pipelines) and trained with NeMo
   AutoModel. No custom model code where diffusers has the class; no backward compatibility with the old code.
+- **The product (decided 2026-10-23)**: millions of different synthetic documents to train VLMs on. One sample is a
+  **full page with its ALTO/PAGE**. Any template (layout) x any text x any style (a reference document's hand, ink
+  and paper), each chosen independently. Document kinds: handwritten running text, **tables and forms**, **printed
+  and mixed** pages. Text: real transcriptions reshuffled, **other historical Swedish text**, **generated text**.
+  Generated at scale by diffu on the Ray cluster's Blackwell GPUs (FLUX.3 at 50 steps: ~3.3 min per crop on the
+  GB10, far too slow for millions). Workstreams this opens:
+  - [ ] Full pages: stitch a page's crops (windows overlap; shared lines must agree) or draw at 2-4 MP.
+  - [ ] Tables and forms: crops and captions for table cells (the crop builder skips them today).
+  - [ ] Printed and mixed pages: printed GT pages to train on, and their templates.
+  - [ ] Text: sources of other historical Swedish text; an LLM text generator in period style.
+  - [ ] Style that transfers: the hand from the reference (v3d, then diffu), measured by `HandFidelity`.
+  - [ ] Throughput: diffu with fewer steps, batched, FP8 on Blackwell; profile on the cluster.
 
 ## Repo structure
 
