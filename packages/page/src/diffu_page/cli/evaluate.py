@@ -136,9 +136,8 @@ def carry_over(pairs: Sequence[tuple[HandLook, HandLook]]) -> CarryOver:
     """How much of the references' variation reaches the hands in ``pairs`` of (reference, hand)."""
 
     def colour(field: str, axis: int) -> float | None:
-        return _slope(
-            [(lab(getattr(reference, field))[axis], lab(getattr(hand, field))[axis]) for reference, hand in pairs]
-        )
+        measured = [(getattr(reference, field), getattr(hand, field)) for reference, hand in pairs]
+        return _slope([(lab(a)[axis], lab(b)[axis]) for a, b in measured if a is not None and b is not None])
 
     slants = [
         (reference.slant, hand.slant)

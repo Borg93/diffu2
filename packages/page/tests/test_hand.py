@@ -43,12 +43,20 @@ def test_hand_look_measures_the_strokes_drawn_in_the_line_boxes(slant: int) -> N
     assert (hand.paper, hand.ink) == ("#E8DCC0", "#3A2A1C")
 
 
-def test_hand_look_of_line_boxes_without_ink_has_no_slant() -> None:
+def test_hand_look_of_line_boxes_without_ink_measures_no_hand_and_no_ink() -> None:
     page = Image.new("RGB", (600, 400), PAPER)
 
     hand = hand_look(page, LINE_BOXES)
 
-    assert hand == HandLook(slant=None, stroke=0.0, letters=0.0, density=0.0, paper="#E8DCC0", ink="#000000")
+    assert hand == HandLook(slant=None, stroke=None, letters=None, density=0.0, paper="#E8DCC0", ink=None)
+
+
+def test_hand_look_of_a_page_of_nothing_but_ink_has_no_paper() -> None:
+    page = Image.new("RGB", (600, 400), (0, 0, 0))  # what a drawing whose latents went NaN decodes to
+
+    hand = hand_look(page, LINE_BOXES)
+
+    assert (hand.paper, hand.ink) == (None, "#000000")
 
 
 @pytest.mark.parametrize(
@@ -80,9 +88,9 @@ def test_hand_distance_compares_the_slant_the_lengths_and_the_colours() -> None:
 
 
 def test_hand_distance_leaves_out_what_one_hand_lacks() -> None:
-    blank = HandLook(slant=None, stroke=0.0, letters=0.0, density=0.0, paper="#E8DCC0", ink="#000000")
-    reference = HandLook(slant=20.0, stroke=0.08, letters=0.4, density=0.16, paper="#E8DCC0", ink="#000000")
+    blank = HandLook(slant=None, stroke=None, letters=None, density=0.0, paper="#E8DCC0", ink=None)
+    reference = HandLook(slant=20.0, stroke=0.08, letters=0.4, density=0.16, paper="#E8DCC0", ink="#3A2A1C")
 
     distance = hand_distance(blank, reference)
 
-    assert distance == HandDistance(slant=None, stroke=None, letters=None, density=None, paper=0.0, ink=0.0)
+    assert distance == HandDistance(slant=None, stroke=None, letters=None, density=None, paper=0.0, ink=None)

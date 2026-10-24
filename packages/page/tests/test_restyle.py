@@ -123,6 +123,26 @@ def test_described_edit_caption_describes_the_reference_in_place_of_the_crop_sty
     assert [word for word in ("Arjeplogs", "yellowed", "dark brown") if word in caption] == []
 
 
+@pytest.mark.parametrize(
+    "hand",
+    [
+        pytest.param(
+            HandLook(slant=None, stroke=None, letters=None, density=0.0, paper="#C8C8C8", ink="#202020"),
+            id="no-ink-in-its-lines",
+        ),
+        pytest.param(
+            HandLook(slant=33.0, stroke=0.05, letters=0.3, density=0.2, paper="#C8C8C8", ink=None), id="no-ink-colour"
+        ),
+    ],
+)
+def test_described_edit_caption_refuses_a_reference_whose_hand_was_not_measured(crop: Crop, hand: HandLook) -> None:
+    record = _record(crop, caption_for(crop, provenance_of(COLLECTION, Path(PAGE)), LOOK))
+    reference = ReferenceLook(scan=ScanLook(greyscale=True, paper="light grey", ink="black"), hand=hand)
+
+    with pytest.raises(ValueError, match="cannot be described"):
+        described_edit_caption(CaptionParts.of(record), reference)
+
+
 def test_restyle_refuses_a_caption_an_older_provenance_rule_wrote(crop: Crop) -> None:
     raw_folder_name = Provenance(title="RA arjeplogs tingslag 20260220", years="1690–1700")  # before collection_key
     record = _record(crop, caption_for(crop, raw_folder_name, LOOK))

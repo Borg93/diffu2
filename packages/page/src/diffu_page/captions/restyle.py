@@ -146,6 +146,8 @@ def _from_reference_describing(reference: ReferenceLook) -> _Phrases:
     """The image-edit phrases that describe the reference's look: the hand first (BFL: what matters most leads),
     then the ink and paper by name and hex; every line row in the reference's hand and ink."""
     scan, hand = reference.scan, reference.hand
+    if hand.ink is None or hand.paper is None:
+        raise ValueError(f"a reference without a measured ink and paper colour ({hand}) cannot be described")
     kind = "greyscale archival scan" if scan.greyscale else "archival scan"
     greyscale = ", in a greyscale scan." if scan.greyscale else "."
     return _Phrases(

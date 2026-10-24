@@ -49,16 +49,17 @@ DENSITY_WORDS = ((0.104, "widely spaced"), (0.146, "evenly spaced"), (math.inf, 
 
 
 class HandLook(BaseModel):
-    """A crop's handwriting, measured. Lengths are shares of the line height."""
+    """A crop's handwriting, measured. Lengths are shares of the line height. A measure the image does not allow is
+    None: no measurable line box, no ink in the line boxes, no paper (an image of nothing but ink) or no ink at all."""
 
     model_config = {"frozen": True}
 
-    slant: float | None  # degrees, positive when the strokes lean right; None when no line could be measured
-    stroke: float  # the pen's width
-    letters: float  # the height of the letters' core band (x-height)
-    density: float  # the share of a line's area covered by ink
-    paper: str  # "#RRGGBB"
-    ink: str  # "#RRGGBB"
+    slant: float | None  # degrees, positive when the strokes lean right
+    stroke: float | None  # the pen's width
+    letters: float | None  # the height of the letters' core band (x-height)
+    density: float | None  # the share of a line's area covered by ink
+    paper: str | None  # "#RRGGBB"
+    ink: str | None  # "#RRGGBB"
 
 
 class ReferenceLook(BaseModel):
@@ -79,8 +80,8 @@ class HandDistance(BaseModel):
     stroke: float | None
     letters: float | None
     density: float | None
-    paper: float
-    ink: float
+    paper: float | None
+    ink: float | None
 
 
 def otsu(gray: np.ndarray) -> int:
@@ -107,9 +108,9 @@ def hand_look(image: Image.Image, boxes: Sequence[Box]) -> HandLook:
         stroke=_stroke(upright),
         letters=_letters(upright),
         # unsheared: the shear pads each row with paper in proportion to the slant
-        density=float(np.mean([(line < threshold).mean() for line, threshold in lines])) if lines else 0.0,
-        paper=_hex(np.median(rgb[~ink], axis=0)),
-        ink=_hex(np.median(rgb[ink & (gray <= np.percentile(gray[ink], 50))], axis=0)) if ink.any() else "#000000",
+        density=float(np.mean([(line < threshold).mean() for line, threshold in lines])) if lines else None,
+        paper=_hex(rgb[~ink]),
+        ink=_hex(rgb[ink & (gray <= np.percentile(gray[ink], 50))]) if ink.any() else None,
     )
 
 
@@ -118,16 +119,33 @@ def slant_words(slant: float | None) -> str:
     return "cursive" if slant is None else f"{band_name(slant, SLANT_WORDS)} cursive"
 
 
+def hand_bands(hand: HandLook) -> tuple[str, str, str]:
+    """The words a caption names a hand's pen, letters and spacing by: ("fine", "small", "closely packed").
+
+    Raises:
+        ValueError: If the hand has no ink in its line boxes: a caption would describe a hand that is not there.
+    """
+    if hand.stroke is None or hand.letters is None or hand.density is None:
+        raise ValueError("a hand with no ink in its line boxes cannot be described")
+    return (
+        band_name(hand.stroke, STROKE_WORDS),
+        band_name(hand.letters, LETTER_WORDS),
+        band_name(hand.density, DENSITY_WORDS),
+    )
+
+
 def hand_words(hand: HandLook) -> str:
     """A hand in a caption's words, its visible features named: "right-slanted cursive, about 35 degrees, with fine
-    pen strokes and small, closely packed letters"."""
+    pen strokes and small, closely packed letters".
+
+    Raises:
+        ValueError: If the hand has no ink in its line boxes (``hand_bands``).
+    """
+    stroke, letters, density = hand_bands(hand)
     slant = slant_words(hand.slant)
     if hand.slant is not None:
         slant += f", about {abs(5 * round(hand.slant / 5))} degrees,"
-    return (
-        f"{slant} with {band_name(hand.stroke, STROKE_WORDS)} pen strokes and {band_name(hand.letters, LETTER_WORDS)}, "
-        f"{band_name(hand.density, DENSITY_WORDS)} letters"
-    )
+    return f"{slant} with {stroke} pen strokes and {letters}, {density} letters"
 
 
 def reference_look(image: Image.Image, boxes: Sequence[Box]) -> ReferenceLook:
@@ -221,32 +239,36 @@ def _slant(lines: list[tuple[np.ndarray, int]]) -> float | None:
     return float(max(range(coarse - 3, coarse + 4), key=uprightness))
 
 
-def _stroke(lines: list[np.ndarray]) -> float:
+def _stroke(lines: list[np.ndarray]) -> float | None:
     """The interquartile mean of the horizontal ink runs in the upright lines, as a share of the line height: the
-    pen's width across its upright strokes, without the joins and flourishes in the long tail."""
+    pen's width across its upright strokes, without the joins and flourishes in the long tail; None without ink."""
     runs = [
         np.nonzero(edges == -1)[1] - np.nonzero(edges == 1)[1]
         for edges in (np.diff(ink.astype(np.int8), axis=1, prepend=0, append=0) for ink in lines)
     ]
     joined = np.sort(np.concatenate(runs)) if runs else np.array([])
     if not joined.size:
-        return 0.0
+        return None
     middle = joined[len(joined) // 4 : max(len(joined) // 4 + 1, 3 * len(joined) // 4)]
     return float(middle.mean()) / LINE_HEIGHT
 
 
-def _letters(lines: list[np.ndarray]) -> float:
-    """The median share of a line's rows in its core band (the rows inked at least half as much as its busiest)."""
-    shares = [float((profile >= 0.5 * profile.max()).mean()) for profile in (ink.mean(axis=1) for ink in lines)]
-    return float(np.median([share for share, ink in zip(shares, lines, strict=True) if ink.any()] or [0.0]))
+def _letters(lines: list[np.ndarray]) -> float | None:
+    """The median share of an inked line's rows in its core band (the rows inked at least half as much as its
+    busiest); None without ink."""
+    shares = [float((ink.mean(axis=1) >= 0.5 * ink.mean(axis=1).max()).mean()) for ink in lines if ink.any()]
+    return float(np.median(shares)) if shares else None
 
 
-def _log_ratio(a: float, b: float) -> float | None:
+def _log_ratio(a: float | None, b: float | None) -> float | None:
     return abs(math.log2(a / b)) if a and b else None
 
 
-def _hex(colour: np.ndarray) -> str:
-    red, green, blue = (int(round(float(v))) for v in colour)
+def _hex(pixels: np.ndarray) -> str | None:
+    """The median colour of ``pixels`` (N x RGB) as "#RRGGBB"; None when there are none."""
+    if not len(pixels):
+        return None
+    red, green, blue = (round(float(v)) for v in np.median(pixels, axis=0))
     return f"#{red:02X}{green:02X}{blue:02X}"
 
 
@@ -264,5 +286,5 @@ def lab(hex_colour: str) -> tuple[float, float, float]:
     return 116 * f(y) - 16, 500 * (f(x) - f(y)), 200 * (f(y) - f(z))
 
 
-def _delta_e(a: str, b: str) -> float:
-    return math.dist(lab(a), lab(b))
+def _delta_e(a: str | None, b: str | None) -> float | None:
+    return math.dist(lab(a), lab(b)) if a is not None and b is not None else None

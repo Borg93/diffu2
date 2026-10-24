@@ -133,15 +133,16 @@ def _median_of_measured(values: list[float | None]) -> float | None:
     return median(measured) if measured else None
 
 
-def _hand(ink: str, slant: float) -> HandLook:
+def _hand(ink: str | None, slant: float | None) -> HandLook:
     return HandLook(slant=slant, stroke=0.07, letters=0.3, density=0.12, paper="#F0E0C0", ink=ink)
 
 
-def test_carry_over_is_the_slope_of_the_hands_on_their_references() -> None:
-    references = [_hand("#202020", 10.0), _hand("#606060", 20.0), _hand("#A0A0A0", 30.0)]
-    hands = [_hand(reference.ink, slant) for reference, slant in zip(references, (15.0, 20.0, 25.0), strict=True)]
+def test_carry_over_is_the_slope_of_the_measured_hands_on_their_references() -> None:
+    references = [_hand("#202020", 10.0), _hand("#606060", 20.0), _hand("#A0A0A0", 30.0), _hand("#E0E0E0", 40.0)]
+    hands = [_hand(reference.ink, slant) for reference, slant in zip(references, (15.0, 20.0, 25.0), strict=False)]
+    blank = _hand(None, None)  # a drawing with no ink: left out, not read as black ink
 
-    carried = carry_over(list(zip(references, hands, strict=True)))
+    carried = carry_over(list(zip(references, [*hands, blank], strict=True)))
 
     assert carried.model_dump() == pytest.approx(
         {"paper_lightness": None, "paper_yellowness": None, "ink_lightness": 1.0, "ink_yellowness": None, "slant": 0.5}

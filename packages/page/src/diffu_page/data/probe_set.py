@@ -24,15 +24,7 @@ from typing import Annotated
 
 import typer
 
-from diffu_page.captions.hand import (
-    DENSITY_WORDS,
-    LETTER_WORDS,
-    STROKE_WORDS,
-    ReferenceLook,
-    measure_reference,
-    slant_words,
-)
-from diffu_page.captions.look import band_name
+from diffu_page.captions.hand import ReferenceLook, hand_bands, measure_reference, slant_words
 from diffu_page.captions.records import CropRecord, read_records
 from diffu_page.captions.restyle import CaptionParts, described_edit_caption, edit_caption
 from diffu_page.data.style_pairs import EvalRow, link, write_rows
@@ -53,12 +45,10 @@ class ProbeRow(EvalRow):
 def words_of(look: ReferenceLook) -> tuple[str, ...]:
     """The words a described caption names ``look`` by: its slant, pen, letter and spacing bands, and its scan's,
     paper's and ink's names."""
-    hand, scan = look.hand, look.scan
+    scan = look.scan
     return (
-        slant_words(hand.slant),
-        band_name(hand.stroke, STROKE_WORDS),
-        band_name(hand.letters, LETTER_WORDS),
-        band_name(hand.density, DENSITY_WORDS),
+        slant_words(look.hand.slant),
+        *hand_bands(look.hand),
         "greyscale" if scan.greyscale else "colour",
         scan.paper,
         scan.ink,
