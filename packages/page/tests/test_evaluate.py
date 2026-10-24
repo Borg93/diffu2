@@ -14,6 +14,7 @@ from typer.testing import CliRunner
 from diffu_page.captions.hand import HandDistance, HandLook, hand_distance, hand_look
 from diffu_page.captions.prompt import LineRecord
 from diffu_page.cli.evaluate import EvalCrop, Hands, Results, app, carry_over, read_crops
+from diffu_page.pipeline import DrawSettings
 
 LINES = [
     LineRecord(id="Sv_Text_1", text="Göteborgs poliskammare", role="", bbox=[0, 0, 500, 1000]),
@@ -124,7 +125,9 @@ def test_evaluate_guides_toward_each_crops_reference_when_asked(tiny_flux3: Path
     results = Results.model_validate_json((tmp_path / "reference" / "results.json").read_text())
     drawn = [(tmp_path / run / "generated" / "000.png").read_bytes() for run in ("caption", "reference")]
     assert exit_code == 0
-    assert results.summary.reference_guidance == 3.0
+    assert results.summary.settings == DrawSettings(
+        steps=2, reference_guidance_scale=3.0, text_layers=(1,), device="cpu"
+    )
     assert drawn[1] != drawn[0]
 
 

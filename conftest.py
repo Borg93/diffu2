@@ -83,6 +83,22 @@ def wide_and_narrow_body_page(tmp_path: Path) -> Path:
     return path
 
 
+@pytest.fixture
+def one_line_page(tmp_path: Path) -> Path:
+    """A 1000 x 1000 px page of a single line: no line pitch to measure, so it plans to no crop at all."""
+    path = tmp_path / "one_line.xml"
+    path.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<PcGts xmlns="http://schema.primaresearch.org/PAGE/gts/pagecontent/2019-07-15">'
+        '<Page imageFilename="one_line.jpg" imageWidth="1000" imageHeight="1000">'
+        '<TextRegion id="r" type="paragraph">'
+        + _line("l", 100, 900, 500, "den fjerde dagen i maj")
+        + "</TextRegion></Page></PcGts>",
+        encoding="utf-8",
+    )
+    return path
+
+
 TABLE_COLUMNS = (150, 300, 1100, 1400, 1650)  # the register's column borders, page px
 TABLE_ROWS = 15  # a printed header row and 14 handwritten rows, 100 px apart from y 200
 

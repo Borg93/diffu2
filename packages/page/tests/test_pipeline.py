@@ -18,12 +18,14 @@ import torch
 from diffusers.modular_pipelines import ModularPipeline
 from PIL import Image
 from safetensors.torch import load_file, save_file
+from typer.testing import CliRunner
 
 from diffu_page.blocks import DrawnCrop
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.prompt import LineRecord
 from diffu_page.captions.provenance import Provenance
-from diffu_page.cli.generate import draw_pages
+from diffu_page.cli.generate import Summary, draw_pages
+from diffu_page.cli.generate import app as generate_app
 from diffu_page.crops.grid import REF_PIXELS, as_reference
 from diffu_page.jobs import PageJob
 from diffu_page.lora import ADAPTER_CONFIG, ADAPTER_WEIGHTS, nemo_lora_state_dict
@@ -166,6 +168,25 @@ def test_draw_pages_records_a_crop_it_cannot_draw_by_name_and_saves_the_other_cr
         "001_wide_and_narrow_0.jpg",
         "001_wide_and_narrow_0.xml",
     ]
+
+
+def test_generate_records_what_drew_the_run_and_a_page_that_plans_to_no_crop(
+    tiny_flux3: Path, one_line_page: Path, body_and_notes_page: Path, tmp_path: Path
+) -> None:
+    args = ["--templates", str(one_line_page), "--text-from", str(body_and_notes_page), "--title", "the archive"]
+    args += ["--model", str(tiny_flux3), "--out", str(tmp_path), "--steps", "2", "--text-layer", "1", "--device", "cpu"]
+
+    result = CliRunner().invoke(generate_app, args)
+
+    summary = Summary.model_validate_json((tmp_path / "summary.json").read_text())
+    assert result.exit_code == 1
+    assert (summary.model, summary.seed, summary.settings, summary.crops) == (
+        str(tiny_flux3),
+        0,
+        DrawSettings(steps=2, text_layers=(1,), device="cpu"),
+        [],
+    )
+    assert {name: error.split(":")[0] for name, error in summary.failed.items()} == {"000_one_line": "ValueError"}
 
 
 @pytest.mark.parametrize(

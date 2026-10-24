@@ -217,18 +217,19 @@ class CropResult(BaseModel):
 
 
 class Summary(BaseModel):
-    """The run's mean CERs over the drawn crops, how closely their hands follow (``HandFidelity``), and its
-    settings."""
+    """The run's mean CERs over the drawn crops, how closely their hands follow (``HandFidelity``), and what drew
+    them: the model, its LoRAs, the seed and the draw settings. Results written before the model, seed and settings
+    were recorded load with None there."""
 
     n: int
     failed: int
     gen_cer: float
     real_cer: float
     hands: HandFidelity | None = None
+    model: str | None = None
     loras: dict[str, str]
-    guidance: float
-    reference_guidance: float = 1.0  # 1 in results written before it was an option
-    steps: int
+    seed: int | None = None
+    settings: DrawSettings | None = None
 
 
 class Results(BaseModel):
@@ -372,10 +373,10 @@ def evaluate(
         gen_cer=fmean(s.gen_cer for s in samples),
         real_cer=fmean(s.real_cer for s in samples),
         hands=hand_fidelity(measured) if (measured := [s.hands for s in samples if s.hands is not None]) else None,
+        model=str(model),
         loras={name: str(path) for name, path in loras.items()},
-        guidance=guidance,
-        reference_guidance=reference_guidance,
-        steps=steps,
+        seed=seed,
+        settings=draw_settings,
     )
     (out / "results.json").write_text(
         Results(summary=summary, samples=samples, failed=failed).model_dump_json(indent=1)

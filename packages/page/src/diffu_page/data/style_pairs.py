@@ -31,7 +31,7 @@ The references are picked first (training, then held-out, then by-example, from 
 (``--caption described`` only, in parallel), then every set is captioned, and only then is any file written, so a
 caption that fails leaves no half-written set; the named captions draw from a stream of their own. So the references do
 not depend on the caption options. ``stale.json`` names, per set, the crops left out because their caption predates the
-caption grammar.
+caption grammar, and ``build.json`` how the set was built (``BuildRecord``).
 
     python -m diffu_page.data.style_pairs --crops data_flux3/layout_crops_v2b --out data_flux3/style_pairs_v3
     python -m diffu_page.data.style_pairs --named-fraction 0.5 --val-pairs 64 \
@@ -180,6 +180,18 @@ class ReferenceSource(StrEnum):
 
     VOLUME = "volume"
     PAGE = "page"
+
+
+class BuildRecord(BaseModel):
+    """``build.json``: what a set of pairs was built from and how. The caption form must be the one generation is told
+    the LoRA was trained on (``--reference-caption``)."""
+
+    crops: str
+    caption: ReferenceCaption
+    reference: ReferenceSource
+    named_fraction: float
+    val_pairs: int
+    seed: int
 
 
 def volume_of(record: CropRecord) -> Volume:
@@ -500,6 +512,15 @@ def main(
     write_set(out / "by_example", examples.placements, "metadata.jsonl", examples.rows)
     stale = {"train": pairs.stale, "val": validation.stale, "val_eval": held.stale, "by_example": examples.stale}
     (out / "stale.json").write_text(json.dumps(stale, indent=1), encoding="utf-8")
+    build = BuildRecord(
+        crops=str(crops),
+        caption=caption,
+        reference=reference,
+        named_fraction=named_fraction,
+        val_pairs=val_pairs,
+        seed=seed,
+    )
+    (out / "build.json").write_text(build.model_dump_json(indent=1), encoding="utf-8")
     alone = len(train) - len(train_pairs)
     console.print(
         f"train: {len(pairs.rows)} pairs -> {out} ({alone} crops skipped: no reference to pick ({reference.value}); "

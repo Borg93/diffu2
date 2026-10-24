@@ -54,12 +54,15 @@ class CropResult(BaseModel):
 
 
 class Summary(BaseModel):
-    """A run: its style, LoRAs and steps, every drawn crop, and every page or crop that failed, by name, with its
-    error."""
+    """A run: what drew it (the model, its LoRAs, the seed, the draw settings, the style and the reference), every
+    drawn crop, and every page or crop that failed, by name, with its error."""
 
-    style: PageStyle
+    model: str
     loras: dict[str, str]
-    steps: int
+    seed: int
+    settings: DrawSettings
+    style: PageStyle
+    reference: Reference | None
     crops: list[CropResult]
     failed: dict[str, str]
 
@@ -202,7 +205,14 @@ def generate(
     with _profiler(profile_dir) as prof:
         crops, failed = draw_pages(pipe, pages, settings=draw_settings, out=out, prof=prof)
     summary = Summary(
-        style=style, loras={name: str(path) for name, path in loras.items()}, steps=steps, crops=crops, failed=failed
+        model=str(model),
+        loras={name: str(path) for name, path in loras.items()},
+        seed=seed,
+        settings=draw_settings,
+        style=style,
+        reference=drawn_from,
+        crops=crops,
+        failed=failed,
     )
     (out / "summary.json").write_text(summary.model_dump_json(indent=1), encoding="utf-8")
     console.print(f"{len(crops)} crops drawn, {len(failed)} pages or crops failed -> {out}")

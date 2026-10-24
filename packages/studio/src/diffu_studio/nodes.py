@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from diffu_page.blocks import DrawnCrop, crop_identity
 from diffu_page.layout import load_xml_layout, running_text
+from diffu_page.output import plain_file_name
 from diffu_page.pipeline import DrawSettings, PagePlanBlocks, crop_blocks, draw_crop, load_pipeline
 from diffu_page.plan import CropPlan, PageStyle
 from diffu_page.readback import pixel_box
@@ -53,9 +54,7 @@ class PlannedPage(BaseModel):
     @field_validator("page")
     @classmethod
     def _plain_file_name(cls, page: str) -> str:
-        if page in ("", ".", "..") or Path(page).name != page:
-            raise ValueError(f"a page's name must be a plain file name, not a path: {page!r}")
-        return page
+        return plain_file_name(page)
 
 
 def local_path(value: object) -> Path:

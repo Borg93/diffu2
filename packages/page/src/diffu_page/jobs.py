@@ -8,12 +8,14 @@ named and seeded by ``crop_identity``, so a page comes out the same either way.
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 from PIL import Image
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from diffu_page.blocks import crop_identity
+from diffu_page.output import plain_file_name
 from diffu_page.pipeline import PagePlanBlocks
 from diffu_page.plan import CropPlan, PageStyle, Reference
 
@@ -24,7 +26,8 @@ class PageJob(BaseModel):
     """A template page to redraw: its PAGE/ALTO file, the text to write into it, the style and the noise seed.
 
     ``reference`` is a crop whose hand, ink and paper to draw in (style by example) instead of the style's archive;
-    the crops are then captioned as its LoRA was trained.
+    the crops are then captioned as its LoRA was trained. ``id``, a plain file name such as a content hash, names and
+    seeds the page's crops in place of the page's place in the run, so adding or removing pages moves no other page.
     """
 
     template: Path
@@ -32,14 +35,22 @@ class PageJob(BaseModel):
     style: PageStyle
     seed: int = 0
     reference: Reference | None = None
+    id: str | None = None
+
+    @field_validator("id")
+    @classmethod
+    def _plain_file_name(cls, page_id: str | None) -> str | None:
+        return None if page_id is None else plain_file_name(page_id)
 
     def name_at(self, index: int) -> str:
-        """The page's name as page ``index`` of a run."""
-        return f"{index:03d}_{self.template.stem}"
+        """The page's name as page ``index`` of a run: its id if it has one."""
+        return self.id if self.id is not None else f"{index:03d}_{self.template.stem}"
 
     def seed_at(self, index: int) -> int:
-        """The noise seed of the page's first crop as page ``index`` of a run."""
-        return self.seed + SEED_STRIDE * index
+        """The noise seed of the page's first crop as page ``index`` of a run: from its id if it has one."""
+        if self.id is None:
+            return self.seed + SEED_STRIDE * index
+        return self.seed + SEED_STRIDE * int.from_bytes(hashlib.sha256(self.id.encode()).digest()[:4], "big")
 
 
 class CropJob(BaseModel):

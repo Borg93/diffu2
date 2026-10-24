@@ -38,17 +38,15 @@ def test_crop_jobs_plan_page_two_of_a_run_into_named_and_seeded_crops(
     ]
 
 
-def test_crop_jobs_refuse_a_template_that_plans_to_no_crops(tmp_path: Path) -> None:
-    one_line = tmp_path / "one_line.xml"  # a single line: no pitch to measure, so no window
-    one_line.write_text(
-        '<?xml version="1.0" encoding="UTF-8"?>\n'
-        '<PcGts xmlns="http://schema.primaresearch.org/PAGE/gts/pagecontent/2019-07-15">'
-        '<Page imageFilename="one_line.jpg" imageWidth="1000" imageHeight="1000">'
-        '<TextRegion id="r" type="paragraph"><TextLine id="l"><Coords points="100,440 900,440 900,520 100,520"/>'
-        '<Baseline points="100,500 900,500"/><TextEquiv><Unicode>den fjerde dagen i maj</Unicode></TextEquiv>'
-        "</TextLine></TextRegion></Page></PcGts>",
-        encoding="utf-8",
-    )
-
+def test_crop_jobs_refuse_a_template_that_plans_to_no_crops(one_line_page: Path) -> None:
     with pytest.raises(ValueError, match="plans to no crops"):
-        crop_jobs(PageJob(template=one_line, text=TEXT, style=STYLE), 0)
+        crop_jobs(PageJob(template=one_line_page, text=TEXT, style=STYLE), 0)
+
+
+def test_crop_jobs_name_and_seed_a_page_with_an_id_alike_wherever_it_stands_in_a_run(body_and_notes_page: Path) -> None:
+    page = PageJob(template=body_and_notes_page, text=TEXT, style=STYLE, seed=5, id="vol7_p12")
+
+    early, late = crop_jobs(page, 2), crop_jobs(page, 7)
+
+    assert [(job.name, job.seed) for job in late] == [(job.name, job.seed) for job in early]
+    assert [job.name for job in early] == [f"vol7_p12_{k}" for k in range(len(early))]

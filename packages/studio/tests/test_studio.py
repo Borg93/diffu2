@@ -100,5 +100,5 @@ def test_draw_nodes_on_one_model_switch_its_loras_per_drawer(
 
 @pytest.mark.parametrize("page", [pytest.param("../../escaped", id="path"), pytest.param("..", id="parent")])
 def test_planned_page_refuses_a_name_that_would_write_outside_the_out_dir(page: str) -> None:
-    with pytest.raises(ValidationError, match="must be a plain file name"):
+    with pytest.raises(ValidationError, match="expected a plain file name"):
         PlannedPage.model_validate({"page": page, "plans": []})
