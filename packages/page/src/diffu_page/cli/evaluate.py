@@ -381,7 +381,7 @@ def evaluate(
     (out / "results.json").write_text(
         Results(summary=summary, samples=samples, failed=failed).model_dump_json(indent=1)
     )
-    console.print(summary.model_dump_json())
+    print(summary.model_dump_json())  # machine output, one line: rich would wrap it at the terminal's width
     if failed:
         raise typer.Exit(code=1)
 

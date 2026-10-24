@@ -9,11 +9,11 @@ from statistics import median
 
 import pytest
 from PIL import Image
-from typer.testing import CliRunner
+from typer.testing import CliRunner, Result
 
 from diffu_page.captions.hand import HandDistance, HandLook, hand_distance, hand_look
 from diffu_page.captions.prompt import LineRecord
-from diffu_page.cli.evaluate import EvalCrop, Hands, Results, app, carry_over, read_crops
+from diffu_page.cli.evaluate import EvalCrop, Hands, Results, Summary, app, carry_over, read_crops
 from diffu_page.pipeline import DrawSettings
 
 LINES = [
@@ -45,10 +45,9 @@ def _crop(name: str, reference: str | None = None, reference_lines: list[list[in
     )
 
 
-def _evaluate(tiny_flux3: Path, crops: Path, out: Path, *options: str) -> int:
+def _evaluate(tiny_flux3: Path, crops: Path, out: Path, *options: str) -> Result:
     args = ["--crops", str(crops), "--out", str(out), "--model", str(tiny_flux3), "-n", "2", "--steps", "2"]
-    result = CliRunner().invoke(app, [*args, "--text-layer", "1", "--device", "cpu", *options])
-    return result.exit_code
+    return CliRunner().invoke(app, [*args, "--text-layer", "1", "--device", "cpu", *options])
 
 
 def _referenced_set(crops_dir: Path) -> tuple[Path, list[Image.Image]]:
@@ -65,19 +64,21 @@ def _referenced_set(crops_dir: Path) -> tuple[Path, list[Image.Image]]:
 def test_evaluate_scores_every_crop_into_results(tiny_flux3: Path, tmp_path: Path) -> None:
     crops = _eval_set(tmp_path / "crops", [_crop("a.jpg"), _crop("b.jpg")])
 
-    exit_code = _evaluate(tiny_flux3, crops, tmp_path / "out")
+    result = _evaluate(tiny_flux3, crops, tmp_path / "out")
 
     results = Results.model_validate_json((tmp_path / "out" / "results.json").read_text())
-    assert exit_code == 0
+    assert result.exit_code == 0
     assert [(sample.index, sample.file) for sample in results.samples] == [(0, "a.jpg"), (1, "b.jpg")]
     assert results.failed == {}
+    last = [line for line in result.output.splitlines() if line.strip()][-1]
+    assert Summary.model_validate_json(last) == results.summary  # one line, for the job logs
 
 
 def test_evaluate_records_a_failed_crop_and_scores_the_rest(tiny_flux3: Path, tmp_path: Path) -> None:
     crops = _eval_set(tmp_path / "crops", [_crop("a.jpg"), _crop("b.jpg")])
     (crops / "b.jpg").unlink()  # its real crop can't be read back
 
-    exit_code = _evaluate(tiny_flux3, crops, tmp_path / "out")
+    exit_code = _evaluate(tiny_flux3, crops, tmp_path / "out").exit_code
 
     results = Results.model_validate_json((tmp_path / "out" / "results.json").read_text())
     assert exit_code == 1
@@ -90,7 +91,7 @@ def test_evaluate_measures_each_drawn_hand_beside_its_real_crop_and_its_referenc
 ) -> None:
     crops, references = _referenced_set(tmp_path / "crops")
 
-    exit_code = _evaluate(tiny_flux3, crops, tmp_path / "out")
+    exit_code = _evaluate(tiny_flux3, crops, tmp_path / "out").exit_code
 
     results = Results.model_validate_json((tmp_path / "out" / "results.json").read_text())
     boxes = [line.bbox for line in LINES]
@@ -120,7 +121,7 @@ def test_evaluate_guides_toward_each_crops_reference_when_asked(tiny_flux3: Path
     crops, _ = _referenced_set(tmp_path / "crops")
     _evaluate(tiny_flux3, crops, tmp_path / "caption")
 
-    exit_code = _evaluate(tiny_flux3, crops, tmp_path / "reference", "--reference-guidance", "3")
+    exit_code = _evaluate(tiny_flux3, crops, tmp_path / "reference", "--reference-guidance", "3").exit_code
 
     results = Results.model_validate_json((tmp_path / "reference" / "results.json").read_text())
     drawn = [(tmp_path / run / "generated" / "000.png").read_bytes() for run in ("caption", "reference")]

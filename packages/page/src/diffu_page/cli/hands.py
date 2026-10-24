@@ -18,7 +18,6 @@ from PIL import Image
 from pydantic import BaseModel
 
 from diffu_page.cli.evaluate import EvalCrop, HandFidelity, Hands, Results, crop_hands, hand_fidelity, read_crops
-from diffu_page.output import console
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 
@@ -76,7 +75,7 @@ def main(
     """Measure the hands of an evaluate run's drawings against their real crops and references."""
     report = measure_run(crops, run)
     (run / "hands.json").write_text(report.model_dump_json(indent=1), encoding="utf-8")
-    console.print(report.fidelity.model_dump_json(indent=1))
+    print(report.fidelity.model_dump_json(indent=1))  # machine output: rich would wrap it at the terminal's width
 
 
 if __name__ == "__main__":

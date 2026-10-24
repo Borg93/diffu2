@@ -39,9 +39,14 @@ class Drawer(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    name: str
+    name: str  # names the node and the dir its sheets go to
     model: Path
     loras: dict[str, Path] = Field(default_factory=dict)
+
+    @field_validator("name")
+    @classmethod
+    def _plain_file_name(cls, name: str) -> str:
+        return plain_file_name(name)
 
 
 class PlannedPage(BaseModel):

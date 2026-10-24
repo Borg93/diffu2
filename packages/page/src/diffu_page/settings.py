@@ -14,11 +14,17 @@ class Settings(BaseSettings):
     Attributes:
         flux3_model: The FLUX.3 Klein directory (a Modular Diffusers repo), env ``FLUX3_MODEL``. None when unset: a
             command that needs a model then asks for ``--model`` (``cli.options.required_model``).
+        htr_model: The HTR model every drawn line is read back with (a Hub id or a local copy, for offline nodes), env
+            ``DIFFU_HTR_MODEL``.
+        htr_revision: Its pinned Hub revision, so every CER and unclear tag is read by the same weights; env
+            ``DIFFU_HTR_REVISION``, empty for a local copy.
     """
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     flux3_model: Path | None = Field(default=None, alias="FLUX3_MODEL")
+    htr_model: str = Field(default="Riksarkivet/trocr-base-handwritten-hist-swe-2", alias="DIFFU_HTR_MODEL")
+    htr_revision: str | None = Field(default="aa79fcb1850bf3155ebc442570d6c6bfc0ac8100", alias="DIFFU_HTR_REVISION")
 
 
 settings = Settings()

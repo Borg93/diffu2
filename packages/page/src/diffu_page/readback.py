@@ -5,11 +5,9 @@ from __future__ import annotations
 import torch
 from PIL import Image
 from transformers import TrOCRProcessor, VisionEncoderDecoderModel
+from transformers.models.trocr.modeling_trocr import TrOCRSinusoidalPositionalEmbedding
 
 from diffu_page.captions.prompt import LineRecord
-
-HTR = "Riksarkivet/trocr-base-handwritten-hist-swe-2"
-HTR_REVISION = "aa79fcb1850bf3155ebc442570d6c6bfc0ac8100"  # every CER and unclear tag read by the same weights
 
 
 def levenshtein(a: str, b: str) -> int:
@@ -42,7 +40,7 @@ def materialize_position_tables(model: VisionEncoderDecoderModel) -> None:
     initializes on the meta device) never fills it and the first forward fails with "Cannot copy out of meta tensor".
     """
     for module in model.modules():
-        if type(module).__name__ == "TrOCRSinusoidalPositionalEmbedding" and module.weights.is_meta:
+        if isinstance(module, TrOCRSinusoidalPositionalEmbedding) and module.weights.is_meta:
             table = module.get_embedding(module.weights.shape[0], module.embedding_dim, module.padding_idx)
             module.weights = table.to(model.device, model.dtype)
 

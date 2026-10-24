@@ -102,3 +102,8 @@ def test_draw_nodes_on_one_model_switch_its_loras_per_drawer(
 def test_planned_page_refuses_a_name_that_would_write_outside_the_out_dir(page: str) -> None:
     with pytest.raises(ValidationError, match="expected a plain file name"):
         PlannedPage.model_validate({"page": page, "plans": []})
+
+
+def test_drawer_refuses_a_name_that_would_put_its_sheets_outside_the_out_dir(tiny_flux3: Path) -> None:
+    with pytest.raises(ValidationError, match="expected a plain file name"):
+        Drawer(name="../flux3", model=tiny_flux3)

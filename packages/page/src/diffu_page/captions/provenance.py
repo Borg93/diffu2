@@ -10,7 +10,7 @@ from pydantic import BaseModel
 YEARS = re.compile(r"(1[5-9]\d\d)(?:\s*[-–]\s*(1[5-9]\d\d))?(-tal|-luku)?")
 # Folder names that went through a Mac SMB share carry the "SFM" encoding of characters Windows forbids at the end of
 # a name: a trailing space as U+F028, a trailing period as U+F029 (two GT collection folders end in U+F028).
-_SFM_DECODE = str.maketrans({"": " ", "": "."})
+_SFM_DECODE = str.maketrans({"\uf028": " ", "\uf029": "."})
 
 
 # The GT collection folder (minus "GT-" and the export date) -> the name its captions use: the style handle
