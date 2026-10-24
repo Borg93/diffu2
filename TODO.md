@@ -207,10 +207,11 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
       `diffu-init`'s repo (float32 weights, bfloat16 compute, logit-normal with shift 6 at 1 MP, no loss weighting);
       `jobs/diffu/run_smoke.sh` chains init, cache (2,000 v2 crops, ~46 GB), a 5-step run, 2,000 steps x 8, and
       the held-out eval of the export as a diffu repo.
-- [ ] **E1 smoke run** (after tonight's queue): pull main into the local checkout, `uv sync`, `jobs/setup_nemo_env.sh`
-      (installs diffu, diffu-page, diffu-train into NeMo's environment), then `jobs/diffu/run_smoke.sh`. Pass: the
-      loss falls, the export loads as a diffu repo, read-back CER on the held-out crops goes down from the random
-      init's.
+- [ ] **E1 smoke run**, running since 16:03 24 Oct (`jobs/diffu/run_smoke.sh`): the cache of 2,000 crops took 40
+      minutes (diffu's text encoder in transformers' slow fallback, see Inference speed), the 5-step run passed, 2,000
+      steps x 8 crops take about 3.5 hours (1.3 crops a second). Pass: the loss falls, the export loads as a diffu
+      repo, read-back CER on the held-out crops goes down from the random init's. Its eval samples at FLUX.3's shift
+      6.93, not the 6.0 it trains at (see Code).
 - [ ] **Training, after the smoke run**: the empty-prompt null swapped in by our dataset (p 0.1; NeMo's own dropout
       zeroes the embeddings; `diffu_train.dropout.CaptionDropout` does it for FLUX.3's image-edit items since
       2026-10-23: reuse it for diffu's text-to-image items, with the empty prompt cached by diffu's own text encoder),
@@ -275,8 +276,8 @@ Any scanned page as a template, not only pages with PAGE/ALTO ground truth.
 
 ## FLUX.3 reference runs
 
-- [ ] Tonight's results: v2 eval, steering test (style by name), first generated crops (`runs/flux3_pages/smoke`).
-- [ ] Decide on v3 (style by example) from the steering results; its results land tomorrow morning.
+- [x] v2 eval, steering test (style by name), first generated crops (`runs/flux3_pages/smoke`) and the v3 decision:
+      done 22 Oct (below).
 - [ ] Full fine-tune of FLUX.3 Klein instead of a LoRA: possible (NeMo's finetune mode), not on the GB10
       (~100 GB of weights, gradients and optimizer state): Leonardo, 4x A100 with FSDP, and ~100k+ crops to be worth
       it. Last resort after v3/v3b and a bigger LoRA (rank 64-128, longer); never shippable (license), so compute
@@ -297,7 +298,10 @@ Any scanned page as a template, not only pages with PAGE/ALTO ground truth.
       not its ink (30.2 vs 29.8; real 6.7): they draw near-black, bolder strokes whatever the reference's brown ink
       (checked by eye, `runs/flux3_style_v3/eval_val_step_1599/022_*`). Watch to_reference against
       to_other_references in v3c's and v3d's results.
-- [ ] Queue since 11:56 23 Oct (`queue_v3d_first.sh` in the session scratchpad, `runs/queue_v3d_first.log`): the
+- [x] Queue since 11:56 23 Oct, done: the control probe ran; v3d stopped while caching (15:54 23 Oct) for the
+      per-hand LoRA pilot, the user's call, and is not trained (whether to, now that four pages per writer suffice,
+      is the user's call). The plan as it stood (`queue_v3d_first.sh` in the session scratchpad,
+      `runs/queue_v3d_first.log`): the
       control probe (`jobs/flux3/run_probe.sh`: base FLUX.3 draws v3c's held-out crops with plain, described and
       contradicting captions: do described words move the hand at all?), then v3d (`jobs/flux3/run_v3d.sh`: described
       captions from the rebuilt crops, caption dropout 0.1, constant LR, 3,000 steps; results ~16:00 24 Oct), diffu
@@ -500,15 +504,13 @@ Captions (BFL; each needs a control probe on base FLUX.3, same crops and seeds, 
 Code (writing-python, diffusers):
 - [ ] Captions are made by rewriting generated prose (restyle `_replace_once`, `StaleCaptionError`): render reference
       captions directly from their parts.
-- [ ] One row model for the eval-dir rows (EvalRow, SteerRow, EvalCrop, Prompt are four copies); one Style
-      (PageStyle and restyle.Style are the same model).
-- [ ] `by_example_rows` does not catch StaleCaptionError (one stale template aborts the build after train.jsonl).
-- [ ] Positional-argument bundles (`crop_hands`, `plan_page`'s dead `settings`, `_plan`, CaptionDropout), studio graph
-      built from dicts, an unclosed file (probe_set.py:107), a dead constant (xml_replay `_TABLE_CONTAINERS`),
-      `@override` on Sampler methods that override nothing (nemo.py), duplicated `load_rgb`/`jpeg` helpers,
-      `sys.maxsize` as "all rows", the runner's `int(str(...))` round-trip.
-- [ ] Tests: exact-value asserts in the edit-caption tests (test_restyle), `pick`'s role-line rule never exercised,
-      a subset twin (tests/test_diffu.py size test), pytest-timeout so a hung Ray test fails alone.
+- [x] One row model for the eval-dir rows (EvalCrop, 24 Oct); `by_example_rows` leaves a stale caption out (24 Oct);
+      the unclosed file, the dead constant, the Sampler overrides, the duplicated `load_rgb`/`jpeg` helpers and
+      `sys.maxsize` are gone; exact-value edit-caption tests, the subset twin and pytest-timeout done (24 Oct).
+- [ ] Still open: one Style (PageStyle and restyle.Style, with the runner's test); positional-argument bundles
+      (`crop_hands`' optional reference pair, `plan_page`'s unused `settings`, CaptionDropout); the studio graph built
+      from dicts; the runner's `int(str(...))` round-trip (with the Ray work); `pick`'s role-line rule never exercised
+      by a test.
 - [ ] diffu samples at FLUX.3's shift 6.93 but trains with flow_shift 6.0: write diffu's scheduler config.
 - [ ] Guider edge: `stop` < 1 leaves the step state of the previous call (diffusers' own guider shares it); diffu's index
       has Hub components with an empty subfolder; the NeMo LoRA scale assumes plain LoRA (raise on rslora/patterns).
@@ -517,8 +519,10 @@ Code (writing-python, diffusers):
 Inference speed (ranked; re-profile on torch 2.14.1 first, one change at a time, gated on CER and the hand metrics):
 - [ ] 1. Fuse the LoRA (`fuse_lora` + `unload_lora_weights` after `set_adapters`; `unfuse_lora()` restores the base for
       a per-hand swap, or hotswap instead of fusing): est. 15-20% on the GB10 (the docs give no figure); prerequisite
-      for compile, FP8 and QKV fusion.
-- [ ] 2. Regional compile (`transformer.compile_repeated_blocks(fullgraph=True, dynamic=True)`; `dynamic` because
+      for compile, FP8 and QKV fusion. Built 24 Oct (`--fuse-loras`); measured tonight.
+- [ ] 2. Built 24 Oct (`--compile-blocks`, dynamic shapes: on CPU a static compile recompiled for every new crop size,
+      5-7 s a crop, the dynamic one 2.9 s after the first); measured tonight. Regional compile
+      (`transformer.compile_repeated_blocks(fullgraph=True, dynamic=True)`; `dynamic` because
       captions pad in 80-token steps and the guidance passes differ in length; our guider's hook stays outside the
       compiled blocks): the docs say full compile's speedup with 8-10x shorter compile time; their benchmarks show
       1.26x on FLUX.1-dev's transformer (not the ~1.5x noted before). Check recompiles with
