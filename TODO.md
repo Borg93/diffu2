@@ -392,6 +392,26 @@ Any scanned page as a template, not only pages with PAGE/ALTO ground truth.
       102/18.9). The second pass adds the ink's unevenness, not this page's colour: H's ink and paper are the
       volume's average. For a volume's own hand the second pass is optional; it earns its time where the ink must
       match one page, or on untrained drawings.
+- [x] The chain on 24 held-out windows (24 Oct; runs/chain_hand, scratchpad chain16/: the LoRAs' own eval drawings,
+      the second pass at 28 steps with the upsampler's instruction wording as a template filled with the volume's
+      medoid ink/paper hex and commonest colour words, PiD; each drawing against its own window's real crop). Medians,
+      LoRA / + PiD / + second pass / + both (real): 1715 (16 windows) ink stands out 130 / 132 / 71 / 76 (97), ink
+      colour gap 21.9 / 25.3 / 12.2 / 9.2, paper gap 6.1 / 7.2 / 11.9 / 12.8, letter-size gap 0.31 / 0.27 / 0.49 / 0.48;
+      Pahlman (8) 164 / 158 / 115 / 120 (126), 24.3 / 24.9 / 11.8 / 8.6, 2.1 / 3.2 / 5.5 / 4.7, 0.27 / 0.26 / 0.28 /
+      0.25. Writer identification (first 8 windows; scratchpad writer/report_chain.json): 1715 83% / 74% / 0% / 12%
+      (real 87%), Pahlman 97% / 98% / 0% / 0% (real 97%); the second pass's lines are named Jämtlands domsaga and the
+      Finnish court records. By eye: the ink turns the right brown, every page gets the template's aged, stained,
+      yellow paper (stains on Pahlman's clean journal), the 1715 ink fades past the real, the letterforms stay; the
+      identifier reacts to the stroke rendering. Verdict: not a default step (it doubles the time a window). The
+      LoRAs' ink is their weak point: it stands out too much and its colour is further from the real ink than
+      untrained FLUX.3's in 8 of 8 1715 windows. Fix it where it goes wrong, in training (below).
+- [ ] Queued 24 Oct, after diffu E1b (analysed by scratchpad analyze_overnight.sh as each finishes, tables beside the
+      runs): (1) the ink-caption test (scratchpad inkcap/): the 1715 LoRA retrained on captions stating each window's
+      measured ink and paper hex (data_flux3/hand_overstat_ink), drawn on held-out windows asked for their own real
+      colours, beside untrained FLUX.3 and the plain LoRA on the same captions: runs/flux3_hand_overstat_ink/compare.txt;
+      (2) guidance strength 2 and 3 for the 1715 and Pahlman LoRAs (is the dark ink a guidance effect?):
+      runs/guidance_hand/compare_*.txt; (3) an ink-only second pass that keeps the paper (runs/chain_hand/*/HI,
+      measure_HI.log); (4) Landskapshandlingar's 4-page LoRA, and writer identification over all four 4-page LoRAs.
 - [x] Reference guidance probe (runs/refguide_probe; untrained FLUX.3, the described captions and seeds of the control
       runs/probe_described/described, its first 11 crops; scratchpad refguide/compare_refguide.py). Carry-over from
       the example (paper yellowness / ink lightness / ink yellowness / slant) at reference scale 1, 2, 3.5:
