@@ -121,9 +121,26 @@ def _load_page(collection_dir: Path, xml_path: Path) -> Page | None:
 
 
 def _find_scan(xml_path: Path) -> Path | None:
-    """The scan a PAGE XML in ``<volume>/page/`` describes: the same stem, one folder up."""
-    candidates = (xml_path.parent.parent / f"{xml_path.stem}{suffix}" for suffix in SCAN_SUFFIXES)
+    """The scan a PAGE XML in ``<volume>/page/`` describes, one folder up: the image its ``Page/@imageFilename``
+    names, else one with the PAGE file's stem. A volume can hold a page as two images cut differently (a JPEG and a
+    TIFF), and the coordinates fit only the named one."""
+    folder = xml_path.parent.parent
+    named = _named_image(xml_path)
+    if named is not None and (folder / named).is_file():
+        return folder / named
+    candidates = (folder / f"{xml_path.stem}{suffix}" for suffix in SCAN_SUFFIXES)
     return next((path for path in candidates if path.is_file()), None)
+
+
+def _named_image(xml_path: Path) -> str | None:
+    """The file name a PAGE file's ``Page/@imageFilename`` gives, read up to its ``Page`` element; only the name's
+    last part, so it never leads out of the volume."""
+    with xml_path.open("rb") as source:
+        for _, element in ET.iterparse(source, events=("start",)):
+            if local_name(element.tag) == "Page":
+                name = element.get("imageFilename")
+                return Path(name).name if name else None
+    return None
 
 
 def split_of(page: Page, val_frac: float) -> str:

@@ -7,6 +7,7 @@ import json
 import shutil
 from pathlib import Path
 
+import numpy as np
 from PIL import Image
 
 from diffu_page.crops.geometry import CropSettings
@@ -34,3 +35,28 @@ def test_build_records_a_page_it_cannot_read_and_writes_the_crops_of_the_rest(
     assert json.loads((out / "failed_pages.json").read_text()) == failed
     assert sorted(record["file_name"] for record in records) == sorted(tile.name for tile in out.glob("train/*.jpg"))
     assert records
+
+
+def _grey_levels(tile: Path) -> set[int]:
+    with Image.open(tile) as image:
+        return set(np.unique(np.asarray(image.convert("L"))).tolist())
+
+
+def test_build_cuts_the_image_the_page_xml_names_beside_another_scan_of_the_page(
+    body_and_notes_page: Path, tmp_path: Path
+) -> None:
+    volume = tmp_path / "gt" / COLLECTION / VOLUME / VOLUME
+    (volume / "page").mkdir(parents=True)
+    xml = body_and_notes_page.read_text(encoding="utf-8").replace(
+        'imageFilename="page.jpg"', 'imageFilename="0001.tif"'
+    )
+    (volume / "page" / "0001.xml").write_text(xml, encoding="utf-8")
+    Image.new("RGB", (2000, 1900), "white").save(volume / "0001.jpg")  # another cut of the page, as a volume may hold
+    Image.new("RGB", (2000, 1900), "black").save(volume / "0001.tif")  # the image the PAGE coordinates belong to
+    out = tmp_path / "out"
+
+    build(tmp_path / "gt", [COLLECTION], out, max_pages=1, val_frac=0.0, seed=0, settings=CropSettings())
+
+    tiles = sorted(out.glob("train/*.jpg"))
+    assert tiles
+    assert set().union(*map(_grey_levels, tiles)) == {0}
