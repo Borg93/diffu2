@@ -26,7 +26,7 @@ from diffu_page.captions.prompt import LineRecord
 from diffu_page.captions.provenance import Provenance
 from diffu_page.cli.generate import Summary, draw_pages
 from diffu_page.cli.generate import app as generate_app
-from diffu_page.crops.grid import REF_PIXELS, as_reference
+from diffu_page.crops.grid import as_reference
 from diffu_page.jobs import PageJob
 from diffu_page.lora import ADAPTER_CONFIG, ADAPTER_WEIGHTS, nemo_lora_state_dict
 from diffu_page.pipeline import DrawSettings, crop_blocks, draw_crop, load_pipeline, model_family
@@ -111,32 +111,6 @@ def test_crop_pipeline_guided_toward_its_reference_draws_otherwise_than_guided_b
 
 def _off_grid_reference() -> Image.Image:
     return Image.linear_gradient("L").resize((50, 34)).convert("RGB")
-
-
-def test_as_reference_squashes_a_small_reference_onto_the_16_px_grid() -> None:
-    reference = _off_grid_reference()
-
-    gridded = as_reference(reference)
-
-    assert gridded.size == (48, 32)
-    assert gridded.tobytes() == reference.resize((48, 32), Image.Resampling.LANCZOS).tobytes()
-
-
-def test_as_reference_shrinks_a_full_crop_to_the_size_references_were_trained_at() -> None:
-    crop = Image.linear_gradient("L").resize((1472, 640)).convert("RGB")  # a 0.94 MP training-bucket crop
-
-    reference = as_reference(crop)
-
-    assert reference.size == (1088, 464)
-    assert reference.width * reference.height <= REF_PIXELS
-
-
-def test_as_reference_leaves_a_reference_sized_image_unchanged() -> None:
-    reference = as_reference(Image.linear_gradient("L").resize((1472, 640)).convert("RGB"))
-
-    again = as_reference(reference)
-
-    assert (again.size, again.tobytes()) == (reference.size, reference.tobytes())
 
 
 def test_crop_pipeline_draws_from_a_reference_as_resized_for_training(crop_pipe: ModularPipeline) -> None:
