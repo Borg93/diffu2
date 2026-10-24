@@ -19,55 +19,19 @@ The image-edit config also takes ``caption_dropout``: that share of the pairs tr
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from dataclasses import dataclass  # noqa: TID251 -- NeMo builds dataloaders only from dataclass configs
 from pathlib import Path
 from typing import override
 
-import torch
 from nemo_automodel.components.datasets.diffusion.collate_fns import TextToImageDataloaderConfig
 from nemo_automodel.components.datasets.diffusion.image_edit_dataset import ImageEditDataloaderConfig
 from nemo_automodel.components.datasets.diffusion.loader import DiffusionDataloaderBuild
 from nemo_automodel.components.datasets.diffusion.sampler import SequentialBucketSampler
-from torch.utils.data import Sampler
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from diffu_train.dropout import CaptionDropout, EmptyPrompt, SampleSource
-
-
-class InterleavedBucketSampler(Sampler[list[int]]):
-    """The batches of a ``SequentialBucketSampler``, shuffled across buckets; resumable mid-epoch."""
-
-    def __init__(self, buckets: SequentialBucketSampler) -> None:
-        super().__init__()
-        self._buckets = buckets
-        self._epoch = 0
-        self._resume_at = 0
-        self._yielded = 0
-
-    def __len__(self) -> int:
-        return len(self._buckets)
-
-    @override
-    def __iter__(self) -> Iterator[list[int]]:
-        batches = list(self._buckets)
-        order = torch.randperm(len(batches), generator=torch.Generator().manual_seed(self._buckets.seed + self._epoch))
-        self._yielded, self._resume_at = self._resume_at, 0
-        for index in order[self._yielded :].tolist():
-            self._yielded += 1
-            yield batches[index]
-
-    def set_epoch(self, epoch: int) -> None:
-        self._epoch = epoch
-        self._buckets.set_epoch(epoch)
-
-    def state_dict(self) -> dict[str, int]:
-        return {"epoch": self._epoch, "batches_yielded": self._yielded}
-
-    def load_state_dict(self, state: dict[str, int]) -> None:
-        self.set_epoch(state["epoch"])
-        self._resume_at = state["batches_yielded"]
-
+from diffu_train.sampler import InterleavedBucketSampler
 
 type DatasetWrap = Callable[[SampleSource], SampleSource]
 
