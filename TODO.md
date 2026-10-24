@@ -439,10 +439,15 @@ Any scanned page as a template, not only pages with PAGE/ALTO ground truth.
       character would be tagged unclear though drawn right. Read printed lines with a printed-text OCR (or don't tag
       them from this read-back), and skip the unclear tag for lines too short to read.
 - [ ] Forms and mixed print/hand still need ground truth to train and evaluate on (none in ours).
-- [ ] Damage test queued (queue_day3.sh): the Landskapshandlingar LoRA retrained on captions stating each window's
-      measured damage (scratchpad damage/: damage.py, caption_damage.py; data_flux3/hand_landskap_dmg). The current
-      LoRA draws the film edges (0.36/0.39/0.33 where real 0.38/0.39/0.41) but not the stains (blotches 0.01 vs 0.12)
-      or the uneven light (0.10 vs 0.17); untrained FLUX.3 none of them.
+- [x] Damage test (24 Oct; runs/flux3_hand_landskap_dmg, scratchpad damage/compare_damage.py, damage_sheet.jpg): the
+      Landskapshandlingar LoRA retrained on captions that state each window's measured damage (same recipe, 700
+      steps), on the 8 held-out windows. Medians, real / plain-caption LoRA / damage-caption LoRA / untrained FLUX.3 on
+      the damage captions: uneven light 0.170 / 0.103 / 0.137 / 0.061, stains 0.123 / 0.011 / 0.074 / 0.017, film
+      edges 0.210 / 0.075 / 0.180 / 0.066, ink fading 0.091 / 0.060 / 0.040 / 0.286. The words carry the damage only
+      through training, and only part of it: by eye the drawings stay clean and crisp beside the film's heavy water
+      stains and blurred ink, and the ink gets darker, not fainter. The hand holds (slant gap 9.0 -> 7.0, spacing 0.27
+      -> 0.19; letter size 0.57 -> 0.72). Damage as a caption knob works but is weak; the second pass or a
+      damage-specific LoRA may do more.
 - [x] Per-hand LoRA from few pages (24 Oct): the 1715 recipe on the windows of 4 and of 10 of its 36 training
       pages (data_flux3/hand_overstat_p4, _p10; 23 and 44 windows), 350 steps of 2, on the same 8 held-out windows
       as the 36-page LoRA. Four pages carry the hand: by eye the three LoRAs draw one writer, and the writer
