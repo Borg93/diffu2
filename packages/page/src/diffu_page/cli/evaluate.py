@@ -26,6 +26,7 @@ from diffu_page.captions.prompt import LineRecord
 from diffu_page.cli.options import (
     DEFAULTS,
     Device,
+    FuseLoras,
     Guidance,
     Lora,
     MaxLineCer,
@@ -163,6 +164,7 @@ def evaluate(
     text_layer: TextLayers = None,
     device: Device = DEFAULTS.device,
     max_line_cer: MaxLineCer = DEFAULTS.max_line_cer,
+    fuse_loras: FuseLoras = DEFAULTS.fuse_loras,
 ) -> None:
     """Draw held-out crops from their stored captions and compare their read-back with the real crops'."""
     model = required_model(model)
@@ -180,6 +182,7 @@ def evaluate(
         max_line_cer=max_line_cer,
         text_layers=tuple(text_layer) if text_layer else None,
         device=device,
+        fuse_loras=fuse_loras,
     )
     pipe = load_pipeline(model, crop_blocks, loras=loras, settings=draw_settings)
     samples: list[CropResult] = []

@@ -27,6 +27,9 @@ TextLayers = Annotated[
 Device = Annotated[str, typer.Option(help="where the models run")]
 MaxLineCer = Annotated[float, typer.Option(help="the read-back CER above which a line's label is tagged unclear")]
 Format = Annotated[LabelFormat, typer.Option("--format", help="the labels' format")]
+FuseLoras = Annotated[
+    bool, typer.Option(help="fuse the LoRAs into the transformer at load: faster, but they can't be switched after")
+]
 
 
 class Lora(BaseModel):

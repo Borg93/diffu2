@@ -200,8 +200,9 @@ def test_draw_crop_refuses_reference_guidance_on_a_crop_without_a_reference(crop
         draw_crop(crop_pipe, _plan(), name="000", seed=0, reference=None, settings=guided)
 
 
+@pytest.mark.parametrize("fuse", [pytest.param(False, id="adapter"), pytest.param(True, id="fused")])
 def test_nemo_lora_loads_at_its_trained_strength(
-    tiny_flux3: Path, crop_pipe: ModularPipeline, write_nemo_lora: Callable[..., Path]
+    tiny_flux3: Path, crop_pipe: ModularPipeline, write_nemo_lora: Callable[..., Path], fuse: bool
 ) -> None:
     torch.manual_seed(0)
     linear = crop_pipe.transformer.get_submodule(LORA_MODULE)
@@ -210,11 +211,13 @@ def test_nemo_lora_loads_at_its_trained_strength(
     lora_dir = write_nemo_lora(LORA_MODULE, a, b, alpha=4)  # scale alpha / r = 2
     x = torch.randn(3, linear.in_features)
     expected = linear(x.to(linear.weight.dtype)).float() + 2 * x @ a.T @ b.T
+    settings = TINY_SETTINGS.model_copy(update={"fuse_loras": fuse})
 
-    pipe = load_pipeline(tiny_flux3, crop_blocks, loras={"v2": lora_dir}, settings=TINY_SETTINGS)
+    pipe = load_pipeline(tiny_flux3, crop_blocks, loras={"v2": lora_dir}, settings=settings)
 
-    got = pipe.transformer.get_submodule(LORA_MODULE)(x.to(linear.weight.dtype)).float()
-    torch.testing.assert_close(got, expected, rtol=2e-2, atol=2e-1)
+    module = pipe.transformer.get_submodule(LORA_MODULE)
+    assert (type(module) is torch.nn.Linear) == fuse  # fused: a plain Linear, the LoRA in its weight
+    torch.testing.assert_close(module(x.to(linear.weight.dtype)).float(), expected, rtol=2e-2, atol=2e-1)
 
 
 def _rslora(lora_dir: Path) -> None:

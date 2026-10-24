@@ -36,6 +36,7 @@ from diffu_page.cli.options import (
     DEFAULTS,
     Device,
     Format,
+    FuseLoras,
     Guidance,
     Lora,
     MaxLineCer,
@@ -190,6 +191,7 @@ def generate(
     device: Device = DEFAULTS.device,
     max_line_cer: MaxLineCer = DEFAULTS.max_line_cer,
     label_format: Format = DEFAULTS.label_format,
+    fuse_loras: FuseLoras = DEFAULTS.fuse_loras,
     profile_dir: Annotated[Path | None, typer.Option("--profile", help="write a trace of crops 2-3 here")] = None,
 ) -> None:
     """Draw every crop of the templates, refilled with the text, in the given style."""
@@ -212,6 +214,7 @@ def generate(
         max_line_cer=max_line_cer,
         text_layers=tuple(text_layer) if text_layer else None,
         device=device,
+        fuse_loras=fuse_loras,
     )
     loras = {adapter.name: adapter.path for adapter in lora or []}
     pipe = load_pipeline(model, crop_blocks, loras=loras, settings=draw_settings)

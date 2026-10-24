@@ -156,6 +156,8 @@ class DrawSettings(BaseModel):
         text_layers: The text-encoder hidden layers stacked into the prompt embeddings; ``None`` is the model's own
             choice (FLUX.3: every 4th of Qwen3-VL's).
         device: Where the components run.
+        fuse_loras: Fuse the LoRAs into the transformer's weights at load and drop their adapter layers: no LoRA
+            matmuls per step, and the transformer can be compiled; the LoRAs can't be switched or rescaled after.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -167,6 +169,7 @@ class DrawSettings(BaseModel):
     max_line_cer: float = MAX_LINE_CER
     text_layers: tuple[int, ...] | None = None
     device: str = "cuda"
+    fuse_loras: bool = False
 
     def pipeline_inputs(self) -> dict[str, object]:
         """The settings a pipeline takes per call, by input name (the guidance scale and device are set at load)."""
@@ -185,7 +188,8 @@ type BlocksFor = Callable[[ModelFamily], SequentialPipelineBlocks]
 def load_pipeline(model: Path, blocks: BlocksFor, *, loras: dict[str, Path], settings: DrawSettings) -> ModularPipeline:
     """``blocks`` built for the model at ``model``, its components loaded (VAE in float32, the rest in bfloat16) on
     ``settings.device``, the guider at ``settings.guidance_scale`` (and ``settings.reference_guidance_scale``) and every
-    LoRA of ``loras`` (NeMo ``model/`` dirs by adapter name) active.
+    LoRA of ``loras`` (NeMo ``model/`` dirs by adapter name) active, fused into the transformer when
+    ``settings.fuse_loras``.
 
     Everything that can be checked without the model is checked first: its family, the guider and every LoRA.
 
@@ -209,6 +213,9 @@ def load_pipeline(model: Path, blocks: BlocksFor, *, loras: dict[str, Path], set
         pipe.load_lora_weights(state_dict, adapter_name=name)
     if loras:
         pipe.set_adapters(list(loras))
+    if loras and settings.fuse_loras:
+        pipe.fuse_lora(adapter_names=list(loras))
+        pipe.unload_lora_weights()
     return pipe
 
 
