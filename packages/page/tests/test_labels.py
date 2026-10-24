@@ -4,11 +4,13 @@ regions, reading order, baselines and tags."""
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import pytest
 import xmlschema
+from pydantic import ValidationError
 
 from diffu_page.blocks.ground_truth import line_labels, rule_rects
 from diffu_page.captions.look import ScanLook
@@ -21,6 +23,10 @@ from diffu_page.plan import CropPlan, PageStyle, plan_page
 # PRImA's PAGE 2019-07-15 schema (Apache-2.0, github.com/PRImA-Research-Lab/PAGE-XML,
 # PAGE-release/gts/pagecontent/2019-07-15/pagecontent.xsd): the version the exports declare
 _PAGE_SCHEMA = Path(__file__).parent / "schemas" / "page2019.xsd"
+# The Library of Congress's ALTO 4.4 schema (CC BY-SA 4.0, loc.gov/standards/alto/v4/alto-4-4.xsd, sha256 5564fd29) and
+# the METS XLink schema it imports (loc.gov/standards/xlink/xlink.xsd, sha256 f1f5bb60), read from here, not the network
+_ALTO_SCHEMA = Path(__file__).parent / "schemas" / "alto-4-4.xsd"
+_XLINK_SCHEMA = Path(__file__).parent / "schemas" / "xlink.xsd"
 
 
 @pytest.fixture(scope="module")
@@ -29,8 +35,14 @@ def prima_schema() -> xmlschema.XMLSchema:
     return xmlschema.XMLSchema(str(_PAGE_SCHEMA))
 
 
+@pytest.fixture(scope="module")
+def alto_schema() -> xmlschema.XMLSchema:
+    """The ALTO 4.4 XSD with its XLink import, compiled once for the module."""
+    return xmlschema.XMLSchema(str(_ALTO_SCHEMA), locations=[("http://www.w3.org/1999/xlink", str(_XLINK_SCHEMA))])
+
+
 def _labels() -> PageLabels:
-    """A page number, a running-text line with a baseline that read back badly, and a table cell."""
+    """A page number, a running-text line with a baseline that read back badly, and a margin note."""
     return PageLabels(
         width=800,
         height=1000,
@@ -44,7 +56,7 @@ def _labels() -> PageLabels:
                 order=1,
                 tag="unclear",
             ),
-            LineLabel(text="12 dr", polygon=[(10, 300), (90, 300), (90, 330), (10, 330)], region="table", order=2),
+            LineLabel(text="12 dr", polygon=[(10, 300), (90, 300), (90, 330), (10, 330)], region="marginalia", order=2),
         ],
     )
 
@@ -138,6 +150,66 @@ def test_page_xml_validates_against_the_prima_schema(prima_schema: xmlschema.XML
     assert errors == []
 
 
+@pytest.mark.parametrize("labels", [_labels(), _form_labels()], ids=["text", "form"])
+def test_alto_validates_against_the_alto_4_4_schema(alto_schema: xmlschema.XMLSchema, labels: PageLabels) -> None:
+    errors = list(alto_schema.iter_errors(to_alto(labels)))
+
+    assert errors == []
+
+
+type ReadLine = tuple[str, str, str, str, str | None]  # text, region kind, production, tag, baseline points
+
+
+def _read_page(xml: str) -> list[ReadLine]:
+    """Each line of a PAGE export, in document order, as its labels said it."""
+    lines: list[ReadLine] = []
+    for region in (e for e in ET.fromstring(xml).iter() if _local(e) == "TextRegion"):
+        in_cell = any(_local(e) == "TableCellRole" for e in region.iter())
+        kind = "table" if in_cell else {"paragraph": "body"}.get(region.get("type", ""), region.get("type", ""))
+        for line in (e for e in region if _local(e) == "TextLine"):
+            baseline = next((e.get("points") for e in line if _local(e) == "Baseline"), None)
+            text = next(e.text or "" for e in line.iter() if _local(e) == "Unicode")
+            production = "printed" if line.get("production") == "printed" else "handwritten"
+            tag = "unclear" if "unclear {" in line.get("custom", "") else ""
+            lines.append((text, kind, production, tag, baseline))
+    return lines
+
+
+def _read_alto(xml: str) -> list[ReadLine]:
+    """Each line of an ALTO export, in document order, as its labels said it: kinds and tags read through TAGREFS."""
+    root = ET.fromstring(xml)
+    tags = {e.get("ID", ""): (e.get("TYPE", ""), e.get("LABEL", "")) for e in root.iter() if _local(e).endswith("Tag")}
+    lines: list[ReadLine] = []
+    for block in (e for e in root.iter() if _local(e) == "TextBlock"):
+        (_, kind), *_ = (tags[ref] for ref in block.get("TAGREFS", "").split())
+        for line in (e for e in block if _local(e) == "TextLine"):
+            refs = dict(tags[ref] for ref in line.get("TAGREFS", "").split())
+            text = next(e.get("CONTENT", "") for e in line if _local(e) == "String")
+            lines.append((text, kind, refs.get("production", ""), refs.get("readback", ""), line.get("BASELINE")))
+    return lines
+
+
+@pytest.mark.parametrize("labels", [_labels(), _form_labels()], ids=["text", "form"])
+@pytest.mark.parametrize(
+    ("export_as", "read"), [(to_page_xml, _read_page), (to_alto, _read_alto)], ids=["page", "alto"]
+)
+def test_both_formats_carry_each_lines_text_kind_production_tag_and_baseline_in_reading_order(
+    labels: PageLabels, export_as: Callable[[PageLabels], str], read: Callable[[str], list[ReadLine]]
+) -> None:
+    exported = export_as(labels)
+
+    assert read(exported) == [
+        (
+            line.text,
+            line.region,
+            line.production.value,
+            line.tag,
+            " ".join(f"{x},{y}" for x, y in line.baseline) or None,
+        )
+        for line in sorted(labels.lines, key=lambda line: line.order)
+    ]
+
+
 def test_page_xml_of_a_planned_table_crop_reads_back_as_the_same_table(table_page: Path, tmp_path: Path) -> None:
     style = PageStyle(
         provenance=Provenance(title="the archive", years=""), look=ScanLook(greyscale=False, paper="cream", ink="brown")
@@ -169,8 +241,8 @@ def test_page_xml_lists_the_regions_in_reading_order_with_their_page_types() -> 
     order = [e.get("regionRef") for e in root.iter() if _local(e) == "RegionRefIndexed"]
     types = {e.get("id"): e.get("type") for e in root.iter() if _local(e) == "TextRegion"}
 
-    assert order == ["page-number", "body", "table"]
-    assert types == {"page-number": "page-number", "body": "paragraph", "table": "other"}
+    assert order == ["page-number", "body", "marginalia"]
+    assert types == {"page-number": "page-number", "body": "paragraph", "marginalia": "marginalia"}
 
 
 def test_page_xml_of_a_planned_crop_keeps_each_body_block_its_own_region(wide_and_narrow_body_page: Path) -> None:
@@ -198,15 +270,11 @@ def test_page_xml_tags_an_unclear_line_the_way_transkribus_does() -> None:
 
     customs = {e.get("id"): e.get("custom") for e in root.iter() if _local(e) == "TextLine"}
 
-    assert customs == {"page-number_l0": None, "body_l1": "structure {type:unclear;}", "table_l2": None}
-
-
-def test_alto_writes_each_line_as_one_string_with_its_text() -> None:
-    root = ET.fromstring(to_alto(_labels()))
-
-    contents = [e.get("CONTENT") for e in root.iter() if _local(e) == "String"]
-
-    assert contents == ["2.", "Hej varlden", "12 dr"]
+    assert customs == {  # Transkribus: each line's place in its region, and an unclear text range over the whole line
+        "page-number_l0": "readingOrder {index:0;}",
+        "body_l1": "readingOrder {index:0;} unclear {offset:0; length:11;}",
+        "marginalia_l2": "readingOrder {index:0;}",
+    }
 
 
 def test_alto_writes_each_ruled_line_as_a_graphical_element() -> None:
@@ -232,12 +300,18 @@ def test_alto_matches_the_htrflow_shape() -> None:
     assert refs == [e.get("ID") for e in root.iter() if _local(e) == "TextLine"]
 
 
-def test_page_and_alto_carry_baselines() -> None:
-    labels = _labels()
-    page = ET.fromstring(to_page_xml(labels))
-    alto = ET.fromstring(to_alto(labels))
-    assert [e.get("points") for e in page.iter() if _local(e) == "Baseline"] == ["10,125 110,125"]
-    assert [e.get("BASELINE") for e in alto.iter() if _local(e) == "TextLine"] == [None, "10,125 110,125", None]
+@pytest.mark.parametrize(
+    ("region", "cell"),
+    [
+        pytest.param("table", None, id="table-without-cell"),
+        pytest.param("body", CellRef(table="t", row=0, column=0), id="cell-outside-table"),
+    ],
+)
+def test_line_label_refuses_a_table_line_without_its_cell_and_a_cell_outside_a_table(
+    region: str, cell: CellRef | None
+) -> None:
+    with pytest.raises(ValidationError, match="in the table region exactly when it has a table cell"):
+        LineLabel(text="12 dr", polygon=[(10, 300), (90, 300), (90, 330), (10, 330)], region=region, order=0, cell=cell)
 
 
 def test_export_refuses_an_unknown_format() -> None:

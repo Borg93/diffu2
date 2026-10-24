@@ -11,10 +11,10 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable
 from importlib.metadata import PackageNotFoundError, version
-from typing import Literal
+from typing import Literal, Self
 from xml.sax.saxutils import escape
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from diffu_page.layout.model import ROLE_NAMES, RUNNING_TEXT, TABLE, CellRef, Production
 
@@ -42,6 +42,13 @@ class LineLabel(BaseModel):
     tag: str = ""  # "unclear" when the line read back badly
     production: Production = Production.HANDWRITTEN
     cell: CellRef | None = None  # the table cell the line is written in
+
+    @model_validator(mode="after")
+    def _table_lines_have_cells(self) -> Self:
+        """PAGE says a line is in a table only through its cell, so a table line without one could not be written."""
+        if (self.region == TABLE) != (self.cell is not None):
+            raise ValueError(f"a line is in the table region exactly when it has a table cell: {self.text!r}")
+        return self
 
 
 class LabelRegion(BaseModel):
@@ -122,13 +129,15 @@ def _pts(points: list[Point]) -> str:
     return " ".join(f"{x},{y}" for x, y in points)
 
 
-def _page_text_line(region: str, line: LineLabel) -> str:
-    """One ``TextLine``: Coords, Baseline, TextEquiv, and the tag as Transkribus writes it into ``@custom``."""
+def _page_text_line(region: str, line: LineLabel, index: int) -> str:
+    """One ``TextLine``: Coords, Baseline, TextEquiv, and in ``@custom``, as Transkribus writes them, its place in its
+    region and, for a tagged line, the tag over its whole text (``unclear {offset:0; length:n;}``)."""
     baseline = f'        <Baseline points="{_pts(line.baseline)}"/>\n' if line.baseline else ""
-    custom = f' custom="structure {{type:{_esc(line.tag)};}}"' if line.tag else ""
+    tag = f" {_esc(line.tag)} {{offset:0; length:{len(line.text)};}}" if line.tag else ""
     production = "printed" if line.production is Production.PRINTED else "handwritten-cursive"
     return (
-        f'      <TextLine id="{_esc(region)}_l{line.order}" production="{production}"{custom}>\n'
+        f'      <TextLine id="{_esc(region)}_l{line.order}" production="{production}" '
+        f'custom="readingOrder {{index:{index};}}{tag}">\n'
         f'        <Coords points="{_pts(line.polygon)}"/>\n'
         f"{baseline}"
         f"        <TextEquiv><Unicode>{_esc(line.text)}</Unicode></TextEquiv>\n"
@@ -157,7 +166,7 @@ def _page_text_region(region: LabelRegion, indent: str = "    ") -> str:
         f'{indent}<TextRegion id="{_esc(region.id)}" type="{_page_type(region.kind)}">\n'
         f'{indent}  <Coords points="{_rect_points(_region_rect(region.lines))}"/>\n'
         + role
-        + "\n".join(_page_text_line(region.id, ln) for ln in region.lines)
+        + "\n".join(_page_text_line(region.id, ln, k) for k, ln in enumerate(region.lines))
         + f"\n{indent}</TextRegion>"
     )
 
@@ -238,6 +247,41 @@ def _alto_description(image: str) -> str:
     )
 
 
+def _region_tag(kind: str) -> str:
+    return f"region_{kind}"
+
+
+def _production_tag(production: Production) -> str:
+    return f"production_{production.value}"
+
+
+def _readback_tag(tag: str) -> str:
+    return f"readback_{tag}"
+
+
+def _alto_tags(regions: list[LabelRegion]) -> str:
+    """ALTO ``<Tags>``: what PAGE says in region types, ``production`` and ``@custom``, as the tags the blocks and
+    lines reference (``TAGREFS``): a ``StructureTag`` per region kind, an ``OtherTag`` per production and per
+    read-back tag (``unclear``). Only the tags in use, so every one is referenced."""
+    lines = [line for region in regions for line in region.lines]
+    kinds = sorted({region.kind for region in regions})
+    productions = sorted({line.production for line in lines})
+    readbacks = sorted({line.tag for line in lines if line.tag})
+    tags = [
+        *(f'    <StructureTag ID="{_esc(_region_tag(kind))}" TYPE="region" LABEL="{_esc(kind)}"/>' for kind in kinds),
+        *(
+            f'    <OtherTag ID="{_production_tag(production)}" TYPE="production" LABEL="{production.value}"/>'
+            for production in productions
+        ),
+        *(
+            f'    <OtherTag ID="{_esc(_readback_tag(tag))}" TYPE="readback" LABEL="{_esc(tag)}" '
+            'DESCRIPTION="the line read back badly: the drawing may not show its text"/>'
+            for tag in readbacks
+        ),
+    ]
+    return "  <Tags>\n" + "\n".join(tags) + "\n  </Tags>\n"
+
+
 def _alto_reading_order(regions: list[LabelRegion]) -> str:
     """ALTO ``<ReadingOrder>``: a nested ``OrderedGroup`` per region, an ``ElementRef`` per line (REF =
     the line's ``TextLine`` ID) — the htrflow shape, so a reader can recover line sequence without geometry."""
@@ -259,9 +303,10 @@ def _alto_text_line(region: str, line: LineLabel) -> str:
     """One ``TextLine``: its box, its polygon as a ``Shape``, its baseline, and its text as one ``String``."""
     lx, ly, lw, lh = _bbox(line.polygon)
     baseline = f' BASELINE="{_pts(line.baseline)}"' if line.baseline else ""
+    tags = " ".join([_production_tag(line.production), *([_readback_tag(line.tag)] if line.tag else [])])
     return (
         f'        <TextLine ID="{_esc(region)}_l{line.order}" HPOS="{lx}" VPOS="{ly}" '
-        f'WIDTH="{lw}" HEIGHT="{lh}"{baseline}>\n'
+        f'WIDTH="{lw}" HEIGHT="{lh}"{baseline} TAGREFS="{_esc(tags)}">\n'
         f'          <Shape><Polygon POINTS="{_pts(line.polygon)}"/></Shape>\n'
         f'          <String ID="{_esc(region)}_l{line.order}_s" HPOS="{lx}" VPOS="{ly}" WIDTH="{lw}" '
         f'HEIGHT="{lh}" WC="1.0" CONTENT="{_esc(line.text)}"/>\n'
@@ -270,16 +315,19 @@ def _alto_text_line(region: str, line: LineLabel) -> str:
 
 
 def to_alto(labels: PageLabels) -> str:
-    """ALTO v4 in the Riksarkivet/htrflow shape: a ``Processing`` provenance block, a ``ReadingOrder``,
-    then ``TextBlock`` -> ``TextLine`` (``Shape``/``Polygon`` outline + ``BASELINE``) -> one ``String``, a table
-    cell's lines in their own ``TextBlock``, and a ``GraphicalElement`` per ruled line.
+    """ALTO v4 in the Riksarkivet/htrflow shape: a ``Processing`` provenance block, the ``Tags`` that carry what
+    PAGE says in region types, production and Transkribus tags, a ``ReadingOrder``, then ``TextBlock`` (its region
+    kind in ``TAGREFS``) -> ``TextLine`` (``Shape``/``Polygon`` outline + ``BASELINE``, its production and read-back
+    tag in ``TAGREFS``) -> one ``String``, a table cell's lines in their own ``TextBlock``, and a ``GraphicalElement``
+    per ruled line.
     ``PC``/``WC`` confidences are 1.0 — this is ground truth, not a recognition guess."""
     regions = _ordered_regions(labels)
     blocks: list[str] = []
     for region in regions:
         bx, by, bw, bh = _bbox([p for ln in region.lines for p in ln.polygon])
         blocks.append(
-            f'      <TextBlock ID="{_esc(region.id)}" HPOS="{bx}" VPOS="{by}" WIDTH="{bw}" HEIGHT="{bh}" CS="false">\n'
+            f'      <TextBlock ID="{_esc(region.id)}" HPOS="{bx}" VPOS="{by}" WIDTH="{bw}" HEIGHT="{bh}" CS="false" '
+            f'TAGREFS="{_esc(_region_tag(region.kind))}">\n'
             + "\n".join(_alto_text_line(region.id, ln) for ln in region.lines)
             + "\n      </TextBlock>"
         )
@@ -291,6 +339,7 @@ def to_alto(labels: PageLabels) -> str:
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         f'<alto xmlns:xsi="{_ALTO_XSI}" xmlns="{_ALTO_NS}" xsi:schemaLocation="{_ALTO_SCHEMA}">\n'
         + _alto_description(_esc(labels.image))
+        + _alto_tags(regions)
         + _alto_reading_order(regions)
         + "  <Layout>\n"
         f'    <Page WIDTH="{labels.width}" HEIGHT="{labels.height}" PC="1.0" PHYSICAL_IMG_NR="0" ID="page">\n'
