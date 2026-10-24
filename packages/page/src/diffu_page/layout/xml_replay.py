@@ -11,6 +11,7 @@ lines come from their ``HPOS``/``VPOS``/``WIDTH``/``HEIGHT`` box and ``String``s
 
 from __future__ import annotations
 
+import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -114,22 +115,22 @@ def _cell_ref(table: ET.Element, table_key: str, cell: ET.Element) -> CellRef | 
     ``TableCellRole``; None for any other child.
 
     Raises:
-        ValueError: If a ``TableCell`` has no ``@row`` or ``@col``.
+        ValueError: If a cell lacks its row or its column (both are required in either form).
     """
     match local_name(cell.tag):
         case "TableCell":
             row, column = cell.get("row"), cell.get("col")
-            if row is None or column is None:
-                raise ValueError(f"TableCell {cell.get('id', '')!r} of table {table_key!r} has no row or col")
-            return CellRef(table=table_key, row=int(row), column=int(column))
         case "TextRegion":
             roles = child(cell, "Roles")
             role = child(roles, "TableCellRole") if roles is not None else None
             if role is None:
                 return None
-            return CellRef(table=table_key, row=int(role.get("rowIndex", 0)), column=int(role.get("columnIndex", 0)))
+            row, column = role.get("rowIndex"), role.get("columnIndex")
         case _:
             return None
+    if row is None or column is None:
+        raise ValueError(f"cell {cell.get('id', '')!r} of table {table_key!r} has no row or no column")
+    return CellRef(table=table_key, row=int(row), column=int(column))
 
 
 def _table_lines(table: ET.Element, table_key: str) -> list[TextLine]:
@@ -169,17 +170,36 @@ def _page_rules(root: ET.Element) -> list[Rule]:
     return rules
 
 
+_NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
+
+
+def _alto_baseline_y(line: ET.Element, bottom: float) -> float:
+    """The y of an ALTO line's ``BASELINE``: one number (ALTO before 4.2), or the mean y of its points, written
+    ``x1,y1 x2,y2`` or ``x1 y1 x2 y2`` (ALTO 4.4's PointsType allows both); ``bottom`` (the box's) without one.
+
+    Raises:
+        ValueError: If the baseline is neither one number nor whole x, y pairs.
+    """
+    numbers = [float(number) for number in _NUMBER.findall(line.get("BASELINE", ""))]
+    if not numbers:
+        return bottom
+    if len(numbers) == 1:
+        return numbers[0]
+    if len(numbers) % 2:
+        raise ValueError(f"BASELINE {line.get('BASELINE')!r} is neither one number nor x, y pairs")
+    ys = numbers[1::2]
+    return sum(ys) / len(ys)
+
+
 def _alto_line(line: ET.Element, block: str) -> TextLine | None:
-    """An ALTO ``TextLine``: its box, its ``String`` contents joined, its ``BASELINE`` (else the box's bottom)."""
+    """An ALTO ``TextLine``: its box, its ``String`` contents joined, its ``BASELINE`` (else the box's bottom); None
+    for a line without text or without a whole box."""
     text = " ".join(s.get("CONTENT", "") for s in line if local_name(s.tag) == "String").strip()
-    if not text or line.get("HPOS") is None:
+    box = [line.get(name) for name in ("HPOS", "VPOS", "WIDTH", "HEIGHT")]
+    if not text or None in box:
         return None
-    x, y = float(line.get("HPOS", 0)), float(line.get("VPOS", 0))
-    w, h = float(line.get("WIDTH", 0)), float(line.get("HEIGHT", 0))
-    baseline = line.get("BASELINE", "")
-    points = parse_points(baseline)
-    baseline_y = sum(py for _, py in points) / len(points) if points else float(baseline or y + h)
-    return TextLine(text=text, box=(x, y, x + w, y + h), baseline_y=baseline_y, block=block)
+    x, y, w, h = (float(value) for value in box if value is not None)
+    return TextLine(text=text, box=(x, y, x + w, y + h), baseline_y=_alto_baseline_y(line, y + h), block=block)
 
 
 def _alto_lines(root: ET.Element) -> list[TextLine]:

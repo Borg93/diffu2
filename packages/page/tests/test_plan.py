@@ -134,7 +134,25 @@ def test_crop_plan_refuses_a_reading_order_that_is_not_an_order_of_its_lines() -
         CropPlan(rect=(0, 0, 10, 10), width=10, height=10, caption="", lines=lines, reading_order=[1, 1])
 
 
+@pytest.mark.parametrize("role", [pytest.param("marginal", id="no-such-kind"), pytest.param("table", id="not-a-role")])
+def test_crop_plan_refuses_a_line_whose_role_is_no_role_on_the_page(role: str) -> None:
+    line = {"id": "Sv_Text_1", "text": "", "role": role, "bbox": [0, 0, 1000, 1000]}
+    plan = {"rect": (0, 0, 10, 10), "width": 10, "height": 10, "caption": "", "lines": [line], "reading_order": [0]}
+
+    with pytest.raises(ValidationError, match=f"role '{role}' is not one of"):
+        CropPlan.model_validate(plan)
+
+
 REFERENCE_LINES = [[100, 50, 300, 950], [500, 50, 700, 950]]
+
+
+def test_plan_names_a_reference_whose_hand_cannot_be_described(body_and_notes_page: Path, tmp_path: Path) -> None:
+    blank = tmp_path / "blank.png"
+    Image.new("RGB", (64, 64), "white").save(blank)
+    reference = Reference(image=blank, caption=ReferenceCaption.DESCRIBED, lines=REFERENCE_LINES)
+
+    with pytest.raises(ValueError, match=f"^{blank}: .*cannot be described"):
+        plan_page(load_xml_layout(body_and_notes_page), STYLE, reference=reference)
 
 
 def test_plan_captions_a_page_drawn_from_a_reference_as_its_training_pairs_were_captioned(

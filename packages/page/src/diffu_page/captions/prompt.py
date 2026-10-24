@@ -13,7 +13,7 @@ from collections import Counter, defaultdict
 from collections.abc import Sequence
 from string import Template
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.provenance import Provenance
@@ -47,6 +47,14 @@ class LineRecord(BaseModel):
     block: str = ""  # "" in records written before blocks were kept: their labels group lines by role alone
     production: Production = Production.HANDWRITTEN
     cell: CellRef | None = None
+
+    @field_validator("role")
+    @classmethod
+    def _a_role_on_the_page(cls, role: str) -> str:
+        """A plan read from a job file fails here, before its crop is drawn, not at the label export after it."""
+        if role and role not in ROLE_NAMES:
+            raise ValueError(f"role {role!r} is not one of {sorted(ROLE_NAMES)}, nor '' (running text, a table cell)")
+        return role
 
     @property
     def kind(self) -> LineKind:

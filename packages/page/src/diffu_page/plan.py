@@ -101,16 +101,23 @@ def _plan(crop: Crop, caption: Caption, text: str, block_rank: dict[str, int]) -
 
 def _reference_captions(written: list[Caption], style: PageStyle, reference: Reference) -> list[str]:
     """The v2 captions ``written`` in ``style``, as a crop drawn from ``reference`` is captioned (the reference
-    measured once)."""
-    look = reference.look()
-    return [
-        reference_caption(
-            CaptionParts(name=f"planned crop {k}", template=caption.template, lines=caption.lines, style=style),
-            reference.caption,
-            look,
-        )
-        for k, caption in enumerate(written)
-    ]
+    measured once).
+
+    Raises:
+        ValueError: If the reference cannot be measured or described, naming its image.
+    """
+    try:
+        look = reference.look()
+        return [
+            reference_caption(
+                CaptionParts(name=f"planned crop {k}", template=caption.template, lines=caption.lines, style=style),
+                reference.caption,
+                look,
+            )
+            for k, caption in enumerate(written)
+        ]
+    except ValueError as error:
+        raise ValueError(f"{reference.image}: {error}") from error
 
 
 def plan_page(layout: Layout, style: PageStyle, *, reference: Reference | None = None) -> list[CropPlan]:

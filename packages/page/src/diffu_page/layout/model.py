@@ -4,8 +4,9 @@ its table cell) and its ruled lines."""
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Self
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class LineKind(StrEnum):
@@ -81,6 +82,12 @@ class TextLine(BaseModel):
     block: str = ""  # the PAGE TextRegion / TableCell or ALTO TextBlock it came from: its id, else its place
     production: Production = Production.HANDWRITTEN
     cell: CellRef | None = None  # set for a table cell's line
+
+    @model_validator(mode="after")
+    def _table_lines_have_cells(self) -> Self:
+        if (self.kind is LineKind.TABLE) != (self.cell is not None):
+            raise ValueError(f"a line is a table's exactly when it has a table cell: {self.text!r}")
+        return self
 
     @property
     def source(self) -> str:

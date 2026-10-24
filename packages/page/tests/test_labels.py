@@ -235,6 +235,35 @@ def test_page_xml_of_a_planned_table_crop_reads_back_as_the_same_table(table_pag
     )
 
 
+def test_page_xml_of_a_window_into_a_table_counts_the_rows_and_columns_it_shows_from_zero(tmp_path: Path) -> None:
+    labels = PageLabels(
+        width=800,
+        height=1000,
+        lines=[
+            LineLabel(
+                text=f"r{row}",
+                polygon=[(100, 100 * row), (300, 100 * row), (300, 100 * row + 40), (100, 100 * row + 40)],
+                region="table",
+                block=f"table|c{row}4",
+                order=k,
+                cell=CellRef(table="register", row=row, column=4),
+            )
+            for k, row in enumerate((5, 7))  # rows 5 to 7 of the page's table, row 6 empty
+        ],
+    )
+    exported = tmp_path / "labels.xml"
+    exported.write_text(to_page_xml(labels), encoding="utf-8")
+
+    table = next(element for element in ET.parse(exported).iter() if _local(element) == "TableRegion")
+    read = load_xml_layout(exported)
+
+    assert (table.get("rows"), table.get("columns")) == ("3", "1")
+    assert [(line.text, line.cell and (line.cell.row, line.cell.column)) for line in read.lines] == [
+        ("r5", (0, 0)),
+        ("r7", (2, 0)),
+    ]
+
+
 def test_page_xml_lists_the_regions_in_reading_order_with_their_page_types() -> None:
     root = ET.fromstring(to_page_xml(_labels()))
 

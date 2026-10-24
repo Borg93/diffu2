@@ -92,11 +92,10 @@ class Region(BaseModel):
 
 def regions_of(layout: Layout) -> list[Region]:
     """The layout's text lines grouped into the regions crops are cut from: a table's lines by table, the others by
-    region and block, in reading order, each region's lines top to bottom. A table line without a cell (an old
-    layout) is left out."""
+    region and block, in reading order, each region's lines top to bottom."""
     grouped: dict[tuple[str, str], list[TextLine]] = {}
     for line in layout.lines:
-        if line.text.strip() and (line.kind is not LineKind.TABLE or line.cell is not None):
+        if line.text.strip():
             grouped.setdefault(_region_key(line), []).append(line)
     return [Region(lines=sorted(lines, key=attrgetter("baseline_y"))) for lines in grouped.values()]
 

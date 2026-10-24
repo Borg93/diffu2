@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from diffu_page.crops.geometry import regions_of
-from diffu_page.layout import CellRef, Production, Rule, load_xml_layout
+from diffu_page.layout import CellRef, LineKind, Production, Rule, TextLine, load_xml_layout
 
 _NS = "http://schema.primaresearch.org/PAGE/gts/pagecontent/2013-07-15"
 
@@ -97,6 +97,35 @@ def test_replay_keeps_each_lines_production_and_table_cell(form_page: Path) -> N
     ]
 
 
+@pytest.mark.parametrize(
+    "cell",
+    [
+        pytest.param('<TableCell id="c1" row="0">{line}</TableCell>', id="table-cell"),
+        pytest.param(
+            '<TextRegion id="c1"><Roles><TableCellRole columnIndex="2"/></Roles>{line}</TextRegion>', id="cell-role"
+        ),
+    ],
+)
+def test_replay_refuses_a_table_cell_without_its_row_or_column(tmp_path: Path, cell: str) -> None:
+    line = _line("n1", "100,360 300,360 300,400 100,400", "Anders Persson")
+    page = _page(tmp_path, f'<TableRegion id="list">{cell.format(line=line)}</TableRegion>')
+
+    with pytest.raises(ValueError, match="cell 'c1' of table 'list' has no row or no column"):
+        load_xml_layout(page)
+
+
+@pytest.mark.parametrize(
+    ("kind", "cell"),
+    [
+        pytest.param(LineKind.TABLE, None, id="table-line-without-cell"),
+        pytest.param(LineKind.BODY, CellRef(table="t", row=0, column=0), id="cell-outside-table"),
+    ],
+)
+def test_text_line_is_a_tables_exactly_when_it_has_a_cell(kind: LineKind, cell: CellRef | None) -> None:
+    with pytest.raises(ValueError, match="a line is a table's exactly when it has a table cell"):
+        TextLine(text="12 dr", box=(0, 0, 10, 10), baseline_y=8, kind=kind, cell=cell)
+
+
 def test_replay_reads_ruled_lines_from_separator_regions(form_page: Path) -> None:
     assert load_xml_layout(form_page).rules == [
         Rule(x0=100.0, y0=350.0, x1=600.0, y1=352.0),
@@ -149,10 +178,18 @@ def _alto(tmp_path: Path, blocks: str, description: str = "") -> Path:
     return path
 
 
-def test_replay_reads_an_alto_page(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "baseline",
+    [
+        pytest.param("100,240 400,240", id="points"),
+        pytest.param("100 240 400 240", id="space-separated-points"),  # ALTO 4.4's PointsType keeps it for old tools
+        pytest.param("240", id="one-number"),  # ALTO before 4.2
+    ],
+)
+def test_replay_reads_an_alto_page(tmp_path: Path, baseline: str) -> None:
     alto = _alto(
         tmp_path,
-        '<TextBlock ID="b1"><TextLine HPOS="100" VPOS="200" WIDTH="300" HEIGHT="50" BASELINE="100,240 400,240">'
+        f'<TextBlock ID="b1"><TextLine HPOS="100" VPOS="200" WIDTH="300" HEIGHT="50" BASELINE="{baseline}">'
         '<String CONTENT="Hej"/><String CONTENT="du"/></TextLine></TextBlock>',
     )
 

@@ -179,10 +179,23 @@ def _page_text_region(region: LabelRegion, indent: str = "    ") -> str:
 
 
 def _page_table(table_id: str, cells: list[LabelRegion]) -> str:
-    """One ``TableRegion``: its rows and columns, its box, and its cells as nested ``TextRegion``s."""
-    rows = len({cell.cell.row for cell in cells if cell.cell is not None})
-    columns = len({cell.cell.column for cell in cells if cell.cell is not None})
-    nested = "\n".join(_page_text_region(cell, indent="      ") for cell in cells)
+    """One ``TableRegion``: the rows and columns the crop shows (a window into a page's table counts its own from 0,
+    as PAGE's ``rows`` and ``rowIndex`` describe the table in this image), its box, and its cells as nested
+    ``TextRegion``s."""
+    refs = [cell.cell for cell in cells if cell.cell is not None]
+    row0, column0 = min(ref.row for ref in refs), min(ref.column for ref in refs)
+    rows = max(ref.row for ref in refs) - row0 + 1
+    columns = max(ref.column for ref in refs) - column0 + 1
+    rebased = [
+        cell.model_copy(
+            update={
+                "cell": cell.cell.model_copy(update={"row": cell.cell.row - row0, "column": cell.cell.column - column0})
+            }
+        )
+        for cell in cells
+        if cell.cell is not None
+    ]
+    nested = "\n".join(_page_text_region(cell, indent="      ") for cell in rebased)
     return (
         f'    <TableRegion id="{_esc(table_id)}" rows="{rows}" columns="{columns}">\n'
         f'      <Coords points="{_rect_points(_region_rect([line for cell in cells for line in cell.lines]))}"/>\n'
