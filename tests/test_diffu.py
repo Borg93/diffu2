@@ -1,5 +1,6 @@
 """diffu end to end on CPU with a tiny model repo: drawing from a prompt and from a reference, the text window, the
-adaLN-Zero init NeMo trains from, and the latent packing FLUX.3's blocks expect."""
+adaLN-Zero init NeMo trains from, a trained checkpoint exported as a model repo, and the latent packing FLUX.3's blocks
+expect."""
 
 from __future__ import annotations
 
@@ -7,6 +8,7 @@ from pathlib import Path
 
 import pytest
 import torch
+import yaml
 from diffusers import Flux3Transformer2DModel
 from diffusers.modular_pipelines.flux3.encoders import Flux3VaeEncoderStep
 from PIL import Image
@@ -14,6 +16,8 @@ from transformers import AutoTokenizer, Qwen3_5ForConditionalGeneration
 from typer.testing import CliRunner
 
 from diffu.configs import DiffuConfig
+from diffu.export import app as export_app
+from diffu.export import export
 from diffu.init import INDEX, app, init_transformer, write_model_repo
 from diffu.latents import patchify, unpatchify
 from diffu.modular_pipelines.diffu import DiffuModularPipeline
@@ -89,6 +93,44 @@ def test_diffu_init_refuses_a_directory_that_holds_a_model(tmp_path: Path) -> No
 
     assert result.exit_code == 1
     assert sorted(path.name for path in tmp_path.iterdir()) == [INDEX]
+
+
+def _nemo_checkpoint(path: Path, transformer: Flux3Transformer2DModel | None, *, flow_shift: float) -> Path:
+    """A NeMo AutoModel checkpoint as diffu-export reads it: the run's config and, in the run's last checkpoint, the
+    transformer's consolidated export."""
+    path.mkdir()
+    (path / "config.yaml").write_text(yaml.safe_dump({"flow_matching": {"flow_shift": flow_shift}}), encoding="utf-8")
+    if transformer is not None:
+        transformer.save_pretrained(path / "model" / "consolidated")
+    return path
+
+
+def test_diffu_export_loads_the_trained_transformer_at_the_shift_it_trained_at(
+    tiny_diffu: Path, tiny_diffu_config: DiffuConfig, tmp_path: Path
+) -> None:
+    torch.manual_seed(1)
+    trained = Flux3Transformer2DModel.from_config(tiny_diffu_config.transformer_config())
+    checkpoint = _nemo_checkpoint(tmp_path / "epoch_0_step_9", trained, flow_shift=3.5)
+    out = tmp_path / "model"
+
+    result = CliRunner().invoke(
+        export_app, ["--checkpoint", str(checkpoint), "--init", str(tiny_diffu), "--out", str(out)]
+    )
+
+    assert result.exit_code == 0, result.output
+    pipe = DiffuModularPipeline.from_pretrained(str(out))
+    pipe.load_components(names=["transformer", "scheduler"])
+    assert pipe.scheduler.config.shift == 3.5
+    assert torch.equal(pipe.transformer.proj_out.weight, trained.proj_out.weight)
+
+
+def test_diffu_export_refuses_a_checkpoint_without_a_consolidated_export(tiny_diffu: Path, tmp_path: Path) -> None:
+    checkpoint = _nemo_checkpoint(tmp_path / "epoch_0_step_4", None, flow_shift=6.0)
+
+    with pytest.raises(ValueError, match="has no consolidated export"):
+        export(checkpoint, tiny_diffu, tmp_path / "model")
+
+    assert not (tmp_path / "model").exists()
 
 
 def _latents() -> torch.Tensor:

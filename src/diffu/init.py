@@ -52,7 +52,7 @@ def init_transformer(config: DiffuConfig, *, seed: int) -> Flux3Transformer2DMod
     return transformer
 
 
-def _component(library: str, cls: type, *, repo: str, revision: str | None, subfolder: str) -> list[object]:
+def index_entry(library: str, cls: type, *, repo: str, revision: str | None, subfolder: str) -> list[object]:
     """One component of a modular_model_index.json: its library, its class and where it loads from."""
     spec = {
         "pretrained_model_name_or_path": repo,
@@ -73,14 +73,14 @@ def model_index(config: DiffuConfig, repo: Path) -> dict[str, object]:
         "_class_name": DiffuModularPipeline.__name__,
         "_diffusers_version": diffusers.__version__,
         "text_layers": list(text.layers),
-        "text_encoder": _component(
+        "text_encoder": index_entry(
             "transformers", Qwen3_5ForConditionalGeneration, repo=text.repo, revision=text.revision, subfolder=""
         ),
-        "tokenizer": _component("transformers", AutoTokenizer, repo=text.repo, revision=text.revision, subfolder=""),
-        "transformer": _component(
+        "tokenizer": index_entry("transformers", AutoTokenizer, repo=text.repo, revision=text.revision, subfolder=""),
+        "transformer": index_entry(
             "diffusers", Flux3Transformer2DModel, repo=str(repo), revision=None, subfolder="transformer"
         ),
-        "vae": _component(
+        "vae": index_entry(
             "diffusers", AutoencoderKLQwenImage, repo=vae.repo, revision=vae.revision, subfolder=vae.subfolder
         ),
     }

@@ -180,7 +180,8 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
       `modular_pipelines/diffu/` with encoders, decoders, `DiffuAutoBlocks`, `DiffuModularPipeline`):
       `Flux3Transformer2DModel` from our presets with random adaLN-Zero init; FLUX.3's denoise blocks reused unchanged.
       diffu-S 618.0M (hidden 1536, 2 per-mode + 12 joint: FLUX.3's per-mode share of depth), diffu-M 1636.7M (2048,
-      4 + 16); Klein is 5.54B. `diffu-init` writes a model repo that `from_pretrained` and NeMo's finetune mode load.
+      4 + 16); Klein is 5.54B. `diffu-init` writes a model repo that `from_pretrained` and NeMo's finetune mode load;
+      `diffu-export` makes a run's last checkpoint a model repo, its scheduler at the run's `flow_matching.flow_shift`.
       Start with S.
 - [x] **Text encoder**: Qwen3.5-4B (Apache-2.0), chat template with thinking off, 80-token windows, hidden layers 4,
       12, 20 and 28 stacked (10,240 wide: the early orthographic, middle compositional and late layers; never 32, the
@@ -210,8 +211,9 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
 - [ ] **E1 smoke run**, running since 16:03 24 Oct (`jobs/diffu/run_smoke.sh`): the cache of 2,000 crops took 40
       minutes (diffu's text encoder in transformers' slow fallback, see Inference speed), the 5-step run passed, 2,000
       steps x 8 crops take about 3.5 hours (1.3 crops a second). Pass: the loss falls, the export loads as a diffu
-      repo, read-back CER on the held-out crops goes down from the random init's. Its eval samples at FLUX.3's shift
-      6.93, not the 6.0 it trains at (see Code).
+      repo, read-back CER on the held-out crops goes down from the random init's. Its eval samples at the 6.0 it
+      trains at: the running job's step 5 copies the init repo's index, which got a scheduler at 6.0 by hand on
+      24 Oct (to drop once the eval has run); later runs export with `diffu-export`.
 - [ ] **Training, after the smoke run**: the empty-prompt null swapped in by our dataset (p 0.1; NeMo's own dropout
       zeroes the embeddings; `diffu_train.dropout.CaptionDropout` does it for FLUX.3's image-edit items since
       2026-10-23: reuse it for diffu's text-to-image items, with the empty prompt cached by diffu's own text encoder),
@@ -222,7 +224,8 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
       at 512² (text only / glyph map + style prompt / both) → E3 Self-Flow vs plain flow matching → E4 style reference
       (swap-test copy rate ≤ 5 %) → E5 main run (~12 h on 32 A100s for diffu-S). Each judged on held-out read-back
       CER (≥ 200 crops, bootstrap CIs) against the real crops and the FLUX.3 LoRA on the same crops.
-- [ ] **Sampling shift**: FLUX.3's 6.93 for now; sweep 3–7 (`Flux3SetTimestepsStep(shift=…)`), it costs nothing.
+- [ ] **Sampling shift**: diffu samples at the shift it trained at (`diffu-export` writes it into the repo's
+      `scheduler/scheduler_config.json`); sweep 3–7 by editing that config, it costs nothing.
 - [ ] **Leonardo**: compute nodes have no internet; pre-fetch Qwen3.5-4B and the Qwen-Image VAE at the pinned
       revisions (a local repo copy with the files loads from the copy).
 - [ ] **Data**: GT-Lejonet, 103,285 pages (~3M lines). Never FLUX.3 outputs.
@@ -511,7 +514,8 @@ Code (writing-python, diffusers):
       the runner's `int(str(...))` round-trip (with the Ray work); `pick`'s role-line rule never exercised by a test.
       (24 Oct: `plan_page`'s unused `settings` is gone, and the optional arguments of `crop_hands`, `plan_page` and
       CaptionDropout are keyword-only.)
-- [ ] diffu samples at FLUX.3's shift 6.93 but trains with flow_shift 6.0: write diffu's scheduler config.
+- [x] diffu sampled at FLUX.3's shift 6.93 but trained with flow_shift 6.0: `diffu-export` (24 Oct) writes a trained
+      repo's scheduler at its checkpoint's `flow_matching.flow_shift`.
 - [ ] Guider edge: `stop` < 1 leaves the step state of the previous call (diffusers' own guider shares it); diffu's index
       has Hub components with an empty subfolder; the NeMo LoRA scale assumes plain LoRA (raise on rslora/patterns).
       (CropLoopStep's copy of ModularPipeline.__call__'s state seeding went with it on 24 Oct.)
