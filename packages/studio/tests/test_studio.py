@@ -115,3 +115,27 @@ def test_edge_refuses_to_wire_ports_of_two_types() -> None:
 
     with pytest.raises(ValueError, match="op_plan.plans carries json, but op_draw_flux3.seed takes number"):
         edge(plan, "plans", draw, "seed")
+
+
+@pytest.mark.parametrize(
+    ("drawers", "settings", "refusal"),
+    [
+        pytest.param(
+            [Drawer(name="v", model=Path("a")), Drawer(name="v", model=Path("b"))],
+            TINY_SETTINGS,
+            r"share each of the names \['v'\]",
+            id="one-name",
+        ),
+        pytest.param(
+            [Drawer(name="base", model=Path("a")), Drawer(name="v2", model=Path("a"), loras={"v2": Path("lora")})],
+            TINY_SETTINGS.model_copy(update={"fuse_loras": True}),
+            "switch LoRAs per drawer, which fused LoRAs cannot",
+            id="fused-switch",
+        ),
+    ],
+)
+def test_draw_nodes_refuse_drawers_they_could_not_tell_apart_before_loading(
+    drawers: list[Drawer], settings: DrawSettings, refusal: str, tmp_path: Path
+) -> None:
+    with pytest.raises(ValueError, match=refusal):
+        load_draw_nodes(drawers, settings=settings, out=tmp_path)

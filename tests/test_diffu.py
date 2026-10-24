@@ -133,6 +133,20 @@ def test_diffu_export_refuses_a_checkpoint_without_a_consolidated_export(tiny_di
     assert not (tmp_path / "model").exists()
 
 
+def test_diffu_export_refuses_a_directory_that_holds_a_model(
+    tiny_diffu: Path, tiny_diffu_config: DiffuConfig, tmp_path: Path
+) -> None:
+    trained = init_transformer(tiny_diffu_config, seed=1)
+    checkpoint = _nemo_checkpoint(tmp_path / "epoch_0_step_9", trained, flow_shift=3.5)
+    export(checkpoint, tiny_diffu, tmp_path / "model")
+    exported = sorted(path.name for path in (tmp_path / "model").iterdir())
+
+    with pytest.raises(ValueError, match="already holds a model"):
+        export(checkpoint, tiny_diffu, tmp_path / "model")
+
+    assert sorted(path.name for path in (tmp_path / "model").iterdir()) == exported
+
+
 def _latents() -> torch.Tensor:
     return torch.arange(2 * 3 * 4 * 6, dtype=torch.float32).reshape(2, 3, 4, 6)
 

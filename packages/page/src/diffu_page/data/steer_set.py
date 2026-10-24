@@ -131,6 +131,8 @@ def main(
     """Build the v2 steering set: held-out templates restyled as other archives and scan looks."""
     train = read_records(crops / "train/metadata.jsonl")
     held_out = read_records(crops / "val_eval/metadata.jsonl")
+    if outside := [t for t in templates or [] if not 0 <= t < len(held_out)]:
+        raise typer.BadParameter(f"val_eval has {len(held_out)} rows, none at {outside}", param_hint="--template")
     archives = {key: archive_style(train, key, crops) for key in ARCHIVES}
     (out / "examples").mkdir(parents=True, exist_ok=True)
     for archive in archives.values():

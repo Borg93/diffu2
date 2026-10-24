@@ -54,9 +54,12 @@ def export(checkpoint: Path, init: Path, out: Path) -> float:
         The shift.
 
     Raises:
-        ValueError: If the checkpoint has no consolidated export (under ``save_consolidated: final``, NeMo writes one
-            for the last checkpoint only) or its config names no flow shift.
+        ValueError: If ``out`` already holds a model, or the checkpoint has no consolidated export (under
+            ``save_consolidated: final``, NeMo writes one for the last checkpoint only) or its config names no flow
+            shift.
     """
+    if (out / INDEX).exists() or (out / "transformer").exists():
+        raise ValueError(f"{out} already holds a model; give a new directory")
     transformer = checkpoint / "model" / "consolidated"
     if not (transformer / "config.json").is_file():
         raise ValueError(f"{checkpoint} has no consolidated export: export the run's last checkpoint")

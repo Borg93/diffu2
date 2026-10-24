@@ -108,6 +108,22 @@ def test_same_hand_reference_falls_back_to_a_facing_page_crop_sharing_no_line(
     assert references == [facing] * 8
 
 
+def test_a_training_sets_spread_keeps_only_the_files_its_pairs_name(
+    body_and_notes_crop: Crop, make_record: Callable[..., CropRecord], tmp_path: Path
+) -> None:
+    scans = _scans(make_record, body_and_notes_crop, tmp_path / "crops")
+    built = training_pairs(
+        pick_pairs(scans, by_volume(scans), rng=random.Random(0), pick=pick_reference), _edit_caption
+    )
+
+    spread = built.spread(2)
+
+    assert [row.metadata.row_index for row in spread.rows] == [0, 1]
+    assert {p.destination.as_posix() for p in spread.placements} == {
+        media.file_name for row in spread.rows for media in row.media
+    }
+
+
 def test_by_example_rows_name_their_reference_and_template(
     body_and_notes_crop: Crop, make_record: Callable[..., CropRecord], tmp_path: Path
 ) -> None:

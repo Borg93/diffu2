@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import threading
 import zipfile
+from collections import Counter
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
@@ -191,8 +192,12 @@ def load_draw_nodes(drawers: list[Drawer], *, settings: DrawSettings, out: Path)
     once, with every LoRA its drawers use.
 
     Raises:
-        ValueError: If two drawers name the same adapter of one model with different LoRA dirs.
+        ValueError: If two drawers share a name (it names their node), two drawers name the same adapter of one model
+            with different LoRA dirs, or LoRAs are to be fused into a model whose drawers switch them per drawer.
     """
+    shared_names = sorted(name for name, count in Counter(drawer.name for drawer in drawers).items() if count > 1)
+    if shared_names:
+        raise ValueError(f"two drawers share each of the names {shared_names}: a name is its draw node's")
     loras_of: dict[Path, dict[str, Path]] = {}
     for drawer in drawers:
         model_loras = loras_of.setdefault(drawer.model, {})
@@ -201,6 +206,9 @@ def load_draw_nodes(drawers: list[Drawer], *, settings: DrawSettings, out: Path)
                 raise ValueError(
                     f"adapter {adapter!r} of {drawer.model} names two LoRAs: {model_loras[adapter]}, {lora_dir}"
                 )
+    switched = [model for model in loras_of if len({frozenset(d.loras) for d in drawers if d.model == model}) > 1]
+    if settings.fuse_loras and switched:
+        raise ValueError(f"the drawers of {switched} switch LoRAs per drawer, which fused LoRAs cannot: draw unfused")
     pipes = {
         model: load_pipeline(model, crop_blocks, loras=loras, settings=settings) for model, loras in loras_of.items()
     }

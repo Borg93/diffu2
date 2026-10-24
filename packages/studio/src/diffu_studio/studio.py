@@ -102,7 +102,10 @@ def main(
     draw_settings = DrawSettings(
         guidance_scale=guidance, text_layers=tuple(text_layer) if text_layer else None, device=device
     )
-    studio = build_studio(drawers, settings=draw_settings, out=out)
+    try:
+        studio = build_studio(drawers, settings=draw_settings, out=out)
+    except ValueError as error:  # the drawers or settings, refused before a model loads
+        raise typer.BadParameter(str(error)) from error
     console.print(f"diffu studio: {', '.join(d.name for d in drawers)} on port {port}, writing to {out}")
     studio.launch(server_port=port, allowed_paths=[str(out)])
 

@@ -136,6 +136,13 @@ class TrainingSet(BaseModel):
     rows: list[ManifestRow]
     placements: list[Placement]
 
+    def spread(self, count: int) -> TrainingSet:
+        """``count`` pairs spread over the set (in its order, sorted by collection), numbered from 0, with only the
+        files they name."""
+        kept = [renumbered(row, k) for k, row in enumerate(self.rows[:: max(1, len(self.rows) // count)][:count])]
+        named = {media.file_name for row in kept for media in row.media}
+        return TrainingSet(rows=kept, placements=[p for p in self.placements if p.destination.as_posix() in named])
+
 
 class EvalSet(BaseModel):
     """An eval dir's rows and the files they need."""
@@ -436,6 +443,8 @@ def main(
     if named_fraction and caption is ReferenceCaption.DESCRIBED:
         raise typer.BadParameter("--named-fraction names the archive in the plain captions; leave it 0 with described")
     train, val, held_out = (load_split(crops, split) for split in ("train", "val", "val_eval"))
+    if outside := [t for t in templates or [] if not 0 <= t < len(held_out)]:
+        raise typer.BadParameter(f"val_eval has {len(held_out)} rows, none at {outside}", param_hint="--template")
     rng = random.Random(seed)
     pick = PICKERS[reference]
     train_pairs = pick_pairs(train, by_volume(train), rng=rng, pick=pick)
@@ -463,8 +472,8 @@ def main(
 
     write_set(out, pairs.placements, "train.jsonl", pairs.rows)
     if val_pairs:
-        spread = validation.rows[:: max(1, len(validation.rows) // val_pairs)][:val_pairs]  # sorted by collection
-        write_set(out / "val", validation.placements, "val.jsonl", [renumbered(row, k) for k, row in enumerate(spread)])
+        spread = validation.spread(val_pairs)
+        write_set(out / "val", spread.placements, "val.jsonl", spread.rows)
     write_set(out / "val_eval", held.placements, "metadata.jsonl", held.rows)
     write_set(out / "by_example", examples.placements, "metadata.jsonl", examples.rows)
     build = BuildRecord(

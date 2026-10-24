@@ -35,8 +35,8 @@ from diffu_train.dropout import EmptyPrompt
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 
 
-def first_rows(manifest: Path, limit: int) -> Path:
-    """A manifest of the first ``limit`` rows, beside the full one so its media paths still resolve."""
+def write_first_rows(manifest: Path, limit: int) -> Path:
+    """Write a manifest of the first ``limit`` rows beside the full one (so its media paths still resolve)."""
     subset = manifest.with_name(f"{manifest.stem}_first{limit}.jsonl")
     with manifest.open(encoding="utf-8") as rows:
         subset.write_text("".join(islice(rows, limit)), encoding="utf-8")
@@ -57,11 +57,11 @@ def main(
     model: Annotated[Path | None, typer.Option(help="the FLUX.3 model directory; default $FLUX3_MODEL")] = (
         settings.flux3_model
     ),
-    limit: Annotated[int | None, typer.Option(help="cache only the first N pairs (a smoke test)")] = None,
+    limit: Annotated[int | None, typer.Option(min=1, help="cache only the first N pairs (a smoke test)")] = None,
 ) -> None:
     """Cache the v3 reference pairs with NeMo AutoModel's FLUX.3 image-edit encoder."""
     model = required_model(model)
-    rows = first_rows(manifest, limit) if limit else manifest
+    rows = manifest if limit is None else write_first_rows(manifest, limit)
     encoder = Flux3ImageEditCacheEncoder(model_name=str(model), max_sequence_length=MAX_SEQUENCE_LENGTH)
     metadata = encoder.encode_manifest(
         manifest_path=rows,
