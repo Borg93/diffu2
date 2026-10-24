@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections import Counter, defaultdict
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.provenance import Provenance
@@ -13,6 +13,8 @@ from diffu_page.crops.geometry import Box, Crop, Line
 from diffu_page.layout.model import ROLE_NAMES, CellRef, Production
 
 NUMBER_WORDS = ("no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten")
+HANDWRITTEN_PAGE = "handwritten page"
+PRINTED_PAGE = "page printed and filled in by hand"  # a crop that holds printed lines
 
 
 class LayoutRow(BaseModel):
@@ -47,6 +49,36 @@ class Caption(BaseModel):
     lines: list[LineRecord]
 
 
+class StylePhrases(BaseModel):
+    """The phrases of a caption that carry its style (the archive, its years, the scan, the paper and the ink): the
+    one place the caption grammar spells them, so restyling (:mod:`diffu_page.captions.restyle`) rewrites exactly
+    what :func:`caption_for` wrote."""
+
+    model_config = ConfigDict(frozen=True)
+
+    opening: str  # the paragraph's first sentence, up to and including "<paper_1>"
+    ink_opening: str  # the handwriting's ink in the paragraph
+    paper_row: str  # the paper row's whole desc
+    ink_line: str  # how every handwritten line row's desc ends
+    ink_fragment: str  # inside every fragment row's desc
+
+
+def phrases_for(provenance: Provenance, look: ScanLook, *, printed: bool) -> StylePhrases:
+    """The style phrases of a crop's caption in ``provenance`` and ``look``; ``printed``: the crop holds printed
+    lines, so its page is printed and filled in by hand."""
+    scan = "greyscale archival scan" if look.greyscale else "archival scan"
+    when = f", dated {provenance.years}" if provenance.years else ""
+    page = PRINTED_PAGE if printed else HANDWRITTEN_PAGE
+    greyscale = ", in a greyscale scan." if look.greyscale else "."
+    return StylePhrases(
+        opening=f"Flat, evenly lit {scan} of a {page} from {provenance.title}{when}. The {look.paper} paper <paper_1>",
+        ink_opening=f"cursive handwriting in {look.ink} ink",
+        paper_row=f"Aged {look.paper} paper of a bound archival volume{greyscale}",
+        ink_line=f"cursive script in {look.ink} ink.",
+        ink_fragment=f"handwritten line in {look.ink} ink, cut off",
+    )
+
+
 def caption_order(lines: list[Line]) -> list[Line]:
     """The order a caption numbers a crop's lines in (``Sv_Text_1``, ...): top to bottom, then left to right."""
     return sorted(lines, key=lambda line: (line.baseline_y, line.box[0]))
@@ -71,20 +103,21 @@ def caption_for(crop: Crop, provenance: Provenance, look: ScanLook) -> Caption:
     ]
     rules = [(f"rule_{k}", rule) for k, rule in enumerate(crop.rules, 1)]
     column = _body_column([line for _, line in numbered if line.cell is None] or [line for _, line in numbered])
+    phrases = phrases_for(provenance, look, printed=any(line.production is Production.PRINTED for _, line in numbered))
     layout = [
-        LayoutRow(id="paper_1", bbox=[0, 0, 1000, 1000], desc=_paper_desc(look)),
+        LayoutRow(id="paper_1", bbox=[0, 0, 1000, 1000], desc=phrases.paper_row),
         *(
-            LayoutRow(id=row_id, bbox=crop.slot(line), desc=_row_desc(line, column, crop, look))
+            LayoutRow(id=row_id, bbox=crop.slot(line), desc=_row_desc(line, column, crop, phrases))
             for row_id, line in numbered
         ),
         *(
-            LayoutRow(id=row_id, bbox=crop.visible_box(line), desc=_fragment_desc(crop.cut_edge(line), look))
+            LayoutRow(id=row_id, bbox=crop.visible_box(line), desc=_fragment_desc(crop.cut_edge(line), phrases))
             for row_id, line in fragments
         ),
         *(LayoutRow(id=row_id, bbox=crop.rule_box(rule), desc=_rule_desc(rule)) for row_id, rule in rules),
     ]
     sentences = [
-        _opening_sentence(provenance, look, numbered),
+        _opening_sentence(phrases, numbered),
         *_role_sentences(numbered, column, crop),
         *_table_sentences(numbered),
         *_rule_sentences(rules, numbered),
@@ -116,15 +149,15 @@ def _body_column(lines: list[Line]) -> tuple[float, float]:
     return min(line.box[0] for line in body), max(line.box[2] for line in body)
 
 
-def _row_desc(line: Line, column: tuple[float, float], crop: Crop, look: ScanLook) -> str:
+def _row_desc(line: Line, column: tuple[float, float], crop: Crop, phrases: StylePhrases) -> str:
     """A line's layout row: printed, in a table cell, or placed in the crop's main text."""
     if line.production is Production.PRINTED:
         what = ROLE_NAMES[line.role] if line.role else "text"
         where = " in a table cell" if line.cell is not None else ""
         return f'Printed {what} reading "{line.text}"{where}, in a serif typeface in black printer\'s ink.'
     if line.cell is not None:
-        return f'Handwritten line of text reading "{line.text}" in a table cell, cursive script in {look.ink} ink.'
-    return _line_desc(_line_kind(line, column, crop.pitch), line, look)
+        return f'Handwritten line of text reading "{line.text}" in a table cell, {phrases.ink_line}'
+    return _line_desc(_line_kind(line, column, crop.pitch), line, phrases)
 
 
 def _rule_desc(rule: Box) -> str:
@@ -146,24 +179,16 @@ def _line_kind(line: Line, column: tuple[float, float], pitch: float) -> str:
     return "Handwritten line of text"
 
 
-def _line_desc(kind: str, line: Line, look: ScanLook) -> str:
-    return f'{kind} reading "{line.text}", cursive script in {look.ink} ink.'
+def _line_desc(kind: str, line: Line, phrases: StylePhrases) -> str:
+    return f'{kind} reading "{line.text}", {phrases.ink_line}'
 
 
-def _paper_desc(look: ScanLook) -> str:
-    scan = ", in a greyscale scan." if look.greyscale else "."
-    return f"Aged {look.paper} paper of a bound archival volume{scan}"
-
-
-def _fragment_desc(edge: str, look: ScanLook) -> str:
+def _fragment_desc(edge: str, phrases: StylePhrases) -> str:
     part = "lower" if edge == "top" else "upper"
-    return (
-        f"The {part} part of a handwritten line in {look.ink} ink, cut off by the {edge} edge of the scan; "
-        "its words are not legible."
-    )
+    return f"The {part} part of a {phrases.ink_fragment} by the {edge} edge of the scan; its words are not legible."
 
 
-def _opening_sentence(provenance: Provenance, look: ScanLook, numbered: list[tuple[str, Line]]) -> str:
+def _opening_sentence(phrases: StylePhrases, numbered: list[tuple[str, Line]]) -> str:
     """The medium, the page and its lines: the handwritten ones counted with their roles, the printed ones cited,
     and the main text (handwritten lines outside a role and a table) in reading order."""
     written = [(row_id, line) for row_id, line in numbered if line.production is Production.HANDWRITTEN]
@@ -171,13 +196,7 @@ def _opening_sentence(provenance: Provenance, look: ScanLook, numbered: list[tup
     roles = Counter(line.role for _, line in written if line.role)
     parts = [f"a {ROLE_NAMES[r]}" if n == 1 else f"{_count(n)} {ROLE_NAMES[r]} lines" for r, n in roles.items()]
     including = f", including {' and '.join(parts)}" if parts else ""
-    scan = "greyscale archival scan" if look.greyscale else "archival scan"
-    when = f", dated {provenance.years}" if provenance.years else ""
-    page = "page printed and filled in by hand" if printed else "handwritten page"
-    opening = (
-        f"Flat, evenly lit {scan} of a {page} from {provenance.title}{when}. The {look.paper} paper "
-        f"<paper_1> carries {len(written)} lines of cursive handwriting in {look.ink} ink{including}"
-    )
+    opening = f"{phrases.opening} carries {len(written)} lines of {phrases.ink_opening}{including}"
     if printed:
         opening += f" and {len(printed)} printed lines in black printer's ink {_cite(printed)}"
     body = [row_id for row_id, line in written if not line.role and line.cell is None]

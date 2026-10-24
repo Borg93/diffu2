@@ -83,6 +83,38 @@ def test_plan_plans_a_form_whose_every_line_is_its_own_region(certificate_page: 
     assert {line.text for plan in plans for line in plan.lines} == {box.text for box in layout.boxes}
 
 
+def test_plan_captions_a_form_drawn_from_a_reference_keeping_its_print_and_rules(
+    certificate_page: Path, tmp_path: Path
+) -> None:
+    image = tmp_path / "reference.png"
+    Image.linear_gradient("L").convert("RGB").save(image)
+    layout = load_xml_layout(certificate_page)
+    named = plan_page(layout, STYLE)[0].caption
+
+    caption = plan_page(layout, STYLE, reference=Reference(image=image, caption=ReferenceCaption.PLAIN))[0].caption
+
+    paragraph, rows = caption[: caption.index(" [{")], json.loads(caption[caption.index(" [{") + 1 :])
+    unstyled = {
+        row["id"]: row["desc"]
+        for row in json.loads(named[named.index(" [{") + 1 :])
+        if row["desc"].startswith(("Printed", "A straight"))
+    }
+    assert paragraph == (
+        "Create a flat, evenly lit archival scan of a new page printed and filled in by hand in the hand, ink and "
+        "paper of <ref_image_0>. The paper <paper_1> carries 5 lines of cursive handwriting and 6 printed lines in "
+        "black printer's ink <Sv_Text_1> <Sv_Text_2> <Sv_Text_4> <Sv_Text_6> <Sv_Text_8> <Sv_Text_10>; the main text "
+        "runs from top to bottom: <Sv_Text_3> <Sv_Text_5> <Sv_Text_7> <Sv_Text_9> <Sv_Text_11>. A heading <Sv_Text_1> "
+        "sits at the top center. Five straight ruled lines cross the page: <rule_1> <rule_2> <rule_3> <rule_4> "
+        "<rule_5>."
+    )
+    assert {row["id"]: row["desc"] for row in rows if row["id"] in unstyled} == unstyled
+    assert {
+        row["desc"].rsplit(", ", 1)[-1]
+        for row in rows
+        if row["id"].startswith("Sv_Text_") and row["id"] not in unstyled
+    } == {"cursive script in the reference's hand and ink."}
+
+
 def test_plan_records_where_each_lines_baseline_lies_on_its_crop(body_and_notes_page: Path) -> None:
     layout = load_xml_layout(body_and_notes_page)
     on_page = {box.text: box.baseline_y for box in layout.boxes}

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -23,7 +24,8 @@ from diffu_page.captions.restyle import (
     named_edit_caption,
     restyle,
 )
-from diffu_page.crops.geometry import Crop
+from diffu_page.crops.geometry import Crop, CropSettings, crops_for_page, regions_of
+from diffu_page.layout import load_xml_layout
 
 CITED_LINES = (  # how the paragraph cites body_and_notes_crop's lines, after their ink
     ", including two marginal note lines; the main text runs from top to bottom: <Sv_Text_1> <Sv_Text_2> <Sv_Text_3> "
@@ -49,6 +51,28 @@ def test_restyle_writes_the_caption_the_crop_gets_in_the_target_style(
     restyled = restyle(CaptionParts.of(record), target)
 
     assert restyled == caption_for(body_and_notes_crop, target.provenance, target.look).text
+
+
+@pytest.fixture
+def certificate_crop(certificate_page: Path) -> Crop:
+    """The crop of a printed certificate filled in by hand: printed lines, handwritten ones and ruled lines."""
+    layout = load_xml_layout(certificate_page)
+    rules = [(rule.x0, rule.y0, rule.x1, rule.y1) for rule in layout.rules]
+    return crops_for_page(regions_of(layout), (layout.width, layout.height), CropSettings(), rules=rules)[0]
+
+
+def test_restyle_writes_the_caption_a_form_crop_gets_in_the_target_style(
+    certificate_crop: Crop, make_record: Callable[..., CropRecord]
+) -> None:
+    record = make_record(certificate_crop)
+    target = Style(
+        provenance=Provenance(title="the court records of Jämtlands domsaga", years="1650"),
+        look=ScanLook(greyscale=True, paper="light grey", ink="black"),
+    )
+
+    restyled = restyle(CaptionParts.of(record), target)
+
+    assert restyled == caption_for(certificate_crop, target.provenance, target.look).text
 
 
 def test_edit_caption_takes_only_the_paper_from_the_reference_and_names_no_style(
