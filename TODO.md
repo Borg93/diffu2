@@ -715,9 +715,10 @@ Still to do, in this order (the refactors after the fixes, the user's call):
       does not and are gone (union of executed lines 1,893 before and after; each red-checked on its kept test).
 - [ ] The runner's draw test calls `run()` and reads the Parquet and run_meta.json back; its RunConfig `[no-drawer]`
       case runs no production line (Pydantic's min_length refuses it): both wait for the Ray work.
-- [ ] The suite's time is two tests (the studio's draw test 6.5 min, draw_pages 2.8 min, of ~12 in one process): both
-      draw whole planned pages (bucket-sized crops) and read every line back with the real TrOCR on CPU. Profile one
-      (cProfile or py-spy) before choosing a fix: smaller test pages, or a tiny read-back model for the tests.
+- [x] The suite's two slow tests (the studio's draw test 6.5 min, draw_pages 2.8 min): profiled (cProfile, 24 Oct),
+      the time was not TrOCR (25 s) but the Hub's tiny FLUX.3 test model, whose VAE downsamples 2x: a bucket-sized
+      crop was ~59,000 tokens, 19 s an attention call and 96 s a VAE decode on CPU. conftest's `tiny_flux3` now
+      copies it with a tiny VAE that downsamples 8x as FLUX.3's does: the studio test takes 27 s, draw_pages 11 s.
 - [x] 11. (24 Oct) One eval-run module: EvalCrop the one row model (reference and reference_lines together), read_jsonl and
       write_jsonl, generated_path, the hand-fidelity statistics out of the CLI module.
 - [x] 12. Draw options and shared constants declared once (24 Oct): Annotated option aliases with defaults from one

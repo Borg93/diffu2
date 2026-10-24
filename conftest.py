@@ -1,16 +1,17 @@
 """Fixtures shared by every workspace member's tests: PAGE pages to plan and draw, a crop and its training record,
-diffusers' tiny FLUX.3 test model, and a tiny diffu model repo (a tiny Qwen3.5, a tiny Qwen-Image VAE and a tiny
-transformer, all random weights)."""
+diffusers' tiny FLUX.3 test model (with a VAE that downsamples as FLUX.3's does), and a tiny diffu model repo (a tiny
+Qwen3.5, a tiny Qwen-Image VAE and a tiny transformer, all random weights)."""
 
 from __future__ import annotations
 
 import json
+import shutil
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 import torch
-from diffusers import AutoencoderKLQwenImage, Flux3Transformer2DModel
+from diffusers import AutoencoderKLFlux2, AutoencoderKLQwenImage, Flux3Transformer2DModel
 from huggingface_hub import snapshot_download
 from safetensors.torch import save_file
 
@@ -210,10 +211,28 @@ TINY_FLUX3 = "hf-internal-testing/tiny-flux3-image-modular"
 TINY_FLUX3_REVISION = "9130f96f124d6c6fdd1beab63cfb6d2f1c8658a1"  # pinned: a changed fixture must not change results
 
 
+# 8x downsampling like FLUX.3's own VAE: the Hub test model's downsamples 2x, which made a bucket-sized crop some
+# 59,000 tokens and its drawing minutes of CPU attention in the transformer and the VAE
+TINY_FLUX3_VAE = {
+    "block_out_channels": [16, 16, 16, 16],
+    "down_block_types": ["DownEncoderBlock2D"] * 4,
+    "up_block_types": ["UpDecoderBlock2D"] * 4,
+}
+
+
 @pytest.fixture(scope="session")
-def tiny_flux3() -> Path:
-    """diffusers' tiny FLUX.3 test model (a few MB), downloaded once into the Hugging Face cache."""
-    return Path(snapshot_download(TINY_FLUX3, revision=TINY_FLUX3_REVISION))
+def tiny_flux3(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """diffusers' tiny FLUX.3 test model (a few MB, downloaded once into the Hugging Face cache), copied with a tiny VAE
+    that downsamples 8x as FLUX.3's does, so a crop is drawn from as many tokens as the real model draws it from."""
+    snapshot = Path(snapshot_download(TINY_FLUX3, revision=TINY_FLUX3_REVISION))
+    repo = tmp_path_factory.mktemp("flux3")
+    shutil.copytree(snapshot, repo, ignore=shutil.ignore_patterns("vae"), dirs_exist_ok=True)
+    torch.manual_seed(0)
+    vae = AutoencoderKLFlux2.from_config(
+        {**AutoencoderKLFlux2.load_config(snapshot, subfolder="vae"), **TINY_FLUX3_VAE}
+    )
+    vae.save_pretrained(repo / "vae")
+    return repo
 
 
 TINY_QWEN35 = "hf-internal-testing/tiny-flux3-prompt-upsampler"
