@@ -100,6 +100,8 @@ class ReferenceGuidance(ClassifierFreeGuidance):
         caption_guided = super().forward(pred_cond, pred_uncond)
         if pred_unreferenced is None:
             return caption_guided
+        if pred_uncond is None:  # _guides_reference runs the reference-free pass only beside the uncaptioned one
+            raise RuntimeError("a reference-free pass without an uncaptioned pass: reference guidance needs both")
         toward_reference = (self.reference_scale - 1.0) * (pred_uncond - pred_unreferenced)
         return GuiderOutput(pred=caption_guided.pred + toward_reference, pred_cond=pred_cond, pred_uncond=pred_uncond)
 

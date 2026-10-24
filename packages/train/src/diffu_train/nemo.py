@@ -22,17 +22,17 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass  # noqa: TID251 -- NeMo builds dataloaders only from dataclass configs
 from pathlib import Path
-from typing import Any, override
+from typing import override
 
 import torch
 from nemo_automodel.components.datasets.diffusion.collate_fns import TextToImageDataloaderConfig
 from nemo_automodel.components.datasets.diffusion.image_edit_dataset import ImageEditDataloaderConfig
 from nemo_automodel.components.datasets.diffusion.loader import DiffusionDataloaderBuild
 from nemo_automodel.components.datasets.diffusion.sampler import SequentialBucketSampler
-from torch.utils.data import Dataset, Sampler
+from torch.utils.data import Sampler
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from diffu_train.dropout import CaptionDropout, EmptyPrompt
+from diffu_train.dropout import CaptionDropout, EmptyPrompt, SampleSource
 
 
 class InterleavedBucketSampler(Sampler[list[int]]):
@@ -57,25 +57,22 @@ class InterleavedBucketSampler(Sampler[list[int]]):
             self._yielded += 1
             yield batches[index]
 
-    @override
     def set_epoch(self, epoch: int) -> None:
         self._epoch = epoch
         self._buckets.set_epoch(epoch)
 
-    @override
     def state_dict(self) -> dict[str, int]:
         return {"epoch": self._epoch, "batches_yielded": self._yielded}
 
-    @override
     def load_state_dict(self, state: dict[str, int]) -> None:
         self.set_epoch(state["epoch"])
         self._resume_at = state["batches_yielded"]
 
 
-type DatasetWrap = Callable[[Dataset[Any]], Dataset[Any]]
+type DatasetWrap = Callable[[SampleSource], SampleSource]
 
 
-def _as_built(dataset: Dataset[Any]) -> Dataset[Any]:
+def _as_built(dataset: SampleSource) -> SampleSource:
     return dataset
 
 

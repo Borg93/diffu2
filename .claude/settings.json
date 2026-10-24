@@ -6,8 +6,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.tool_input.file_path // .tool_response.filePath // empty' | { read -r f; case \"$f\" in *.py) cd \"$CLAUDE_PROJECT_DIR\" && uvx pyrefly check ;; esac; }",
-            "statusMessage": "pyrefly check"
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath // empty' | { read -r f; case \"$f\" in *.py) cd \"$CLAUDE_PROJECT_DIR\" && { uvx pyrefly check; p=$?; uvx ty check; t=$?; exit $((p | t)); } ;; esac; }",
+            "statusMessage": "pyrefly and ty check"
           }
         ]
       }

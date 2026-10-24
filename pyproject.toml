@@ -84,16 +84,17 @@ strict = true
 source = ["src", "packages/page/src", "packages/runner/src", "packages/studio/src", "packages/train/src"]
 omit = ["tests/*", "packages/*/tests/*", "conftest.py"]
 
-# ty, as pyrefly.toml: the ML libraries are typed as Any (diffusers exports a torch-less dummy for every class, so
-# each use reads as "real class or dummy"), and NeMo AutoModel exists only in NeMo's own environment.
+# ty, as pyrefly.toml: diffusers, transformers and safetensors are typed as Any (diffusers exports a torch-less dummy
+# for every class, so each use reads as "real class or dummy"), and NeMo AutoModel and its torchdata exist only in
+# NeMo's own environment. torch, numpy and PIL ship their own types and are checked.
 [tool.ty.analysis]
 replace-imports-with-any = [
-    "torch.**", "torch",
     "diffusers.**", "diffusers",
     "transformers.**", "transformers",
     "safetensors.**", "safetensors",
     "nemo_automodel.**", "nemo_automodel",
     "torchdata.**", "torchdata",
-    "numpy.**", "numpy",
-    "PIL.**", "PIL",
 ]
+
+[tool.ty.terminal]
+error-on-warning = true

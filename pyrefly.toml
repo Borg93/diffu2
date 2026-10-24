@@ -1,21 +1,18 @@
 project-includes = ["src/**/*.py", "packages/*/src/**/*.py"]
 project-excludes = ["**/.git/**", "**/__pycache__/**", "**/.venv/**"]
 
-# The ML libraries' stubs don't model their dynamic attributes (diffusers block state, transformers configs), so they
-# are typed as Any: we check our own logic, not theirs. NeMo AutoModel and the torchdata it brings exist only in
-# NeMo's own environment.
+# diffusers' and transformers' stubs don't model their dynamic attributes (block state, configs), so they are typed as
+# Any: we check our own logic, not theirs. NeMo AutoModel and the torchdata it brings exist only in NeMo's own
+# environment. torch, numpy and PIL ship their own types and are checked, as ty checks them (pyproject.toml).
 replace-imports-with-any = [
-    "torch", "torch.*",
     "diffusers", "diffusers.*",
     "transformers", "transformers.*",
     "safetensors", "safetensors.*",
     "nemo_automodel", "nemo_automodel.*",
     "torchdata", "torchdata.*",
-    "numpy", "numpy.*",
-    "PIL", "PIL.*",
 ]
 
 [errors]
-# Every class we override comes from diffusers or NeMo, which are typed as Any above, so pyrefly can never see the
-# parent and reports each @override as overriding nothing. @override stays on them as documentation.
+# diffusers and NeMo, typed as Any above, are the parents of most classes we override, so pyrefly cannot see them and
+# would report each @override as overriding nothing. ty checks the overrides whose parents it sees (torch's).
 bad-override = false

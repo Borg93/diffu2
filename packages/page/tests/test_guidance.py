@@ -12,7 +12,7 @@ CAPTIONS = {"encoder_hidden_states": (torch.tensor([1.0]), torch.tensor([0.0]))}
 class _ReferenceProbe(torch.nn.Module):
     """A denoiser that answers whether its call carried the reference tokens."""
 
-    def forward(
+    def forward(  # ty: ignore[invalid-mutable-override]  torch declares forward an attribute; Modules override it
         self,
         hidden_states: torch.Tensor,
         image_cond_hidden_states: torch.Tensor | None = None,

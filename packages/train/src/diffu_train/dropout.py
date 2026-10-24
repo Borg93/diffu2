@@ -14,7 +14,7 @@ from __future__ import annotations
 import random
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import torch
 from pydantic import BaseModel, ConfigDict
@@ -23,6 +23,14 @@ from torch.utils.data import Dataset
 EMPTY_PROMPT_FILE = "empty_prompt.pt"  # in a pair cache dir
 
 type Sample = Mapping[str, Any]  # one item of NeMo's ImageEditDataset
+
+
+class SampleSource(Protocol):
+    """What caption dropout draws its samples from: NeMo's ImageEditDataset, or any sized, indexed source."""
+
+    def __len__(self) -> int: ...
+
+    def __getitem__(self, index: int, /) -> Sample: ...
 
 
 def uniform() -> float:
@@ -67,7 +75,7 @@ class CaptionDropout(Dataset[dict[str, Any]]):
     """
 
     def __init__(
-        self, dataset: Dataset[Sample], empty: EmptyPrompt, share: float, draw: Callable[[], float] = uniform
+        self, dataset: SampleSource, empty: EmptyPrompt, share: float, draw: Callable[[], float] = uniform
     ) -> None:
         super().__init__()
         self._dataset = dataset
