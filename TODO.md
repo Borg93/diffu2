@@ -493,14 +493,39 @@ Code (writing-python, diffusers):
       (CropLoopStep's copy of ModularPipeline.__call__'s state seeding went with it on 24 Oct.)
 
 Inference speed (ranked; re-profile on torch 2.14.1 first, one change at a time, gated on CER and the hand metrics):
-- [ ] 1. Fuse the LoRA (`fuse_lora` + `unload_lora_weights` after `set_adapters`; re-fuse from a kept base copy or
-      hotswap for per-hand swaps): est. 15-20% on the GB10; prerequisite for compile, FP8 and QKV fusion.
-- [ ] 2. Regional compile (`transformer.compile_repeated_blocks(fullgraph=True, dynamic=True)`): ~1.5x in diffusers'
-      benchmarks; fuses the elementwise share.
-- [ ] 3. FP8 rowwise (torchao, after fusing), with an INT8 A/B on sm_120; BFL ships fp8r and nvfp4 checkpoints.
-- [ ] Sweeps: CFG `stop` 0.6-0.8; steps 50/40/30 x shift 6.93/16 x guidance 3.5/4.0 (we use 4.0 with 6.93, which matches
-      neither diffusers' 3.5/6.93 nor BFL's code 4.0/16); cuDNN attention (BFL's reference forces it).
-- [ ] FLUX.3 Klein distilled (16 steps, no CFG, ~6x) for FLUX.3 research runs; base-trained LoRAs on it are unverified.
+- [ ] 1. Fuse the LoRA (`fuse_lora` + `unload_lora_weights` after `set_adapters`; `unfuse_lora()` restores the base for
+      a per-hand swap, or hotswap instead of fusing): est. 15-20% on the GB10 (the docs give no figure); prerequisite
+      for compile, FP8 and QKV fusion.
+- [ ] 2. Regional compile (`transformer.compile_repeated_blocks(fullgraph=True, dynamic=True)`; `dynamic` because
+      captions pad in 80-token steps and the guidance passes differ in length; our guider's hook stays outside the
+      compiled blocks): the docs say full compile's speedup with 8-10x shorter compile time; their benchmarks show
+      1.26x on FLUX.1-dev's transformer (not the ~1.5x noted before). Check recompiles with
+      `torch._dynamo.config.patch(error_on_recompile=True)`.
+- [ ] 3. FP8 (torchao after fusing; FP8 dynamic + compile measured 1.96x on FLUX.1-dev, L20), with an INT8 A/B on
+      sm_120. BFL's fp8r and nvfp4 Klein transformers load through `BFLQuantizationConfig` (runs without a LoRA; LoRA on
+      quantized weights is not documented: fuse, then quantize, one hand per actor). NVFP4 needs FlashInfer, nvcc and
+      CUDA >= 12.9 on sm_120 (sm_121 not stated).
+- [ ] Sweeps: CFG `stop` 0.6-0.8 (with three passes, 0.7 cuts 150 transformer passes to 120); steps 50/40/30 x shift
+      6.93/16 x guidance 3.5/4.0 (we use 4.0 with 6.93, which matches neither diffusers' 3.5/6.93 nor BFL's code
+      4.0/16); cuDNN attention (`set_attention_backend("_native_cudnn")`; attention is 8% of GPU time on the GB10).
+- [ ] FLUX.3 Klein distilled (16 steps, no CFG, ~6x) for FLUX.3 research runs; base-trained LoRAs on it are unverified,
+      and it has no guider, so no reference guidance.
+- [ ] Exact savings from the diffusers docs (read 24 Oct; 0.42.0.dev0 has every API named): split the crop pipeline into
+      stages with `pipe(state=...)`: the empty negative prompt encoded once per actor, each reference encoded once and
+      passed as `image_cond_latents` (which skips the VAE encode), the text encoder and the read-back as stages of their
+      own (frees ~8 GB on the drawing actor); `transformer.fuse_qkv_projections()` after the LoRA is fused (1.025x;
+      it copies base weights, so an unfused q/k/v LoRA would silently drop); TF32 matmuls; `HF_ENABLE_PARALLEL_LOADING`
+      and a compile cache for actor start-up.
+- [ ] From reading FLUX.3's transformer (not in the docs, to verify): the text and reference blocks before the joint
+      blocks always see timestep 0, so they compute the same thing every step; caching them would save ~5% exactly.
+- [ ] Batching crops in one forward needs pre-encoded `prompt_embeds` and crops of one image size, reference size and
+      80-token caption window (no attention mask, shared position ids); the empty-prompt passes batch across any crops
+      of one size. `num_images_per_prompt` batches variants of one plan exactly. The GB10 is already 99.5% busy at batch
+      1 (23 Oct: matmul 41%, elementwise 37%, copy 10%, attention 8%).
+- Not for us: diffusers' caching methods (they change outputs; FLUX.3 has no cache support in 0.42), offloading,
+  context/tensor parallelism, the other quantizers. Hub kernels: a `*_hub` attention backend from a publisher the Hub
+  marks trusted loads even with DIFFUSERS_TRUST_REMOTE_KERNELS off (attention_dispatch.py): never select one, and keep
+  `kernels` uninstalled.
 
 Data checks (23 Oct evening, the user's question: any leakage or anything weird?):
 - [x] Per-hand LoRAs: training and held-out pages disjoint (1715: 36 vs 4 pages; Pahlman: 37 vs 3); held-out lines
@@ -607,6 +632,42 @@ an executor (Ray Data, a Ray actor pool, Xenna, a Slurm array) decides how it ru
       using Curator itself (its executors, resumability, failure manifests and diagnostics for free) against its
       weight (loguru, lmdb, dataclass stages, Ray >= 2.57 coupling). Its image stages (CLIP embeddings, aesthetic and
       NSFW filters, dedup) could also curate our real crops and filter generated windows.
+
+## Design and quality audit of 24 Oct (nine parallel audits against writing-python; 86 findings verified, 67 worth fixing)
+
+Done on 24 Oct, each with a test that was red with its fix removed:
+- [x] 1. Labels put each line on its true baseline (edge lines were up to 0.21 pitch off); a plan's reading order is
+      checked. Old records still get 0.7 of the slot: delete that branch when the datasets are rebuilt.
+- [x] 3. The diffu cache stops when an encoder fails to load and never marks an empty cache finished.
+- [x] 4. ty beside pyrefly; both check torch, numpy and PIL; the hook runs both.
+- [x] 5. Every run input checked before the expensive work (LoRA dirs and scales, the model index, guidance without a
+      reference, empty plans, a used --out, drawers, FLUX3_MODEL with no default path and no Hub fallback).
+- [x] 6. The dataset builders never leave a half-written dataset (build_crops, style_pairs).
+- [x] 7. Outputs record what produced them (evaluate and generate summaries, a page id, style_pairs' build.json).
+- [x] 8. Unmeasurable hand features are None, never black ink or a crash.
+- [x] 13. diffu-generate draws crop by crop; page_blocks, CropLoopStep and LoadReferenceStep are gone.
+- [x] Smaller: the studio refuses page and drawer names that are paths; machine JSON printed on one line; the HTR
+      model in Settings; isinstance for TrOCR's tables; escaped SFM characters; the Python floor explained.
+
+Still to do, in this order (the refactors after the fixes, the user's call):
+- [ ] 2. ALTO carries what PAGE carries: a `Tags` element (an OtherTag for unclear, a StructureTag per region kind) and
+      TAGREFS on lines and blocks; one test over both exporters; validate ALTO against the 4.4 XSD; check PAGE's
+      unclear tag against a real Transkribus export (it writes `unclear {offset:..; length:..;}`).
+- [ ] 15. Tests of long-running state: the interleaved sampler resumed from `state_dict` yields exactly the rest of an
+      epoch; the runner's draw test calls `run()` and reads the Parquet and run_meta.json back; pytest-timeout; then
+      prune the suite with per-test coverage (testing-python's recipe).
+- [ ] 11. One eval-run module: EvalCrop the one row model (reference and reference_lines together), read_jsonl and
+      write_jsonl, generated_path, the hand-fidelity statistics out of the CLI module.
+- [ ] 12. Draw options and shared constants declared once: Annotated option aliases from one `DrawSettings()`,
+      max_line_cer in DrawSettings, `--reference-guidance` for generate, LabelFormat as a StrEnum, MAX_SEQUENCE_LENGTH
+      and the component dtypes from diffu, one JPEG helper.
+- [ ] 9, 10, 14: one PAGE/ALTO reader, one caption grammar and Style, one page-space line model. Each gated on a
+      golden diff (crop rects, slots and caption bytes identical, old code against new) over every set a LoRA was
+      trained on.
+- [ ] Smaller: one `crop_record` for build_crops and test_plan; run text split at blank lines before refill; probe_set
+      refuses references whose words never differ; each package's direct imports declared; shared crop and record
+      fixtures; exact paragraphs in the plain edit-caption test; stale docstrings and YAML references to missing files;
+      generation checks `--reference-caption` against the LoRA's build.json.
 
 ## Quality control of generated windows (plan of 24 Oct: embeddings, a tabular model, a VLM judge)
 
