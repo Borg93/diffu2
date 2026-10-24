@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from operator import attrgetter
 from pathlib import Path
+from typing import Self
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -44,7 +45,7 @@ class Reference(BaseModel):
     lines: list[list[int]] = []  # the reference's line boxes, 0-1000 of the image, y first
 
     @model_validator(mode="after")
-    def _measurable(self) -> Reference:
+    def _measurable(self) -> Self:
         if self.caption is ReferenceCaption.DESCRIBED and not self.lines:
             raise ValueError(
                 f"a described caption measures the reference's hand in its line boxes: {self.image} has none"
@@ -79,6 +80,15 @@ class CropPlan(BaseModel):
     lines: list[LineRecord]  # boxes on 0-1000 of the crop, y first, in the caption's numbering
     reading_order: list[int]  # indices into ``lines``: block by block in page order, top to bottom in each
     rules: list[list[int]] = Field(default_factory=list)  # the ruled lines' boxes, 0-1000 of the crop, y first
+
+    @model_validator(mode="after")
+    def _reading_order_orders_the_lines(self) -> Self:
+        """A plan read from a job file fails here, before its crop is drawn, not at the label export after it."""
+        if sorted(self.reading_order) != list(range(len(self.lines))):
+            raise ValueError(
+                f"reading order {self.reading_order} is not an order of the plan's {len(self.lines)} lines"
+            )
+        return self
 
 
 def _source(box: LineBox) -> str:

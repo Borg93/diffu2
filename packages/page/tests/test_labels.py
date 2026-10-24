@@ -12,10 +12,11 @@ import xmlschema
 
 from diffu_page.blocks.ground_truth import line_labels, rule_rects
 from diffu_page.captions.look import ScanLook
+from diffu_page.captions.prompt import LineRecord
 from diffu_page.captions.provenance import Provenance
 from diffu_page.labels import LineLabel, PageLabels, export, to_alto, to_page_xml
 from diffu_page.layout import CellRef, Production, load_xml_layout
-from diffu_page.plan import PageStyle, plan_page
+from diffu_page.plan import CropPlan, PageStyle, plan_page
 
 # PRImA's PAGE 2019-07-15 schema (Apache-2.0, github.com/PRImA-Research-Lab/PAGE-XML,
 # PAGE-release/gts/pagecontent/2019-07-15/pagecontent.xsd): the version the exports declare
@@ -86,6 +87,48 @@ def _form_labels() -> PageLabels:
 
 def _local(element: ET.Element) -> str:
     return element.tag.rsplit("}", 1)[-1]
+
+
+def test_line_labels_put_each_line_on_its_baseline_in_reading_order_tagging_lines_over_the_cer_limit() -> None:
+    plan = CropPlan(
+        rect=(0, 0, 1000, 200),
+        width=1000,
+        height=200,
+        caption="",
+        lines=[
+            # its slot cut off by the crop's top edge: the baseline is not 0.7 of the way down what is left of it
+            LineRecord(id="Sv_Text_1", text="Anno 1715", role="", bbox=[0, 100, 105, 900], baseline=60),
+            # a record written before baselines were kept: 0.7 of the way down its slot
+            LineRecord(id="Sv_Text_2", text="den 4 maj", role="", bbox=[300, 100, 450, 900]),
+            LineRecord(id="Sv_Text_3", text="Stockholm", role="marginalia", bbox=[500, 0, 650, 90], baseline=605),
+        ],
+        reading_order=[2, 0, 1],
+    )
+
+    labels = line_labels(plan, [0.25, 0.26, 0.0], max_line_cer=0.25)
+
+    assert labels == [
+        LineLabel(
+            text="Anno 1715",
+            polygon=[(100, 0), (900, 0), (900, 21), (100, 21)],
+            baseline=[(100, 12), (900, 12)],
+            order=1,
+        ),
+        LineLabel(
+            text="den 4 maj",
+            polygon=[(100, 60), (900, 60), (900, 90), (100, 90)],
+            baseline=[(100, 81), (900, 81)],
+            order=2,
+            tag="unclear",
+        ),
+        LineLabel(
+            text="Stockholm",
+            polygon=[(0, 100), (90, 100), (90, 130), (0, 130)],
+            baseline=[(0, 121), (90, 121)],
+            region="marginalia",
+            order=0,
+        ),
+    ]
 
 
 @pytest.mark.parametrize("labels", [_labels(), _form_labels()], ids=["text", "form"])

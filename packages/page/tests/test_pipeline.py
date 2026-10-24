@@ -72,7 +72,7 @@ def test_crop_pipeline_draws_a_plan_with_one_unclear_label_per_line(crop_pipe: M
     assert crop.image.size == (64, 32)
     assert len(crop.line_cers) == 2
     assert crop.unclear_lines == 2  # noise reads back as nothing like the text
-    assert sorted(_alto_lines(crop.labels_xml)) == ["Göteborgs poliskammare", "den 4 maj"]
+    assert _alto_lines(crop.labels_xml) == ["den 4 maj", "Göteborgs poliskammare"]  # in the plan's reading order
 
 
 def test_crop_pipeline_draws_a_plan_with_the_model_a_diffu_repo_names(tiny_diffu: Path) -> None:
@@ -81,7 +81,7 @@ def test_crop_pipeline_draws_a_plan_with_the_model_a_diffu_repo_names(tiny_diffu
     crop = _draw(pipe)
 
     assert crop.image.size == (64, 32)
-    assert sorted(_alto_lines(crop.labels_xml)) == ["Göteborgs poliskammare", "den 4 maj"]
+    assert _alto_lines(crop.labels_xml) == ["den 4 maj", "Göteborgs poliskammare"]  # in the plan's reading order
 
 
 def test_crop_pipeline_conditions_a_crop_on_its_reference_image(crop_pipe: ModularPipeline) -> None:

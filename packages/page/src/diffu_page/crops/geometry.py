@@ -200,6 +200,11 @@ class Crop(BaseModel):
         bottom = line.baseline_y + SLOT_BELOW_BASELINE * self.pitch
         return self.layout_box((line.box[0] - margin, top, line.box[2] + margin, bottom))
 
+    def baseline(self, line: Line) -> int:
+        """A line's baseline as a layout y, 0-1000 of the crop height. A crop holds only lines whose baseline lies
+        inside it, so unlike the line's slot it is never clamped."""
+        return round(1000 * (line.baseline_y - self.rect[1]) / (self.rect[3] - self.rect[1]))
+
     def visible_box(self, line: Line) -> list[int]:
         """The layout box of the part of a cut-off line inside the crop."""
         return self.layout_box(

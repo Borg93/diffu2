@@ -24,13 +24,16 @@ class LayoutRow(BaseModel):
 
 
 class LineRecord(BaseModel):
-    """A crop's text line: its layout row id, transcription, PAGE role, box, the template block it came from, how it
-    was made and, in a table, its cell."""
+    """A crop's text line: its layout row id, transcription, PAGE role, box, baseline, the template block it came
+    from, how it was made and, in a table, its cell."""
 
     id: str
     text: str
     role: str
     bbox: list[int]
+    # 0-1000 of the crop height. None in records written before baselines were kept: their labels put it 0.7 of the
+    # way down the box, which is wrong where a crop edge cuts the box.
+    baseline: int | None = None
     block: str = ""  # "" in records written before blocks were kept: their labels group lines by role alone
     production: Production = Production.HANDWRITTEN
     cell: CellRef | None = None
@@ -97,6 +100,7 @@ def caption_for(crop: Crop, provenance: Provenance, look: ScanLook) -> Caption:
                 text=line.text,
                 role=line.role,
                 bbox=crop.slot(line),
+                baseline=crop.baseline(line),
                 block=line.source,
                 production=line.production,
                 cell=line.cell,

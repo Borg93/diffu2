@@ -7,7 +7,9 @@ import json
 from collections import Counter
 from pathlib import Path
 
+import pytest
 from PIL import Image
+from pydantic import ValidationError
 
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.prompt import LineRecord, caption_for, caption_order
@@ -89,6 +91,25 @@ def test_plan_cuts_a_page_where_the_training_builder_cut_it(body_and_notes_page:
     assert [(plan.rect, [line.bbox for line in plan.lines]) for plan in planned] == [
         (crop.rect, [crop.slot(line) for line in caption_order(crop.lines)]) for crop in trained
     ]
+
+
+def test_plan_records_where_each_lines_baseline_lies_on_its_crop(body_and_notes_page: Path) -> None:
+    layout = load_xml_layout(body_and_notes_page)
+    on_page = {box.text: box.baseline_y for box in layout.boxes}
+
+    planned = plan_page(layout, STYLE)
+
+    assert [[line.baseline for line in plan.lines] for plan in planned] == [
+        [round(1000 * (on_page[line.text] - plan.rect[1]) / (plan.rect[3] - plan.rect[1])) for line in plan.lines]
+        for plan in planned
+    ]
+
+
+def test_crop_plan_refuses_a_reading_order_that_is_not_an_order_of_its_lines() -> None:
+    lines = [LineRecord(id=f"Sv_Text_{k}", text="", role="", bbox=[0, 0, 1000, 1000]) for k in (1, 2)]
+
+    with pytest.raises(ValidationError, match="reading order"):
+        CropPlan(rect=(0, 0, 10, 10), width=10, height=10, caption="", lines=lines, reading_order=[1, 1])
 
 
 COLLECTION = "GT-RA_arjeplogs_tingslag_20260220"

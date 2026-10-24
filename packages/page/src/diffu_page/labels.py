@@ -38,7 +38,7 @@ class LineLabel(BaseModel):
     baseline: list[Point] = Field(default_factory=list)  # left to right; empty if unknown
     region: str = RUNNING_TEXT  # a role's PAGE type (see ROLE_NAMES), "table" or "body"
     block: str = ""  # the template block the line came from; "" for labels made before blocks were kept
-    order: int = 0
+    order: int  # its place in reading order, which the exported ids are built from
     tag: str = ""  # "unclear" when the line read back badly
     production: Production = Production.HANDWRITTEN
     cell: CellRef | None = None  # the table cell the line is written in
