@@ -215,10 +215,24 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
       strokes where the lines are, not letters (read-back CER 0.94, real 0.10). At guidance 4 (`eval_final`) it draws
       noise: it trained without caption dropout, so it never learned the empty prompt CFG steers against. Its model
       is re-exported with `diffu-export` (shift 6.0 from its config.yaml; the init repo's hand-added scheduler gone).
-- [ ] **Training, after the smoke run**: the empty-prompt null swapped in by our dataset (p 0.1; NeMo's own dropout
-      zeroes the embeddings; `diffu_train.dropout.CaptionDropout` does it for FLUX.3's image-edit items since
-      2026-10-23: reuse it for diffu's text-to-image items, with the empty prompt cached by diffu's own text encoder),
-      zero latents for a dropped reference, then the EMA / Self-Flow recipe subclass
+- [x] **Caption dropout for diffu** (24 Oct): `InterleavedTextToImageDataloaderConfig.caption_dropout` swaps the
+      empty prompt in for a share of the crops (`CaptionDropout`, as for FLUX.3's pairs; NeMo's own dropout zeroes
+      the embeddings). The empty prompt is cached by diffu's own text encoder: `cache_diffu` writes it,
+      `python -m diffu_train.empty_prompt` adds it to an older cache. It trains at its own 80-token window, which is
+      what generation feeds: diffu's guider runs the unconditional pass on its own, with `""` at its own window
+      (diffusers' FLUX.3 denoise loop). diffusers' FLUX.3 trainer pads it to the dropped sample's window instead,
+      because it batches several samples. Checked in NeMo's environment on E1's cache: the log line, 31 of 400
+      dropped, a batch builds.
+- [ ] **E1b** (queued 24 Oct after the CFG stop sweep, `jobs/diffu/run_e1b.sh`, `configs/diffu/diffu_s_e1b.yaml`):
+      E1's weights, 3,000 more steps x 8 with caption dropout 0.1, drawn at guidance 4 and 1. Does guidance now
+      draw a page, and better than without it; do letters start to form? The smoke step stops the run if NeMo's
+      log lacks the dropout line.
+- [ ] **More than one crop per micro-batch**: NeMo's collate pads mixed text windows with zeros and FLUX.3's
+      adapter passes no text mask, so the transformer would attend to zeros generation never feeds (it attends to
+      its padding). At one crop per micro-batch (E1, E1b) nothing is padded. Before E2 raises `local_batch_size`:
+      bucket by text window as well, or pad with the encoder's own padding (diffusers' trainer re-encodes with
+      `pad_to_length`).
+- [ ] **Training, after E1b**: zero latents for a dropped reference, then the EMA / Self-Flow recipe subclass
       (per-token timesteps through three forward pre-hooks; bit-identical to the stock forward with uniform
       timesteps).
 - [ ] **Staged experiments** (design study 2026-10-21): E1 GB10 smoke + overfit (~3–4 h) → E2 conditioning ablation

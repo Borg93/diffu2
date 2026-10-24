@@ -5,7 +5,8 @@ Each crop's latents (``diffu.latents.encode_latents``) and prompt embeddings
 training sees what generation will: the same Qwen3.5 layers and 80-token windows, the same Qwen-Image VAE latents and
 normalization, the same image preprocessing (FLUX.3's image processor). The files are laid out as NeMo's
 ``TextToImageDataset`` reads them: ``<out>/<W>x<H>/<md5>.pt`` per crop, ``metadata_shard_NNNN.json`` listing them,
-and ``metadata.json`` naming the shards. ``diffu_train.cache_diffu`` is the command that writes a split.
+and ``metadata.json`` naming the shards; beside them ``empty_prompt.pt``, the empty prompt encoded as a caption, which
+caption dropout trains on (``diffu_train.dropout``). ``diffu_train.cache_diffu`` is the command that writes a split.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from diffu.modular_pipelines.diffu import DiffuModularPipeline
 from diffu.modular_pipelines.diffu.encoders import MAX_SEQUENCE_LENGTH, prompt_embeds
 from diffu.modular_pipelines.loading import COMPONENT_DTYPES, require_loaded
 from diffu_page.captions.records import CropRecord
+from diffu_train.dropout import EmptyPrompt
 
 SHARD_SIZE = 1000  # crops per metadata shard, as NeMo's own cache writer shards them
 ENCODERS = ["text_encoder", "tokenizer", "vae"]  # the components caching loads; the transformer is not one
@@ -87,10 +89,8 @@ class DiffuEncoders(BaseModel):
 
 
 @torch.no_grad()
-def encode_crop(encoders: DiffuEncoders, image: Image.Image, caption: str) -> tuple[torch.Tensor, torch.Tensor]:
-    """A crop's latents ``(C, H/16, W/16)`` in float32 and its prompt embeddings ``(window, width)``, on the CPU."""
-    pixels, _ = encoders.image_processor.preprocess(image.convert("RGB"), resize_mode="fill")
-    latents = encode_latents(encoders.vae, pixels.to(encoders.device, encoders.vae.dtype))
+def encode_prompt(encoders: DiffuEncoders, caption: str) -> torch.Tensor:
+    """A caption's prompt embeddings ``(window, width)`` as diffu's pipeline makes them, on the CPU."""
     embeds = prompt_embeds(
         encoders.text_encoder,
         encoders.tokenizer,
@@ -99,7 +99,22 @@ def encode_crop(encoders: DiffuEncoders, image: Image.Image, caption: str) -> tu
         max_sequence_length=MAX_SEQUENCE_LENGTH,
         device=torch.device(encoders.device),
     )
-    return latents[0].float().cpu(), embeds[0].cpu()
+    return embeds[0].cpu()
+
+
+@torch.no_grad()
+def encode_crop(encoders: DiffuEncoders, image: Image.Image, caption: str) -> tuple[torch.Tensor, torch.Tensor]:
+    """A crop's latents ``(C, H/16, W/16)`` in float32 and its prompt embeddings ``(window, width)``, on the CPU."""
+    pixels, _ = encoders.image_processor.preprocess(image.convert("RGB"), resize_mode="fill")
+    latents = encode_latents(encoders.vae, pixels.to(encoders.device, encoders.vae.dtype))
+    return latents[0].float().cpu(), encode_prompt(encoders, caption)
+
+
+def write_empty_prompt(encoders: DiffuEncoders, out: Path) -> None:
+    """The empty prompt encoded as a caption, into the cache ``out``: what caption dropout trains on, as classifier-free
+    guidance contrasts a caption with it at generation."""
+    embeddings = encode_prompt(encoders, "")
+    EmptyPrompt(embeddings=embeddings, mask=torch.ones(embeddings.shape[0], dtype=torch.long)).save(out)
 
 
 def _cache_crop(

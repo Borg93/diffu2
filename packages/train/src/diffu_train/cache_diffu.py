@@ -20,7 +20,7 @@ from nemo_automodel.components.datasets.diffusion.multi_tier_bucketing import Mu
 
 from diffu_page.captions.records import read_records
 from diffu_page.output import console, err_console
-from diffu_train.cache import DiffuEncoders, cache_crops, write_metadata
+from diffu_train.cache import DiffuEncoders, cache_crops, write_empty_prompt, write_metadata
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 
@@ -39,13 +39,15 @@ def main(
     records = read_records(crops / "metadata.jsonl")[:limit]
     calculator = MultiTierBucketCalculator(quantization=64)
     out.mkdir(parents=True, exist_ok=True)
+    encoders = DiffuEncoders.load(model, device)
     run = cache_crops(
         records,
         crops,
-        encoders=DiffuEncoders.load(model, device),
+        encoders=encoders,
         out=out,
         bucket_id=lambda width, height: calculator.get_bucket_for_image(width, height)["id"],
     )
+    write_empty_prompt(encoders, out)
     (out / "failed.json").write_text(json.dumps(run.failed, indent=1), encoding="utf-8")
     if run.failed:
         err_console.print(f"{len(run.failed)} of {len(records)} crops failed: see {out / 'failed.json'}")

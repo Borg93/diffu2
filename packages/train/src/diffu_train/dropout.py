@@ -1,12 +1,14 @@
-"""Caption dropout for FLUX.3 image-edit training: a share of the pairs trained on the empty prompt in place of their
-caption, as diffusers' FLUX.3 Klein trainer does it (``--caption_dropout``, 0.1 recommended).
+"""Caption dropout: a share of the training items trained on the empty prompt in place of their caption, as diffusers'
+FLUX.3 Klein trainer does it (``--caption_dropout``, 0.1 recommended), for FLUX.3's image-edit pairs and diffu's
+text-to-image crops alike.
 
 Classifier-free guidance at generation contrasts the caption with the empty prompt ``""``, encoded like any caption
-(diffusers' ``Flux3TextEncoderStep``). Trained only on captioned pairs, the LoRA never sees that unconditional input
-with a reference, so guidance pushes every drawing towards the words and away from what the reference alone would
-give. NeMo's own ``cfg_dropout`` zeroes the text embeddings instead, an input generation never makes; this swaps in
-the real encoding of ``""``, cached once beside the pairs (``diffu_train.cache_pairs``). No NeMo import, so it runs
-and tests off the NeMo environment; ``diffu_train.nemo`` wraps NeMo's image-edit dataset with it.
+(diffusers' ``Flux3TextEncoderStep``, diffu's ``DiffuTextEncoderStep``). A model trained only on captioned items never
+sees that unconditional input, so guidance pushes against a prediction it never learned (diffu's first run drew noise
+at guidance 4 and a page without guidance). NeMo's own ``cfg_dropout`` zeroes the text embeddings instead, an input
+generation never makes; this swaps in the real encoding of ``""``, cached once beside the items
+(``diffu_train.cache_pairs`` for FLUX.3's pairs, ``diffu_train.cache_diffu`` for diffu's crops). No NeMo import, so it
+runs and tests off the NeMo environment; ``diffu_train.nemo`` wraps NeMo's datasets with it.
 """
 
 from __future__ import annotations
@@ -22,7 +24,9 @@ from torch.utils.data import Dataset
 
 EMPTY_PROMPT_FILE = "empty_prompt.pt"  # in a pair cache dir
 
-type Sample = Mapping[str, Any]  # one item of NeMo's ImageEditDataset
+type Sample = Mapping[str, Any]  # one item of NeMo's ImageEditDataset or TextToImageDataset
+type Item = dict[str, Any]  # an item as the dataset hands it on
+type Blank = Callable[[Sample], Item]  # an item with the empty prompt in place of its caption
 
 
 class SampleSource(Protocol):
@@ -39,7 +43,7 @@ def uniform() -> float:
 
 
 class EmptyPrompt(BaseModel):
-    """The empty prompt as NeMo's FLUX.3 text encoding caches a caption: its embeddings and attention mask."""
+    """The empty prompt as a cache holds a caption: its embeddings and attention mask."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
 
@@ -51,11 +55,13 @@ class EmptyPrompt(BaseModel):
         """The empty prompt cached in ``cache_dir``.
 
         Raises:
-            FileNotFoundError: If the cache has none (it predates caption dropout: run diffu_train.cache_pairs).
+            FileNotFoundError: If the cache has none (it predates caption dropout: cache it again).
         """
         path = cache_dir / EMPTY_PROMPT_FILE
         if not path.exists():
-            raise FileNotFoundError(f"{path} is missing: cache the pairs with diffu_train.cache_pairs to write it")
+            raise FileNotFoundError(
+                f"{path} is missing: cache with diffu_train.cache_pairs (FLUX.3) or diffu_train.cache_diffu (diffu)"
+            )
         data = torch.load(path, map_location="cpu", weights_only=True)
         return cls(embeddings=data["prompt_embeddings"], mask=data["prompt_attention_mask"])
 
@@ -65,10 +71,25 @@ class EmptyPrompt(BaseModel):
             {"prompt_embeddings": self.embeddings, "prompt_attention_mask": self.mask}, cache_dir / EMPTY_PROMPT_FILE
         )
 
+    def into_image_edit(self, sample: Sample) -> Item:
+        """An image-edit pair (NeMo's ImageEditDataset item) with the empty prompt in place of its caption: target and
+        reference stay, and its text token count follows the prompt."""
+        return {
+            **sample,
+            "prompt_embeddings": self.embeddings,
+            "prompt_attention_mask": self.mask,
+            "metadata": {**sample["metadata"], "text_token_length": self.embeddings.shape[0]},
+        }
 
-class CaptionDropout(Dataset[dict[str, Any]]):
-    """A NeMo image-edit dataset whose samples each carry the empty prompt instead of their caption with probability
-    ``share``: target and reference stay, and the sample's text token count follows its prompt.
+    def into_text_to_image(self, sample: Sample) -> Item:
+        """A text-to-image crop (NeMo's TextToImageDataset item, whose mask NeMo's collate makes from its length) with
+        the empty prompt in place of its caption."""
+        return {**sample, "prompt_embeds": self.embeddings}
+
+
+class CaptionDropout(Dataset[Item]):
+    """A NeMo dataset whose items each carry the empty prompt instead of their caption with probability ``share``,
+    put in by ``blank`` (``EmptyPrompt.into_image_edit`` or ``into_text_to_image``).
 
     Each draw is ``draw()``, by default Python's ``random`` (``uniform``), which the DataLoader seeds once in each
     worker as it starts (NeMo's workers persist across epochs, so the draws run on from epoch to epoch): a pair loses
@@ -76,21 +97,17 @@ class CaptionDropout(Dataset[dict[str, Any]]):
     """
 
     def __init__(
-        self, dataset: SampleSource, empty: EmptyPrompt, *, share: float, draw: Callable[[], float] = uniform
+        self, dataset: SampleSource, blank: Blank, *, share: float, draw: Callable[[], float] = uniform
     ) -> None:
         super().__init__()
         self._dataset = dataset
-        self._empty = empty
+        self._blank = blank
         self._share = share
         self._draw = draw
 
     def __len__(self) -> int:
         return len(self._dataset)
 
-    def __getitem__(self, index: int) -> dict[str, Any]:
-        sample = dict(self._dataset[index])
-        if self._draw() < self._share:
-            sample["prompt_embeddings"] = self._empty.embeddings
-            sample["prompt_attention_mask"] = self._empty.mask
-            sample["metadata"] = {**sample["metadata"], "text_token_length": self._empty.embeddings.shape[0]}
-        return sample
+    def __getitem__(self, index: int) -> Item:
+        sample = self._dataset[index]
+        return self._blank(sample) if self._draw() < self._share else dict(sample)

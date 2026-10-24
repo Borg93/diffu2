@@ -1,5 +1,6 @@
 """diffu's training cache on CPU with the tiny diffu repo: each crop written where NeMo's TextToImageDataset reads it,
-holding exactly the latents and prompt embeddings diffu's own pipeline steps make at generation."""
+holding exactly the latents and prompt embeddings diffu's own pipeline steps make at generation, and the empty prompt
+caption dropout trains on."""
 
 from __future__ import annotations
 
@@ -11,6 +12,7 @@ import pytest
 import torch
 from diffusers.modular_pipelines import SequentialPipelineBlocks
 from PIL import Image
+from typer.testing import CliRunner
 
 from diffu.modular_pipelines.diffu import DiffuModularPipeline
 from diffu.modular_pipelines.diffu.encoders import DiffuTextEncoderStep
@@ -19,6 +21,8 @@ from diffu.modular_pipelines.loading import COMPONENT_DTYPES
 from diffu_page.captions.prompt import LineRecord
 from diffu_page.captions.records import CropRecord
 from diffu_train.cache import DiffuEncoders, cache_crops, write_metadata
+from diffu_train.dropout import EmptyPrompt
+from diffu_train.empty_prompt import app as empty_prompt_app
 
 CAPTIONS = ["Ett protokoll i brun bläck.", "En dombok på gult papper, två rader."]
 
@@ -77,6 +81,31 @@ def test_cache_holds_each_crop_as_diffus_pipeline_encodes_it_where_nemo_reads_it
             latents = vae(image=image.convert("RGB"), output="image_cond_latents")[0][0]
         assert torch.equal(sample["prompt_embeds"], text(prompt=caption, output="prompt_embeds")[0])
         assert torch.equal(sample["latent"], latents.float())
+
+
+def test_empty_prompt_writes_into_a_cache_the_empty_prompt_as_diffus_pipeline_encodes_it(
+    tiny_diffu: Path, tmp_path: Path
+) -> None:
+    (tmp_path / "metadata.json").write_text("{}", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        empty_prompt_app, ["--model", str(tiny_diffu), "--cache", str(tmp_path), "--device", "cpu"]
+    )
+
+    assert result.exit_code == 0, result.output
+    text = _pipeline(SequentialPipelineBlocks.from_blocks_dict({"text_encoder": DiffuTextEncoderStep()}), tiny_diffu)
+    empty = EmptyPrompt.load(tmp_path)
+    assert torch.equal(empty.embeddings, text(prompt="", output="prompt_embeds")[0])
+    assert torch.equal(empty.mask, torch.ones(empty.embeddings.shape[0], dtype=torch.long))
+
+
+def test_empty_prompt_refuses_a_directory_that_holds_no_cache(tiny_diffu: Path, tmp_path: Path) -> None:
+    result = CliRunner().invoke(
+        empty_prompt_app, ["--model", str(tiny_diffu), "--cache", str(tmp_path), "--device", "cpu"]
+    )
+
+    assert result.exit_code == 2
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_cache_records_a_crop_it_cannot_read_and_caches_the_rest(tiny_diffu: Path, tmp_path: Path) -> None:

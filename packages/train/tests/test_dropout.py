@@ -1,5 +1,5 @@
-"""Caption dropout on samples shaped like NeMo's image-edit items: a dropped pair trains on the cached empty prompt
-with its target and reference, every other pair as it was."""
+"""Caption dropout on items shaped like NeMo's image-edit and text-to-image items: a dropped item trains on the cached
+empty prompt with its images, every other item as it was."""
 
 from __future__ import annotations
 
@@ -28,7 +28,8 @@ def test_caption_dropout_trains_a_dropped_pair_on_the_empty_prompt_and_keeps_the
         tmp_path
     )
     pairs = [_sample(0), _sample(1)]
-    dataset = CaptionDropout(pairs, EmptyPrompt.load(tmp_path), share=0.1, draw=iter([0.05, 0.5]).__next__)
+    blank = EmptyPrompt.load(tmp_path).into_image_edit
+    dataset = CaptionDropout(pairs, blank, share=0.1, draw=iter([0.05, 0.5]).__next__)
 
     dropped, kept = dataset[0], dataset[1]
 
@@ -39,3 +40,17 @@ def test_caption_dropout_trains_a_dropped_pair_on_the_empty_prompt_and_keeps_the
     assert dropped["context_latents"] is pairs[0]["context_latents"]
     assert pairs[0]["metadata"]["text_token_length"] == 160  # the dataset's own sample is left as it was
     assert kept == pairs[1]
+
+
+def test_caption_dropout_trains_a_dropped_crop_of_diffu_on_the_empty_prompt_and_keeps_the_rest() -> None:
+    empty = EmptyPrompt(embeddings=torch.full((80, 8), 7.0), mask=torch.ones(80, dtype=torch.long))
+    crops = [
+        {"latent": torch.full((64, 2, 2), float(k)), "prompt_embeds": torch.full((160, 8), float(k))} for k in (0, 1)
+    ]
+    dataset = CaptionDropout(crops, empty.into_text_to_image, share=0.1, draw=iter([0.05, 0.5]).__next__)
+
+    dropped, kept = dataset[0], dataset[1]
+
+    assert torch.equal(dropped["prompt_embeds"], torch.full((80, 8), 7.0))
+    assert dropped["latent"] is crops[0]["latent"]
+    assert kept == crops[1]
