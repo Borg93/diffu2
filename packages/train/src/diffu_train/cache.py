@@ -14,7 +14,7 @@ import hashlib
 import json
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 import torch
 from PIL import Image
@@ -23,10 +23,12 @@ from pydantic import BaseModel, ConfigDict
 from diffu.latents import encode_latents
 from diffu.modular_pipelines.diffu import DiffuModularPipeline
 from diffu.modular_pipelines.diffu.encoders import prompt_embeds
+from diffu.modular_pipelines.loading import require_loaded
 from diffu_page.captions.records import CropRecord
 
 MAX_SEQUENCE_LENGTH = 8192  # the text encoder step's default, so training never cuts a caption shorter than generation
 SHARD_SIZE = 1000  # crops per metadata shard, as NeMo's own cache writer shards them
+ENCODERS = ["text_encoder", "tokenizer", "vae"]  # the components caching loads; the transformer is not one
 
 type BucketId = Callable[[int, int], int]
 
@@ -65,12 +67,15 @@ class DiffuEncoders(BaseModel):
     device: str
 
     @classmethod
-    def load(cls, model: Path, device: str) -> DiffuEncoders:
-        """The encoders of the diffu repo at ``model`` (VAE in float32, the text encoder in bfloat16) on ``device``."""
+    def load(cls, model: Path, device: str) -> Self:
+        """The encoders of the diffu repo at ``model`` (VAE in float32, the text encoder in bfloat16) on ``device``.
+
+        Raises:
+            RuntimeError: If one of them failed to load, before a single crop fails on it.
+        """
         pipe = DiffuModularPipeline.from_pretrained(str(model))
-        pipe.load_components(
-            names=["text_encoder", "tokenizer", "vae"], dtype={"vae": torch.float32, "default": torch.bfloat16}
-        )
+        pipe.load_components(names=ENCODERS, dtype={"vae": torch.float32, "default": torch.bfloat16})
+        require_loaded(pipe, ENCODERS)
         pipe.to(device)
         return cls(
             text_encoder=pipe.text_encoder,
@@ -150,7 +155,14 @@ def cache_crops(
 
 
 def write_metadata(entries: list[CacheEntry], out: Path, *, model: Path) -> None:
-    """``out``'s metadata shards and ``metadata.json``, as NeMo's ``TextToImageDataset`` loads them."""
+    """``out``'s metadata shards and ``metadata.json``, as NeMo's ``TextToImageDataset`` loads them. ``metadata.json``
+    is written last, so it marks a finished cache.
+
+    Raises:
+        ValueError: If ``entries`` is empty: a cache that holds nothing is not finished.
+    """
+    if not entries:
+        raise ValueError(f"nothing was cached into {out}: no metadata.json marks it finished")
     shards: list[str] = []
     for start in range(0, len(entries), SHARD_SIZE):
         name = f"metadata_shard_{start // SHARD_SIZE:04d}.json"

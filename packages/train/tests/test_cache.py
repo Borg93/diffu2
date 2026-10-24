@@ -4,8 +4,10 @@ holding exactly the latents and prompt embeddings diffu's own pipeline steps mak
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
+import pytest
 import torch
 from diffusers.modular_pipelines import SequentialPipelineBlocks
 from PIL import Image
@@ -91,3 +93,18 @@ def test_cache_records_a_crop_it_cannot_read_and_caches_the_rest(tiny_diffu: Pat
 
     assert [entry.prompt for entry in run.entries] == [CAPTIONS[0]]
     assert list(run.failed) == ["1.jpg"]
+
+
+def test_encoders_refuse_a_repo_whose_vae_does_not_load(tiny_diffu: Path, tmp_path: Path) -> None:
+    repo = shutil.copytree(tiny_diffu, tmp_path / "repo")
+    (repo / "vae" / "diffusion_pytorch_model.safetensors").write_bytes(b"not a safetensors file")
+
+    with pytest.raises(RuntimeError, match=r"failed to load .*\['vae'\]"):
+        DiffuEncoders.load(repo, "cpu")
+
+
+def test_write_metadata_refuses_to_mark_an_empty_cache_finished(tiny_diffu: Path, tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="nothing was cached"):
+        write_metadata([], tmp_path, model=tiny_diffu)
+
+    assert not (tmp_path / "metadata.json").exists()

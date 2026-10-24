@@ -5,7 +5,8 @@ Runs in NeMo AutoModel's environment, on the GPU, through jobs/spark_guard.sh:
     python -m diffu_train.cache_diffu --crops data_flux3/layout_crops_v2/train --model runs/diffu/init_s \\
         --out data_flux3/cache_diffu_v2
 
-Writes ``<out>/failed.json`` with the crops that could not be cached, and exits 1 if there are any.
+Writes ``<out>/failed.json`` with the crops that could not be cached, and exits 1 if there are any. When nothing was
+cached it writes no ``metadata.json``, the file a finished cache is known by.
 """
 
 from __future__ import annotations
@@ -45,8 +46,8 @@ def main(
         out=out,
         bucket_id=lambda width, height: calculator.get_bucket_for_image(width, height)["id"],
     )
-    write_metadata(run.entries, out, model=model)
     (out / "failed.json").write_text(json.dumps(run.failed, indent=1), encoding="utf-8")
+    write_metadata(run.entries, out, model=model)
     console.print(f"cached {len(run.entries)} of {len(records)} crops -> {out}")
     if run.failed:
         err_console.print(f"{len(run.failed)} crops failed: see {out / 'failed.json'}")

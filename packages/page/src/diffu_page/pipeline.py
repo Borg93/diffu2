@@ -30,6 +30,7 @@ from PIL import Image
 from pydantic import BaseModel, ConfigDict
 
 from diffu.modular_pipelines.diffu import DiffuAutoBlocks, DiffuModularPipeline
+from diffu.modular_pipelines.loading import require_loaded
 from diffu_page.blocks import (
     CROP_OUTPUTS,
     CropLoopStep,
@@ -206,13 +207,6 @@ class DrawSettings(BaseModel):
 type BlocksFor = Callable[[ModelFamily], SequentialPipelineBlocks]
 
 
-def _require_loaded(pipe: ModularPipeline) -> None:
-    """Fail fast: ``load_components`` logs a component that failed to load and leaves it ``None``."""
-    missing = [name for name in pipe.pretrained_component_names if getattr(pipe, name, None) is None]
-    if missing:
-        raise RuntimeError(f"components failed to load (see the log above): {missing}")
-
-
 def load_pipeline(model: Path, blocks: BlocksFor, *, loras: dict[str, Path], settings: DrawSettings) -> ModularPipeline:
     """``blocks`` built for the model at ``model``, its components loaded (VAE in float32, the rest in bfloat16) on
     ``settings.device``, the guider at ``settings.guidance_scale`` (and ``settings.reference_guidance_scale``) and every
@@ -225,7 +219,7 @@ def load_pipeline(model: Path, blocks: BlocksFor, *, loras: dict[str, Path], set
     family = model_family(model)
     pipe = family.pipeline(blocks=blocks(family), pretrained_model_name_or_path=str(model))
     pipe.load_components(dtype={"vae": torch.float32, "default": torch.bfloat16})
-    _require_loaded(pipe)
+    require_loaded(pipe)
     guider = ReferenceGuidance(
         guidance_scale=settings.guidance_scale, reference_scale=settings.reference_guidance_scale
     )
