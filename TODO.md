@@ -391,7 +391,35 @@ Any scanned page as a template, not only pages with PAGE/ALTO ground truth.
       0.86/0.59/0.38, by eye the same drawings. None carries the letterforms; without training one image carries the
       page (paper, ink, grain; reference guidance 3.5 most), not the writer. Side idea: a blank page from
       GT-RA_tomma_sidor as the canvas for realism.
-- [ ] Per-hand LoRA from few pages (queue_tonight3b.sh, after diffu E1): the 1715 recipe on the windows of 4 and
+- [x] Caption probe (runs/caption_probe; untrained FLUX.3, the described control's 21 crops and seeds): (scribe)
+      "another page of the same volume, by the same scribe: copy the handwriting exactly"; (ink) the ink described
+      physically (two hexes, hairlines, downstrokes, soaked into the fibres); (script) "Swedish Kurrent written with a
+      quill: looped ascenders, the long s, e like a narrow n". Carry-over paper/ink/slant: described 0.86/0.50/0.18,
+      scribe 0.85/0.51/0.22, ink 0.77/0.43/0.16, script 0.84/0.45/0.17; by eye the same letters in all four. No wording
+      moves the letterforms: v3d keeps the described captions; the hand must come from training.
+- [x] Writer identification (scratchpad writer/: build_lines.py, train_id.py; data_flux3/writer_id/lines.npz). A small
+      CNN learns 37 collections from 300 real lines each (layout_crops_v2b train; lines normalised to handwriting only,
+      64 px high), then names held-out real lines and the per-hand evals' lines (same text and boxes). Top-1, grey /
+      black-and-white strokes only: held-out real 0.77 / 0.59; 1715 real 0.87 / 0.85, LoRA 0.83 / 0.83, untrained 0.00
+      / 0.02; Pahlman 0.97 / 0.95, 0.97 / 0.91, 0.00 / 0.00; Kopparberg 0.74 / 0.83, 0.94 / 0.96, 0.00 / 0.00;
+      Landskapshandlingar 0.31 / 0.21, 0.76 / 0.49, 0.00 / 0.00. The LoRAs' lines are named as their collection as
+      often as the real ones (more on the films: a cleaner, more typical hand than the faded originals); untrained
+      FLUX.3's never (they go to Göteborgs poliskammare, the neatest 19th-c. hand). Machine-level writer identity
+      holds; a human examiner's blind test is still to do (the LoRA lines are bolder and cleaner than the real).
+- [x] Table probe (runs/table_probe, data_flux3/table_probe; scratchpad tables/stage_tables.py): 6 windows of real
+      ruled registers (one TableRegion, <= 30 cell lines), untrained FLUX.3 three ways with one seed: column rules +
+      top/bottom from the cells' borders, a full grid, no rules. All three draw the table (aligned columns, numbers
+      right, letter headings centred; CER 0.01-0.09, the Sollentuna ledger 0.30-0.52); asked for, the rules and the
+      grid are drawn where the boxes put them; unasked, FLUX.3 adds a column rule itself but never a row grid.
+- [ ] Tables in the pipeline: the planner and build_crops leave table cells out (plan.py); include them, caption the
+      ruling (rule rows from the cells' borders; which borders are really ruled must come from the template or a line
+      detector on the real page), train crops with tables, export TableRegion/TableCell in PAGE. Forms and mixed
+      print/hand need data (none in our ground truth).
+- [ ] Damage test queued (queue_day3.sh): the Landskapshandlingar LoRA retrained on captions stating each window's
+      measured damage (scratchpad damage/: damage.py, caption_damage.py; data_flux3/hand_landskap_dmg). The current
+      LoRA draws the film edges (0.36/0.39/0.33 where real 0.38/0.39/0.41) but not the stains (blotches 0.01 vs 0.12)
+      or the uneven light (0.10 vs 0.17); untrained FLUX.3 none of them.
+- [ ] Per-hand LoRA from few pages (queue_day3.sh, running from 09:46): the 1715 recipe on the windows of 4 and
       of 10 of its 36 training pages (data_flux3/hand_overstat_p4, _p10; 23 and 44 windows), 350 steps, checkpoints
       175 and 350 on the same 8 held-out windows, beside the 36-page LoRA's eval_step_349.
 - [ ] The tokenizer warns that FLUX.3 Klein's Qwen3-VL tokenizer has "an incorrect regex pattern" (transformers;
