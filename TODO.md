@@ -650,7 +650,7 @@ Done on 24 Oct, each with a test that was red with its fix removed:
       model in Settings; isinstance for TrOCR's tables; escaped SFM characters; the Python floor explained.
 
 Still to do, in this order (the refactors after the fixes, the user's call):
-- [ ] 2. ALTO carries what PAGE carries: a `Tags` element (an OtherTag for unclear, a StructureTag per region kind) and
+- [x] 2. (24 Oct) ALTO carries what PAGE carries: a `Tags` element (an OtherTag for unclear, a StructureTag per region kind) and
       TAGREFS on lines and blocks; one test over both exporters; validate ALTO against the 4.4 XSD; check PAGE's
       unclear tag against a real Transkribus export (it writes `unclear {offset:..; length:..;}`).
 - [ ] 15. Tests of long-running state: the interleaved sampler resumed from `state_dict` yields exactly the rest of an
@@ -658,9 +658,10 @@ Still to do, in this order (the refactors after the fixes, the user's call):
       prune the suite with per-test coverage (testing-python's recipe).
 - [ ] 11. One eval-run module: EvalCrop the one row model (reference and reference_lines together), read_jsonl and
       write_jsonl, generated_path, the hand-fidelity statistics out of the CLI module.
-- [ ] 12. Draw options and shared constants declared once: Annotated option aliases from one `DrawSettings()`,
-      max_line_cer in DrawSettings, `--reference-guidance` for generate, LabelFormat as a StrEnum, MAX_SEQUENCE_LENGTH
-      and the component dtypes from diffu, one JPEG helper.
+- [x] 12. Draw options and shared constants declared once (24 Oct): Annotated option aliases with defaults from one
+      `DrawSettings()`, max_line_cer in DrawSettings (`--max-line-cer`), `--reference-guidance` for generate,
+      LabelFormat a StrEnum, MAX_SEQUENCE_LENGTH and COMPONENT_DTYPES from diffu, one JPEG quality and helper. Not in
+      the runner (no Ray work yet): diffu-run keeps its own option copies and `_jpeg` until then.
 - [ ] 9, 10, 14: one PAGE/ALTO reader, one caption grammar and Style, one page-space line model. Each gated on a
       golden diff (crop rects, slots and caption bytes identical, old code against new) over every set a LoRA was
       trained on.

@@ -18,7 +18,7 @@ import typer
 from PIL import Image, ImageDraw
 from pydantic import BaseModel
 
-from diffu_page.output import console
+from diffu_page.output import console, load_rgb
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 
@@ -78,11 +78,6 @@ def stack(rows: list[Image.Image]) -> Image.Image:
     return sheet
 
 
-def _load(path: Path) -> Image.Image:
-    with Image.open(path) as image:
-        return image.convert("RGB")
-
-
 @app.command()
 def sheets(
     steer: Annotated[Path, typer.Option(help="the steering set (diffu_page.data.steer_set)")],
@@ -95,9 +90,9 @@ def sheets(
     by_template: dict[int, list[Image.Image]] = defaultdict(list)
     for sample in results.samples:
         prompt = prompts[sample.index]
-        panels = [_load(run / "generated" / f"{sample.index:03d}.png")]
+        panels = [load_rgb(run / "generated" / f"{sample.index:03d}.png")]
         if prompt.example:
-            panels.append(_load(steer / prompt.example))
+            panels.append(load_rgb(steer / prompt.example))
         by_template[prompt.template].append(labelled_row(label_of(prompt, sample), panels))
     for template, rows in by_template.items():
         out = run / f"steer_template_{template}.jpg"

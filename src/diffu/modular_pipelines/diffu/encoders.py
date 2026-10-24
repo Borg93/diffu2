@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 # The prompt window is right-padded to a multiple of this many tokens. The transformer attends to the padding, so the
 # window is part of the model recipe, as it is FLUX.3's.
 TEXT_WINDOW = 80
+MAX_SEQUENCE_LENGTH = 8192  # prompt tokens the text encoder reads at most; training caches with the same limit
 
 
 def prompt_embeds(
@@ -126,7 +127,7 @@ class DiffuTextEncoderStep(ModularPipelineBlocks):
             InputParam.template("negative_prompt", description="The prompt not to guide the generation"),
             InputParam.template(
                 "max_sequence_length",
-                default=8192,
+                default=MAX_SEQUENCE_LENGTH,
                 description="Maximum number of prompt tokens; longer prompts are truncated.",
             ),
             InputParam(

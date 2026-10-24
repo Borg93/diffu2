@@ -22,6 +22,8 @@ from diffu_page.plan import CropPlan
 from diffu_page.readback import pixel_box, read_lines
 from diffu_page.settings import settings
 
+MAX_LINE_CER = 0.25  # a line that reads back with a higher CER is labelled unclear
+
 
 class LineReadbackStep(ModularPipelineBlocks):
     """Reads every line box of the drawn image with an HTR model: the per-line CER against its text."""
@@ -127,8 +129,10 @@ class LabelExportStep(ModularPipelineBlocks):
         return [
             InputParam("crop_plan", type_hint=CropPlan, required=True),
             InputParam("line_cers", type_hint=list, required=True, description="LineReadbackStep's per-line CER."),
-            InputParam("label_format", type_hint=LabelFormat, default="alto", description="alto | page"),
-            InputParam("max_line_cer", type_hint=float, default=0.25, description="Above it a line is unclear."),
+            InputParam("label_format", type_hint=LabelFormat, default=LabelFormat.ALTO, description="alto | page"),
+            InputParam(
+                "max_line_cer", type_hint=float, default=MAX_LINE_CER, description="Above it a line is unclear."
+            ),
             InputParam("image_name", type_hint=str, default="", description="The image file the labels name."),
         ]
 

@@ -25,9 +25,20 @@ from pydantic import BaseModel
 
 from diffu_page.captions.hand import Box, HandDistance, HandLook, hand_distance, hand_look, lab
 from diffu_page.captions.prompt import LineRecord
-from diffu_page.cli.options import Lora, parse_lora, required_model
+from diffu_page.cli.options import (
+    DEFAULTS,
+    Device,
+    Guidance,
+    Lora,
+    MaxLineCer,
+    ReferenceGuidance,
+    Steps,
+    TextLayers,
+    parse_lora,
+    required_model,
+)
 from diffu_page.crops.grid import as_reference
-from diffu_page.output import console, err_console
+from diffu_page.output import console, err_console, load_rgb
 from diffu_page.pipeline import DrawSettings, crop_blocks, draw_crop, load_pipeline
 from diffu_page.plan import CropPlan
 from diffu_page.readback import pixel_box, read_lines
@@ -274,11 +285,6 @@ def read_crops(crops_dir: Path, n: int) -> list[EvalCrop]:
     return crops
 
 
-def _load(path: Path) -> Image.Image:
-    with Image.open(path) as image:
-        return image.convert("RGB")
-
-
 def evaluate_crop(
     pipe: ModularPipeline,
     crop: EvalCrop,
@@ -292,10 +298,10 @@ def evaluate_crop(
     """Draw one held-out crop with the crop pipeline, read it and its real counterpart back, and save its contact
     sheet."""
     plan = crop.plan()
-    reference = _load(crops_dir / crop.reference) if crop.reference else None
+    reference = load_rgb(crops_dir / crop.reference) if crop.reference else None
     drawn = draw_crop(pipe, plan, name=f"{index:03d}", seed=seed, reference=reference, settings=settings)
     drawn.image.save(out / "generated" / f"{index:03d}.png")
-    real = _load(crops_dir / crop.file_name).resize(drawn.image.size)
+    real = load_rgb(crops_dir / crop.file_name).resize(drawn.image.size)
     real_reads, real_cers = read_lines(real, plan.lines, model=pipe.htr_model, processor=pipe.htr_processor)
     panels = [reference, real, drawn.image] if reference else [real, drawn.image]
     contact_sheet(panels, crop.lines).save(out / f"{index:03d}_{Path(crop.file_name).stem}.jpg")
@@ -322,16 +328,13 @@ def evaluate(
     ] = settings.flux3_model,
     lora: Annotated[list[Lora] | None, typer.Option(parser=parse_lora, help="name=<NeMo LoRA model dir>")] = None,
     n: Annotated[int, typer.Option("-n", help="crops to evaluate")] = 16,
-    steps: int = 50,
-    guidance: float = 4.0,
-    reference_guidance: Annotated[
-        float, typer.Option(help="how hard guidance also pushes toward each crop's reference image (1: none)")
-    ] = 1.0,
+    steps: Steps = DEFAULTS.steps,
+    guidance: Guidance = DEFAULTS.guidance_scale,
+    reference_guidance: ReferenceGuidance = DEFAULTS.reference_guidance_scale,
     seed: int = 0,
-    text_layer: Annotated[
-        list[int] | None, typer.Option(help="a text-encoder layer to stack (repeat it; default: the model's own)")
-    ] = None,
-    device: Annotated[str, typer.Option(help="where the models run")] = "cuda",
+    text_layer: TextLayers = None,
+    device: Device = DEFAULTS.device,
+    max_line_cer: MaxLineCer = DEFAULTS.max_line_cer,
 ) -> None:
     """Draw held-out crops from their stored captions and compare their read-back with the real crops'."""
     model = required_model(model)
@@ -346,6 +349,7 @@ def evaluate(
         steps=steps,
         guidance_scale=guidance,
         reference_guidance_scale=reference_guidance,
+        max_line_cer=max_line_cer,
         text_layers=tuple(text_layer) if text_layer else None,
         device=device,
     )

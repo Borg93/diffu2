@@ -15,6 +15,7 @@ from PIL import Image
 from diffu.modular_pipelines.diffu import DiffuModularPipeline
 from diffu.modular_pipelines.diffu.encoders import DiffuTextEncoderStep
 from diffu.modular_pipelines.diffu.modular_blocks_diffu import DiffuVaeEncoderSequentialStep
+from diffu.modular_pipelines.loading import COMPONENT_DTYPES
 from diffu_page.captions.prompt import LineRecord
 from diffu_page.captions.records import CropRecord
 from diffu_train.cache import DiffuEncoders, cache_crops, write_metadata
@@ -49,7 +50,7 @@ def _split(directory: Path) -> list[CropRecord]:
 
 def _pipeline(blocks: SequentialPipelineBlocks, model: Path) -> DiffuModularPipeline:
     pipe = DiffuModularPipeline(blocks=blocks, pretrained_model_name_or_path=str(model))
-    pipe.load_components(dtype={"vae": torch.float32, "default": torch.bfloat16})
+    pipe.load_components(dtype=COMPONENT_DTYPES)
     return pipe
 
 

@@ -29,9 +29,10 @@ from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 
 from diffu.modular_pipelines.diffu import DiffuAutoBlocks, DiffuModularPipeline
-from diffu.modular_pipelines.loading import require_loaded
+from diffu.modular_pipelines.loading import COMPONENT_DTYPES, require_loaded
 from diffu_page.blocks import (
     CROP_OUTPUTS,
+    MAX_LINE_CER,
     CropPromptStep,
     DrawnCrop,
     LabelExportStep,
@@ -152,6 +153,7 @@ class DrawSettings(BaseModel):
         reference_guidance_scale: How hard guidance also pushes toward the reference image (:mod:`diffu_page.guidance`,
             a third pass per step); 1 guides the caption alone.
         label_format: ``alto`` or ``page``.
+        max_line_cer: The read-back CER above which a line's label is tagged ``unclear``.
         text_layers: The text-encoder hidden layers stacked into the prompt embeddings; ``None`` is the model's own
             choice (FLUX.3: every 4th of Qwen3-VL's).
         device: Where the components run.
@@ -162,14 +164,20 @@ class DrawSettings(BaseModel):
     steps: int = Field(default=50, ge=1)
     guidance_scale: float = 4.0
     reference_guidance_scale: float = 1.0
-    label_format: LabelFormat = "alto"
+    label_format: LabelFormat = LabelFormat.ALTO
+    max_line_cer: float = MAX_LINE_CER
     text_layers: tuple[int, ...] | None = None
     device: str = "cuda"
 
     def pipeline_inputs(self) -> dict[str, object]:
         """The settings a pipeline takes per call, by input name (the guidance scale and device are set at load)."""
         layers = {} if self.text_layers is None else {"text_encoder_out_layers": self.text_layers}
-        return {"num_inference_steps": self.steps, "label_format": self.label_format, **layers}
+        return {
+            "num_inference_steps": self.steps,
+            "label_format": self.label_format,
+            "max_line_cer": self.max_line_cer,
+            **layers,
+        }
 
 
 type BlocksFor = Callable[[ModelFamily], SequentialPipelineBlocks]
@@ -193,7 +201,7 @@ def load_pipeline(model: Path, blocks: BlocksFor, *, loras: dict[str, Path], set
     )
     adapters = {name: nemo_lora_state_dict(lora_dir) for name, lora_dir in loras.items()}
     pipe = family.pipeline(blocks=blocks(family), pretrained_model_name_or_path=str(model))
-    pipe.load_components(dtype={"vae": torch.float32, "default": torch.bfloat16})
+    pipe.load_components(dtype=COMPONENT_DTYPES)
     require_loaded(pipe)
     pipe.update_components(guider=guider)
     pipe.to(settings.device)

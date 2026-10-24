@@ -14,10 +14,10 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-from PIL import Image
 from pydantic import BaseModel
 
 from diffu_page.cli.evaluate import EvalCrop, HandFidelity, Hands, Results, crop_hands, hand_fidelity, read_crops
+from diffu_page.output import load_rgb
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 
@@ -38,16 +38,11 @@ class HandsReport(BaseModel):
     samples: list[CropHands]
 
 
-def _rgb(path: Path) -> Image.Image:
-    with Image.open(path) as image:
-        return image.convert("RGB")
-
-
 def drawn_hands(crop: EvalCrop, crops: Path, drawing: Path) -> Hands:
     """The hands of ``crop`` drawn as ``drawing``: its real crop resized to the drawing, as evaluate reads it back."""
-    drawn = _rgb(drawing)
-    reference = _rgb(crops / crop.reference) if crop.reference else None
-    real = _rgb(crops / crop.file_name).resize(drawn.size)
+    drawn = load_rgb(drawing)
+    reference = load_rgb(crops / crop.reference) if crop.reference else None
+    real = load_rgb(crops / crop.file_name).resize(drawn.size)
     return crop_hands(drawn, real, crop.lines, reference, crop.reference_lines)
 
 

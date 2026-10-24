@@ -70,7 +70,7 @@ from diffu_page.captions.restyle import (
 )
 from diffu_page.crops.grid import as_reference
 from diffu_page.data.steer_set import ARCHIVES, DEFAULT_TEMPLATES, SEED, archive_style
-from diffu_page.output import console
+from diffu_page.output import JPEG_QUALITY, console
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 
@@ -211,7 +211,7 @@ def shrink(source: Path, destination: Path) -> None:
     if destination.exists():
         return
     with Image.open(source) as image:
-        as_reference(image).save(destination, quality=92)
+        as_reference(image).save(destination, quality=JPEG_QUALITY)
 
 
 def load_split(crops: Path, split: str) -> list[Scan]:

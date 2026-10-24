@@ -10,7 +10,6 @@ gr.Workflow calls a node with its input ports' values in order and passes media 
 
 from __future__ import annotations
 
-import io
 import threading
 import zipfile
 from pathlib import Path
@@ -24,7 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from diffu_page.blocks import DrawnCrop, crop_identity
 from diffu_page.layout import load_xml_layout, running_text
-from diffu_page.output import plain_file_name
+from diffu_page.output import JPEG_QUALITY, jpeg_bytes, plain_file_name
 from diffu_page.pipeline import DrawSettings, PagePlanBlocks, crop_blocks, draw_crop, load_pipeline
 from diffu_page.plan import CropPlan, PageStyle
 from diffu_page.readback import pixel_box
@@ -121,12 +120,6 @@ def crop_sheet(crops: list[DrawnCrop]) -> Image.Image:
     return sheet
 
 
-def _jpeg(image: Image.Image) -> bytes:
-    buffer = io.BytesIO()
-    image.save(buffer, format="JPEG", quality=92)
-    return buffer.getvalue()
-
-
 class DrawNode:
     """A drawer's draw node: every planned crop drawn by its crop pipeline, written to ``<out>/<drawer>/`` as a sheet
     of the crops and a zip of the crops with their labels.
@@ -182,11 +175,11 @@ class DrawNode:
         self._out.mkdir(parents=True, exist_ok=True)
         stem = f"{page.page}_{int(seed)}"
         sheet = self._out / f"{stem}.jpg"
-        crop_sheet(crops).save(sheet, quality=92)
+        crop_sheet(crops).save(sheet, quality=JPEG_QUALITY)
         archive = self._out / f"{stem}.zip"
         with zipfile.ZipFile(archive, "w") as files:
             for crop in crops:
-                files.writestr(f"{crop.name}.jpg", _jpeg(crop.image))
+                files.writestr(f"{crop.name}.jpg", jpeg_bytes(crop.image))
                 files.writestr(f"{crop.name}.xml", crop.labels_xml)
         return media(sheet), media(archive)
 

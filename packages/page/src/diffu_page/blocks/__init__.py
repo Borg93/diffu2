@@ -4,11 +4,12 @@ assembles them around a model's blocks."""
 
 from diffu_page.blocks.crop import CropPromptStep, ReferenceGridStep
 from diffu_page.blocks.drawn import CROP_OUTPUTS, DrawnCrop, crop_identity
-from diffu_page.blocks.ground_truth import LabelExportStep, LineReadbackStep
+from diffu_page.blocks.ground_truth import MAX_LINE_CER, LabelExportStep, LineReadbackStep
 from diffu_page.blocks.page import LoadLayoutStep, PlanCropsStep, RefillStep
 
 __all__ = [
     "CROP_OUTPUTS",
+    "MAX_LINE_CER",
     "CropPromptStep",
     "DrawnCrop",
     "LabelExportStep",

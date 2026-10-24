@@ -78,6 +78,14 @@ def test_crop_pipeline_draws_a_plan_with_one_unclear_label_per_line(crop_pipe: M
     assert _alto_lines(crop.labels_xml) == ["den 4 maj", "Göteborgs poliskammare"]  # in the plan's reading order
 
 
+def test_crop_pipeline_tags_a_line_unclear_only_above_the_settings_max_line_cer(crop_pipe: ModularPipeline) -> None:
+    lenient = TINY_SETTINGS.model_copy(update={"max_line_cer": 10.0})  # noise reads back at a CER near 1
+
+    crop = draw_crop(crop_pipe, _plan(), name="000", seed=0, reference=None, settings=lenient)
+
+    assert crop.unclear_lines == 0
+
+
 def test_crop_pipeline_draws_a_plan_with_the_model_a_diffu_repo_names(tiny_diffu: Path) -> None:
     pipe = load_pipeline(tiny_diffu, crop_blocks, loras={}, settings=TINY_SETTINGS)
 
@@ -142,6 +150,19 @@ def test_draw_pages_records_a_crop_it_cannot_draw_by_name_and_saves_the_other_cr
         "001_wide_and_narrow_0.jpg",
         "001_wide_and_narrow_0.xml",
     ]
+
+
+def test_generate_refuses_reference_guidance_without_a_reference_before_it_loads(
+    one_line_page: Path, body_and_notes_page: Path, tmp_path: Path
+) -> None:
+    args = ["--templates", str(one_line_page), "--text-from", str(body_and_notes_page), "--title", "the archive"]
+    args += ["--model", str(tmp_path / "no_model"), "--out", str(tmp_path / "out"), "--reference-guidance", "3"]
+
+    result = CliRunner().invoke(generate_app, args)
+
+    message = " ".join(result.output.replace("│", " ").split())  # rich wraps the error panel at 80 columns
+    assert result.exit_code == 2  # a usage error, raised before the (missing) model would have been read
+    assert "there is no --reference to guide toward" in message
 
 
 def test_generate_records_what_drew_the_run_and_a_page_that_plans_to_no_crop(

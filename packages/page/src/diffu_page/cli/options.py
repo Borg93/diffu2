@@ -1,13 +1,32 @@
-"""Option types the generation CLIs share."""
+"""Option types the generation CLIs share: the draw options, each declared once with its default from
+``DrawSettings``, and the LoRA and model options."""
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Annotated
 
 import typer
 from pydantic import BaseModel
 
+from diffu_page.labels import LabelFormat
 from diffu_page.lora import ADAPTER_CONFIG, ADAPTER_WEIGHTS
+from diffu_page.pipeline import DrawSettings
+
+DEFAULTS = DrawSettings()  # every draw option's default comes from here
+
+Steps = Annotated[int, typer.Option(min=1, help="denoising steps per crop")]
+Guidance = Annotated[float, typer.Option(help="how hard guidance pushes toward the caption")]
+ReferenceGuidance = Annotated[
+    float, typer.Option(help="how hard guidance also pushes toward the reference image (1: not at all)")
+]
+TextLayers = Annotated[
+    list[int] | None,
+    typer.Option("--text-layer", help="a text-encoder layer to stack (repeat it; default: the model's own)"),
+]
+Device = Annotated[str, typer.Option(help="where the models run")]
+MaxLineCer = Annotated[float, typer.Option(help="the read-back CER above which a line's label is tagged unclear")]
+Format = Annotated[LabelFormat, typer.Option("--format", help="the labels' format")]
 
 
 class Lora(BaseModel):

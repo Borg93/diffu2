@@ -21,7 +21,16 @@ import typer
 
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.provenance import Provenance
-from diffu_page.cli.options import Lora, named_path, parse_lora, required_model
+from diffu_page.cli.options import (
+    DEFAULTS,
+    Device,
+    Guidance,
+    Lora,
+    TextLayers,
+    named_path,
+    parse_lora,
+    required_model,
+)
 from diffu_page.output import console
 from diffu_page.pipeline import DrawSettings
 from diffu_page.plan import PageStyle
@@ -83,11 +92,9 @@ def main(
     lora: Annotated[
         list[Lora] | None, typer.Option(parser=parse_lora, help="<drawer>.<adapter>=<NeMo LoRA model dir>")
     ] = None,
-    guidance: float = 4.0,
-    text_layer: Annotated[
-        list[int] | None, typer.Option(help="a text-encoder layer to stack (repeat it; default: each model's own)")
-    ] = None,
-    device: Annotated[str, typer.Option(help="where the models run")] = "cuda",
+    guidance: Guidance = DEFAULTS.guidance_scale,
+    text_layer: TextLayers = None,
+    device: Device = DEFAULTS.device,
     port: Annotated[int, typer.Option(help="the port the studio serves on")] = 7860,
 ) -> None:
     """Serve the studio: one draw node per drawer, all fed by one plan."""

@@ -21,7 +21,7 @@ from collections.abc import Callable
 from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 from statistics import fmean
-from typing import Annotated, Literal
+from typing import Annotated
 
 import typer
 from diffusers.modular_pipelines import ModularPipeline
@@ -32,10 +32,22 @@ from diffu_page.blocks import DrawnCrop
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.provenance import Provenance
 from diffu_page.captions.restyle import ReferenceCaption
-from diffu_page.cli.options import Lora, parse_lora, required_model
+from diffu_page.cli.options import (
+    DEFAULTS,
+    Device,
+    Format,
+    Guidance,
+    Lora,
+    MaxLineCer,
+    ReferenceGuidance,
+    Steps,
+    TextLayers,
+    parse_lora,
+    required_model,
+)
 from diffu_page.jobs import CropJob, PageJob, crop_jobs
 from diffu_page.layout import load_xml_layout, running_text
-from diffu_page.output import console, err_console
+from diffu_page.output import JPEG_QUALITY, console, err_console
 from diffu_page.pipeline import DrawSettings, crop_blocks, draw_crop, load_pipeline
 from diffu_page.plan import PageStyle, Reference
 from diffu_page.settings import settings
@@ -68,7 +80,7 @@ class Summary(BaseModel):
 
 
 def _save(crop: DrawnCrop, template: Path, out: Path) -> CropResult:
-    crop.image.save(out / f"{crop.name}.jpg", quality=92)
+    crop.image.save(out / f"{crop.name}.jpg", quality=JPEG_QUALITY)
     (out / f"{crop.name}.xml").write_text(crop.labels_xml, encoding="utf-8")
     return CropResult(
         name=crop.name,
@@ -170,20 +182,20 @@ def generate(
         ReferenceCaption,
         typer.Option(help="the caption form the LoRA was trained on: plain (v3, v3c), described (v3d)"),
     ] = ReferenceCaption.PLAIN,
-    steps: int = 50,
-    guidance: float = 4.0,
+    steps: Steps = DEFAULTS.steps,
+    guidance: Guidance = DEFAULTS.guidance_scale,
+    reference_guidance: ReferenceGuidance = DEFAULTS.reference_guidance_scale,
     seed: int = 0,
-    text_layer: Annotated[
-        list[int] | None, typer.Option(help="a text-encoder layer to stack (repeat it; default: the model's own)")
-    ] = None,
-    device: Annotated[str, typer.Option(help="where the models run")] = "cuda",
-    label_format: Annotated[
-        Literal["alto", "page"], typer.Option("--format")
-    ] = "alto",  # Typer cannot read LabelFormat
+    text_layer: TextLayers = None,
+    device: Device = DEFAULTS.device,
+    max_line_cer: MaxLineCer = DEFAULTS.max_line_cer,
+    label_format: Format = DEFAULTS.label_format,
     profile_dir: Annotated[Path | None, typer.Option("--profile", help="write a trace of crops 2-3 here")] = None,
 ) -> None:
     """Draw every crop of the templates, refilled with the text, in the given style."""
     model = required_model(model)
+    if reference_guidance != 1.0 and reference is None:
+        raise typer.BadParameter("there is no --reference to guide toward", param_hint="--reference-guidance")
     style = PageStyle(
         provenance=Provenance(title=title, years=years), look=ScanLook(greyscale=greyscale, paper=paper, ink=ink)
     )
@@ -195,7 +207,9 @@ def generate(
     draw_settings = DrawSettings(
         steps=steps,
         guidance_scale=guidance,
+        reference_guidance_scale=reference_guidance,
         label_format=label_format,
+        max_line_cer=max_line_cer,
         text_layers=tuple(text_layer) if text_layer else None,
         device=device,
     )

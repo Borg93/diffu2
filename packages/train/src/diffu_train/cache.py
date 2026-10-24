@@ -22,11 +22,10 @@ from pydantic import BaseModel, ConfigDict
 
 from diffu.latents import encode_latents
 from diffu.modular_pipelines.diffu import DiffuModularPipeline
-from diffu.modular_pipelines.diffu.encoders import prompt_embeds
-from diffu.modular_pipelines.loading import require_loaded
+from diffu.modular_pipelines.diffu.encoders import MAX_SEQUENCE_LENGTH, prompt_embeds
+from diffu.modular_pipelines.loading import COMPONENT_DTYPES, require_loaded
 from diffu_page.captions.records import CropRecord
 
-MAX_SEQUENCE_LENGTH = 8192  # the text encoder step's default, so training never cuts a caption shorter than generation
 SHARD_SIZE = 1000  # crops per metadata shard, as NeMo's own cache writer shards them
 ENCODERS = ["text_encoder", "tokenizer", "vae"]  # the components caching loads; the transformer is not one
 
@@ -74,7 +73,7 @@ class DiffuEncoders(BaseModel):
             RuntimeError: If one of them failed to load, before a single crop fails on it.
         """
         pipe = DiffuModularPipeline.from_pretrained(str(model))
-        pipe.load_components(names=ENCODERS, dtype={"vae": torch.float32, "default": torch.bfloat16})
+        pipe.load_components(names=ENCODERS, dtype=COMPONENT_DTYPES)
         require_loaded(pipe, ENCODERS)
         pipe.to(device)
         return cls(

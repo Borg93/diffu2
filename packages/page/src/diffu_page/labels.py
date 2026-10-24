@@ -10,8 +10,9 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Callable
+from enum import StrEnum
 from importlib.metadata import PackageNotFoundError, version
-from typing import Literal, Self
+from typing import Self
 from xml.sax.saxutils import escape
 
 from pydantic import BaseModel, Field, model_validator
@@ -25,7 +26,13 @@ except PackageNotFoundError:  # not installed (e.g. running from a source checko
 
 type Point = tuple[int, int]
 type Rect = tuple[int, int, int, int]  # x0, y0, x1, y1
-type LabelFormat = Literal["alto", "page"]
+
+
+class LabelFormat(StrEnum):
+    """The formats a crop's labels are written in."""
+
+    ALTO = "alto"
+    PAGE = "page"
 
 
 class LineLabel(BaseModel):
@@ -348,7 +355,7 @@ def to_alto(labels: PageLabels) -> str:
     )
 
 
-EXPORTERS: dict[LabelFormat, Callable[[PageLabels], str]] = {"page": to_page_xml, "alto": to_alto}
+EXPORTERS: dict[LabelFormat, Callable[[PageLabels], str]] = {LabelFormat.PAGE: to_page_xml, LabelFormat.ALTO: to_alto}
 
 
 def export(labels: PageLabels, fmt: LabelFormat) -> str:
