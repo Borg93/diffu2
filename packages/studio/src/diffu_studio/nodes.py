@@ -28,6 +28,7 @@ from diffu_page.output import JPEG_QUALITY, jpeg_bytes, plain_file_name
 from diffu_page.pipeline import DrawSettings, PagePlanBlocks, crop_blocks, draw_crop, load_pipeline
 from diffu_page.plan import CropPlan
 from diffu_page.readback import pixel_box
+from diffu_studio.graph import draw_fn
 
 SHEET_HEIGHT = 512  # px: every crop of a sheet is scaled to it
 SHEET_GAP = 8  # px between the crops of a sheet
@@ -186,8 +187,8 @@ class DrawNode:
 
 
 def load_draw_nodes(drawers: list[Drawer], *, settings: DrawSettings, out: Path) -> dict[str, DrawNode]:
-    """A draw node per drawer, by node name (``draw_<drawer>``); each model is loaded once, with every LoRA its drawers
-    use.
+    """A draw node per drawer, by its bound function's name (:func:`diffu_studio.graph.draw_fn`); each model is loaded
+    once, with every LoRA its drawers use.
 
     Raises:
         ValueError: If two drawers name the same adapter of one model with different LoRA dirs.
@@ -205,6 +206,6 @@ def load_draw_nodes(drawers: list[Drawer], *, settings: DrawSettings, out: Path)
     }
     lock = threading.Lock()
     return {
-        f"draw_{drawer.name}": DrawNode(drawer, pipes[drawer.model], settings=settings, out=out, lock=lock)
+        draw_fn(drawer.name): DrawNode(drawer, pipes[drawer.model], settings=settings, out=out, lock=lock)
         for drawer in drawers
     }

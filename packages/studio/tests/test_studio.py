@@ -22,6 +22,7 @@ from diffu_page.captions.provenance import Provenance
 from diffu_page.layout import load_xml_layout, refill, running_text
 from diffu_page.pipeline import DrawSettings
 from diffu_page.plan import CropPlan, plan_page
+from diffu_studio.graph import edge, studio_graph
 from diffu_studio.nodes import SHEET_GAP, SHEET_HEIGHT, Drawer, PlannedPage, load_draw_nodes
 from diffu_studio.studio import build_studio
 
@@ -107,3 +108,10 @@ def test_planned_page_refuses_a_name_that_would_write_outside_the_out_dir(page: 
 def test_drawer_refuses_a_name_that_would_put_its_sheets_outside_the_out_dir(tiny_flux3: Path) -> None:
     with pytest.raises(ValidationError, match="expected a plain file name"):
         Drawer(name="../flux3", model=tiny_flux3)
+
+
+def test_edge_refuses_to_wire_ports_of_two_types() -> None:
+    plan, draw = studio_graph(["flux3"], STYLE).operators
+
+    with pytest.raises(ValueError, match="op_plan.plans carries json, but op_draw_flux3.seed takes number"):
+        edge(plan, "plans", draw, "seed")

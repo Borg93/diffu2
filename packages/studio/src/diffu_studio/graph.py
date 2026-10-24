@@ -1,132 +1,223 @@
 """The studio's canvas: the gr.Workflow graph of a plan node feeding one draw node per drawer.
 
-The references are declared in the order the app view's endpoint takes them (template, text, style, seed, steps), and
-the first drawer's crops come first, so the endpoint is ``/<first drawer>_crops``.
+The graph is gr.Workflow's schema version 2 (references, operators, subjects and the edges between their ports) as
+models: an edge takes its type from the ports it joins and refuses two ports of different types. The references are
+declared in the order the app view's endpoint takes them (template, text, style, seed, steps), and the first drawer's
+crops come first, so the endpoint is ``/<first drawer>_crops``.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from enum import StrEnum
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, JsonValue
 
 from diffu_page.captions.prompt import PageStyle
 
-type Node = dict[str, Any]
-
+PLAN = "plan"  # the plan node's bound function
 _COLUMN = 340  # px between the canvas' columns: references, plan, draw nodes, results
 _ROW = 150  # px between the nodes of a column
 
 
-def _port(port_id: str, label: str, port_type: str, **extra: Any) -> dict[str, Any]:
-    return {"id": port_id, "label": label, "type": port_type, **extra}
+def draw_fn(drawer: str) -> str:
+    """The bound function of ``drawer``'s draw node."""
+    return f"draw_{drawer}"
 
 
-def _reference(node_id: str, label: str, port_type: str, default: object, row: int) -> Node:
-    node: Node = {
-        "id": node_id,
-        "label": label,
-        "role": "reference",
-        "asset_type": port_type,
-        "inputs": [_port("in", label, port_type)],
-        "outputs": [_port("out", label, port_type)],
-        "x": 0,
-        "y": row * _ROW,
-    }
-    if default is not None:
-        node["data"] = {"out": default}
-    return node
+class PortType(StrEnum):
+    """What a port carries."""
+
+    FILE = "file"
+    TEXT = "text"
+    JSON = "json"
+    NUMBER = "number"
+    IMAGE = "image"
 
 
-def _subject(node_id: str, label: str, port_type: str, row: int) -> Node:
-    return {
-        "id": node_id,
-        "label": label,
-        "role": "subject",
-        "asset_type": port_type,
-        "inputs": [_port("in", label, port_type)],
-        "outputs": [_port("out", label, port_type)],
-        "x": 3 * _COLUMN,
-        "y": row * _ROW,
-    }
+class Port(BaseModel):
+    """A node's input or output. ``required``: an operator input its function cannot run without; ``output_index``: an
+    operator output's place in what its function returns."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    label: str
+    type: PortType
+    required: bool | None = None
+    output_index: int | None = None
 
 
-def _edge(source: tuple[str, str], target: tuple[str, str], port_type: str) -> dict[str, str]:
-    return {
-        "id": f"{source[0]}.{source[1]}->{target[0]}.{target[1]}",
-        "from_node_id": source[0],
-        "from_port_id": source[1],
-        "to_node_id": target[0],
-        "to_port_id": target[1],
-        "type": port_type,
-    }
+class Node(BaseModel):
+    """A canvas node: its ports and where it sits on the canvas."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    label: str
+    inputs: list[Port]
+    outputs: list[Port]
+    x: int
+    y: int
 
 
-def studio_graph(drawers: list[str], style: PageStyle) -> dict[str, Any]:
+class Reference(Node):
+    """An input value of the canvas; ``data`` holds its default."""
+
+    role: Literal["reference"] = "reference"
+    asset_type: PortType
+    data: dict[str, JsonValue] | None = None
+
+
+class Operator(Node):
+    """A function of the studio, bound by the name ``fn``."""
+
+    role: Literal["operator"] = "operator"
+    kind: Literal["fn"] = "fn"
+    fn: str
+
+
+class Subject(Node):
+    """A result shown on the canvas."""
+
+    role: Literal["subject"] = "subject"
+    asset_type: PortType
+
+
+class Edge(BaseModel):
+    """A wire from one node's output port to another's input port."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    from_node_id: str
+    from_port_id: str
+    to_node_id: str
+    to_port_id: str
+    type: PortType
+
+
+class WorkflowGraph(BaseModel):
+    """A gr.Workflow canvas in schema version 2."""
+
+    schema_version: Literal["2"] = "2"
+    name: str
+    references: list[Reference]
+    operators: list[Operator]
+    subjects: list[Subject]
+    edges: list[Edge]
+
+
+def _find(ports: list[Port], port_id: str, node: Node) -> Port:
+    port = next((port for port in ports if port.id == port_id), None)
+    if port is None:
+        raise ValueError(f"{node.id} has no port {port_id!r}")
+    return port
+
+
+def edge(source: Node, output: str, target: Node, input_: str) -> Edge:
+    """The wire from ``source``'s output port ``output`` to ``target``'s input port ``input_``.
+
+    Raises:
+        ValueError: If a node lacks the port, or the two ports carry different types.
+    """
+    out, into = _find(source.outputs, output, source), _find(target.inputs, input_, target)
+    if out.type is not into.type:
+        raise ValueError(f"{source.id}.{output} carries {out.type}, but {target.id}.{input_} takes {into.type}")
+    return Edge(
+        id=f"{source.id}.{output}->{target.id}.{input_}",
+        from_node_id=source.id,
+        from_port_id=output,
+        to_node_id=target.id,
+        to_port_id=input_,
+        type=out.type,
+    )
+
+
+def _reference(node_id: str, label: str, port_type: PortType, default: JsonValue, row: int) -> Reference:
+    return Reference(
+        id=node_id,
+        label=label,
+        asset_type=port_type,
+        inputs=[Port(id="in", label=label, type=port_type)],
+        outputs=[Port(id="out", label=label, type=port_type)],
+        x=0,
+        y=row * _ROW,
+        data=None if default is None else {"out": default},
+    )
+
+
+def _subject(node_id: str, label: str, port_type: PortType, row: int) -> Subject:
+    return Subject(
+        id=node_id,
+        label=label,
+        asset_type=port_type,
+        inputs=[Port(id="in", label=label, type=port_type)],
+        outputs=[Port(id="out", label=label, type=port_type)],
+        x=3 * _COLUMN,
+        y=row * _ROW,
+    )
+
+
+def studio_graph(drawers: list[str], style: PageStyle) -> WorkflowGraph:
     """The canvas for ``drawers`` (by name), its style reference set to ``style``."""
-    references = [
-        _reference("ref_template", "Template", "file", None, 0),
-        _reference("ref_text", "Text (blank: the template's own)", "text", "", 1),
-        _reference("ref_style", "Style", "json", style.model_dump(mode="json"), 2),
-        _reference("ref_seed", "Seed", "number", 0, 3),
-        _reference("ref_steps", "Steps", "number", 50, 4),
-    ]
-    plan = {
-        "id": "op_plan",
-        "label": "Plan the page",
-        "role": "operator",
-        "kind": "fn",
-        "fn": "plan",
-        "inputs": [
-            _port("template", "Template", "file", required=True),
-            _port("text", "Text", "text"),
-            _port("style", "Style", "json", required=True),
+    template = _reference("ref_template", "Template", PortType.FILE, None, 0)
+    text = _reference("ref_text", "Text (blank: the template's own)", PortType.TEXT, "", 1)
+    style_reference = _reference("ref_style", "Style", PortType.JSON, style.model_dump(mode="json"), 2)
+    seed = _reference("ref_seed", "Seed", PortType.NUMBER, 0, 3)
+    steps = _reference("ref_steps", "Steps", PortType.NUMBER, 50, 4)
+    plan = Operator(
+        id="op_plan",
+        label="Plan the page",
+        fn=PLAN,
+        inputs=[
+            Port(id="template", label="Template", type=PortType.FILE, required=True),
+            Port(id="text", label="Text", type=PortType.TEXT),
+            Port(id="style", label="Style", type=PortType.JSON, required=True),
         ],
-        "outputs": [_port("plans", "Crop plans", "json", output_index=0)],
-        "x": _COLUMN,
-        "y": _ROW,
-    }
-    draws: list[Node] = []
-    subjects: list[Node] = []
+        outputs=[Port(id="plans", label="Crop plans", type=PortType.JSON, output_index=0)],
+        x=_COLUMN,
+        y=_ROW,
+    )
+    draws: list[Operator] = []
+    subjects: list[Subject] = []
     edges = [
-        _edge(("ref_template", "out"), ("op_plan", "template"), "file"),
-        _edge(("ref_text", "out"), ("op_plan", "text"), "text"),
-        _edge(("ref_style", "out"), ("op_plan", "style"), "json"),
+        edge(template, "out", plan, "template"),
+        edge(text, "out", plan, "text"),
+        edge(style_reference, "out", plan, "style"),
     ]
     for row, name in enumerate(drawers):
-        draw_id = f"op_draw_{name}"
-        draws.append(
-            {
-                "id": draw_id,
-                "label": f"Draw with {name}",
-                "role": "operator",
-                "kind": "fn",
-                "fn": f"draw_{name}",
-                "inputs": [
-                    _port("plans", "Crop plans", "json", required=True),
-                    _port("seed", "Seed", "number"),
-                    _port("steps", "Steps", "number"),
-                ],
-                "outputs": [
-                    _port("sheet", "Crops", "image", output_index=0),
-                    _port("labels", "Crops and labels (zip)", "file", output_index=1),
-                ],
-                "x": 2 * _COLUMN,
-                "y": 2 * row * _ROW,
-            }
+        draw = Operator(
+            id=f"op_draw_{name}",
+            label=f"Draw with {name}",
+            fn=draw_fn(name),
+            inputs=[
+                Port(id="plans", label="Crop plans", type=PortType.JSON, required=True),
+                Port(id="seed", label="Seed", type=PortType.NUMBER),
+                Port(id="steps", label="Steps", type=PortType.NUMBER),
+            ],
+            outputs=[
+                Port(id="sheet", label="Crops", type=PortType.IMAGE, output_index=0),
+                Port(id="labels", label="Crops and labels (zip)", type=PortType.FILE, output_index=1),
+            ],
+            x=2 * _COLUMN,
+            y=2 * row * _ROW,
         )
-        subjects.append(_subject(f"sub_{name}_crops", f"{name} crops", "image", 2 * row))
-        subjects.append(_subject(f"sub_{name}_labels", f"{name} labels", "file", 2 * row + 1))
+        crops = _subject(f"sub_{name}_crops", f"{name} crops", PortType.IMAGE, 2 * row)
+        labels = _subject(f"sub_{name}_labels", f"{name} labels", PortType.FILE, 2 * row + 1)
+        draws.append(draw)
+        subjects += [crops, labels]
         edges += [
-            _edge(("op_plan", "plans"), (draw_id, "plans"), "json"),
-            _edge(("ref_seed", "out"), (draw_id, "seed"), "number"),
-            _edge(("ref_steps", "out"), (draw_id, "steps"), "number"),
-            _edge((draw_id, "sheet"), (f"sub_{name}_crops", "in"), "image"),
-            _edge((draw_id, "labels"), (f"sub_{name}_labels", "in"), "file"),
+            edge(plan, "plans", draw, "plans"),
+            edge(seed, "out", draw, "seed"),
+            edge(steps, "out", draw, "steps"),
+            edge(draw, "sheet", crops, "in"),
+            edge(draw, "labels", labels, "in"),
         ]
-    return {
-        "schema_version": "2",
-        "name": "diffu studio",
-        "references": references,
-        "operators": [plan, *draws],
-        "subjects": subjects,
-        "edges": edges,
-    }
+    return WorkflowGraph(
+        name="diffu studio",
+        references=[template, text, style_reference, seed, steps],
+        operators=[plan, *draws],
+        subjects=subjects,
+        edges=edges,
+    )

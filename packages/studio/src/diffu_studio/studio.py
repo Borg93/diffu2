@@ -12,7 +12,6 @@ studio is a GPU job like any other: start it through ``jobs/spark_guard.sh``.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Annotated
 
@@ -35,7 +34,7 @@ from diffu_page.cli.options import (
 from diffu_page.output import console
 from diffu_page.pipeline import DrawSettings
 from diffu_page.settings import settings
-from diffu_studio.graph import studio_graph
+from diffu_studio.graph import PLAN, studio_graph
 from diffu_studio.nodes import Drawer, load_draw_nodes, plan_node
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
@@ -50,8 +49,9 @@ def build_studio(drawers: list[Drawer], *, settings: DrawSettings, out: Path) ->
     """The studio for ``drawers``: their models loaded, the canvas written to ``<out>/workflow.json``, every node bound."""
     out.mkdir(parents=True, exist_ok=True)
     graph = out / "workflow.json"
-    graph.write_text(json.dumps(studio_graph([drawer.name for drawer in drawers], DEFAULT_STYLE), indent=1))
-    nodes = {"plan": plan_node, **load_draw_nodes(drawers, settings=settings, out=out)}
+    canvas = studio_graph([drawer.name for drawer in drawers], DEFAULT_STYLE)
+    graph.write_text(canvas.model_dump_json(indent=1, exclude_none=True), encoding="utf-8")
+    nodes = {PLAN: plan_node, **load_draw_nodes(drawers, settings=settings, out=out)}
     return gr.Workflow(graph=str(graph), bind=nodes)
 
 
