@@ -357,8 +357,14 @@ Any scanned page as a template, not only pages with PAGE/ALTO ground truth.
       8 windows. By eye Pahlman's thin leaning hand with his dashes at sentence ends. It also writes text no label
       asks for: the caption's date range "1825–1826" as a running header at the top right (2 of 8 windows), where the
       journal's real pages carry page numbers the ground truth does not transcribe (see Data checks).
-- [ ] Per-hand LoRAs on Bergskollegium Stora Kopparbergs bergslag 1743 (microfilm) and Landskapshandlingar 16th c.
-      (microfilm): queue_tonight3.sh, after the reference tests. If they hold: one LoRA per volume (230 volumes).
+- [x] Per-hand LoRAs on two microfilms, the same recipe (runs/flux3_hand_{kopparberg,landskap}; 211 windows of 37
+      pages and 208 of 36; 8 held-out windows each; median distance to the real hand, untrained -> LoRA): Bergskollegium
+      Stora Kopparbergs bergslag 1743: slant 4.0 -> 3.5, pen width 0.92 -> 0.15, spacing 0.94 -> 0.38, letter size
+      0.40 -> 0.77 (worse), CER 0.013 -> 0.037 (real 0.053); Landskapshandlingar 16th c.: slant 24.5 -> 9.0, pen width
+      1.32 -> 0.28, spacing 1.58 -> 0.27, letter size 0.50 -> 0.57, CER 0.117 -> 0.165 (real 0.375). By eye the
+      clerks' hands (long s, gothic letters, dash rules, the film's edges); the films' stains and fading not yet. No
+      unlabelled writing (hand/unlabelled.py: outside ink is film edges and bindings, as on the real windows). Four of
+      four volumes hold: one LoRA per volume (230 volumes) is the way to real hands. Letter size worse on 3 of 4.
 - [x] The chain on the per-hand drawing (runs/realism_test H -> HC, the second pass in C's wording at 28 steps, 67-73 s
       a window -> HC_pid; means of 2 windows; CER / ink stands out / ink varies / ink dE / paper dE to the example):
       H 0.062/122/14.4/25/17, HC 0.076/112/16.7/23/16, HC_pid 0.084/116/18.1/27/18 (real crops 103/17.2, the example
@@ -374,7 +380,18 @@ Any scanned page as a template, not only pages with PAGE/ALTO ground truth.
       3.5 the example's mottled paper, grain and heavier strokes arrive, the letterforms stay FLUX.3's neat cursive.
       It carries the page around the letters, not the hand: keep it for paper and ink (maybe instead of the second
       pass), not as a way to copy a writer. 11 crops: carry-over steps of ~0.05 are near noise; the trend is monotonic.
-- [ ] Per-hand LoRA from few pages (queue_tonight4.sh, after queue_tonight3): the 1715 recipe on the windows of 4 and
+- [x] FLUX.3 Klein's own reference patterns (runs/ref_tests; the reference guidance probe's 11 crops, captions'
+      layouts and seeds; scratchpad reftests/). (a) Canvas edit, the example page at its full size told to replace its
+      writing with our lines in exactly the same hand: 10 of 11 rewritten on the example's own paper, stains, binding
+      and glove, in FLUX.3's own neat hand; 1 of 11 (a 16th-c. microfilm) returned unchanged; the lines land outside
+      our boxes, so read-back and box measures do not apply. (b) The prompt upsampler (plain i2i) writing the caption's
+      opening: asked for a new page it invents text and headings (Latin, German, Danish), which get drawn (CER 0.123);
+      cut to its style sentences (reftests/trim_pup.py): carry-over paper/ink/slant 0.75/0.32/0.29 against our
+      described caption's 0.84/0.41/0.32, paper dE 6.0 against 3.3 (cream under grey films). (c) Examples at 1 MP:
+      0.86/0.59/0.38, by eye the same drawings. None carries the letterforms; without training one image carries the
+      page (paper, ink, grain; reference guidance 3.5 most), not the writer. Side idea: a blank page from
+      GT-RA_tomma_sidor as the canvas for realism.
+- [ ] Per-hand LoRA from few pages (queue_tonight3b.sh, after diffu E1): the 1715 recipe on the windows of 4 and
       of 10 of its 36 training pages (data_flux3/hand_overstat_p4, _p10; 23 and 44 windows), 350 steps, checkpoints
       175 and 350 on the same 8 held-out windows, beside the 36-page LoRA's eval_step_349.
 - [ ] The tokenizer warns that FLUX.3 Klein's Qwen3-VL tokenizer has "an incorrect regex pattern" (transformers;
