@@ -64,25 +64,43 @@ class Rule(BaseModel):
     y1: float
 
 
-class LineBox(BaseModel):
-    """One text line of a page: its box and baseline height (page px), its text and where it belongs: its kind
-    (running text, a table cell's line or a role, :class:`LineKind`) and its source block."""
+type PageBox = tuple[float, float, float, float]  # x0, y0, x1, y1 in page pixels
+
+
+class TextLine(BaseModel):
+    """One text line of a page, from the reader through the crops: its box and baseline height (page px), its text,
+    its kind (running text, a table cell's line or a role, :class:`LineKind`), the block it came from, how it was made
+    and, in a table, its cell."""
+
+    model_config = {"frozen": True}
 
     text: str
-    x: float
-    y: float
-    w: float
-    h: float
+    box: PageBox
     baseline_y: float
-    region: LineKind = LineKind.BODY
-    block: str = ""  # the PAGE TextRegion / TableCell or ALTO TextBlock id the line came from
+    kind: LineKind = LineKind.BODY
+    block: str = ""  # the PAGE TextRegion / TableCell or ALTO TextBlock it came from: its id, else its place
     production: Production = Production.HANDWRITTEN
     cell: CellRef | None = None  # set for a table cell's line
 
     @property
     def source(self) -> str:
-        """The block the line came from, as reading order tracks it: its region and block."""
-        return f"{self.region}|{self.block}"
+        """The block the line came from, as reading order tracks it: its kind and block."""
+        return f"{self.kind}|{self.block}"
+
+    @property
+    def role(self) -> LineKind | None:
+        """The line's role on the page (a margin note, a page number, ...); None for running text and table cells."""
+        return self.kind if self.kind in ROLE_NAMES else None
+
+    @property
+    def width(self) -> float:
+        """The line's width (page px)."""
+        return self.box[2] - self.box[0]
+
+    @property
+    def middle_x(self) -> float:
+        """The x of the line's middle."""
+        return (self.box[0] + self.box[2]) / 2
 
 
 class Layout(BaseModel):
@@ -90,5 +108,5 @@ class Layout(BaseModel):
 
     width: int
     height: int
-    boxes: list[LineBox] = Field(default_factory=list)
+    lines: list[TextLine] = Field(default_factory=list)
     rules: list[Rule] = Field(default_factory=list)

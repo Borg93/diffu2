@@ -15,10 +15,7 @@ from operator import attrgetter
 
 from pydantic import BaseModel, Field
 
-from diffu_page.layout.model import ROLE_NAMES, CellRef, Layout, LineBox, LineKind, Production
-
-type Box = tuple[float, float, float, float]  # x0, y0, x1, y1 in page pixels
-
+from diffu_page.layout.model import Layout, LineKind, PageBox, TextLine
 
 # NeMo's image buckets for --resolution_preset 1024p (MultiTierBucketCalculator, quantization 64), (w, h).
 # Preprocessing fits an image to the bucket nearest its aspect by a cover-resize and a center crop, which
@@ -69,39 +66,10 @@ class CropSettings(BaseModel):
     overlap_lines: int = 2  # lines shared by consecutive windows of a column
 
 
-class Line(BaseModel):
-    """A text line on a page: its outline and baseline height (page px), its text, kind, source block, how it was
-    made and, in a table, its cell."""
-
-    polygon: list[tuple[float, float]]
-    baseline_y: float
-    text: str
-    kind: LineKind = LineKind.BODY
-    source: str = ""  # the region / block it came from, when a caller tracks reading order by block
-    production: Production = Production.HANDWRITTEN
-    cell: CellRef | None = None
-
-    @property
-    def role(self) -> LineKind | None:
-        """The line's role on the page (a margin note, a page number, ...); None for running text and table cells."""
-        return self.kind if self.kind in ROLE_NAMES else None
-
-    @property
-    def box(self) -> Box:
-        """The line's bounding box."""
-        xs, ys = zip(*self.polygon, strict=True)
-        return min(xs), min(ys), max(xs), max(ys)
-
-    @property
-    def middle_x(self) -> float:
-        """The x of the line's middle."""
-        return (self.box[0] + self.box[2]) / 2
-
-
 class Region(BaseModel):
     """A text region's lines, or a whole table's."""
 
-    lines: list[Line]
+    lines: list[TextLine]
 
     @property
     def is_table(self) -> bool:
@@ -109,7 +77,7 @@ class Region(BaseModel):
         return any(line.cell is not None for line in self.lines)
 
     @property
-    def box(self) -> Box:
+    def box(self) -> PageBox:
         """The bounding box of the region's lines."""
         boxes = [line.box for line in self.lines]
         return (
@@ -124,40 +92,27 @@ def regions_of(layout: Layout) -> list[Region]:
     """The layout's text lines grouped into the regions crops are cut from: a table's lines by table, the others by
     region and block, in reading order, each region's lines top to bottom. A table line without a cell (an old
     layout) is left out."""
-    grouped: dict[tuple[str, str], list[Line]] = {}
-    for box in layout.boxes:
-        if box.text.strip() and (box.region is not LineKind.TABLE or box.cell is not None):
-            grouped.setdefault(_region_key(box), []).append(_line(box))
+    grouped: dict[tuple[str, str], list[TextLine]] = {}
+    for line in layout.lines:
+        if line.text.strip() and (line.kind is not LineKind.TABLE or line.cell is not None):
+            grouped.setdefault(_region_key(line), []).append(line)
     return [Region(lines=sorted(lines, key=attrgetter("baseline_y"))) for lines in grouped.values()]
 
 
-def _region_key(box: LineBox) -> tuple[str, str]:
-    """The region a line is cut in: its table for a table cell's line, else its region and block."""
-    if box.cell is not None:
-        return LineKind.TABLE, box.cell.table
-    return box.region, box.block
-
-
-def _line(box: LineBox) -> Line:
-    x0, y0, x1, y1 = box.x, box.y, box.x + box.w, box.y + box.h
-    return Line(
-        polygon=[(x0, y0), (x1, y0), (x1, y1), (x0, y1)],
-        baseline_y=box.baseline_y,
-        text=box.text,
-        kind=box.region,
-        source=box.source,
-        production=box.production,
-        cell=box.cell,
-    )
+def _region_key(line: TextLine) -> tuple[str, str]:
+    """The region a line is cut in: its table for a table cell's line, else its kind and block."""
+    if line.cell is not None:
+        return LineKind.TABLE, line.cell.table
+    return line.kind, line.block
 
 
 class Column(BaseModel):
     """A wide text region and the narrow regions (margin notes, headings, page numbers) that joined it."""
 
-    anchor: Box  # the wide region's own box
+    anchor: PageBox  # the wide region's own box
     left: float
     right: float
-    lines: list[Line]
+    lines: list[TextLine]
 
     @classmethod
     def of(cls, region: Region) -> Column:
@@ -165,11 +120,11 @@ class Column(BaseModel):
         box = region.box
         return cls(anchor=box, left=box[0], right=box[2], lines=list(region.lines))
 
-    def gap_to(self, box: Box) -> float:
+    def gap_to(self, box: PageBox) -> float:
         """Vertical distance from the anchor region to ``box``; 0 when they overlap."""
         return max(0.0, max(self.anchor[1], box[1]) - min(self.anchor[3], box[3]))
 
-    def width_with(self, box: Box) -> float:
+    def width_with(self, box: PageBox) -> float:
         """The column's width if ``box`` joined it."""
         return max(self.right, box[2]) - min(self.left, box[0])
 
@@ -185,8 +140,8 @@ class PageGeometry(BaseModel):
 
     size: tuple[int, int]
     pitch: float
-    lines: list[Line]
-    rules: list[Box] = Field(default_factory=list)
+    lines: list[TextLine]
+    rules: list[PageBox] = Field(default_factory=list)
 
 
 class ColumnFrame(BaseModel):
@@ -211,14 +166,14 @@ class Crop(BaseModel):
     """A crop of a page: its rectangle (page px), bucket size, whole lines, the lines its top or bottom cuts and the
     parts of the page's ruled lines inside it."""
 
-    rect: Box
+    rect: PageBox
     size: tuple[int, int]
     pitch: float
-    lines: list[Line]
-    fragments: list[Line]
-    rules: list[Box] = Field(default_factory=list)
+    lines: list[TextLine]
+    fragments: list[TextLine]
+    rules: list[PageBox] = Field(default_factory=list)
 
-    def layout_box(self, box: Box) -> list[int]:
+    def layout_box(self, box: PageBox) -> list[int]:
         """A page rectangle as a FLUX.3 layout box: ``[y_min, x_min, y_max, x_max]`` on 0-1000, clamped."""
         x0, y0, x1, y1 = self.rect
         width, height = x1 - x0, y1 - y0
@@ -230,25 +185,25 @@ class Crop(BaseModel):
         )
         return [min(1000, max(0, round(1000 * v))) for v in relative]
 
-    def slot(self, line: Line) -> list[int]:
+    def slot(self, line: TextLine) -> list[int]:
         """A line's layout box: its x-extent plus a small margin, one line pitch around its baseline."""
         margin = SLOT_SIDE_MARGIN * self.pitch
         top = line.baseline_y - SLOT_ABOVE_BASELINE * self.pitch
         bottom = line.baseline_y + SLOT_BELOW_BASELINE * self.pitch
         return self.layout_box((line.box[0] - margin, top, line.box[2] + margin, bottom))
 
-    def baseline(self, line: Line) -> int:
+    def baseline(self, line: TextLine) -> int:
         """A line's baseline as a layout y, 0-1000 of the crop height. A crop holds only lines whose baseline lies
         inside it, so unlike the line's slot it is never clamped."""
         return round(1000 * (line.baseline_y - self.rect[1]) / (self.rect[3] - self.rect[1]))
 
-    def visible_box(self, line: Line) -> list[int]:
+    def visible_box(self, line: TextLine) -> list[int]:
         """The layout box of the part of a cut-off line inside the crop."""
         return self.layout_box(
             (line.box[0], max(line.box[1], self.rect[1]), line.box[2], min(line.box[3], self.rect[3]))
         )
 
-    def rule_box(self, rule: Box) -> list[int]:
+    def rule_box(self, rule: PageBox) -> list[int]:
         """A ruled line's layout box, at least ``RULE_THICKNESS`` units across so a hairline stays a box."""
         y0, x0, y1, x1 = self.layout_box(rule)
         y0, x0 = min(y0, 1000 - RULE_THICKNESS), min(x0, 1000 - RULE_THICKNESS)
@@ -259,7 +214,7 @@ class Crop(BaseModel):
         x0, y0, x1, y1 = self.rect
         return _place((x - x0) / (x1 - x0), (y - y0) / (y1 - y0))
 
-    def cut_edge(self, line: Line) -> str:
+    def cut_edge(self, line: TextLine) -> str:
         """The edge (``top`` or ``bottom``) that cuts a line off the crop."""
         return "top" if line.baseline_y < self.rect[1] else "bottom"
 
@@ -277,7 +232,7 @@ def _pitch_baselines(region: Region) -> list[float]:
     return [line.baseline_y for line in region.lines]
 
 
-def _row_baselines(lines: list[Line]) -> list[float]:
+def _row_baselines(lines: list[TextLine]) -> list[float]:
     """A table's baselines, top to bottom, the lines of one row (cells side by side, baselines within ``SAME_ROW`` of
     the median line height) counted once, at their median."""
     tolerance = SAME_ROW * statistics.median(line.box[3] - line.box[1] for line in lines)
@@ -290,13 +245,13 @@ def _row_baselines(lines: list[Line]) -> list[float]:
     return [statistics.median(row) for row in rows]
 
 
-def _x_overlap(box: Box, rect: Box) -> float:
+def _x_overlap(box: PageBox, rect: PageBox) -> float:
     """Fraction of ``box``'s width inside ``rect``'s x-range."""
     inside = max(0.0, min(box[2], rect[2]) - max(box[0], rect[0]))
     return inside / max(box[2] - box[0], 1e-6)
 
 
-def text_columns(regions: list[Region], pitch: float, settings: CropSettings) -> list[list[Line]]:
+def text_columns(regions: list[Region], pitch: float, settings: CropSettings) -> list[list[TextLine]]:
     """The lines of each wide text region together with the narrow regions that belong beside it.
 
     A region too narrow to be cropped on its own (a margin note, heading, page number) joins the nearest
@@ -318,7 +273,7 @@ def text_columns(regions: list[Region], pitch: float, settings: CropSettings) ->
     return [sorted(c.lines, key=lambda line: line.baseline_y) for c in columns]
 
 
-def _merge_fits(column: Column, box: Box, pitch: float, *, settings: CropSettings) -> bool:
+def _merge_fits(column: Column, box: PageBox, pitch: float, *, settings: CropSettings) -> bool:
     """Whether ``column`` plus ``box``, scaled to fit the widest bucket, keeps a legible line pitch."""
     span = column.width_with(box) + pitch
     scale = min(1.0, settings.line_spacing / pitch, WIDEST_BUCKET / span)
@@ -326,7 +281,7 @@ def _merge_fits(column: Column, box: Box, pitch: float, *, settings: CropSetting
 
 
 def crops_for_page(
-    regions: list[Region], size: tuple[int, int], settings: CropSettings, *, rules: Sequence[Box] = ()
+    regions: list[Region], size: tuple[int, int], settings: CropSettings, *, rules: Sequence[PageBox] = ()
 ) -> list[Crop]:
     """Crops over consecutive whole lines of each text column (see ``text_columns``).
 
@@ -354,7 +309,7 @@ def crops_for_page(
 
 
 def _block_crops(
-    lines: list[Line], size: tuple[int, int], settings: CropSettings, *, rules: Sequence[Box]
+    lines: list[TextLine], size: tuple[int, int], settings: CropSettings, *, rules: Sequence[PageBox]
 ) -> list[Crop]:
     """Crops of all of a page's lines as one block, at the pitch between its rows."""
     rows = _row_baselines(lines) if lines else []
@@ -365,7 +320,7 @@ def _block_crops(
     return _column_crops(sorted(lines, key=lambda line: line.baseline_y), page, settings)
 
 
-def _column_crops(lines: list[Line], page: PageGeometry, settings: CropSettings) -> list[Crop]:
+def _column_crops(lines: list[TextLine], page: PageGeometry, settings: CropSettings) -> list[Crop]:
     frame = _column_frame(lines, page, settings)
     if frame is None:
         return []
@@ -377,7 +332,7 @@ def _column_crops(lines: list[Line], page: PageGeometry, settings: CropSettings)
     return [crop for crop in crops if crop is not None and len(crop.lines) >= settings.min_lines]
 
 
-def _column_frame(lines: list[Line], page: PageGeometry, settings: CropSettings) -> ColumnFrame | None:
+def _column_frame(lines: list[TextLine], page: PageGeometry, settings: CropSettings) -> ColumnFrame | None:
     """The column's padded x-range and the bucket nearest its width at the target pitch; None if unfit."""
     pad = 0.5 * page.pitch
     left = max(0.0, min(line.box[0] for line in lines) - pad)
@@ -396,7 +351,7 @@ def _column_frame(lines: list[Line], page: PageGeometry, settings: CropSettings)
     return frame
 
 
-def _lines_per_window(lines: list[Line], span: float, pitch: float) -> int:
+def _lines_per_window(lines: list[TextLine], span: float, pitch: float) -> int:
     count = len(lines)
     while count > 1 and lines[count - 1].baseline_y - lines[0].baseline_y + 2 * pitch > span:
         count -= 1
@@ -411,13 +366,13 @@ def _window_starts(total: int, size: int, overlap: int) -> list[int]:
     return starts
 
 
-def _window_rect(window: list[Line], frame: ColumnFrame, page: PageGeometry) -> Box:
+def _window_rect(window: list[TextLine], frame: ColumnFrame, page: PageGeometry) -> PageBox:
     middle = (window[0].baseline_y + window[-1].baseline_y) / 2 - 0.25 * page.pitch
     top = min(max(0.0, middle - frame.span / 2), page.size[1] - frame.span)
     return (frame.left, top, frame.right, top + frame.span)
 
 
-def _crop(rect: Box, bucket: tuple[int, int], page: PageGeometry) -> Crop | None:
+def _crop(rect: PageBox, bucket: tuple[int, int], page: PageGeometry) -> Crop | None:
     """The crop at ``rect``; None when it cuts a line at the side."""
     inside = [line for line in page.lines if rect[1] <= line.baseline_y <= rect[3]]
     if any(CUT_LINE < _x_overlap(line.box, rect) < WHOLE_LINE for line in inside):
@@ -432,7 +387,7 @@ def _crop(rect: Box, bucket: tuple[int, int], page: PageGeometry) -> Crop | None
     )
 
 
-def _rule_inside(rule: Box, rect: Box, pitch: float) -> Box | None:
+def _rule_inside(rule: PageBox, rect: PageBox, pitch: float) -> PageBox | None:
     """The part of a ruled line inside ``rect``; None when less than ``SHORTEST_RULE`` line pitches of it is."""
     part = (max(rule[0], rect[0]), max(rule[1], rect[1]), min(rule[2], rect[2]), min(rule[3], rect[3]))
     if part[2] < part[0] or part[3] < part[1]:
@@ -440,7 +395,7 @@ def _rule_inside(rule: Box, rect: Box, pitch: float) -> Box | None:
     return part if max(part[2] - part[0], part[3] - part[1]) >= SHORTEST_RULE * pitch else None
 
 
-def _is_cut_off(line: Line, rect: Box, pitch: float) -> bool:
+def _is_cut_off(line: TextLine, rect: PageBox, pitch: float) -> bool:
     """Whether the crop's top or bottom edge cuts the line: baseline outside, a visible part of its ink inside."""
     if rect[1] <= line.baseline_y <= rect[3] or _x_overlap(line.box, rect) < 0.5:
         return False

@@ -16,7 +16,7 @@ import statistics
 from collections import deque
 from collections.abc import Iterable
 
-from diffu_page.layout.model import Layout, LineBox, LineKind
+from diffu_page.layout.model import Layout, LineKind, TextLine
 
 PARAGRAPH_BREAK = re.compile(r"\n\s*\n")  # a blank line, spaces and all
 SPLIT_MARK = "¬"
@@ -24,8 +24,10 @@ MIN_SPLIT = 3  # characters each half of a split word keeps
 DENSITY_MIN_CHARS = 10  # lines shorter than this (paragraph ends, numbers) don't measure the writing density
 
 
-def _writing_density(boxes: list[LineBox]) -> float:
-    densities = [len(box.text) / box.w for box in boxes if len(box.text) >= DENSITY_MIN_CHARS and box.w > 0]
+def _writing_density(lines: list[TextLine]) -> float:
+    densities = [
+        len(line.text) / line.width for line in lines if len(line.text) >= DENSITY_MIN_CHARS and line.width > 0
+    ]
     if not densities:
         raise ValueError(f"no line of at least {DENSITY_MIN_CHARS} characters to measure the writing density")
     return statistics.median(densities)
@@ -74,7 +76,7 @@ class _TextStream:
 def running_text(layout: Layout) -> str:
     """A layout's running-text lines as one paragraph, the words its transcription broke with ``SPLIT_MARK``
     joined back, ready to refill another page with."""
-    lines = " ".join(box.text.strip() for box in layout.boxes if box.region is LineKind.BODY)
+    lines = " ".join(line.text.strip() for line in layout.lines if line.kind is LineKind.BODY)
     return lines.replace(f"{SPLIT_MARK} ", "")
 
 
@@ -82,7 +84,7 @@ def refill(layout: Layout, text: str) -> Layout:
     """Rewrite a layout's running-text lines with new text, in reading order.
 
     Args:
-        layout: The page; its running-text lines (region ``body``) set the line widths and the writing
+        layout: The page; its running-text lines (kind ``body``) set the line widths and the writing
             density, its other lines keep their text.
         text: The new text; a blank line ends a paragraph, and the next starts on a fresh line.
 
@@ -93,14 +95,14 @@ def refill(layout: Layout, text: str) -> Layout:
     Raises:
         ValueError: If no running-text line holds ``DENSITY_MIN_CHARS`` characters to measure the density by.
     """
-    density = _writing_density([box for box in layout.boxes if box.region is LineKind.BODY])
+    density = _writing_density([line for line in layout.lines if line.kind is LineKind.BODY])
     stream = _TextStream(PARAGRAPH_BREAK.split(text))
-    boxes: list[LineBox] = []
-    for box in layout.boxes:
-        if box.region is not LineKind.BODY:
-            boxes.append(box)
+    lines: list[TextLine] = []
+    for line in layout.lines:
+        if line.kind is not LineKind.BODY:
+            lines.append(line)
             continue
-        line = stream.line(max(1, round(density * box.w)))
-        if line is not None:
-            boxes.append(box.model_copy(update={"text": line}))
-    return layout.model_copy(update={"boxes": boxes})
+        written = stream.line(max(1, round(density * line.width)))
+        if written is not None:
+            lines.append(line.model_copy(update={"text": written}))
+    return layout.model_copy(update={"lines": lines})

@@ -51,7 +51,7 @@ def transkribus_page(tmp_path: Path) -> Path:
 def test_replay_reads_regions_in_transkribus_reading_order_with_their_roles(transkribus_page: Path) -> None:
     layout = load_xml_layout(transkribus_page)
 
-    assert [(box.text, box.region, box.block) for box in layout.boxes] == [
+    assert [(line.text, line.kind, line.block) for line in layout.lines] == [
         ("97.", "page-number", "r1"),
         ("No 12", "marginalia", "r2"),
         ("den fjarde maj", "body", "r3"),
@@ -87,7 +87,7 @@ def form_page(tmp_path: Path) -> Path:
 def test_replay_keeps_each_lines_production_and_table_cell(form_page: Path) -> None:
     layout = load_xml_layout(form_page)
 
-    assert [(box.text, box.production, box.cell) for box in layout.boxes] == [
+    assert [(line.text, line.production, line.cell) for line in layout.lines] == [
         ("Flyttningsbetyg", Production.PRINTED, None),
         ("Att", Production.PRINTED, None),
         ("Anna Lisa", Production.HANDWRITTEN, None),
@@ -124,9 +124,9 @@ def test_replay_takes_a_lines_own_outline_not_its_last_words(tmp_path: Path) -> 
         '<TextRegion id="r">' + _line("l", "100,190 900,190 900,260 100,260", "ett tva", words) + "</TextRegion>",
     )
 
-    box = load_xml_layout(page).boxes[0]
+    line = load_xml_layout(page).lines[0]
 
-    assert (box.x, box.y, box.w, box.h) == (100.0, 190.0, 800.0, 70.0)
+    assert line.box == (100.0, 190.0, 900.0, 260.0)
 
 
 def test_replay_takes_the_baseline_from_the_lines_baseline_points(tmp_path: Path) -> None:
@@ -136,7 +136,7 @@ def test_replay_takes_the_baseline_from_the_lines_baseline_points(tmp_path: Path
         '<TextRegion id="r">' + _line("l", "100,190 900,190 900,260 100,260", "ett", baseline) + "</TextRegion>",
     )
 
-    assert load_xml_layout(page).boxes[0].baseline_y == 242.0
+    assert load_xml_layout(page).lines[0].baseline_y == 242.0
 
 
 def _alto(tmp_path: Path, blocks: str, description: str = "") -> Path:
@@ -159,8 +159,8 @@ def test_replay_reads_an_alto_page(tmp_path: Path) -> None:
     layout = load_xml_layout(alto)
 
     assert (layout.width, layout.height) == (6000, 5000)
-    assert [(b.text, b.x, b.y, b.w, b.h, b.baseline_y, b.block) for b in layout.boxes] == [
-        ("Hej du", 100.0, 200.0, 300.0, 50.0, 240.0, "b1")
+    assert [(line.text, line.box, line.baseline_y, line.block) for line in layout.lines] == [
+        ("Hej du", (100.0, 200.0, 400.0, 250.0), 240.0, "b1")
     ]
 
 

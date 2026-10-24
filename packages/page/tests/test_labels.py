@@ -229,7 +229,7 @@ def test_page_xml_of_a_planned_table_crop_reads_back_as_the_same_table(table_pag
     def cells(lines: list) -> list[tuple]:
         return sorted((line.text, line.production, line.cell and (line.cell.row, line.cell.column)) for line in lines)
 
-    assert (cells(read.boxes), [(r.x0, r.y0, r.x1, r.y1) for r in read.rules]) == (
+    assert (cells(read.lines), [(r.x0, r.y0, r.x1, r.y1) for r in read.rules]) == (
         cells(plan.lines),
         [tuple(float(v) for v in rect) for rect in labels.rules],
     )

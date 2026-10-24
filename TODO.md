@@ -705,7 +705,15 @@ Still to do, in this order (the refactors after the fixes, the user's call):
       Golden diff over the 11,827 trained crops: the caption, restyled, edit, named-edit and described-edit captions
       byte-identical. Left: PageStyle and restyle.Style as one model (the runner's test imports PageStyle, so with
       the Ray work).
-- [ ] 14: one page-space line model. Gated on the golden diff (crop rects, slots and caption bytes identical, old code
+- [x] 14, first two parts (24 Oct): a line's kind is one `LineKind` StrEnum (running text, a table cell's line or a
+      role; the stored LineRecord keeps its role as written and reads its kind through one property), and one
+      `TextLine` (text, page box, baseline, kind, block, production, cell) runs from the reader through the crops:
+      LineBox, the crop cutter's Line and their rectangle-polygon round trip are gone. Golden diff byte-identical on
+      both paths, the boxes now the outlines' exact extremes.
+- [ ] 14, the rest: `type LayoutBox = tuple[int, int, int, int]` (0-1000, y first) for the boxes captions and records
+      store, so a box of the wrong length fails validation instead of mid-draw (tests compare them as lists today);
+      Paper and Ink Literals once the stored metadata's values are scanned; `band_name` generic. Gated on the golden
+      diff (crop rects, slots and caption bytes identical, old code
       against new) over every set a LoRA was trained on: scratchpad golden/golden.py re-cuts the 1,952 pages of
       layout_crops_v2/v2b (11,827 crops; the val_eval rows are val's) on the training path and the generation path,
       and writes every crop's caption in each form (restyled, edit, named edit, described edit). The two paths differ on 35 pages only by the page size: their PAGE

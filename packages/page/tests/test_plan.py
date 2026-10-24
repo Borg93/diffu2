@@ -45,7 +45,7 @@ def _rows(plan: CropPlan) -> dict[str, str]:
 
 def test_plan_keeps_every_row_of_a_table_whole_in_its_windows(table_page: Path) -> None:
     layout = load_xml_layout(table_page)
-    cells_per_row = Counter(box.cell.row for box in layout.boxes if box.cell is not None)
+    cells_per_row = Counter(line.cell.row for line in layout.lines if line.cell is not None)
 
     windows = [
         Counter(line.cell.row for line in plan.lines if line.cell is not None) for plan in plan_page(layout, STYLE)
@@ -80,7 +80,7 @@ def test_plan_plans_a_form_whose_every_line_is_its_own_region(certificate_page: 
 
     plans = plan_page(layout, STYLE)
 
-    assert {line.text for plan in plans for line in plan.lines} == {box.text for box in layout.boxes}
+    assert {line.text for plan in plans for line in plan.lines} == {line.text for line in layout.lines}
 
 
 def test_plan_captions_a_form_drawn_from_a_reference_keeping_its_print_and_rules(
@@ -117,7 +117,7 @@ def test_plan_captions_a_form_drawn_from_a_reference_keeping_its_print_and_rules
 
 def test_plan_records_where_each_lines_baseline_lies_on_its_crop(body_and_notes_page: Path) -> None:
     layout = load_xml_layout(body_and_notes_page)
-    on_page = {box.text: box.baseline_y for box in layout.boxes}
+    on_page = {line.text: line.baseline_y for line in layout.lines}
 
     planned = plan_page(layout, STYLE)
 

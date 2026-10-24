@@ -9,8 +9,8 @@ from pydantic import BaseModel, ConfigDict
 
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.provenance import Provenance
-from diffu_page.crops.geometry import Box, Crop, Line
-from diffu_page.layout.model import ROLE_NAMES, CellRef, LineKind, Production
+from diffu_page.crops.geometry import Crop
+from diffu_page.layout.model import ROLE_NAMES, CellRef, LineKind, PageBox, Production, TextLine
 
 NUMBER_WORDS = ("no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten")
 HANDWRITTEN_PAGE = "handwritten page"
@@ -86,7 +86,7 @@ def phrases_for(provenance: Provenance, look: ScanLook, *, printed: bool) -> Sty
     )
 
 
-def caption_order(lines: list[Line]) -> list[Line]:
+def caption_order(lines: list[TextLine]) -> list[TextLine]:
     """The order a caption numbers a crop's lines in (``Sv_Text_1``, ...): top to bottom, then left to right."""
     return sorted(lines, key=lambda line: (line.baseline_y, line.box[0]))
 
@@ -150,13 +150,13 @@ def caption_for(crop: Crop, provenance: Provenance, look: ScanLook) -> Caption:
     )
 
 
-def _body_column(lines: list[Line]) -> tuple[float, float]:
+def _body_column(lines: list[TextLine]) -> tuple[float, float]:
     """The x-range of the crop's main text (of all its lines when every line has a role)."""
     body = [line for line in lines if not line.role] or lines
     return min(line.box[0] for line in body), max(line.box[2] for line in body)
 
 
-def _row_desc(line: Line, column: tuple[float, float], crop: Crop, phrases: StylePhrases) -> str:
+def _row_desc(line: TextLine, column: tuple[float, float], crop: Crop, phrases: StylePhrases) -> str:
     """A line's layout row: printed, in a table cell, or placed in the crop's main text."""
     if line.production is Production.PRINTED:
         what = ROLE_NAMES[line.role] if line.role else "text"
@@ -167,13 +167,13 @@ def _row_desc(line: Line, column: tuple[float, float], crop: Crop, phrases: Styl
     return _line_desc(_line_kind(line, column, crop.pitch), line, phrases)
 
 
-def _rule_desc(rule: Box) -> str:
+def _rule_desc(rule: PageBox) -> str:
     """A ruled line's row: its direction only, as PAGE does not say whether a rule was printed or drawn."""
     direction = "vertical" if rule[3] - rule[1] > rule[2] - rule[0] else "horizontal"
     return f"A straight {direction} ruled line."
 
 
-def _line_kind(line: Line, column: tuple[float, float], pitch: float) -> str:
+def _line_kind(line: TextLine, column: tuple[float, float], pitch: float) -> str:
     """How a line's desc opens: its role, or how a main-text line sits in its column."""
     if line.role:
         return ROLE_NAMES[line.role].capitalize()
@@ -186,7 +186,7 @@ def _line_kind(line: Line, column: tuple[float, float], pitch: float) -> str:
     return "Handwritten line of text"
 
 
-def _line_desc(kind: str, line: Line, phrases: StylePhrases) -> str:
+def _line_desc(kind: str, line: TextLine, phrases: StylePhrases) -> str:
     return f'{kind} reading "{line.text}", {phrases.ink_line}'
 
 
@@ -195,7 +195,7 @@ def _fragment_desc(edge: str, phrases: StylePhrases) -> str:
     return f"The {part} part of a {phrases.ink_fragment} by the {edge} edge of the scan; its words are not legible."
 
 
-def _opening_sentence(phrases: StylePhrases, numbered: list[tuple[str, Line]]) -> str:
+def _opening_sentence(phrases: StylePhrases, numbered: list[tuple[str, TextLine]]) -> str:
     """The medium, the page and its lines: the handwritten ones counted with their roles, the printed ones cited,
     and the main text (handwritten lines outside a role and a table) in reading order."""
     written = [(row_id, line) for row_id, line in numbered if line.production is Production.HANDWRITTEN]
@@ -212,7 +212,7 @@ def _opening_sentence(phrases: StylePhrases, numbered: list[tuple[str, Line]]) -
     return f"{opening}; the main text runs from top to bottom: {_cite(body)}."
 
 
-def _table_sentences(numbered: list[tuple[str, Line]]) -> list[str]:
+def _table_sentences(numbered: list[tuple[str, TextLine]]) -> list[str]:
     """One sentence for the crop's table cells, when it has any: how many rows and columns they fill."""
     cells = [(row_id, line.cell) for row_id, line in numbered if line.cell is not None]
     if not cells:
@@ -224,7 +224,7 @@ def _table_sentences(numbered: list[tuple[str, Line]]) -> list[str]:
     ]
 
 
-def _rule_sentences(rules: list[tuple[str, Box]], numbered: list[tuple[str, Line]]) -> list[str]:
+def _rule_sentences(rules: list[tuple[str, PageBox]], numbered: list[tuple[str, TextLine]]) -> list[str]:
     """One sentence for the crop's ruled lines, when it has any."""
     if not rules:
         return []
@@ -233,7 +233,7 @@ def _rule_sentences(rules: list[tuple[str, Box]], numbered: list[tuple[str, Line
     return [f"{_count(len(rules)).capitalize()} straight {lines} {where}: {_cite([row_id for row_id, _ in rules])}."]
 
 
-def _role_sentences(numbered: list[tuple[str, Line]], column: tuple[float, float], crop: Crop) -> list[str]:
+def _role_sentences(numbered: list[tuple[str, TextLine]], column: tuple[float, float], crop: Crop) -> list[str]:
     """One sentence per role and position: "A marginal note <Sv_Text_4> sits in the left margin."."""
     placed: dict[tuple[LineKind, str], list[str]] = defaultdict(list)
     for row_id, line in numbered:
@@ -242,7 +242,7 @@ def _role_sentences(numbered: list[tuple[str, Line]], column: tuple[float, float
     return [_role_sentence(ROLE_NAMES[role], where, ids) for (role, where), ids in placed.items()]
 
 
-def _role_position(line: Line, column: tuple[float, float], crop: Crop) -> str:
+def _role_position(line: TextLine, column: tuple[float, float], crop: Crop) -> str:
     if line.role is not LineKind.MARGINALIA:
         return crop.place(line.middle_x, line.baseline_y)
     return "in the left margin" if line.middle_x < sum(column) / 2 else "in the right margin"
@@ -254,7 +254,7 @@ def _role_sentence(name: str, where: str, ids: list[str]) -> str:
     return f"{_count(len(ids)).capitalize()} {name} lines {_cite(ids)} sit {where}."
 
 
-def _fragment_sentences(fragments: list[tuple[str, Line]], crop: Crop) -> list[str]:
+def _fragment_sentences(fragments: list[tuple[str, TextLine]], crop: Crop) -> list[str]:
     if not fragments:
         return []
     edges = {crop.cut_edge(line) for _, line in fragments}

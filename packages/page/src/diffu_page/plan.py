@@ -135,7 +135,7 @@ def plan_page(
         settings or CropSettings(),
         rules=[(rule.x0, rule.y0, rule.x1, rule.y1) for rule in layout.rules],
     )
-    block_rank = {source: rank for rank, source in enumerate(dict.fromkeys(box.source for box in layout.boxes))}
+    block_rank = {source: rank for rank, source in enumerate(dict.fromkeys(line.source for line in layout.lines))}
     written = [caption_for(crop, style.provenance, style.look) for crop in crops]
     texts = (
         [caption.text for caption in written] if reference is None else _reference_captions(written, style, reference)

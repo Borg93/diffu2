@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from diffu_page.layout import Layout, LineBox, load_xml_layout, refill, running_text
+from diffu_page.layout import Layout, TextLine, load_xml_layout, refill, running_text
 
 _BODY_TEXTS = [  # 40 characters on each 680 px line: every refilled line gets a 40-character budget
     "den fjarde maj artonhundra attiotva fors",
@@ -41,7 +41,7 @@ def page(tmp_path: Path) -> Layout:
 
 
 def _body_texts(layout: Layout) -> list[str]:
-    return [box.text for box in layout.boxes if box.region == "body"]
+    return [line.text for line in layout.lines if line.kind == "body"]
 
 
 def test_refill_flows_the_text_through_the_lines_at_the_pages_density_dropping_the_rest(page: Layout):
@@ -77,22 +77,24 @@ def test_refill_splits_a_word_that_overruns_its_line_with_the_break_mark(page: L
 
 
 def test_refill_keeps_the_other_regions_text(page: Layout):
-    others = {box.region: box.text for box in refill(page, "Ny text.").boxes if box.region != "body"}
+    others = {line.kind: line.text for line in refill(page, "Ny text.").lines if line.kind != "body"}
     assert others == {"page-number": "61.", "marginalia": "No 12"}
 
 
 def test_refill_refuses_a_page_without_a_line_to_measure(page: Layout):
-    short = page.model_copy(update={"boxes": [box.model_copy(update={"text": "kort"}) for box in page.boxes]})
+    short = page.model_copy(update={"lines": [line.model_copy(update={"text": "kort"}) for line in page.lines]})
     with pytest.raises(ValueError, match="writing density"):
         refill(short, "Ny text.")
 
 
 def test_running_text_joins_the_words_a_transcription_breaks_across_lines():
     lines = ["nastkomne mandag up¬", "gifwa fortekning pa de som", "krogar halla wilja"]
-    boxes = [LineBox(text=text, x=0, y=60 * i, w=600, h=40, baseline_y=60 * i + 30) for i, text in enumerate(lines)]
+    body = [
+        TextLine(text=text, box=(0, 60 * i, 600, 60 * i + 40), baseline_y=60 * i + 30) for i, text in enumerate(lines)
+    ]
     page = Layout(
         width=600,
         height=400,
-        boxes=[*boxes, LineBox(text="97.", x=0, y=0, w=40, h=40, baseline_y=30, region="page-number")],
+        lines=[*body, TextLine(text="97.", box=(0, 0, 40, 40), baseline_y=30, kind="page-number")],
     )
     assert running_text(page) == "nastkomne mandag upgifwa fortekning pa de som krogar halla wilja"

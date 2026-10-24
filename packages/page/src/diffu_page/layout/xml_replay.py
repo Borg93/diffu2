@@ -14,7 +14,7 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from diffu_page.layout.model import CellRef, Layout, LineBox, LineKind, Production, Rule
+from diffu_page.layout.model import CellRef, Layout, LineKind, Production, Rule, TextLine
 from diffu_page.layout.page_xml import (
     PageLine,
     child,
@@ -70,17 +70,14 @@ def _production(element: ET.Element, inherited: Production) -> Production:
     return _PRODUCTION[value]
 
 
-def _box(line: PageLine, region: LineKind, block: str, *, production: Production, cell: CellRef | None) -> LineBox:
+def _text_line(line: PageLine, kind: LineKind, block: str, *, production: Production, cell: CellRef | None) -> TextLine:
     xs = [x for x, _ in line.polygon]
     ys = [y for _, y in line.polygon]
-    return LineBox(
+    return TextLine(
         text=line.text,
-        x=min(xs),
-        y=min(ys),
-        w=max(xs) - min(xs),
-        h=max(ys) - min(ys),
+        box=(min(xs), min(ys), max(xs), max(ys)),
         baseline_y=line.baseline_y,
-        region=region,
+        kind=kind,
         block=block,
         production=production,
         cell=cell,
@@ -95,21 +92,21 @@ def _key(element: ET.Element, kind: str, position: int) -> str:
 
 def _region_lines(
     element: ET.Element,
-    region: LineKind,
+    kind: LineKind,
     block: str,
     *,
     production: Production = Production.HANDWRITTEN,
     cell: CellRef | None = None,
-) -> list[LineBox]:
+) -> list[TextLine]:
     """The lines of a PAGE region (direct ``TextLine`` children), top to bottom; ``production`` is what the region's
     container makes them unless the region or a line says otherwise."""
     own = _production(element, production)
-    boxes = [
-        _box(read, region, block, production=_production(line, own), cell=cell)
+    lines = [
+        _text_line(read, kind, block, production=_production(line, own), cell=cell)
         for line in element
         if local_name(line.tag) == "TextLine" and (read := read_page_line(line)) is not None
     ]
-    return sorted(boxes, key=lambda box: box.baseline_y)
+    return sorted(lines, key=lambda line: line.baseline_y)
 
 
 def _cell_ref(table: ET.Element, table_key: str, cell: ET.Element) -> CellRef | None:
@@ -135,7 +132,7 @@ def _cell_ref(table: ET.Element, table_key: str, cell: ET.Element) -> CellRef | 
             return None
 
 
-def _table_lines(table: ET.Element, table_key: str) -> list[LineBox]:
+def _table_lines(table: ET.Element, table_key: str) -> list[TextLine]:
     """A table's lines, cell by cell in file order, each cell's top to bottom."""
     production = _production(table, Production.HANDWRITTEN)
     return [
@@ -146,7 +143,7 @@ def _table_lines(table: ET.Element, table_key: str) -> list[LineBox]:
     ]
 
 
-def _page_lines(root: ET.Element) -> list[LineBox]:
+def _page_lines(root: ET.Element) -> list[TextLine]:
     """A PAGE file's lines: text regions in Transkribus reading order, then the tables' cells, each top to bottom."""
     tables = iter_local(root, "TableRegion")
     in_table = {id(element) for table in tables for element in table.iter()}
@@ -172,7 +169,7 @@ def _page_rules(root: ET.Element) -> list[Rule]:
     return rules
 
 
-def _alto_line(line: ET.Element, block: str) -> LineBox | None:
+def _alto_line(line: ET.Element, block: str) -> TextLine | None:
     """An ALTO ``TextLine``: its box, its ``String`` contents joined, its ``BASELINE`` (else the box's bottom)."""
     text = " ".join(s.get("CONTENT", "") for s in line if local_name(s.tag) == "String").strip()
     if not text or line.get("HPOS") is None:
@@ -182,10 +179,10 @@ def _alto_line(line: ET.Element, block: str) -> LineBox | None:
     baseline = line.get("BASELINE", "")
     points = parse_points(baseline)
     baseline_y = sum(py for _, py in points) / len(points) if points else float(baseline or y + h)
-    return LineBox(text=text, x=x, y=y, w=w, h=h, baseline_y=baseline_y, block=block)
+    return TextLine(text=text, box=(x, y, x + w, y + h), baseline_y=baseline_y, block=block)
 
 
-def _alto_lines(root: ET.Element) -> list[LineBox]:
+def _alto_lines(root: ET.Element) -> list[TextLine]:
     """An ALTO file's lines, block by block in file order."""
     lines = (
         _alto_line(line, _key(block, "block", k))
@@ -227,5 +224,5 @@ def _layout(root: ET.Element) -> Layout:
     width, height = _page_size(root)
     if local_name(root.tag) == "alto":
         _require_pixels(root)
-        return Layout(width=width, height=height, boxes=_alto_lines(root))
-    return Layout(width=width, height=height, boxes=_page_lines(root), rules=_page_rules(root))
+        return Layout(width=width, height=height, lines=_alto_lines(root))
+    return Layout(width=width, height=height, lines=_page_lines(root), rules=_page_rules(root))
