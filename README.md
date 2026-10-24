@@ -52,6 +52,9 @@ cd ~/Desktop/repos/Automodel && ~/Desktop/repos/diffu2/jobs/spark_guard.sh --nee
     --title "the court records of Jämtlands domsaga" --paper cream --ink "dark brown"
 ```
 
+`--fuse-loras` fuses the LoRAs into the transformer's weights at load: faster for a run that keeps one LoRA (the
+studio keeps its adapters, to switch them per drawer).
+
 In Python, a page planned into crop jobs on CPU, then each crop drawn by the crop pipeline (a Modular Diffusers
 pipeline), as diffu-generate and diffu-runner do it:
 
@@ -70,7 +73,7 @@ style = PageStyle(
 )
 settings = DrawSettings(steps=50)
 pipe = load_pipeline(model_dir, crop_blocks, loras={"v2": lora_dir}, settings=settings)
-page = PageJob(template=Path("page.xml"), text=text, style=style, seed=0)
+page = PageJob(template=Path("page.xml"), text=text, style=style, seed=0)  # a blank line in text ends a paragraph
 crops = [
     draw_crop(pipe, job.plan, name=job.name, seed=job.seed, reference=job.reference_image(), settings=settings)
     for job in crop_jobs(page, 0)

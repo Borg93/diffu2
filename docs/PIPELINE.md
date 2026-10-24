@@ -16,11 +16,13 @@ PAGE/ALTO page ──► LoadLayout ──► Refill ──► PlanCrops ──�
 
 1. **Layout** (`LoadLayoutStep`, `diffu_page.layout`): a real PAGE or ALTO page read as its lines
    (`load_xml_layout`): each line's text, outline, baseline, region role and source block, regions in Transkribus
-   reading order. The training-crop builder reads PAGE with the same code (`layout/page_xml.py`), so a page is planned
-   for generation exactly where its training crops were cut. PAGE and ALTO are only formats here: the layout is what
-   the rest uses.
+   reading order; an element without an id is keyed by its place, so it stays a region of its own. The training-crop
+   builder cuts its crops from this same layout (`crops.regions_of`, at the scan's size), so a page is planned for
+   generation exactly where its training crops were cut. PAGE and ALTO are only formats here: the layout is what the
+   rest uses.
 2. **Refill** (`RefillStep`, `layout.refill`): the running-text lines get new text at the page's own writing density;
-   margin notes, headings and page numbers keep theirs.
+   a blank line in the text ends a paragraph and the next starts on a fresh line; margin notes, headings and page
+   numbers keep theirs.
 3. **Crops** (`PlanCropsStep`, `diffu_page.crops`, `diffu_page.plan`): the page is cut into the windows the models
    were trained on: whole lines, about 1 megapixel at a 64 px line pitch, NeMo bucket sizes, margin notes joined to
    the column beside them. Each window is a `CropPlan`: its size, its caption and its lines with boxes (0–1000, y
@@ -28,7 +30,8 @@ PAGE/ALTO page ──► LoadLayout ──► Refill ──► PlanCrops ──�
    tiling of the page.
 4. **Caption** (`diffu_page.captions`): FLUX.3's layout prompt. A paragraph names the archive, years, scan, paper and
    ink and cites every line; a JSON table gives each line's box and text. Training data and generation build it
-   with the same code. A page drawn from a reference crop (`plan.Reference`, style by example) is captioned as the
+   with the same code, and the phrases that carry the style are spelled in one place (`captions.prompt.phrases_for`),
+   which restyling rewrites; a printed line's row and a ruled line's name no style and are left as written. A page drawn from a reference crop (`plan.Reference`, style by example) is captioned as the
    reference pairs were (`restyle.reference_caption`): the style's words give way to `<ref_image_0>`, plain (v3, v3c)
    or with the reference's hand, ink and paper described as measured (`captions.hand`: slant, pen width, letter
    size, spacing, colours as hex; v3d). The form must be the one the LoRA in use was trained on.
@@ -43,7 +46,9 @@ PAGE/ALTO page ──► LoadLayout ──► Refill ──► PlanCrops ──�
    - `PagePlanBlocks`: the plan steps alone, no model. `jobs.crop_jobs` turns a page's plans into crop jobs, crop k
      named `<page>_<k>` and drawn from noise seed `seed + k`, each with the page's reference image if it has one (so a
      reference only ever reaches the crops beside the captions planned for it).
-   LoRAs load through the model's own LoRA loader as named adapters (`diffu_page.lora`).
+   LoRAs load through the model's own LoRA loader as named adapters (`diffu_page.lora`); with
+   `DrawSettings.fuse_loras` (`--fuse-loras`) they are fused into the transformer's weights at load, which saves the
+   adapters' matmuls every step but fixes the LoRAs for the run.
 
 Who runs what: every entry point plans pages with `PagePlanBlocks` and draws each crop on its own with the crop
 pipeline (`pipeline.draw_crop`). `diffu-generate` draws a run's crop jobs one after another; diffu-runner plans pages
