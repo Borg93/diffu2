@@ -17,14 +17,13 @@ from diffu_page.captions.provenance import Provenance
 from diffu_page.captions.records import CropRecord
 from diffu_page.captions.restyle import (
     CaptionParts,
-    StaleCaptionError,
     described_edit_caption,
     edit_caption,
     named_edit_caption,
     restyle,
 )
 from diffu_page.crops.geometry import Crop, CropSettings, crops_for_page, regions_of
-from diffu_page.layout import load_xml_layout
+from diffu_page.layout import load_xml_layout, refill
 
 CITED_LINES = (  # how the paragraph cites body_and_notes_crop's lines, after their ink
     ", including two marginal note lines; the main text runs from top to bottom: <Sv_Text_1> <Sv_Text_2> <Sv_Text_3> "
@@ -50,6 +49,24 @@ def test_restyle_writes_the_caption_the_crop_gets_in_the_target_style(
     restyled = restyle(CaptionParts.of(record), target)
 
     assert restyled == caption_for(body_and_notes_crop, target).text
+
+
+def test_restyle_quotes_a_line_with_a_dollar_sign_as_written(
+    body_and_notes_page: Path, make_record: Callable[..., CropRecord]
+) -> None:
+    layout = refill(load_xml_layout(body_and_notes_page), "kostade $ 12 och $$ 3 " * 40)
+    record = make_record(crops_for_page(regions_of(layout), (layout.width, layout.height), CropSettings())[0])
+    target = PageStyle(
+        provenance=Provenance(title="the court records of Jämtlands domsaga", years="1650"),
+        look=ScanLook(greyscale=True, paper="light grey", ink="black"),
+    )
+
+    restyled = restyle(CaptionParts.of(record), target)
+
+    rows = [row for row in _paragraph_and_rows(restyled)[1] if row["id"].startswith("Sv_Text_")]
+    assert [row["desc"].split('reading "', 1)[1].rsplit('", ', 1)[0] for row in rows] == [
+        line.text for line in record.lines
+    ]
 
 
 @pytest.fixture
@@ -96,13 +113,13 @@ def test_edit_caption_takes_only_the_paper_from_the_reference_and_names_no_style
         },
         *(
             {
-                "id": row.id,
+                "id": row["id"],
                 "from": "target",
                 "src_bbox": None,
-                "tgt_bbox": list(row.bbox),
-                "desc": row.desc.replace("in dark brown ink.", "in the reference's hand and ink."),
+                "tgt_bbox": row["bbox"],
+                "desc": row["desc"].replace("in dark brown ink.", "in the reference's hand and ink."),
             }
-            for row in record.layout[1:]
+            for row in _paragraph_and_rows(record.caption)[1][1:]
         ),
     ]
 
@@ -121,7 +138,8 @@ def test_named_edit_caption_names_the_archive_and_look_beside_the_reference(
         f"14 lines of cursive handwriting in dark brown ink{CITED_LINES}"
     )
     assert [(row["id"], row["from"]) for row in rows] == [
-        (row.id, "ref_image_0" if row.id == "paper_1" else "target") for row in record.layout
+        (row["id"], "ref_image_0" if row["id"] == "paper_1" else "target")
+        for row in _paragraph_and_rows(record.caption)[1]
     ]
     assert {row["desc"].rsplit(", cursive script ", 1)[-1] for row in rows if row["id"].startswith("Sv_Text_")} == {
         "in the reference's hand, in dark brown ink."
@@ -177,13 +195,10 @@ def test_described_edit_caption_refuses_a_reference_whose_hand_was_not_measured(
         described_edit_caption(CaptionParts.of(record), reference)
 
 
-def test_restyle_refuses_a_caption_an_older_provenance_rule_wrote(
+def test_caption_parts_refuse_a_record_built_before_records_kept_their_template(
     body_and_notes_crop: Crop, make_record: Callable[..., CropRecord]
 ) -> None:
-    record = make_record(body_and_notes_crop)
-    raw_folder_name = Provenance(title="RA arjeplogs tingslag 20260220", years="1690–1700")  # before collection_key
-    stale_style = PageStyle(provenance=raw_folder_name, look=record.look)
-    stale = record.model_copy(update={"caption": caption_for(body_and_notes_crop, stale_style).text})
+    old = make_record(body_and_notes_crop).model_copy(update={"template": None})
 
-    with pytest.raises(StaleCaptionError, match="crop.jpg: its caption was not written by the current caption grammar"):
-        restyle(CaptionParts.of(stale), stale.style)
+    with pytest.raises(ValueError, match="crop.jpg: its record keeps no caption template"):
+        CaptionParts.of(old)

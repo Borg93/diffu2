@@ -96,10 +96,9 @@ Done 2026-10-21.
 - [x] ALTO `softwareVersion` asked for the version of `page-synth`, a package that no longer exists, and always
       wrote "0".
 - [x] pytest `strict = true`; pytest-cov and `[tool.coverage.run]` for per-test coverage when pruning the suite.
-- [ ] Rebuild `data_flux3/layout_crops_v2` (and steer_v2, style_pairs_v3, val_eval) with the fixed archive names
-      before any v2 retrain or new derived set: 521 records carry the raw folder name, and restyle now refuses them
-      (`StaleCaptionError`). Rebuilt as `data_flux3/layout_crops_v2b` (2026-10-23) for v3d; v2's sets stay as they
-      were trained.
+- [ ] Rebuild `data_flux3/layout_crops_v2b` (and any set derived from it) before a new derived set: records built
+      before 24 Oct keep no caption template, which restyle and the edit captions render (v3d's pairs included).
+      v2's sets stay as they were trained.
 - [x] The one-off job chains in `jobs/flux3/` that ran (steer, pages smoke, v3, v3b, the control probe) are deleted
       (24 Oct; git history keeps them); v3c, its guidance run and v3d wait for the v3d decision.
 
@@ -505,15 +504,19 @@ Captions (BFL; each needs a control probe on base FLUX.3, same crops and seeds, 
       artifacts the example shows, no stacked hedges.
 
 Code (writing-python, diffusers):
-- [ ] Captions are made by rewriting generated prose (restyle `_replace_once`, `StaleCaptionError`): render reference
-      captions directly from their parts.
+- [x] Captions are rendered, not rewritten (24 Oct): the caption grammar writes a crop's caption once as a
+      `CaptionTemplate` (each style phrase a `$` slot), a record keeps its template, and restyle and the three edit
+      captions render it with other phrases (`_replace_once`, `StaleCaptionError` and style_pairs' stale.json are
+      gone). Golden diff over layout_crops_v2's 1,952 pages, both cut paths: byte-identical captions, rows, restyled
+      and edit captions. A record built before 24 Oct keeps no template: style_pairs, probe_set and steer_set refuse it
+      (rebuild its crops with build_crops first).
 - [x] One row model for the eval-dir rows (EvalCrop, 24 Oct); `by_example_rows` leaves a stale caption out (24 Oct);
       the unclosed file, the dead constant, the Sampler overrides, the duplicated `load_rgb`/`jpeg` helpers and
       `sys.maxsize` are gone; exact-value edit-caption tests, the subset twin and pytest-timeout done (24 Oct).
-- [ ] Still open: one Style (PageStyle and restyle.Style, with the runner's test); the studio graph built from dicts;
-      the runner's `int(str(...))` round-trip (with the Ray work). (24 Oct: `plan_page`'s unused `settings` is gone,
-      the optional arguments of `crop_hands`, `plan_page` and CaptionDropout are keyword-only, and `pick`'s preference
-      for a crop with a margin note has its test.)
+- [ ] Still open: the runner's `int(str(...))` round-trip and its direct imports (with the Ray work). (24 Oct:
+      `plan_page`'s unused `settings` is gone, the optional arguments of `crop_hands`, `plan_page` and CaptionDropout
+      are keyword-only, `pick`'s preference for a crop with a margin note has its test, PageStyle is the one style
+      model, and the studio's gr.Workflow graph is typed: an edge refuses ports of two types.)
 - [x] diffu sampled at FLUX.3's shift 6.93 but trained with flow_shift 6.0: `diffu-export` (24 Oct) writes a trained
       repo's scheduler at its checkpoint's `flow_matching.flow_shift`.
 - [x] Guider: at `stop` < 1 the guider kept the previous crop's last step, so the next crop's text encoder step (which

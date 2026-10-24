@@ -1,11 +1,10 @@
 """The style words of a v2 layout caption: swap in another archive's, or hand them to a reference image.
 
-A caption from ``diffu_page.captions.prompt.caption_for`` is a paragraph, a space and the crop's layout rows as JSON.
-Its style is a ``PageStyle`` (the archive and its years; the scan, paper and ink), in the phrases ``phrases_for``
-spells: the paragraph's opening sentence and its ink, the paper row, the ink of every handwritten line
-row and of every fragment row. A printed line's row (black printer's ink whatever the scan) and a ruled line's row
-name no style and are left as written. Each function here rewrites those phrases of a :class:`CaptionParts` (a
-training record's caption, or a planned crop's):
+A caption from ``diffu_page.captions.prompt.caption_for`` is its :class:`CaptionTemplate` rendered with the phrases of
+the crop's ``PageStyle``: the paragraph's opening sentence and its ink, the paper row, the ink of every handwritten
+line row and of every fragment row (``phrases_for``). A printed line's row (black printer's ink whatever the scan) and
+a ruled line's row hold no phrase. Each function here renders a :class:`CaptionParts`' template (a training record's,
+or a planned crop's) with other phrases:
 
 - ``restyle``: another style's archive and look (the v2 steering test: the same text and layout as another archive);
 - ``edit_caption``: a FLUX.3 image-edit record that takes the hand, ink and paper from ``<ref_image_0>`` and names
@@ -14,38 +13,31 @@ training record's caption, or a planned crop's):
 - ``described_edit_caption``: that record describing the reference's measured hand, ink and paper (v3d): BFL's
   captions state a style's visible features, and FLUX.3 takes its style from the caption more than from a reference.
 
-Training captions (from records) and generation captions (from crop plans) go through the same functions, so a crop
-is drawn from exactly the caption grammar it was trained on. Every phrase is built from a style's fields and must
-occur where the grammar writes it, so a change to the grammar fails loudly instead of leaving stale words behind.
+Training captions (from records) and generation captions (from crop plans) go through the same functions, and a
+record keeps the template its own caption was rendered from, so a crop is drawn from exactly the caption grammar it
+was trained on.
 """
 
 from __future__ import annotations
 
-import json
-from collections.abc import Generator
-from contextlib import contextmanager
 from enum import StrEnum
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field
 
 from diffu_page.captions.hand import ReferenceLook, hand_words, slant_words
 from diffu_page.captions.prompt import (
     HANDWRITTEN_PAGE,
     PRINTED_PAGE,
-    LayoutRow,
+    CaptionTemplate,
     LineRecord,
     PageStyle,
     StylePhrases,
+    caption_text,
+    holds_print,
     phrases_for,
 )
 from diffu_page.captions.records import CropRecord
 from diffu_page.crops.geometry import LayoutBox
-from diffu_page.layout.model import Production
-
-
-class StaleCaptionError(ValueError):
-    """A record's caption lacks the style words the caption grammar writes for it now: it was built by an older
-    grammar or provenance rule, and its crops need rebuilding (``diffu_page.data.build_crops``)."""
 
 
 class ReferenceCaption(StrEnum):
@@ -57,50 +49,31 @@ class ReferenceCaption(StrEnum):
 
 
 class CaptionParts(BaseModel):
-    """A v2 caption and what it was written from: its layout rows, its lines and the style it names."""
+    """A v2 caption's template, its lines and the style its own caption names."""
 
     name: str  # what an error names it by: a crop's file name, or a planned crop's
-    text: str
-    layout: list[LayoutRow]
+    template: CaptionTemplate
     lines: list[LineRecord]
     style: PageStyle
 
     @classmethod
     def of(cls, record: CropRecord) -> CaptionParts:
-        """A training record's caption."""
-        return cls(
-            name=record.file_name,
-            text=record.caption,
-            layout=record.layout,
-            lines=record.lines,
-            style=record.style,
-        )
+        """A training record's caption.
+
+        Raises:
+            ValueError: If the record keeps no caption template (built before records kept one).
+        """
+        if record.template is None:
+            raise ValueError(
+                f"{record.file_name}: its record keeps no caption template; rebuild its crops with "
+                "diffu_page.data.build_crops"
+            )
+        return cls(name=record.file_name, template=record.template, lines=record.lines, style=record.style)
 
     @property
     def printed(self) -> bool:
         """Whether the crop holds a printed line: its page is then one printed and filled in by hand."""
-        return any(line.production is Production.PRINTED for line in self.lines)
-
-    @property
-    def unstyled(self) -> frozenset[str]:
-        """The rows whose desc names no style: the printed lines' and the ruled lines'."""
-        printed = {line.id for line in self.lines if line.production is Production.PRINTED}
-        return frozenset(printed | {row.id for row in self.layout if row.id.startswith("rule_")})
-
-
-class _GrammarMismatch(ValueError):
-    """A caption lacks a phrase where the caption grammar writes it."""
-
-
-@contextmanager
-def _written_by_this_grammar(parts: CaptionParts) -> Generator[None]:
-    try:
-        yield
-    except _GrammarMismatch as error:
-        raise StaleCaptionError(
-            f"{parts.name}: its caption was not written by the current caption grammar ({error}); "
-            "rebuild the crops with diffu_page.data.build_crops"
-        ) from error
+        return holds_print(self.lines)
 
 
 def _phrases(style: PageStyle, parts: CaptionParts) -> StylePhrases:
@@ -187,69 +160,9 @@ class EditRow(BaseModel):
     desc: str
 
 
-def _rows_json(rows: list[dict[str, object]]) -> str:
-    return json.dumps(rows, ensure_ascii=False)
-
-
-_ROWS = ' [{"id": "paper_1"'  # where caption_for's layout rows begin: a space, then the paper row first
-
-
-def _paragraph(parts: CaptionParts) -> str:
-    """The caption's paragraph: everything before the layout rows ``caption_for`` appended as JSON.
-
-    The stored rows are compared with the record's as models, not as text, so a field LayoutRow gains with a default
-    leaves earlier captions readable.
-
-    Raises:
-        _GrammarMismatch: If the caption doesn't end in its own layout rows.
-    """
-    paragraph, start, rest = parts.text.partition(_ROWS)
-    try:
-        stored = [LayoutRow.model_validate(row) for row in json.loads(start.lstrip() + rest)] if start else None
-    except (json.JSONDecodeError, ValidationError) as error:
-        raise _GrammarMismatch(f"the caption of {parts.name} doesn't end in layout rows: {error}") from error
-    if stored != parts.layout:
-        raise _GrammarMismatch(f"the caption of {parts.name} doesn't end in its layout rows")
-    return paragraph
-
-
-def _replace_once(text: str, old: str, new: str) -> str:
-    if text.count(old) != 1:
-        raise _GrammarMismatch(f"expected {old!r} once in {text[:80]!r}...")
-    return text.replace(old, new)
-
-
-def _restyled_paragraph(paragraph: str, old: StylePhrases, new: StylePhrases) -> str:
-    return _replace_once(_replace_once(paragraph, old.opening, new.opening), old.ink_opening, new.ink_opening)
-
-
-def _restyled_desc(row: LayoutRow, old: StylePhrases, new: StylePhrases, unstyled: frozenset[str]) -> str:
-    """A layout row's desc in the new style: the paper row whole, a line row's ending, a fragment row's ink; a row in
-    ``unstyled`` (a printed or a ruled line's) as it is.
-
-    Raises:
-        _GrammarMismatch: If the desc doesn't carry the phrase the grammar gives its kind of row.
-    """
-    if row.id in unstyled:
-        return row.desc
-    if row.id == "paper_1":
-        if row.desc != old.paper_row:
-            raise _GrammarMismatch(f"paper row {row.desc!r} is not {old.paper_row!r}")
-        return new.paper_row
-    if row.id.startswith("fragment_"):
-        return _replace_once(row.desc, old.ink_fragment, new.ink_fragment)
-    if not row.desc.endswith(old.ink_line):
-        raise _GrammarMismatch(f"line row {row.id} doesn't end in {old.ink_line!r}")
-    return row.desc.removesuffix(old.ink_line) + new.ink_line
-
-
 def restyle(parts: CaptionParts, target: PageStyle) -> str:
     """The caption naming ``target``'s archive, years, scan, paper and ink instead of its own."""
-    old, new = _phrases(parts.style, parts), _phrases(target, parts)
-    with _written_by_this_grammar(parts):
-        rows = [row.model_copy(update={"desc": _restyled_desc(row, old, new, parts.unstyled)}) for row in parts.layout]
-        paragraph = _restyled_paragraph(_paragraph(parts), old, new)
-    return f"{paragraph} {_rows_json([row.model_dump() for row in rows])}"
+    return caption_text(*parts.template.render(_phrases(target, parts)))
 
 
 def edit_caption(parts: CaptionParts) -> str:
@@ -288,18 +201,16 @@ def reference_caption(parts: CaptionParts, form: ReferenceCaption, reference: Re
             return described_edit_caption(parts, reference)
 
 
-def _edit(parts: CaptionParts, new: StylePhrases) -> str:
-    old = _phrases(parts.style, parts)
-    with _written_by_this_grammar(parts):
-        rows = [
-            EditRow(
-                id=row.id,
-                source="ref_image_0" if row.id == "paper_1" else "target",
-                src_bbox=_WHOLE_IMAGE if row.id == "paper_1" else None,
-                tgt_bbox=row.bbox,
-                desc=_restyled_desc(row, old, new, parts.unstyled),
-            )
-            for row in parts.layout
-        ]
-        paragraph = _restyled_paragraph(_paragraph(parts), old, new)
-    return f"{paragraph} {_rows_json([row.model_dump(by_alias=True) for row in rows])}"
+def _edit(parts: CaptionParts, phrases: StylePhrases) -> str:
+    paragraph, rows = parts.template.render(phrases)
+    edit_rows = [  # the paper taken from the whole reference, every other row new content
+        EditRow(
+            id=row.id,
+            source="ref_image_0" if row.id == "paper_1" else "target",
+            src_bbox=_WHOLE_IMAGE if row.id == "paper_1" else None,
+            tgt_bbox=row.bbox,
+            desc=row.desc,
+        )
+        for row in rows
+    ]
+    return caption_text(paragraph, edit_rows)

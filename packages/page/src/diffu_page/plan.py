@@ -105,9 +105,7 @@ def _reference_captions(written: list[Caption], style: PageStyle, reference: Ref
     look = reference.look()
     return [
         reference_caption(
-            CaptionParts(
-                name=f"planned crop {k}", text=caption.text, layout=caption.layout, lines=caption.lines, style=style
-            ),
+            CaptionParts(name=f"planned crop {k}", template=caption.template, lines=caption.lines, style=style),
             reference.caption,
             look,
         )

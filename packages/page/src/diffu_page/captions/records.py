@@ -7,7 +7,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from diffu_page.captions.look import Ink, Paper, ScanLook
-from diffu_page.captions.prompt import LayoutRow, LineRecord, PageStyle, caption_for
+from diffu_page.captions.prompt import CaptionTemplate, LineRecord, PageStyle, caption_for
 from diffu_page.captions.provenance import Provenance, provenance_of
 from diffu_page.crops.geometry import Crop
 
@@ -24,7 +24,7 @@ class CropRecord(BaseModel):
     greyscale: bool
     paper: Paper
     ink: Ink
-    layout: list[LayoutRow]
+    template: CaptionTemplate | None = None  # None in records built before records kept their caption's template
     lines: list[LineRecord]
 
     @property
@@ -62,7 +62,7 @@ def crop_record(crop: Crop, *, file_name: str, collection: str, page: Path, look
         width=crop.size[0],
         height=crop.size[1],
         **look.model_dump(),
-        layout=caption.layout,
+        template=caption.template,
         lines=caption.lines,
     )
 

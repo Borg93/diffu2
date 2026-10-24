@@ -30,8 +30,8 @@ are: the held-out set NeMo scores ``val_loss`` on during training.
 The references are picked first (training, then held-out, then by-example, from one seeded stream), then measured
 (``--caption described`` only, in parallel), then every set is captioned, and only then is any file written, so a
 caption that fails leaves no half-written set; the named captions draw from a stream of their own. So the references do
-not depend on the caption options. ``stale.json`` names, per set, the crops left out because their caption predates the
-caption grammar, and ``build.json`` how the set was built (``BuildRecord``).
+not depend on the caption options. A crop whose record keeps no caption template (built before records kept one)
+stops the build before any file is written. ``build.json`` records how the set was built (``BuildRecord``).
 
     python -m diffu_page.data.style_pairs --crops data_flux3/layout_crops_v2b --out data_flux3/style_pairs_v3
     python -m diffu_page.data.style_pairs --named-fraction 0.5 --val-pairs 64 \
@@ -42,7 +42,6 @@ caption grammar, and ``build.json`` how the set was built (``BuildRecord``).
 
 from __future__ import annotations
 
-import json
 import os
 import random
 import re
@@ -63,7 +62,6 @@ from diffu_page.captions.records import CropRecord, read_records
 from diffu_page.captions.restyle import (
     CaptionParts,
     ReferenceCaption,
-    StaleCaptionError,
     named_edit_caption,
     reference_caption,
 )
@@ -133,20 +131,16 @@ class Placement(BaseModel):
 
 
 class TrainingSet(BaseModel):
-    """The manifest's pairs, the targets left out because their caption predates the caption grammar, and the files
-    the manifest needs."""
+    """The manifest's pairs and the files it needs."""
 
     rows: list[ManifestRow]
-    stale: list[str]
     placements: list[Placement]
 
 
 class EvalSet(BaseModel):
-    """An eval dir's rows, the crops left out because their caption predates the caption grammar, and the files the
-    rows need."""
+    """An eval dir's rows and the files they need."""
 
     rows: list[ReferencedCrop]
-    stale: list[str]
     placements: list[Placement]
 
 
@@ -306,18 +300,12 @@ def renumbered(row: ManifestRow, index: int) -> ManifestRow:
 
 
 def training_pairs(pairs: list[Pair], caption: CaptionFor) -> TrainingSet:
-    """The manifest of ``pairs`` and the files it needs (targets linked, references shrunk); a pair whose target's
-    caption predates the caption grammar is left out."""
+    """The manifest of ``pairs`` and the files it needs (targets linked, references shrunk)."""
     manifest: list[ManifestRow] = []
-    stale: list[str] = []
     placements: list[Placement] = []
     for pair in pairs:
         target, reference = pair.target, pair.reference
-        try:
-            prompt = caption(pair)
-        except StaleCaptionError:
-            stale.append(target.record.file_name)
-            continue
+        prompt = caption(pair)
         placements += [
             Placement(source=target.path, destination=Path("targets") / target.record.file_name, shrunk=False),
             Placement(source=reference.path, destination=Path("refs") / reference.record.file_name, shrunk=True),
@@ -333,23 +321,14 @@ def training_pairs(pairs: list[Pair], caption: CaptionFor) -> TrainingSet:
                 metadata=PairMetadata(row_index=len(manifest), reference=reference.record.file_name),
             )
         )
-    return TrainingSet(rows=manifest, stale=stale, placements=placements)
+    return TrainingSet(rows=manifest, placements=placements)
 
 
 def eval_set(picks: list[EvalPick], caption: CaptionFor) -> EvalSet:
-    """Each pick as an eval crop, with the files the rows need; a crop whose caption predates the caption grammar is
-    left out, as in ``training_pairs``."""
-    rows: list[ReferencedCrop] = []
-    stale: list[str] = []
-    placements: list[Placement] = []
-    for pick in picks:
-        try:
-            rows.append(eval_row(pick, caption))
-        except StaleCaptionError:
-            stale.append(pick.pair.target.record.file_name)
-            continue
-        placements += eval_placements(pick.pair)
-    return EvalSet(rows=rows, stale=stale, placements=placements)
+    """Each pick as an eval crop, with the files the rows need."""
+    rows = [eval_row(pick, caption) for pick in picks]
+    placements = [placement for pick in picks for placement in eval_placements(pick.pair)]
+    return EvalSet(rows=rows, placements=placements)
 
 
 class ExamplePair(BaseModel):
@@ -488,8 +467,6 @@ def main(
         write_set(out / "val", validation.placements, "val.jsonl", [renumbered(row, k) for k, row in enumerate(spread)])
     write_set(out / "val_eval", held.placements, "metadata.jsonl", held.rows)
     write_set(out / "by_example", examples.placements, "metadata.jsonl", examples.rows)
-    stale = {"train": pairs.stale, "val": validation.stale, "val_eval": held.stale, "by_example": examples.stale}
-    (out / "stale.json").write_text(json.dumps(stale, indent=1), encoding="utf-8")
     build = BuildRecord(
         crops=str(crops),
         caption=caption,
@@ -501,13 +478,9 @@ def main(
     (out / "build.json").write_text(build.model_dump_json(indent=1), encoding="utf-8")
     alone = len(train) - len(train_pairs)
     console.print(
-        f"train: {len(pairs.rows)} pairs -> {out} ({alone} crops skipped: no reference to pick ({reference.value}); "
-        f"{len(pairs.stale)} skipped: caption older than the caption grammar, see stale.json)"
+        f"train: {len(pairs.rows)} pairs -> {out} ({alone} crops skipped: no reference to pick ({reference.value}))"
     )
-    console.print(
-        f"val_eval: {len(held.rows)} crops ({len(held.stale)} stale), "
-        f"by_example: {len(examples.rows)} prompts ({len(examples.stale)} stale)"
-    )
+    console.print(f"val_eval: {len(held.rows)} crops, by_example: {len(examples.rows)} prompts")
 
 
 if __name__ == "__main__":

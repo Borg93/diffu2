@@ -41,7 +41,6 @@ def _split(directory: Path) -> list[CropRecord]:
                 greyscale=False,
                 paper="cream",
                 ink="brown",
-                layout=[],
                 lines=[line],
             )
         )

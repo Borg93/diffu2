@@ -1,5 +1,5 @@
-"""The v3 reference pairs: a crop whose caption predates the caption grammar is left out without moving any other
-crop's reference, in every set, and a build never writes into a dir that holds an earlier one."""
+"""The v3 reference pairs: the manifest and the eval rows name each pair's target and reference, a same-hand
+reference shares no line with its target, and a build never writes into a dir that holds an earlier one."""
 
 from __future__ import annotations
 
@@ -11,8 +11,7 @@ import pytest
 from PIL import Image
 from typer.testing import CliRunner
 
-from diffu_page.captions.prompt import LineRecord, PageStyle, caption_for
-from diffu_page.captions.provenance import Provenance
+from diffu_page.captions.prompt import LineRecord
 from diffu_page.captions.records import CropRecord
 from diffu_page.captions.restyle import CaptionParts, edit_caption
 from diffu_page.crops.geometry import Crop
@@ -30,19 +29,13 @@ from diffu_page.data.style_pairs import (
     training_pairs,
 )
 
-RAW_FOLDER_NAME = Provenance(title="RA arjeplogs tingslag 20260220", years="1690–1700")  # before collection_key
 
-
-def _scans(make_record: Callable[..., CropRecord], crop: Crop, directory: Path, stale: str) -> list[Scan]:
-    """Six crops on three pages of one volume, as build_crops writes them; ``stale`` was captioned before
-    collection_key."""
+def _scans(make_record: Callable[..., CropRecord], crop: Crop, directory: Path) -> list[Scan]:
+    """Six crops on three pages of one volume, as build_crops writes them."""
     directory.mkdir()
     scans: list[Scan] = []
     for k in range(6):
         record = make_record(crop, f"{k}.jpg", page=f"{k // 2:04d}.xml")
-        if record.file_name == stale:
-            stale_style = PageStyle(provenance=RAW_FOLDER_NAME, look=record.look)
-            record = record.model_copy(update={"caption": caption_for(crop, stale_style).text})
         Image.new("RGB", crop.size, "white").save(directory / record.file_name)
         scans.append(Scan(record=record, path=directory / record.file_name))
     return scans
@@ -52,19 +45,21 @@ def _edit_caption(pair: Pair) -> str:
     return edit_caption(CaptionParts.of(pair.target.record))
 
 
-def test_training_pairs_leave_out_a_stale_caption_and_keep_every_other_pair(
+def test_training_pairs_name_each_pairs_target_and_reference(
     body_and_notes_crop: Crop, make_record: Callable[..., CropRecord], tmp_path: Path
 ) -> None:
-    scans = _scans(make_record, body_and_notes_crop, tmp_path / "crops", stale="3.jpg")
+    scans = _scans(make_record, body_and_notes_crop, tmp_path / "crops")
     pairs = pick_pairs(scans, by_volume(scans), rng=random.Random(0), pick=pick_reference)
 
     built = training_pairs(pairs, _edit_caption)
 
-    assert built.stale == ["3.jpg"]
-    assert [(row.media[0].file_name, row.metadata.reference) for row in built.rows] == [
-        (f"targets/{pair.target.record.file_name}", pair.reference.record.file_name)
+    assert [(row.media[0].file_name, row.media[1].file_name, row.metadata.reference) for row in built.rows] == [
+        (
+            f"targets/{pair.target.record.file_name}",
+            f"refs/{pair.reference.record.file_name}",
+            pair.reference.record.file_name,
+        )
         for pair in pairs
-        if pair.target.record.file_name != "3.jpg"
     ]
 
 
@@ -113,10 +108,10 @@ def test_same_hand_reference_falls_back_to_a_facing_page_crop_sharing_no_line(
     assert references == [facing] * 8
 
 
-def test_by_example_rows_leave_out_a_stale_caption_and_keep_the_others(
+def test_by_example_rows_name_their_reference_and_template(
     body_and_notes_crop: Crop, make_record: Callable[..., CropRecord], tmp_path: Path
 ) -> None:
-    scans = _scans(make_record, body_and_notes_crop, tmp_path / "crops", stale="3.jpg")
+    scans = _scans(make_record, body_and_notes_crop, tmp_path / "crops")
     picked = [
         ExamplePair(pair=Pair(target=scans[3], reference=scans[0]), template=3, label="a"),
         ExamplePair(pair=Pair(target=scans[1], reference=scans[4]), template=1, label="b"),
@@ -124,10 +119,10 @@ def test_by_example_rows_leave_out_a_stale_caption_and_keep_the_others(
 
     built = eval_set(by_example_picks(picked), _edit_caption)
 
-    assert (built.stale, [(row.file_name, row.reference, row.template) for row in built.rows]) == (
-        ["3.jpg"],
-        [("1.jpg", "refs/4.jpg", 1)],
-    )
+    assert [(row.file_name, row.reference, row.template) for row in built.rows] == [
+        ("3.jpg", "refs/0.jpg", 3),
+        ("1.jpg", "refs/4.jpg", 1),
+    ]
 
 
 def test_style_pairs_refuses_to_build_into_a_dir_that_holds_an_earlier_build(tmp_path: Path) -> None:

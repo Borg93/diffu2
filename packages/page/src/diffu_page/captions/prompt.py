@@ -1,9 +1,17 @@
-"""The FLUX.3 layout prompt of a crop (BFL's layout-prompt guide): a paragraph citing every line, then the layout rows."""
+"""The FLUX.3 layout prompt of a crop (BFL's layout-prompt guide): a paragraph citing every line, then the layout rows.
+
+The caption grammar writes a crop's caption once, as a :class:`CaptionTemplate` with each style phrase as a slot; the
+caption of a style is that template rendered with the style's phrases (:func:`phrases_for`), and a caption in another
+style or drawn from a reference image (:mod:`diffu_page.captions.restyle`) is the same template rendered with other
+phrases.
+"""
 
 from __future__ import annotations
 
 import json
 from collections import Counter, defaultdict
+from collections.abc import Sequence
+from string import Template
 
 from pydantic import BaseModel, ConfigDict
 
@@ -48,12 +56,9 @@ class LineRecord(BaseModel):
         return LineKind(self.role) if self.role else LineKind.BODY
 
 
-class Caption(BaseModel):
-    """A crop's FLUX.3 layout prompt with the layout rows and line records it was written from."""
-
-    text: str  # the prompt: the caption paragraph, a space and the layout rows as JSON
-    layout: list[LayoutRow]
-    lines: list[LineRecord]
+def holds_print(lines: Sequence[LineRecord]) -> bool:
+    """Whether a crop holds a printed line: its page is then one printed and filled in by hand."""
+    return any(line.production is Production.PRINTED for line in lines)
 
 
 class PageStyle(BaseModel):
@@ -68,8 +73,7 @@ class PageStyle(BaseModel):
 
 class StylePhrases(BaseModel):
     """The phrases of a caption that carry its style (the archive, its years, the scan, the paper and the ink): the
-    one place the caption grammar spells them, so restyling (:mod:`diffu_page.captions.restyle`) rewrites exactly
-    what :func:`caption_for` wrote."""
+    one place the caption grammar spells them. A caption's template holds each as a slot named by its field."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -97,6 +101,39 @@ def phrases_for(style: PageStyle, *, printed: bool) -> StylePhrases:
     )
 
 
+SLOTS = StylePhrases(**{name: f"${name}" for name in StylePhrases.model_fields})  # each phrase as its own slot
+
+
+class CaptionTemplate(BaseModel):
+    """A crop's caption as the caption grammar wrote it, each style phrase a slot (``$opening``, ``$ink_line``, ...:
+    the fields of :class:`StylePhrases`) and every ``$`` of a line's text doubled; the slots make the only difference
+    between the captions of two styles."""
+
+    model_config = ConfigDict(frozen=True)
+
+    paragraph: str
+    rows: list[LayoutRow]
+
+    def render(self, phrases: StylePhrases) -> tuple[str, list[LayoutRow]]:
+        """The paragraph and the layout rows in ``phrases``."""
+        slots = phrases.model_dump()
+        rows = [row.model_copy(update={"desc": Template(row.desc).substitute(slots)}) for row in self.rows]
+        return Template(self.paragraph).substitute(slots), rows
+
+
+def caption_text(paragraph: str, rows: Sequence[BaseModel]) -> str:
+    """A prompt: the paragraph, a space and the layout rows as JSON (by their field aliases)."""
+    return f"{paragraph} {json.dumps([row.model_dump(by_alias=True) for row in rows], ensure_ascii=False)}"
+
+
+class Caption(BaseModel):
+    """A crop's FLUX.3 layout prompt with the template and line records it was written from."""
+
+    text: str  # the prompt: the caption paragraph, a space and the layout rows as JSON
+    template: CaptionTemplate
+    lines: list[LineRecord]
+
+
 def caption_order(lines: list[TextLine]) -> list[TextLine]:
     """The order a caption numbers a crop's lines in (``Sv_Text_1``, ...): top to bottom, then left to right."""
     return sorted(lines, key=lambda line: (line.baseline_y, line.box[0]))
@@ -121,44 +158,38 @@ def caption_for(crop: Crop, style: PageStyle) -> Caption:
     ]
     rules = [(f"rule_{k}", rule) for k, rule in enumerate(crop.rules, 1)]
     column = _body_column([line for _, line in numbered if line.cell is None] or [line for _, line in numbered])
-    phrases = phrases_for(style, printed=any(line.production is Production.PRINTED for _, line in numbered))
-    layout = [
-        LayoutRow(id="paper_1", bbox=(0, 0, 1000, 1000), desc=phrases.paper_row),
+    rows = [
+        LayoutRow(id="paper_1", bbox=(0, 0, 1000, 1000), desc=SLOTS.paper_row),
+        *(LayoutRow(id=row_id, bbox=crop.slot(line), desc=_row_desc(line, column, crop)) for row_id, line in numbered),
         *(
-            LayoutRow(id=row_id, bbox=crop.slot(line), desc=_row_desc(line, column, crop, phrases))
-            for row_id, line in numbered
-        ),
-        *(
-            LayoutRow(id=row_id, bbox=crop.visible_box(line), desc=_fragment_desc(crop.cut_edge(line), phrases))
+            LayoutRow(id=row_id, bbox=crop.visible_box(line), desc=_fragment_desc(crop.cut_edge(line)))
             for row_id, line in fragments
         ),
         *(LayoutRow(id=row_id, bbox=crop.rule_box(rule), desc=_rule_desc(rule)) for row_id, rule in rules),
     ]
     sentences = [
-        _opening_sentence(phrases, numbered),
+        _opening_sentence(numbered),
         *_role_sentences(numbered, column, crop),
         *_table_sentences(numbered),
         *_rule_sentences(rules, numbered),
         *_fragment_sentences(fragments, crop),
     ]
-    rows = json.dumps([row.model_dump() for row in layout], ensure_ascii=False)
-    return Caption(
-        text=f"{' '.join(sentences)} {rows}",
-        layout=layout,
-        lines=[
-            LineRecord(
-                id=row_id,
-                text=line.text,
-                role=line.role or "",
-                bbox=crop.slot(line),
-                baseline=crop.baseline(line),
-                block=line.source,
-                production=line.production,
-                cell=line.cell,
-            )
-            for row_id, line in numbered
-        ],
-    )
+    template = CaptionTemplate(paragraph=" ".join(sentences), rows=rows)
+    lines = [
+        LineRecord(
+            id=row_id,
+            text=line.text,
+            role=line.role or "",
+            bbox=crop.slot(line),
+            baseline=crop.baseline(line),
+            block=line.source,
+            production=line.production,
+            cell=line.cell,
+        )
+        for row_id, line in numbered
+    ]
+    paragraph, styled = template.render(phrases_for(style, printed=holds_print(lines)))
+    return Caption(text=caption_text(paragraph, styled), template=template, lines=lines)
 
 
 def _body_column(lines: list[TextLine]) -> tuple[float, float]:
@@ -167,15 +198,15 @@ def _body_column(lines: list[TextLine]) -> tuple[float, float]:
     return min(line.box[0] for line in body), max(line.box[2] for line in body)
 
 
-def _row_desc(line: TextLine, column: tuple[float, float], crop: Crop, phrases: StylePhrases) -> str:
+def _row_desc(line: TextLine, column: tuple[float, float], crop: Crop) -> str:
     """A line's layout row: printed, in a table cell, or placed in the crop's main text."""
     if line.production is Production.PRINTED:
         what = ROLE_NAMES[line.role] if line.role else "text"
         where = " in a table cell" if line.cell is not None else ""
-        return f'Printed {what} reading "{line.text}"{where}, in a serif typeface in black printer\'s ink.'
+        return f'Printed {what} reading "{_literal(line.text)}"{where}, in a serif typeface in black printer\'s ink.'
     if line.cell is not None:
-        return f'Handwritten line of text reading "{line.text}" in a table cell, {phrases.ink_line}'
-    return _line_desc(_line_kind(line, column, crop.pitch), line, phrases)
+        return f'Handwritten line of text reading "{_literal(line.text)}" in a table cell, {SLOTS.ink_line}'
+    return _line_desc(_line_kind(line, column, crop.pitch), line)
 
 
 def _rule_desc(rule: PageBox) -> str:
@@ -197,16 +228,21 @@ def _line_kind(line: TextLine, column: tuple[float, float], pitch: float) -> str
     return "Handwritten line of text"
 
 
-def _line_desc(kind: str, line: TextLine, phrases: StylePhrases) -> str:
-    return f'{kind} reading "{line.text}", {phrases.ink_line}'
+def _line_desc(kind: str, line: TextLine) -> str:
+    return f'{kind} reading "{_literal(line.text)}", {SLOTS.ink_line}'
 
 
-def _fragment_desc(edge: str, phrases: StylePhrases) -> str:
+def _literal(text: str) -> str:
+    """``text`` as literal template text: a ``$`` doubled."""
+    return text.replace("$", "$$")
+
+
+def _fragment_desc(edge: str) -> str:
     part = "lower" if edge == "top" else "upper"
-    return f"The {part} part of a {phrases.ink_fragment} by the {edge} edge of the scan; its words are not legible."
+    return f"The {part} part of a {SLOTS.ink_fragment} by the {edge} edge of the scan; its words are not legible."
 
 
-def _opening_sentence(phrases: StylePhrases, numbered: list[tuple[str, TextLine]]) -> str:
+def _opening_sentence(numbered: list[tuple[str, TextLine]]) -> str:
     """The medium, the page and its lines: the handwritten ones counted with their roles, the printed ones cited,
     and the main text (handwritten lines outside a role and a table) in reading order."""
     written = [(row_id, line) for row_id, line in numbered if line.production is Production.HANDWRITTEN]
@@ -214,7 +250,7 @@ def _opening_sentence(phrases: StylePhrases, numbered: list[tuple[str, TextLine]
     roles = Counter(line.role for _, line in written if line.role)
     parts = [f"a {ROLE_NAMES[r]}" if n == 1 else f"{_count(n)} {ROLE_NAMES[r]} lines" for r, n in roles.items()]
     including = f", including {' and '.join(parts)}" if parts else ""
-    opening = f"{phrases.opening} carries {len(written)} lines of {phrases.ink_opening}{including}"
+    opening = f"{SLOTS.opening} carries {len(written)} lines of {SLOTS.ink_opening}{including}"
     if printed:
         opening += f" and {len(printed)} printed lines in black printer's ink {_cite(printed)}"
     body = [row_id for row_id, line in written if not line.role and line.cell is None]

@@ -20,7 +20,6 @@ def _record(collection: str, name: str = "crop", lines: tuple[LineRecord, ...] =
         greyscale=False,
         paper="cream",
         ink="brown",
-        layout=[],
         lines=list(lines),
     )
 
