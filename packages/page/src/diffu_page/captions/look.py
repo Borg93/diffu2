@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from enum import StrEnum
 
 import numpy as np
 from PIL import Image
@@ -13,15 +14,37 @@ from pydantic import BaseModel
 GREY_SATURATION = 8.0 / 255
 
 
+class Paper(StrEnum):
+    """The paper colours a caption names: neutral paper by its brightness, tinted paper by its saturation."""
+
+    GREY = "grey"
+    LIGHT_GREY = "light grey"
+    WHITE = "white"
+    OFF_WHITE = "off-white"
+    CREAM = "cream"
+    YELLOWED = "yellowed"
+
+
+class Ink(StrEnum):
+    """The ink colours a caption names: grey to black, or brown, each by its brightness."""
+
+    BLACK = "black"
+    DARK_GREY = "dark grey"
+    FADED_GREY = "faded grey"
+    DARK_BROWN = "dark brown"
+    BROWN = "brown"
+    FADED_BROWN = "faded brown"
+
+
 # Colour names by level, from the GT collections: colour paper is hue 28-48 degrees, saturation 0.09-0.35;
 # ink is brown (hue 22-45) at value 0.23-0.49; greyscale paper is value 0.71-0.91 and its ink 0.05-0.45.
 NEUTRAL_PAPER = 0.06  # paper saturation below which it is named by brightness
 
 
-NEUTRAL_PAPERS = ((0.78, "grey"), (0.88, "light grey"), (math.inf, "white"))  # by value
+NEUTRAL_PAPERS = ((0.78, Paper.GREY), (0.88, Paper.LIGHT_GREY), (math.inf, Paper.WHITE))  # by value
 
 
-TINTED_PAPERS = ((0.12, "off-white"), (0.22, "cream"), (math.inf, "yellowed"))  # by saturation
+TINTED_PAPERS = ((0.12, Paper.OFF_WHITE), (0.22, Paper.CREAM), (math.inf, Paper.YELLOWED))  # by saturation
 
 
 BROWN_INK_SATURATION = 0.15
@@ -30,10 +53,10 @@ BROWN_INK_SATURATION = 0.15
 BROWN_INK_HUES = (15.0, 55.0)  # degrees
 
 
-BROWN_INKS = ((0.30, "dark brown"), (0.42, "brown"), (math.inf, "faded brown"))  # by value
+BROWN_INKS = ((0.30, Ink.DARK_BROWN), (0.42, Ink.BROWN), (math.inf, Ink.FADED_BROWN))  # by value
 
 
-GREY_INKS = ((0.15, "black"), (0.35, "dark grey"), (math.inf, "faded grey"))  # by value
+GREY_INKS = ((0.15, Ink.BLACK), (0.35, Ink.DARK_GREY), (math.inf, Ink.FADED_GREY))  # by value
 
 
 class ScanLook(BaseModel):
@@ -42,8 +65,8 @@ class ScanLook(BaseModel):
     model_config = {"frozen": True}
 
     greyscale: bool
-    paper: str  # e.g. "yellowed", "light grey"
-    ink: str  # e.g. "dark brown", "black"
+    paper: Paper
+    ink: Ink
 
 
 def scan_look(img: Image.Image) -> ScanLook:
@@ -63,19 +86,19 @@ def scan_look(img: Image.Image) -> ScanLook:
     )
 
 
-def _paper_colour(saturation: float, value: float) -> str:
+def _paper_colour(saturation: float, value: float) -> Paper:
     if saturation < NEUTRAL_PAPER:
         return band_name(value, NEUTRAL_PAPERS)
     return band_name(saturation, TINTED_PAPERS)
 
 
-def _ink_colour(hue: float, saturation: float, value: float) -> str:
+def _ink_colour(hue: float, saturation: float, value: float) -> Ink:
     low, high = BROWN_INK_HUES
     if saturation < BROWN_INK_SATURATION or not low <= hue <= high:
         return band_name(value, GREY_INKS)
     return band_name(value, BROWN_INKS)
 
 
-def band_name(level: float, bands: tuple[tuple[float, str], ...]) -> str:
+def band_name[T](level: float, bands: tuple[tuple[float, T], ...]) -> T:
     """The name of the first band ``level`` is below; the last band's limit is infinite."""
     return next(name for limit, name in bands if level < limit)

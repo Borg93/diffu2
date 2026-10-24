@@ -17,6 +17,8 @@ from pydantic import BaseModel, Field
 
 from diffu_page.layout.model import Layout, LineKind, PageBox, TextLine
 
+type LayoutBox = tuple[int, int, int, int]  # y0, x0, y1, x1 on 0-1000 of a crop: FLUX.3's layout boxes
+
 # NeMo's image buckets for --resolution_preset 1024p (MultiTierBucketCalculator, quantization 64), (w, h).
 # Preprocessing fits an image to the bucket nearest its aspect by a cover-resize and a center crop, which
 # would trim a crop's edge lines out from under their boxes; a crop saved at a bucket's exact size is not cut.
@@ -173,7 +175,7 @@ class Crop(BaseModel):
     fragments: list[TextLine]
     rules: list[PageBox] = Field(default_factory=list)
 
-    def layout_box(self, box: PageBox) -> list[int]:
+    def layout_box(self, box: PageBox) -> LayoutBox:
         """A page rectangle as a FLUX.3 layout box: ``[y_min, x_min, y_max, x_max]`` on 0-1000, clamped."""
         x0, y0, x1, y1 = self.rect
         width, height = x1 - x0, y1 - y0
@@ -183,9 +185,10 @@ class Crop(BaseModel):
             (box[3] - y0) / height,
             (box[2] - x0) / width,
         )
-        return [min(1000, max(0, round(1000 * v))) for v in relative]
+        y_min, x_min, y_max, x_max = (min(1000, max(0, round(1000 * v))) for v in relative)
+        return y_min, x_min, y_max, x_max
 
-    def slot(self, line: TextLine) -> list[int]:
+    def slot(self, line: TextLine) -> LayoutBox:
         """A line's layout box: its x-extent plus a small margin, one line pitch around its baseline."""
         margin = SLOT_SIDE_MARGIN * self.pitch
         top = line.baseline_y - SLOT_ABOVE_BASELINE * self.pitch
@@ -197,17 +200,17 @@ class Crop(BaseModel):
         inside it, so unlike the line's slot it is never clamped."""
         return round(1000 * (line.baseline_y - self.rect[1]) / (self.rect[3] - self.rect[1]))
 
-    def visible_box(self, line: TextLine) -> list[int]:
+    def visible_box(self, line: TextLine) -> LayoutBox:
         """The layout box of the part of a cut-off line inside the crop."""
         return self.layout_box(
             (line.box[0], max(line.box[1], self.rect[1]), line.box[2], min(line.box[3], self.rect[3]))
         )
 
-    def rule_box(self, rule: PageBox) -> list[int]:
+    def rule_box(self, rule: PageBox) -> LayoutBox:
         """A ruled line's layout box, at least ``RULE_THICKNESS`` units across so a hairline stays a box."""
         y0, x0, y1, x1 = self.layout_box(rule)
         y0, x0 = min(y0, 1000 - RULE_THICKNESS), min(x0, 1000 - RULE_THICKNESS)
-        return [y0, x0, max(y1, y0 + RULE_THICKNESS), max(x1, x0 + RULE_THICKNESS)]
+        return y0, x0, max(y1, y0 + RULE_THICKNESS), max(x1, x0 + RULE_THICKNESS)
 
     def place(self, x: float, y: float) -> str:
         """A page point's position on the crop in words: "in the upper right corner", "at the top center"."""

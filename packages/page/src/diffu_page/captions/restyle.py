@@ -40,6 +40,7 @@ from diffu_page.captions.prompt import (
 )
 from diffu_page.captions.provenance import Provenance
 from diffu_page.captions.records import CropRecord
+from diffu_page.crops.geometry import LayoutBox
 from diffu_page.layout.model import Production
 
 
@@ -141,7 +142,7 @@ def _from_reference(parts: CaptionParts) -> StylePhrases:
     )
 
 
-_WHOLE_IMAGE = [0, 0, 1000, 1000]
+_WHOLE_IMAGE: LayoutBox = (0, 0, 1000, 1000)
 
 
 def _from_reference_naming(parts: CaptionParts) -> StylePhrases:
@@ -194,8 +195,8 @@ class EditRow(BaseModel):
 
     id: str
     source: str = Field(serialization_alias="from")  # "ref_image_0" for content taken from it, else "target"
-    src_bbox: list[int] | None
-    tgt_bbox: list[int]
+    src_bbox: LayoutBox | None
+    tgt_bbox: LayoutBox
     desc: str
 
 

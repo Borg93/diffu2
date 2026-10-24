@@ -8,6 +8,7 @@ from transformers import TrOCRProcessor, VisionEncoderDecoderModel
 from transformers.models.trocr.modeling_trocr import TrOCRSinusoidalPositionalEmbedding
 
 from diffu_page.captions.prompt import LineRecord
+from diffu_page.crops.geometry import LayoutBox
 
 
 def levenshtein(a: str, b: str) -> int:
@@ -26,7 +27,7 @@ def cer(pred: str, ref: str) -> float:
     return levenshtein(pred, ref) / max(len(ref), 1)
 
 
-def pixel_box(bbox: list[int], size: tuple[int, int]) -> tuple[float, float, float, float]:
+def pixel_box(bbox: LayoutBox, size: tuple[int, int]) -> tuple[float, float, float, float]:
     """A layout box (``[y_min, x_min, y_max, x_max]`` on 0-1000) as ``(x0, y0, x1, y1)`` pixels of ``size``."""
     width, height = size
     y0, x0, y1, x1 = bbox

@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict
 
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.provenance import Provenance
-from diffu_page.crops.geometry import Crop
+from diffu_page.crops.geometry import Crop, LayoutBox
 from diffu_page.layout.model import ROLE_NAMES, CellRef, LineKind, PageBox, Production, TextLine
 
 NUMBER_WORDS = ("no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten")
@@ -21,7 +21,7 @@ class LayoutRow(BaseModel):
     """One element of a FLUX.3 layout prompt."""
 
     id: str
-    bbox: list[int]
+    bbox: LayoutBox
     desc: str
 
 
@@ -32,7 +32,7 @@ class LineRecord(BaseModel):
     id: str
     text: str
     role: str
-    bbox: list[int]
+    bbox: LayoutBox
     # 0-1000 of the crop height. None in records written before baselines were kept: their labels put it 0.7 of the
     # way down the box, which is wrong where a crop edge cuts the box.
     baseline: int | None = None
@@ -112,7 +112,7 @@ def caption_for(crop: Crop, provenance: Provenance, look: ScanLook) -> Caption:
     column = _body_column([line for _, line in numbered if line.cell is None] or [line for _, line in numbered])
     phrases = phrases_for(provenance, look, printed=any(line.production is Production.PRINTED for _, line in numbered))
     layout = [
-        LayoutRow(id="paper_1", bbox=[0, 0, 1000, 1000], desc=phrases.paper_row),
+        LayoutRow(id="paper_1", bbox=(0, 0, 1000, 1000), desc=phrases.paper_row),
         *(
             LayoutRow(id=row_id, bbox=crop.slot(line), desc=_row_desc(line, column, crop, phrases))
             for row_id, line in numbered

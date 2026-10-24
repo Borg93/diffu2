@@ -715,16 +715,13 @@ Still to do, in this order (the refactors after the fixes, the user's call):
       `TextLine` (text, page box, baseline, kind, block, production, cell) runs from the reader through the crops:
       LineBox, the crop cutter's Line and their rectangle-polygon round trip are gone. Golden diff byte-identical on
       both paths, the boxes now the outlines' exact extremes.
-- [ ] 14, the rest: `type LayoutBox = tuple[int, int, int, int]` (0-1000, y first) for the boxes captions and records
-      store, so a box of the wrong length fails validation instead of mid-draw (tests compare them as lists today);
-      Paper and Ink Literals once the stored metadata's values are scanned; `band_name` generic. Gated on the golden
-      diff (crop rects, slots and caption bytes identical, old code
-      against new) over every set a LoRA was trained on: scratchpad golden/golden.py re-cuts the 1,952 pages of
-      layout_crops_v2/v2b (11,827 crops; the val_eval rows are val's) on the training path and the generation path,
-      and writes every crop's caption in each form (restyled, edit, named edit, described edit). The two paths differ on 35 pages only by the page size: their PAGE
-      files declare a stale size (FNA_1500, the Finnish letter recipes, Kääriäinen: the coordinates are in the scan's
-      pixels) or describe the TIFF beside the cut JPEG (Byggningskollegium), so training cuts at the scan's size and
-      generation at the declared one. No trained page has a SeparatorRegion or a TableRegion.
+- [x] 14, the rest (24 Oct): `LayoutBox` (0-1000, y first, a 4-tuple) for every box captions, records, plans and
+      eval sets store, so a box of the wrong length fails when it is read, not mid-draw; `Paper` and `Ink` StrEnums
+      for the scan look (every stored value was a band name: 6 papers, 6 inks), so `--paper` and `--ink` offer the
+      names the LoRAs were trained on; `band_name` generic. Golden diff byte-identical on both paths. The golden diff
+      (scratchpad golden/golden.py) re-cuts the 1,952 trained pages on the training and generation paths and writes
+      every crop's caption in each form; the two paths differ on 35 pages only by the page size (stale PAGE sizes;
+      Byggningskollegium's TIFFs), and no trained page has a SeparatorRegion or a TableRegion.
 - [x] Smaller (24 Oct): one `crop_record` for build_crops and the tests; refill takes the text and starts a paragraph
       after a blank line; probe_set refuses references whose words never differ; diffu-train and diffu-studio declare
       their direct imports; shared crop and record fixtures in conftest; exact paragraphs in the edit-caption tests;

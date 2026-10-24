@@ -11,6 +11,7 @@ from typing import Self
 from pydantic import BaseModel, model_validator
 
 from diffu_page.captions.prompt import LineRecord
+from diffu_page.crops.geometry import LayoutBox
 from diffu_page.plan import CropPlan
 
 
@@ -45,7 +46,7 @@ class EvalCrop(CropRow):
     reference's line boxes beside it (they measure the reference's hand)."""
 
     reference: str | None = None  # relative to the set's dir
-    reference_lines: list[list[int]] | None = None  # the reference's line boxes (0-1000, y first)
+    reference_lines: list[LayoutBox] | None = None  # the reference's line boxes (0-1000, y first)
 
     @model_validator(mode="after")
     def _reference_with_its_lines(self) -> Self:
@@ -59,7 +60,7 @@ class ReferencedCrop(CropRow):
     boxes required, so such a set without them fails when it is read. Its rows read as ``EvalCrop`` too."""
 
     reference: str
-    reference_lines: list[list[int]]
+    reference_lines: list[LayoutBox]
 
 
 def read_jsonl[T: BaseModel](path: Path, model: type[T]) -> list[T]:

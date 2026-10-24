@@ -100,7 +100,7 @@ def test_edit_caption_takes_only_the_paper_from_the_reference_and_names_no_style
                 "id": row.id,
                 "from": "target",
                 "src_bbox": None,
-                "tgt_bbox": row.bbox,
+                "tgt_bbox": list(row.bbox),
                 "desc": row.desc.replace("in dark brown ink.", "in the reference's hand and ink."),
             }
             for row in record.layout[1:]

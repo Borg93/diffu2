@@ -6,7 +6,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from diffu_page.captions.look import ScanLook
+from diffu_page.captions.look import Ink, Paper, ScanLook
 from diffu_page.captions.prompt import LayoutRow, LineRecord, caption_for
 from diffu_page.captions.provenance import Provenance, provenance_of
 from diffu_page.crops.geometry import Crop
@@ -22,8 +22,8 @@ class CropRecord(BaseModel):
     width: int
     height: int
     greyscale: bool
-    paper: str
-    ink: str
+    paper: Paper
+    ink: Ink
     layout: list[LayoutRow]
     lines: list[LineRecord]
 

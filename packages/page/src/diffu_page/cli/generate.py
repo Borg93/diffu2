@@ -29,7 +29,7 @@ from pydantic import BaseModel
 from torch.profiler import ProfilerActivity, profile, schedule
 
 from diffu_page.blocks import DrawnCrop
-from diffu_page.captions.look import ScanLook
+from diffu_page.captions.look import Ink, Paper, ScanLook
 from diffu_page.captions.provenance import Provenance
 from diffu_page.captions.restyle import ReferenceCaption
 from diffu_page.cli.options import (
@@ -174,8 +174,8 @@ def generate(
     lora: Annotated[list[Lora] | None, typer.Option(parser=parse_lora, help="name=<NeMo LoRA model dir>")] = None,
     years: str = "",
     greyscale: Annotated[bool, typer.Option("--greyscale/--colour")] = False,
-    paper: str = "cream",
-    ink: str = "dark brown",
+    paper: Annotated[Paper, typer.Option(help="the paper's colour, as the captions name it")] = Paper.CREAM,
+    ink: Annotated[Ink, typer.Option(help="the ink's colour, as the captions name it")] = Ink.DARK_BROWN,
     reference: Annotated[
         Path | None, typer.Option(help="a crop to draw every page in the hand, ink and paper of (the v3 LoRAs)")
     ] = None,

@@ -23,7 +23,7 @@ from diffu_page.captions.prompt import Caption, LineRecord, caption_for, caption
 from diffu_page.captions.provenance import Provenance
 from diffu_page.captions.records import read_records
 from diffu_page.captions.restyle import CaptionParts, ReferenceCaption, Style, reference_caption
-from diffu_page.crops.geometry import Crop, CropSettings, crops_for_page, regions_of
+from diffu_page.crops.geometry import Crop, CropSettings, LayoutBox, crops_for_page, regions_of
 from diffu_page.layout import Layout
 
 
@@ -41,7 +41,7 @@ class Reference(BaseModel):
 
     image: Path
     caption: ReferenceCaption = ReferenceCaption.PLAIN
-    lines: list[list[int]] = []  # the reference's line boxes, 0-1000 of the image, y first
+    lines: list[LayoutBox] = []  # the reference's line boxes, 0-1000 of the image, y first
 
     @model_validator(mode="after")
     def _measurable(self) -> Self:
@@ -78,7 +78,7 @@ class CropPlan(BaseModel):
     caption: str
     lines: list[LineRecord]  # boxes on 0-1000 of the crop, y first, in the caption's numbering
     reading_order: list[int]  # indices into ``lines``: block by block in page order, top to bottom in each
-    rules: list[list[int]] = Field(default_factory=list)  # the ruled lines' boxes, 0-1000 of the crop, y first
+    rules: list[LayoutBox] = Field(default_factory=list)  # the ruled lines' boxes, 0-1000 of the crop, y first
 
     @model_validator(mode="after")
     def _reading_order_orders_the_lines(self) -> Self:
