@@ -612,6 +612,11 @@ same held-out windows (CER as information only).
       graph break; the tiny model draws within 2/255 of eager). Queued after diffu E1 (scratchpad
       profile/run_fuse_ab.sh): the profile fused and fused + compiled, and the 8 held-out windows evaluated as an
       adapter, fused and fused + compiled, against the 142 s baseline and its hand measures.
+- [ ] NeMo AutoModel moves the transformer to bf16 with `.to()`, so FLUX.3's `norm_q`/`norm_k` (diffusers'
+      `_keep_in_fp32_modules`) train in bf16 in every LoRA and diffu run, while load_pipeline loads them in float32
+      (the log warns: "should be kept in float32"). Measure whether it matters: one LoRA drawn with those norms in
+      bf16 and in float32 on the same windows; if it does, load them in float32 for training (NeMo's pipeline
+      config) or match inference to training.
 - [ ] diffu's Qwen3.5 text encoder runs its linear-attention layers in transformers' reference PyTorch code
       (`causal-conv1d` and `flash-linear-attention` are not installed in either environment): caching 2,000 crops
       took about 40 minutes. Installing them into NeMo's environment needs the user's approval.
