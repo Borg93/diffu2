@@ -16,7 +16,7 @@ import statistics
 from collections import deque
 from collections.abc import Iterable
 
-from diffu_page.layout.model import RUNNING_TEXT, Layout, LineBox
+from diffu_page.layout.model import Layout, LineBox, LineKind
 
 PARAGRAPH_BREAK = re.compile(r"\n\s*\n")  # a blank line, spaces and all
 SPLIT_MARK = "¬"
@@ -74,7 +74,7 @@ class _TextStream:
 def running_text(layout: Layout) -> str:
     """A layout's running-text lines as one paragraph, the words its transcription broke with ``SPLIT_MARK``
     joined back, ready to refill another page with."""
-    lines = " ".join(box.text.strip() for box in layout.boxes if box.region == RUNNING_TEXT)
+    lines = " ".join(box.text.strip() for box in layout.boxes if box.region is LineKind.BODY)
     return lines.replace(f"{SPLIT_MARK} ", "")
 
 
@@ -93,11 +93,11 @@ def refill(layout: Layout, text: str) -> Layout:
     Raises:
         ValueError: If no running-text line holds ``DENSITY_MIN_CHARS`` characters to measure the density by.
     """
-    density = _writing_density([box for box in layout.boxes if box.region == RUNNING_TEXT])
+    density = _writing_density([box for box in layout.boxes if box.region is LineKind.BODY])
     stream = _TextStream(PARAGRAPH_BREAK.split(text))
     boxes: list[LineBox] = []
     for box in layout.boxes:
-        if box.region != RUNNING_TEXT:
+        if box.region is not LineKind.BODY:
             boxes.append(box)
             continue
         line = stream.line(max(1, round(density * box.w)))

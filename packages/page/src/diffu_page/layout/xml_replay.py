@@ -14,7 +14,7 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from diffu_page.layout.model import RUNNING_TEXT, TABLE, CellRef, Layout, LineBox, Production, Rule
+from diffu_page.layout.model import CellRef, Layout, LineBox, LineKind, Production, Rule
 from diffu_page.layout.page_xml import (
     PageLine,
     child,
@@ -23,7 +23,7 @@ from diffu_page.layout.page_xml import (
     parse_points,
     read_page_line,
     reading_order_index,
-    region_role,
+    region_kind,
 )
 
 # PAGE's ``@production`` values, as the two kinds of line a caption tells apart
@@ -70,7 +70,7 @@ def _production(element: ET.Element, inherited: Production) -> Production:
     return _PRODUCTION[value]
 
 
-def _box(line: PageLine, region: str, block: str, *, production: Production, cell: CellRef | None) -> LineBox:
+def _box(line: PageLine, region: LineKind, block: str, *, production: Production, cell: CellRef | None) -> LineBox:
     xs = [x for x, _ in line.polygon]
     ys = [y for _, y in line.polygon]
     return LineBox(
@@ -95,7 +95,7 @@ def _key(element: ET.Element, kind: str, position: int) -> str:
 
 def _region_lines(
     element: ET.Element,
-    region: str,
+    region: LineKind,
     block: str,
     *,
     production: Production = Production.HANDWRITTEN,
@@ -142,7 +142,7 @@ def _table_lines(table: ET.Element, table_key: str) -> list[LineBox]:
         line
         for k, cell in enumerate(table)
         if (ref := _cell_ref(table, table_key, cell)) is not None
-        for line in _region_lines(cell, TABLE, _key(cell, "cell", k), production=production, cell=ref)
+        for line in _region_lines(cell, LineKind.TABLE, _key(cell, "cell", k), production=production, cell=ref)
     ]
 
 
@@ -155,7 +155,7 @@ def _page_lines(root: ET.Element) -> list[LineBox]:
     text = [
         line
         for position, element in regions
-        for line in _region_lines(element, region_role(element) or RUNNING_TEXT, _key(element, "region", position))
+        for line in _region_lines(element, region_kind(element), _key(element, "region", position))
     ]
     return text + [line for k, table in enumerate(tables) for line in _table_lines(table, _key(table, "table", k))]
 

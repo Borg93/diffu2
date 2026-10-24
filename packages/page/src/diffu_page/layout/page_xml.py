@@ -10,7 +10,7 @@ import xml.etree.ElementTree as ET
 
 from pydantic import BaseModel
 
-from diffu_page.layout.model import ROLE_NAMES
+from diffu_page.layout.model import ROLE_NAMES, LineKind
 
 _STRUCTURE = re.compile(r"structure \{type:([^;}]+)")  # Transkribus writes a region's type into @custom
 _READING_ORDER = re.compile(r"readingOrder \{index:(\d+);")
@@ -88,10 +88,11 @@ def region_type(region: ET.Element) -> str:
     return (region.get("type") or (structure.group(1) if structure else "")).lower()
 
 
-def region_role(region: ET.Element) -> str:
-    """The role a ``TextRegion`` gives its lines: its PAGE type when that names one (see ``ROLE_NAMES``), else ''."""
+def region_kind(region: ET.Element) -> LineKind:
+    """The kind of line a ``TextRegion`` holds: the role its PAGE type names (see ``ROLE_NAMES``), else running
+    text."""
     kind = region_type(region)
-    return kind if kind in ROLE_NAMES else ""
+    return LineKind(kind) if kind in ROLE_NAMES else LineKind.BODY
 
 
 def reading_order_index(region: ET.Element, position: int) -> int:

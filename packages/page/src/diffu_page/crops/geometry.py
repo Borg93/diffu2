@@ -15,7 +15,7 @@ from operator import attrgetter
 
 from pydantic import BaseModel, Field
 
-from diffu_page.layout.model import ROLE_NAMES, TABLE, CellRef, Layout, LineBox, Production
+from diffu_page.layout.model import ROLE_NAMES, CellRef, Layout, LineBox, LineKind, Production
 
 type Box = tuple[float, float, float, float]  # x0, y0, x1, y1 in page pixels
 
@@ -70,16 +70,21 @@ class CropSettings(BaseModel):
 
 
 class Line(BaseModel):
-    """A text line on a page: its outline and baseline height (page px), its text, role, source block, how it was
+    """A text line on a page: its outline and baseline height (page px), its text, kind, source block, how it was
     made and, in a table, its cell."""
 
     polygon: list[tuple[float, float]]
     baseline_y: float
     text: str
-    role: str = ""  # its region's PAGE type when ROLE_NAMES names it
+    kind: LineKind = LineKind.BODY
     source: str = ""  # the region / block it came from, when a caller tracks reading order by block
     production: Production = Production.HANDWRITTEN
     cell: CellRef | None = None
+
+    @property
+    def role(self) -> LineKind | None:
+        """The line's role on the page (a margin note, a page number, ...); None for running text and table cells."""
+        return self.kind if self.kind in ROLE_NAMES else None
 
     @property
     def box(self) -> Box:
@@ -121,7 +126,7 @@ def regions_of(layout: Layout) -> list[Region]:
     layout) is left out."""
     grouped: dict[tuple[str, str], list[Line]] = {}
     for box in layout.boxes:
-        if box.text.strip() and (box.region != TABLE or box.cell is not None):
+        if box.text.strip() and (box.region is not LineKind.TABLE or box.cell is not None):
             grouped.setdefault(_region_key(box), []).append(_line(box))
     return [Region(lines=sorted(lines, key=attrgetter("baseline_y"))) for lines in grouped.values()]
 
@@ -129,7 +134,7 @@ def regions_of(layout: Layout) -> list[Region]:
 def _region_key(box: LineBox) -> tuple[str, str]:
     """The region a line is cut in: its table for a table cell's line, else its region and block."""
     if box.cell is not None:
-        return TABLE, box.cell.table
+        return LineKind.TABLE, box.cell.table
     return box.region, box.block
 
 
@@ -139,7 +144,7 @@ def _line(box: LineBox) -> Line:
         polygon=[(x0, y0), (x1, y0), (x1, y1), (x0, y1)],
         baseline_y=box.baseline_y,
         text=box.text,
-        role=box.region if box.region in ROLE_NAMES else "",
+        kind=box.region,
         source=box.source,
         production=box.production,
         cell=box.cell,

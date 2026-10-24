@@ -17,7 +17,7 @@ from xml.sax.saxutils import escape
 
 from pydantic import BaseModel, Field, model_validator
 
-from diffu_page.layout.model import ROLE_NAMES, RUNNING_TEXT, TABLE, CellRef, Production
+from diffu_page.layout.model import ROLE_NAMES, CellRef, LineKind, Production
 
 try:
     _VERSION = version("diffu-page")
@@ -43,7 +43,7 @@ class LineLabel(BaseModel):
     text: str
     polygon: list[Point]
     baseline: list[Point] = Field(default_factory=list)  # left to right; empty if unknown
-    region: str = RUNNING_TEXT  # a role's PAGE type (see ROLE_NAMES), "table" or "body"
+    region: LineKind = LineKind.BODY
     block: str = ""  # the template block the line came from; "" for labels made before blocks were kept
     order: int  # its place in reading order, which the exported ids are built from
     tag: str = ""  # "unclear" when the line read back badly
@@ -53,7 +53,7 @@ class LineLabel(BaseModel):
     @model_validator(mode="after")
     def _table_lines_have_cells(self) -> Self:
         """PAGE says a line is in a table only through its cell, so a table line without one could not be written."""
-        if (self.region == TABLE) != (self.cell is not None):
+        if (self.region is LineKind.TABLE) != (self.cell is not None):
             raise ValueError(f"a line is in the table region exactly when it has a table cell: {self.text!r}")
         return self
 
@@ -63,7 +63,7 @@ class LabelRegion(BaseModel):
     kind, else numbered in reading order), its kind, its lines in reading order and, for a table cell, the cell."""
 
     id: str
-    kind: str
+    kind: LineKind
     lines: list[LineLabel]
     cell: CellRef | None = None
 
@@ -88,12 +88,12 @@ def _esc(s: str) -> str:
     return escape(s, {'"': "&quot;"})  # values land in XML attributes, so quotes must be entities too
 
 
-def _page_type(region: str) -> str:
+def _page_type(region: LineKind) -> str:
     """A region's PAGE ``TextRegion@type``: a role's own type, a table cell's ``other``, running text's
     ``paragraph``."""
     if region in ROLE_NAMES:
-        return region
-    return "other" if region == TABLE else "paragraph"
+        return region.value
+    return "other" if region is LineKind.TABLE else "paragraph"
 
 
 def _ordered_regions(labels: PageLabels) -> list[LabelRegion]:

@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.provenance import Provenance
 from diffu_page.crops.geometry import Box, Crop, Line
-from diffu_page.layout.model import ROLE_NAMES, CellRef, Production
+from diffu_page.layout.model import ROLE_NAMES, CellRef, LineKind, Production
 
 NUMBER_WORDS = ("no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten")
 HANDWRITTEN_PAGE = "handwritten page"
@@ -39,6 +39,13 @@ class LineRecord(BaseModel):
     block: str = ""  # "" in records written before blocks were kept: their labels group lines by role alone
     production: Production = Production.HANDWRITTEN
     cell: CellRef | None = None
+
+    @property
+    def kind(self) -> LineKind:
+        """The line's kind: a table cell's line, else its role, else running text (``role`` is '' for both)."""
+        if self.cell is not None:
+            return LineKind.TABLE
+        return LineKind(self.role) if self.role else LineKind.BODY
 
 
 class Caption(BaseModel):
@@ -131,7 +138,7 @@ def caption_for(crop: Crop, provenance: Provenance, look: ScanLook) -> Caption:
             LineRecord(
                 id=row_id,
                 text=line.text,
-                role=line.role,
+                role=line.role or "",
                 bbox=crop.slot(line),
                 baseline=crop.baseline(line),
                 block=line.source,
@@ -228,15 +235,15 @@ def _rule_sentences(rules: list[tuple[str, Box]], numbered: list[tuple[str, Line
 
 def _role_sentences(numbered: list[tuple[str, Line]], column: tuple[float, float], crop: Crop) -> list[str]:
     """One sentence per role and position: "A marginal note <Sv_Text_4> sits in the left margin."."""
-    placed: dict[tuple[str, str], list[str]] = defaultdict(list)
+    placed: dict[tuple[LineKind, str], list[str]] = defaultdict(list)
     for row_id, line in numbered:
-        if line.role:
+        if line.role is not None:
             placed[(line.role, _role_position(line, column, crop))].append(row_id)
     return [_role_sentence(ROLE_NAMES[role], where, ids) for (role, where), ids in placed.items()]
 
 
 def _role_position(line: Line, column: tuple[float, float], crop: Crop) -> str:
-    if line.role != "marginalia":
+    if line.role is not LineKind.MARGINALIA:
         return crop.place(line.middle_x, line.baseline_y)
     return "in the left margin" if line.middle_x < sum(column) / 2 else "in the right margin"
 
