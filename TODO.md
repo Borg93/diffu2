@@ -540,3 +540,54 @@ Data checks (23 Oct evening, the user's question: any leakage or anything weird?
       call), a Lance sink if Parquet's per-file writes get in the way.
 - [ ] Runs on our Ray cluster's Blackwell GPUs (96 GB each, sm_120). Re-profile there before optimizing; measure
       FP8 / NVFP4, fewer steps, a compiled transformer, several actors per card.
+
+Where our code does the compute engine's job, or blocks Ray Data from optimizing (review of 24 Oct; the boundary is
+right in diffu_runner: Ray does fan-out, actors, retries and the sink; these are the exceptions). On the Spark with a
+local Ray, profiled before and after; no cluster runs until the tests are done:
+- [ ] A crop is drawn one per call (`draw_crop`, `batch_size=1`): give the compute layer a batch of same-size crops
+      (one bucket, one forward) and let Ray Data pick the batch size; group crops by bucket upstream.
+- [ ] One actor does everything in turn (reference image read, text encoding, denoising, VAE decode, HTR read-back,
+      label XML, JPEG): split into stages with their own resources (CPU read and encode, GPU denoise, a small GPU
+      read-back pool, CPU labels and sink) so Ray Data pipelines them. Modular Diffusers blocks already split there.
+- [ ] The driver reads every job into a list (`read_pages` -> `from_items`) and names and seeds crops by the page's
+      position in the run file (two run files reuse the same seeds): read jobs with `ray.data.read_json`, and give
+      every page a content-based id (template, text and style hashed) that names and seeds its crops.
+- [ ] Our own parallelism: `style_pairs` runs a `ProcessPoolExecutor`; `page_blocks` loops over crops inside a
+      pipeline (to remove, the user's call of 24 Oct, when generate draws per crop).
+- [ ] `DrawActor` catches every exception as a failed crop, CUDA faults included: let CUDA errors (OOM, illegal
+      access) raise so Ray restarts the actor; keep per-crop rows for content errors only.
+
+Lessons from NVIDIA NeMo Curator (github.com/NVIDIA-NeMo/Curator, Apache-2.0, read 24 Oct: stages/base.py,
+resources.py, tasks/tasks.py, pipeline/pipeline.py, backends/base.py, backends/ray_data/{adapter,executor}.py and its
+AGENTS.md tuning guide, failed_task_markers.py, utils/resumability_actor.py, utils/atomic_io.py, the CLIP embedding
+and image writer stages). Its core idea is ours to copy: the compute code is a stage that declares what it needs, and
+an executor (Ray Data, a Ray actor pool, Xenna, a Slurm array) decides how it runs:
+- [ ] A small stage contract for our generation steps: `setup()` per worker (load the model once), `setup_on_node()`
+      (fetch weights once per node: Leonardo's offline nodes), `process_batch(list[In]) -> list[Out]`, declared
+      `resources` (CPUs, GPUs or GPU memory in GB, turned into a GPU fraction: the 96 GB cards hold one FLUX.3 actor
+      at ~50 GB but many small read-back actors) and `batch_size`; one generic Ray Data adapter maps a stateful stage
+      to an `ActorPoolStrategy` and a stateless one to tasks, and repartitions after fan-out stages (Curator's rule:
+      one Task per block, so the Task's size sets the parallelism). Pydantic models and a Protocol, not Curator's ABC
+      and metaclass registry (writing-python).
+- [ ] Deterministic task ids owned by the framework: a child's id is its parent's plus its own segment, and a source
+      task's segment is content-based (Curator hashes a file group's sorted paths) so adding or removing pages does
+      not shift the others. Our crop names and noise seeds come from these ids (with the content-based page id above).
+- [ ] Failures as sentinels: a stage returns a failed marker instead of raising, the adapter strips markers before the
+      next stage and records the attempt in a failure manifest; filtered items are a None marker. Our DrawnRow error
+      column does part of this but carries failures into the sink.
+- [ ] Resumability for million-page runs: per-source completion counters (Curator: one LMDB file per writer, the union
+      read at start, so a rerun skips every source any earlier writer finished); for us at least: deterministic output
+      names per page plus a completed-pages manifest, so a restarted run skips finished pages instead of appending.
+- [ ] Atomic writes (temp file, fsync, rename) for every manifest and dataset file, and sinks that name their files
+      from the task id (a rerun overwrites the same file, never adds a second): fixes the audit's half-written builds
+      and the runner's Parquet appended into an earlier run.
+- [ ] Composite stages: a user-facing "draw pages" stage that decomposes into plan (CPU fan-out), draw (GPU), labels
+      and write (CPU) at planning time, with per-sub-stage overrides (Curator's `with_()`).
+- [ ] Declared inputs and outputs per stage, checked when the pipeline is built, not mid-run.
+- [ ] Tuning by diagnosis, not by knob: Curator's Ray Data guide classifies starvation, actor saturation, resource
+      admission and downstream backpressure from Ray Data's scheduler events before changing a worker count; one
+      lever per run, compared on the same input.
+- [ ] Later, a spike: our draw stage as a Curator ProcessingStage on its RayDataExecutor, on the Spark, to judge
+      using Curator itself (its executors, resumability, failure manifests and diagnostics for free) against its
+      weight (loguru, lmdb, dataclass stages, Ray >= 2.57 coupling). Its image stages (CLIP embeddings, aesthetic and
+      NSFW filters, dedup) could also curate our real crops and filter generated windows.
