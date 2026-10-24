@@ -208,12 +208,13 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
       `diffu-init`'s repo (float32 weights, bfloat16 compute, logit-normal with shift 6 at 1 MP, no loss weighting);
       `jobs/diffu/run_smoke.sh` chains init, cache (2,000 v2 crops, ~46 GB), a 5-step run, 2,000 steps x 8, and
       the held-out eval of the export as a diffu repo.
-- [ ] **E1 smoke run**, running since 16:03 24 Oct (`jobs/diffu/run_smoke.sh`): the cache of 2,000 crops took 40
-      minutes (diffu's text encoder in transformers' slow fallback, see Inference speed), the 5-step run passed, 2,000
-      steps x 8 crops take about 3.5 hours (1.3 crops a second). Pass: the loss falls, the export loads as a diffu
-      repo, read-back CER on the held-out crops goes down from the random init's. Its eval samples at the 6.0 it
-      trains at: the running job's step 5 copies the init repo's index, which got a scheduler at 6.0 by hand on
-      24 Oct (to drop once the eval has run); later runs export with `diffu-export`.
+- [x] **E1 smoke run** (24 Oct, `jobs/diffu/run_smoke.sh`, 16:03-20:25): cache 40 minutes, 2,000 steps x 8 crops in
+      3.5 hours (1.3 crops a second, 64 GB peak). The chain works: the loss fell from 1.29 to 0.37 over the first epoch
+      and 0.06 over the last (flat from the fourth), the export loads and draws. Drawn without guidance
+      (`eval_final_g1`) it draws a page: the paper's colour (dE 6.6 to the real crop), the page edge and rows of pen
+      strokes where the lines are, not letters (read-back CER 0.94, real 0.10). At guidance 4 (`eval_final`) it draws
+      noise: it trained without caption dropout, so it never learned the empty prompt CFG steers against. Its model
+      is re-exported with `diffu-export` (shift 6.0 from its config.yaml; the init repo's hand-added scheduler gone).
 - [ ] **Training, after the smoke run**: the empty-prompt null swapped in by our dataset (p 0.1; NeMo's own dropout
       zeroes the embeddings; `diffu_train.dropout.CaptionDropout` does it for FLUX.3's image-edit items since
       2026-10-23: reuse it for diffu's text-to-image items, with the empty prompt cached by diffu's own text encoder),
