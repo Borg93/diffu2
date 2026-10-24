@@ -16,8 +16,8 @@ from diffusers.modular_pipelines import (
 from transformers import TrOCRProcessor, VisionEncoderDecoderModel
 
 from diffu_page.crops.geometry import SLOT_ABOVE_BASELINE, SLOT_BELOW_BASELINE
-from diffu_page.labels import LabelFormat, LineLabel, PageLabels, export
-from diffu_page.layout import RUNNING_TEXT
+from diffu_page.labels import LabelFormat, LineLabel, PageLabels, Rect, export
+from diffu_page.layout import RUNNING_TEXT, TABLE
 from diffu_page.plan import CropPlan
 from diffu_page.readback import HTR, HTR_REVISION, pixel_box, read_lines
 
@@ -69,8 +69,9 @@ class LineReadbackStep(ModularPipelineBlocks):
 
 
 def line_labels(plan: CropPlan, line_cers: list[float], max_line_cer: float) -> list[LineLabel]:
-    """The plan's lines as labels in crop pixels: the slot as the polygon, the baseline across it, and a line
-    whose read-back error rate is over ``max_line_cer`` tagged ``unclear``."""
+    """The plan's lines as labels in crop pixels: the slot as the polygon, the baseline across it, a table cell's
+    line in the table region with its cell, and a line whose read-back error rate is over ``max_line_cer`` tagged
+    ``unclear``."""
     order_of = {index: order for order, index in enumerate(plan.reading_order)}
     labels: list[LineLabel] = []
     for index, (line, line_cer) in enumerate(zip(plan.lines, line_cers, strict=True)):
@@ -81,13 +82,23 @@ def line_labels(plan: CropPlan, line_cers: list[float], max_line_cer: float) -> 
                 text=line.text,
                 polygon=[(x0, y0), (x1, y0), (x1, y1), (x0, y1)],
                 baseline=[(x0, baseline_y), (x1, baseline_y)],
-                region=line.role or RUNNING_TEXT,
+                region=TABLE if line.cell is not None else line.role or RUNNING_TEXT,
                 block=line.block,
                 order=order_of[index],
                 tag="unclear" if line_cer > max_line_cer else "",
+                production=line.production,
+                cell=line.cell,
             )
         )
     return labels
+
+
+def rule_rects(plan: CropPlan) -> list[Rect]:
+    """The plan's ruled lines in crop pixels."""
+    return [
+        (round(x0), round(y0), round(x1), round(y1))
+        for x0, y0, x1, y1 in (pixel_box(rule, (plan.width, plan.height)) for rule in plan.rules)
+    ]
 
 
 class LabelExportStep(ModularPipelineBlocks):
@@ -121,7 +132,9 @@ class LabelExportStep(ModularPipelineBlocks):
         block_state = self.get_block_state(state)
         plan: CropPlan = block_state.crop_plan
         lines = line_labels(plan, block_state.line_cers, block_state.max_line_cer)
-        page = PageLabels(width=plan.width, height=plan.height, image=block_state.image_name, lines=lines)
+        page = PageLabels(
+            width=plan.width, height=plan.height, image=block_state.image_name, lines=lines, rules=rule_rects(plan)
+        )
         block_state.labels_xml = export(page, block_state.label_format)
         block_state.unclear_lines = sum(line.tag == "unclear" for line in lines)
         self.set_block_state(state, block_state)

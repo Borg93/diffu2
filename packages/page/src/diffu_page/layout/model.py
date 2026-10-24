@@ -1,6 +1,9 @@
-"""A page layout: its size and its text lines in reading order, each with its box, baseline and region."""
+"""A page layout: its size, its text lines in reading order (each with its box, baseline, region, how it was made and
+its table cell) and its ruled lines."""
 
 from __future__ import annotations
+
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
@@ -20,6 +23,34 @@ ROLE_NAMES = {
 }
 
 
+class Production(StrEnum):
+    """How a line was made: printed (type or typewriter) or by hand, as PAGE's ``@production`` tells it."""
+
+    PRINTED = "printed"
+    HANDWRITTEN = "handwritten"
+
+
+class CellRef(BaseModel):
+    """The table cell a line is written in: its table (the PAGE ``TableRegion`` id), its row and its column."""
+
+    model_config = {"frozen": True}
+
+    table: str
+    row: int
+    column: int
+
+
+class Rule(BaseModel):
+    """A ruled line of the page (a PAGE ``SeparatorRegion``): its box, page px."""
+
+    model_config = {"frozen": True}
+
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+
+
 class LineBox(BaseModel):
     """One text line of a page: its box and baseline height (page px), its text and where it belongs.
 
@@ -36,11 +67,14 @@ class LineBox(BaseModel):
     baseline_y: float
     region: str = RUNNING_TEXT
     block: str = ""  # the PAGE TextRegion / TableCell or ALTO TextBlock id the line came from
+    production: Production = Production.HANDWRITTEN
+    cell: CellRef | None = None  # set for a table cell's line
 
 
 class Layout(BaseModel):
-    """A page's size (px) and its text lines in reading order."""
+    """A page's size (px), its text lines in reading order and its ruled lines."""
 
     width: int
     height: int
     boxes: list[LineBox] = Field(default_factory=list)
+    rules: list[Rule] = Field(default_factory=list)

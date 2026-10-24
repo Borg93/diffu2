@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from diffu_page.layout import load_xml_layout
+from diffu_page.layout import CellRef, Production, Rule, load_xml_layout
 
 _NS = "http://schema.primaresearch.org/PAGE/gts/pagecontent/2013-07-15"
 
@@ -40,7 +40,7 @@ def transkribus_page(tmp_path: Path) -> Path:
         + _line("n1", "850,60 900,60 900,100 850,100", "97.")
         + '</TextRegion><TextRegion id="r2" custom="readingOrder {index:1;} structure {type:marginalia;}">'
         + _line("m1", "20,200 180,200 180,240 20,240", "No 12")
-        + '</TextRegion><TableRegion id="t1"><TableCell id="c1">'
+        + '</TextRegion><TableRegion id="t1"><TableCell id="c1" row="0" col="0">'
         + _line("c1l", "220,300 400,300 400,340 220,340", "Anders Persson")
         + "</TableCell></TableRegion>",
     )
@@ -55,6 +55,61 @@ def test_replay_reads_regions_in_transkribus_reading_order_with_their_roles(tran
         ("den fjarde maj", "body", "r3"),
         ("Anders Persson", "table", "c1"),
     ]
+
+
+@pytest.fixture
+def form_page(tmp_path: Path) -> Path:
+    """A printed form filled in by hand: a printed heading, a printed region with one handwritten line, a table in
+    Transkribus' TableCell form and one in PAGE 2019's TableCellRole form, and two ruled lines."""
+    return _page(
+        tmp_path,
+        '<TextRegion id="title" production="printed">'
+        + _line("t1", "300,40 700,40 700,90 300,90", "Flyttningsbetyg")
+        + '</TextRegion><TextRegion id="field" production="printed">'
+        + _line("f1", "100,120 200,120 200,160 100,160", "Att")
+        + '<TextLine id="f2" production="handwritten-cursive"><Coords points="220,120 600,120 600,160 220,160"/>'
+        "<TextEquiv><Unicode>Anna Lisa</Unicode></TextEquiv></TextLine>"
+        '</TextRegion><TableRegion id="list" production="printed"><TableCell id="c00" row="0" col="0">'
+        + _line("h1", "100,300 300,300 300,340 100,340", "Namn")
+        + '</TableCell><TableCell id="c10" row="1" col="0" production="handwritten-cursive">'
+        + _line("n1", "100,360 300,360 300,400 100,400", "Anders Persson")
+        + '</TableCell></TableRegion><TableRegion id="ledger"><TextRegion id="r1c2">'
+        '<Coords points="400,500 600,500 600,560 400,560"/><Roles><TableCellRole rowIndex="1" columnIndex="2"/></Roles>'
+        + _line("s1", "420,510 580,510 580,550 420,550", "12 dr")
+        + "</TextRegion></TableRegion>"
+        '<SeparatorRegion id="s1"><Coords points="100,350 600,350 600,352 100,352"/></SeparatorRegion>'
+        '<SeparatorRegion id="s2"><Coords points="310,300 312,300 312,410 310,410"/></SeparatorRegion>',
+    )
+
+
+def test_replay_keeps_each_lines_production_and_table_cell(form_page: Path) -> None:
+    layout = load_xml_layout(form_page)
+
+    assert [(box.text, box.production, box.cell) for box in layout.boxes] == [
+        ("Flyttningsbetyg", Production.PRINTED, None),
+        ("Att", Production.PRINTED, None),
+        ("Anna Lisa", Production.HANDWRITTEN, None),
+        ("Namn", Production.PRINTED, CellRef(table="list", row=0, column=0)),
+        ("Anders Persson", Production.HANDWRITTEN, CellRef(table="list", row=1, column=0)),
+        ("12 dr", Production.HANDWRITTEN, CellRef(table="ledger", row=1, column=2)),
+    ]
+
+
+def test_replay_reads_ruled_lines_from_separator_regions(form_page: Path) -> None:
+    assert load_xml_layout(form_page).rules == [
+        Rule(x0=100.0, y0=350.0, x1=600.0, y1=352.0),
+        Rule(x0=310.0, y0=300.0, x1=312.0, y1=410.0),
+    ]
+
+
+def test_replay_refuses_a_production_page_does_not_define(tmp_path: Path) -> None:
+    page = _page(
+        tmp_path,
+        '<TextRegion id="r" production="engraved">' + _line("l", "1,1 9,1 9,9 1,9", "ett") + "</TextRegion>",
+    )
+
+    with pytest.raises(ValueError, match="'engraved'"):
+        load_xml_layout(page)
 
 
 def test_replay_takes_a_lines_own_outline_not_its_last_words(tmp_path: Path) -> None:

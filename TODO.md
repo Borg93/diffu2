@@ -411,10 +411,23 @@ Any scanned page as a template, not only pages with PAGE/ALTO ground truth.
       top/bottom from the cells' borders, a full grid, no rules. All three draw the table (aligned columns, numbers
       right, letter headings centred; CER 0.01-0.09, the Sollentuna ledger 0.30-0.52); asked for, the rules and the
       grid are drawn where the boxes put them; unasked, FLUX.3 adds a column rule itself but never a row grid.
-- [ ] Tables in the pipeline: the planner and build_crops leave table cells out (plan.py); include them, caption the
-      ruling (rule rows from the cells' borders; which borders are really ruled must come from the template or a line
-      detector on the real page), train crops with tables, export TableRegion/TableCell in PAGE. Forms and mixed
-      print/hand need data (none in our ground truth).
+- [x] Tables, print and ruled lines in generation (branch tables): the loader reads a line's PAGE @production
+      (printed/typewritten -> printed; unknown values fail), table cells in both forms (Transkribus TableCell
+      @row/@col, PAGE 2019 TextRegion + TableCellRole; a TableCell without row/col fails) and SeparatorRegions as
+      ruled lines; the planner keeps a table as one region (windows of whole rows, pitch from row to row) and clips
+      the ruled lines into each window; captions describe printed lines ("Printed text reading ... in a serif
+      typeface in black printer's ink"), cell lines ("... in a table cell") and a rule_k row per ruled line, plus a
+      table and a rule sentence; PAGE labels write a TableRegion of nested cell TextRegions with TableCellRole,
+      SeparatorRegions and @production, validated against PRImA's 2019 schema (now vendored; the 2013 one is gone);
+      ALTO writes cells as TextBlocks and rules as GraphicalElements. A page without tables, print or rules plans
+      byte-identically (300 random ground-truth pages compared: 299 identical, the 300th a table page that main
+      planned as nothing). Red-checked tests: the loader (3), the planner (3), the labels (schema, round trip, ALTO).
+- [ ] Tables in training data: build_crops still leaves table cells out. Needs a ruled-line detector on the scans
+      (the ground truth has no SeparatorRegions; cells are not rules), a filter for the 135 of 249 tables whose cells
+      overlap (Sollentuna's "tables" are paragraphs in one cell), then table crops for the per-hand LoRAs.
+- [ ] Typeface for printed lines: PAGE TextStyle@fontFamily (Fraktur vs antiqua) into the printed row's desc.
+- [ ] Forms and mixed print/hand need data (none in our ground truth); the form probe (5 templates of our own,
+      untrained FLUX.3 and Pahlman's LoRA) tests whether FLUX.3 draws them at all.
 - [ ] Damage test queued (queue_day3.sh): the Landskapshandlingar LoRA retrained on captions stating each window's
       measured damage (scratchpad damage/: damage.py, caption_damage.py; data_flux3/hand_landskap_dmg). The current
       LoRA draws the film edges (0.36/0.39/0.33 where real 0.38/0.39/0.41) but not the stains (blotches 0.01 vs 0.12)

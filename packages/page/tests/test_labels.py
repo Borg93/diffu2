@@ -10,14 +10,16 @@ from typing import Any
 import pytest
 import xmlschema
 
-from diffu_page.blocks.ground_truth import line_labels
+from diffu_page.blocks.ground_truth import line_labels, rule_rects
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.provenance import Provenance
 from diffu_page.labels import LineLabel, PageLabels, export, to_alto, to_page_xml
-from diffu_page.layout import load_xml_layout
+from diffu_page.layout import CellRef, Production, load_xml_layout
 from diffu_page.plan import PageStyle, plan_page
 
-_PAGE_SCHEMA = Path(__file__).parent / "schemas" / "page2013.xsd"
+# PRImA's PAGE 2019-07-15 schema (Apache-2.0, github.com/PRImA-Research-Lab/PAGE-XML,
+# PAGE-release/gts/pagecontent/2019-07-15/pagecontent.xsd): the version the exports declare
+_PAGE_SCHEMA = Path(__file__).parent / "schemas" / "page2019.xsd"
 
 
 @pytest.fixture(scope="module")
@@ -46,16 +48,76 @@ def _labels() -> PageLabels:
     )
 
 
+def _form_labels() -> PageLabels:
+    """A printed heading, a table of a printed header cell and a handwritten cell, and two ruled lines."""
+    return PageLabels(
+        width=800,
+        height=1000,
+        image="form.jpg",
+        lines=[
+            LineLabel(
+                text="Förteckning",
+                polygon=[(100, 20), (700, 20), (700, 60), (100, 60)],
+                region="heading",
+                order=0,
+                production=Production.PRINTED,
+            ),
+            LineLabel(
+                text="Namn",
+                polygon=[(100, 100), (300, 100), (300, 140), (100, 140)],
+                region="table",
+                block="table|c00",
+                order=1,
+                production=Production.PRINTED,
+                cell=CellRef(table="register", row=0, column=0),
+            ),
+            LineLabel(
+                text="Anders Persson",
+                polygon=[(100, 160), (300, 160), (300, 200), (100, 200)],
+                region="table",
+                block="table|c10",
+                order=2,
+                cell=CellRef(table="register", row=1, column=0),
+            ),
+        ],
+        rules=[(90, 150, 710, 152), (310, 90, 312, 210)],
+    )
+
+
 def _local(element: ET.Element) -> str:
     return element.tag.rsplit("}", 1)[-1]
 
 
-def test_page_xml_validates_against_the_prima_schema(prima_schema: xmlschema.XMLSchema) -> None:
-    xml = to_page_xml(_labels()).replace("/2019-07-15", "/2013-07-15")  # the vendored XSD is 2013's (same model)
-
-    errors = list(prima_schema.iter_errors(xml))
+@pytest.mark.parametrize("labels", [_labels(), _form_labels()], ids=["text", "form"])
+def test_page_xml_validates_against_the_prima_schema(prima_schema: xmlschema.XMLSchema, labels: PageLabels) -> None:
+    errors = list(prima_schema.iter_errors(to_page_xml(labels)))
 
     assert errors == []
+
+
+def test_page_xml_of_a_planned_table_crop_reads_back_as_the_same_table(table_page: Path, tmp_path: Path) -> None:
+    style = PageStyle(
+        provenance=Provenance(title="the archive", years=""), look=ScanLook(greyscale=False, paper="cream", ink="brown")
+    )
+    plan = plan_page(load_xml_layout(table_page), style)[0]
+    labels = PageLabels(
+        width=plan.width,
+        height=plan.height,
+        lines=line_labels(plan, [0.0] * len(plan.lines), 1.0),
+        rules=rule_rects(plan),
+    )
+    exported = tmp_path / "labels.xml"
+    exported.write_text(to_page_xml(labels), encoding="utf-8")
+
+    read = load_xml_layout(exported)
+
+    def cells(lines: list) -> list[tuple]:
+        return sorted((line.text, line.production, line.cell and (line.cell.row, line.cell.column)) for line in lines)
+
+    assert (cells(read.boxes), [(r.x0, r.y0, r.x1, r.y1) for r in read.rules]) == (
+        cells(plan.lines),
+        [tuple(float(v) for v in rect) for rect in labels.rules],
+    )
 
 
 def test_page_xml_lists_the_regions_in_reading_order_with_their_page_types() -> None:
@@ -102,6 +164,18 @@ def test_alto_writes_each_line_as_one_string_with_its_text() -> None:
     contents = [e.get("CONTENT") for e in root.iter() if _local(e) == "String"]
 
     assert contents == ["2.", "Hej varlden", "12 dr"]
+
+
+def test_alto_writes_each_ruled_line_as_a_graphical_element() -> None:
+    root = ET.fromstring(to_alto(_form_labels()))
+
+    rules = [
+        (e.get("HPOS"), e.get("VPOS"), e.get("WIDTH"), e.get("HEIGHT"))
+        for e in root.iter()
+        if _local(e) == "GraphicalElement"
+    ]
+
+    assert rules == [("90", "150", "620", "2"), ("310", "90", "2", "120")]
 
 
 def test_alto_matches_the_htrflow_shape() -> None:

@@ -9,8 +9,8 @@ from pydantic import BaseModel
 
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.provenance import Provenance
-from diffu_page.crops.geometry import Crop, Line
-from diffu_page.layout.model import ROLE_NAMES
+from diffu_page.crops.geometry import Box, Crop, Line
+from diffu_page.layout.model import ROLE_NAMES, CellRef, Production
 
 NUMBER_WORDS = ("no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten")
 
@@ -24,13 +24,16 @@ class LayoutRow(BaseModel):
 
 
 class LineRecord(BaseModel):
-    """A crop's text line: its layout row id, transcription, PAGE role, box and the template block it came from."""
+    """A crop's text line: its layout row id, transcription, PAGE role, box, the template block it came from, how it
+    was made and, in a table, its cell."""
 
     id: str
     text: str
     role: str
     bbox: list[int]
     block: str = ""  # "" in records written before blocks were kept: their labels group lines by role alone
+    production: Production = Production.HANDWRITTEN
+    cell: CellRef | None = None
 
 
 class Caption(BaseModel):
@@ -56,30 +59,32 @@ def caption_for(crop: Crop, provenance: Provenance, look: ScanLook) -> Caption:
     than names alone; every visible text a row quoting its words with style and alignment. A text line's id is
     its language code + ``_Text_`` + its index in reading order (``Sv_Text_1``). Lines cut by the top or bottom
     edge get a ``fragment_k`` row, so the model learns that unprompted ink appears only where a row says so.
+    A printed line's row says it is printed, a table cell's line's that it sits in a table cell, and each ruled
+    line of the crop gets a ``rule_k`` row; a crop with none of them is captioned exactly as before.
     """
     numbered = [(f"Sv_Text_{i}", line) for i, line in enumerate(caption_order(crop.lines), start=1)]
     fragments = [
         (f"fragment_{k}", line) for k, line in enumerate(sorted(crop.fragments, key=lambda line: line.baseline_y), 1)
     ]
-    column = _body_column([line for _, line in numbered])
+    rules = [(f"rule_{k}", rule) for k, rule in enumerate(crop.rules, 1)]
+    column = _body_column([line for _, line in numbered if line.cell is None] or [line for _, line in numbered])
     layout = [
         LayoutRow(id="paper_1", bbox=[0, 0, 1000, 1000], desc=_paper_desc(look)),
         *(
-            LayoutRow(
-                id=row_id,
-                bbox=crop.slot(line),
-                desc=_line_desc(_line_kind(line, column, crop.pitch), line, look),
-            )
+            LayoutRow(id=row_id, bbox=crop.slot(line), desc=_row_desc(line, column, crop, look))
             for row_id, line in numbered
         ),
         *(
             LayoutRow(id=row_id, bbox=crop.visible_box(line), desc=_fragment_desc(crop.cut_edge(line), look))
             for row_id, line in fragments
         ),
+        *(LayoutRow(id=row_id, bbox=crop.rule_box(rule), desc=_rule_desc(rule)) for row_id, rule in rules),
     ]
     sentences = [
         _opening_sentence(provenance, look, numbered),
         *_role_sentences(numbered, column, crop),
+        *_table_sentences(numbered),
+        *_rule_sentences(rules, numbered),
         *_fragment_sentences(fragments, crop),
     ]
     rows = json.dumps([row.model_dump() for row in layout], ensure_ascii=False)
@@ -87,7 +92,15 @@ def caption_for(crop: Crop, provenance: Provenance, look: ScanLook) -> Caption:
         text=f"{' '.join(sentences)} {rows}",
         layout=layout,
         lines=[
-            LineRecord(id=row_id, text=line.text, role=line.role, bbox=crop.slot(line), block=line.source)
+            LineRecord(
+                id=row_id,
+                text=line.text,
+                role=line.role,
+                bbox=crop.slot(line),
+                block=line.source,
+                production=line.production,
+                cell=line.cell,
+            )
             for row_id, line in numbered
         ],
     )
@@ -97,6 +110,23 @@ def _body_column(lines: list[Line]) -> tuple[float, float]:
     """The x-range of the crop's main text (of all its lines when every line has a role)."""
     body = [line for line in lines if not line.role] or lines
     return min(line.box[0] for line in body), max(line.box[2] for line in body)
+
+
+def _row_desc(line: Line, column: tuple[float, float], crop: Crop, look: ScanLook) -> str:
+    """A line's layout row: printed, in a table cell, or placed in the crop's main text."""
+    if line.production is Production.PRINTED:
+        what = ROLE_NAMES[line.role] if line.role else "text"
+        where = " in a table cell" if line.cell is not None else ""
+        return f'Printed {what} reading "{line.text}"{where}, in a serif typeface in black printer\'s ink.'
+    if line.cell is not None:
+        return f'Handwritten line of text reading "{line.text}" in a table cell, cursive script in {look.ink} ink.'
+    return _line_desc(_line_kind(line, column, crop.pitch), line, look)
+
+
+def _rule_desc(rule: Box) -> str:
+    """A ruled line's row: its direction only, as PAGE does not say whether a rule was printed or drawn."""
+    direction = "vertical" if rule[3] - rule[1] > rule[2] - rule[0] else "horizontal"
+    return f"A straight {direction} ruled line."
 
 
 def _line_kind(line: Line, column: tuple[float, float], pitch: float) -> str:
@@ -130,19 +160,47 @@ def _fragment_desc(edge: str, look: ScanLook) -> str:
 
 
 def _opening_sentence(provenance: Provenance, look: ScanLook, numbered: list[tuple[str, Line]]) -> str:
-    roles = Counter(line.role for _, line in numbered if line.role)
+    """The medium, the page and its lines: the handwritten ones counted with their roles, the printed ones cited,
+    and the main text (handwritten lines outside a role and a table) in reading order."""
+    written = [(row_id, line) for row_id, line in numbered if line.production is Production.HANDWRITTEN]
+    printed = [row_id for row_id, line in numbered if line.production is Production.PRINTED]
+    roles = Counter(line.role for _, line in written if line.role)
     parts = [f"a {ROLE_NAMES[r]}" if n == 1 else f"{_count(n)} {ROLE_NAMES[r]} lines" for r, n in roles.items()]
     including = f", including {' and '.join(parts)}" if parts else ""
     scan = "greyscale archival scan" if look.greyscale else "archival scan"
     when = f", dated {provenance.years}" if provenance.years else ""
+    page = "page printed and filled in by hand" if printed else "handwritten page"
     opening = (
-        f"Flat, evenly lit {scan} of a handwritten page from {provenance.title}{when}. The {look.paper} paper "
-        f"<paper_1> carries {len(numbered)} lines of cursive handwriting in {look.ink} ink{including}"
+        f"Flat, evenly lit {scan} of a {page} from {provenance.title}{when}. The {look.paper} paper "
+        f"<paper_1> carries {len(written)} lines of cursive handwriting in {look.ink} ink{including}"
     )
-    body = [row_id for row_id, line in numbered if not line.role]
+    if printed:
+        opening += f" and {len(printed)} printed lines in black printer's ink {_cite(printed)}"
+    body = [row_id for row_id, line in written if not line.role and line.cell is None]
     if not body:
         return f"{opening}."
     return f"{opening}; the main text runs from top to bottom: {_cite(body)}."
+
+
+def _table_sentences(numbered: list[tuple[str, Line]]) -> list[str]:
+    """One sentence for the crop's table cells, when it has any: how many rows and columns they fill."""
+    cells = [(row_id, line.cell) for row_id, line in numbered if line.cell is not None]
+    if not cells:
+        return []
+    rows, columns = len({cell.row for _, cell in cells}), len({cell.column for _, cell in cells})
+    return [
+        f"A table of {_counted(rows, 'row')} and {_counted(columns, 'column')} holds "
+        f"{_cite([row_id for row_id, _ in cells])}, row by row."
+    ]
+
+
+def _rule_sentences(rules: list[tuple[str, Box]], numbered: list[tuple[str, Line]]) -> list[str]:
+    """One sentence for the crop's ruled lines, when it has any."""
+    if not rules:
+        return []
+    where = "the table" if any(line.cell is not None for _, line in numbered) else "the page"
+    lines = "ruled line crosses" if len(rules) == 1 else "ruled lines cross"
+    return [f"{_count(len(rules)).capitalize()} straight {lines} {where}: {_cite([row_id for row_id, _ in rules])}."]
 
 
 def _role_sentences(numbered: list[tuple[str, Line]], column: tuple[float, float], crop: Crop) -> list[str]:
@@ -176,6 +234,11 @@ def _fragment_sentences(fragments: list[tuple[str, Line]], crop: Crop) -> list[s
 
 def _cite(ids: list[str]) -> str:
     return " ".join(f"<{row_id}>" for row_id in ids)
+
+
+def _counted(n: int, noun: str) -> str:
+    """``n`` in words with ``noun`` in the number it takes: "one row", "three columns"."""
+    return f"{_count(n)} {noun}" if n == 1 else f"{_count(n)} {noun}s"
 
 
 def _count(n: int) -> str:

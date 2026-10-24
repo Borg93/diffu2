@@ -1,14 +1,20 @@
 """Where a page's lines are and how a page is cut into crops at the scale the FLUX.3 LoRAs train on.
 
 Crops cover consecutive whole lines of one text column (a wide region plus the margin notes, headings and page
-numbers beside it), scaled to a ~64 px line pitch and saved at the exact size of a NeMo bucket.
+numbers beside it), scaled to a ~64 px line pitch and saved at the exact size of a NeMo bucket. A table is one region:
+its cells' lines side by side make one row, so its windows hold whole rows across the table, and its pitch is measured
+from row to row. A crop keeps the parts of the page's ruled lines inside it.
 """
 
 from __future__ import annotations
 
 import statistics
+from collections.abc import Sequence
+from itertools import pairwise
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from diffu_page.layout.model import CellRef, Production
 
 type Box = tuple[float, float, float, float]  # x0, y0, x1, y1 in page pixels
 
@@ -42,6 +48,15 @@ WHOLE_LINE = 0.9  # share of a line's width inside a crop that counts as the who
 CUT_LINE = 0.15  # above this (and below WHOLE_LINE) a line is cut at the side and the crop is dropped
 
 
+SAME_ROW = 0.3  # of a table's median line height: baselines closer than this are one row of cells
+
+
+SHORTEST_RULE = 1.0  # line pitches: a ruled line with less than this inside a crop is left out of it
+
+
+RULE_THICKNESS = 2  # the thinnest a ruled line's layout box is, on 0-1000
+
+
 class CropSettings(BaseModel):
     """How pages are cut into crops (pixels are after scaling unless noted)."""
 
@@ -54,13 +69,16 @@ class CropSettings(BaseModel):
 
 
 class Line(BaseModel):
-    """A text line on a page: its outline and baseline height (page px), its text, role and source block."""
+    """A text line on a page: its outline and baseline height (page px), its text, role, source block, how it was
+    made and, in a table, its cell."""
 
     polygon: list[tuple[float, float]]
     baseline_y: float
     text: str
     role: str = ""  # its region's PAGE type when ROLE_NAMES names it
     source: str = ""  # the region / block it came from, when a caller tracks reading order by block
+    production: Production = Production.HANDWRITTEN
+    cell: CellRef | None = None
 
     @property
     def box(self) -> Box:
@@ -75,9 +93,14 @@ class Line(BaseModel):
 
 
 class Region(BaseModel):
-    """A text region's lines."""
+    """A text region's lines, or a whole table's."""
 
     lines: list[Line]
+
+    @property
+    def is_table(self) -> bool:
+        """Whether the region is a table: its lines are cells'."""
+        return any(line.cell is not None for line in self.lines)
 
     @property
     def box(self) -> Box:
@@ -121,11 +144,12 @@ class Column(BaseModel):
 
 
 class PageGeometry(BaseModel):
-    """What cropping a column needs to know about its page: size (px), line pitch and every line."""
+    """What cropping a column needs to know about its page: size (px), line pitch, every line and every ruled line."""
 
     size: tuple[int, int]
     pitch: float
     lines: list[Line]
+    rules: list[Box] = Field(default_factory=list)
 
 
 class ColumnFrame(BaseModel):
@@ -147,13 +171,15 @@ class ColumnFrame(BaseModel):
 
 
 class Crop(BaseModel):
-    """A crop of a page: its rectangle (page px), bucket size, whole lines and the lines its top or bottom cuts."""
+    """A crop of a page: its rectangle (page px), bucket size, whole lines, the lines its top or bottom cuts and the
+    parts of the page's ruled lines inside it."""
 
     rect: Box
     size: tuple[int, int]
     pitch: float
     lines: list[Line]
     fragments: list[Line]
+    rules: list[Box] = Field(default_factory=list)
 
     def layout_box(self, box: Box) -> list[int]:
         """A page rectangle as a FLUX.3 layout box: ``[y_min, x_min, y_max, x_max]`` on 0-1000, clamped."""
@@ -180,6 +206,12 @@ class Crop(BaseModel):
             (line.box[0], max(line.box[1], self.rect[1]), line.box[2], min(line.box[3], self.rect[3]))
         )
 
+    def rule_box(self, rule: Box) -> list[int]:
+        """A ruled line's layout box, at least ``RULE_THICKNESS`` units across so a hairline stays a box."""
+        y0, x0, y1, x1 = self.layout_box(rule)
+        y0, x0 = min(y0, 1000 - RULE_THICKNESS), min(x0, 1000 - RULE_THICKNESS)
+        return [y0, x0, max(y1, y0 + RULE_THICKNESS), max(x1, x0 + RULE_THICKNESS)]
+
     def place(self, x: float, y: float) -> str:
         """A page point's position on the crop in words: "in the upper right corner", "at the top center"."""
         x0, y0, x1, y1 = self.rect
@@ -191,14 +223,29 @@ class Crop(BaseModel):
 
 
 def line_spacing(regions: list[Region]) -> float | None:
-    """Median vertical distance between consecutive baselines within regions (the page's line pitch)."""
-    gaps = [
-        b.baseline_y - a.baseline_y
-        for region in regions
-        for a, b in zip(region.lines, region.lines[1:], strict=False)
-        if b.baseline_y > a.baseline_y
-    ]
+    """Median vertical distance between consecutive baselines within regions (the page's line pitch); a table's are
+    its rows' (see ``_row_baselines``)."""
+    gaps = [b - a for region in regions for a, b in pairwise(_pitch_baselines(region)) if b > a]
     return statistics.median(gaps) if gaps else None
+
+
+def _pitch_baselines(region: Region) -> list[float]:
+    if region.is_table:
+        return _row_baselines(region.lines)
+    return [line.baseline_y for line in region.lines]
+
+
+def _row_baselines(lines: list[Line]) -> list[float]:
+    """A table's baselines, top to bottom, the lines of one row (cells side by side, baselines within ``SAME_ROW`` of
+    the median line height) counted once, at their median."""
+    tolerance = SAME_ROW * statistics.median(line.box[3] - line.box[1] for line in lines)
+    rows: list[list[float]] = []
+    for baseline in sorted(line.baseline_y for line in lines):
+        if rows and baseline - rows[-1][-1] <= tolerance:
+            rows[-1].append(baseline)
+        else:
+            rows.append([baseline])
+    return [statistics.median(row) for row in rows]
 
 
 def _x_overlap(box: Box, rect: Box) -> float:
@@ -236,20 +283,44 @@ def _merge_fits(column: Column, box: Box, pitch: float, *, settings: CropSetting
     return pitch * scale >= settings.min_merge_spacing
 
 
-def crops_for_page(regions: list[Region], size: tuple[int, int], settings: CropSettings) -> list[Crop]:
+def crops_for_page(
+    regions: list[Region], size: tuple[int, int], settings: CropSettings, *, rules: Sequence[Box] = ()
+) -> list[Crop]:
     """Crops over consecutive whole lines of each text column (see ``text_columns``).
 
     A column's crops all take the size of one NeMo bucket (the one nearest the column's width at the target
     line pitch whose height still fits on the page). Windows of lines overlap by ``overlap_lines``. A crop
     holds every line whose baseline lies inside it and whose width is (almost) whole; a crop that cuts a line
     at the side (unlabelled visible text) is dropped. Lines cut by the top or bottom edge are its
-    ``fragments``.
+    ``fragments``. Each of the page's ruled ``rules`` (page px) at least ``SHORTEST_RULE`` line pitches long
+    inside a crop is kept in it, cut to the crop.
+
+    A page where this finds no crop at all (a form of printed labels and handwritten fields, a page of one-line
+    regions: nothing anchors a column or gives a pitch inside a region) is cropped as one block of all its lines,
+    its pitch measured from row to row across the page; every other page is cropped as above.
     """
+    lines = [line for region in regions for line in region.lines]
     pitch = line_spacing(regions)
-    if pitch is None:
+    if pitch is not None:
+        page = PageGeometry(size=size, pitch=pitch, lines=lines, rules=list(rules))
+        crops = [
+            crop for column in text_columns(regions, pitch, settings) for crop in _column_crops(column, page, settings)
+        ]
+        if crops:
+            return crops
+    return _block_crops(lines, size, settings, rules=rules)
+
+
+def _block_crops(
+    lines: list[Line], size: tuple[int, int], settings: CropSettings, *, rules: Sequence[Box]
+) -> list[Crop]:
+    """Crops of all of a page's lines as one block, at the pitch between its rows."""
+    rows = _row_baselines(lines) if lines else []
+    gaps = [b - a for a, b in pairwise(rows)]
+    if not gaps:
         return []
-    page = PageGeometry(size=size, pitch=pitch, lines=[line for region in regions for line in region.lines])
-    return [crop for lines in text_columns(regions, pitch, settings) for crop in _column_crops(lines, page, settings)]
+    page = PageGeometry(size=size, pitch=statistics.median(gaps), lines=lines, rules=list(rules))
+    return _column_crops(sorted(lines, key=lambda line: line.baseline_y), page, settings)
 
 
 def _column_crops(lines: list[Line], page: PageGeometry, settings: CropSettings) -> list[Crop]:
@@ -315,7 +386,16 @@ def _crop(rect: Box, bucket: tuple[int, int], page: PageGeometry) -> Crop | None
         pitch=page.pitch,
         lines=[line for line in inside if _x_overlap(line.box, rect) >= WHOLE_LINE],
         fragments=[line for line in page.lines if _is_cut_off(line, rect, page.pitch)],
+        rules=[part for rule in page.rules if (part := _rule_inside(rule, rect, page.pitch)) is not None],
     )
+
+
+def _rule_inside(rule: Box, rect: Box, pitch: float) -> Box | None:
+    """The part of a ruled line inside ``rect``; None when less than ``SHORTEST_RULE`` line pitches of it is."""
+    part = (max(rule[0], rect[0]), max(rule[1], rect[1]), min(rule[2], rect[2]), min(rule[3], rect[3]))
+    if part[2] < part[0] or part[3] < part[1]:
+        return None
+    return part if max(part[2] - part[0], part[3] - part[1]) >= SHORTEST_RULE * pitch else None
 
 
 def _is_cut_off(line: Line, rect: Box, pitch: float) -> bool:

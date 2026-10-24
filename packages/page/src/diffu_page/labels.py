@@ -1,7 +1,9 @@
 """A crop's ground truth and its export formats.
 
-:class:`PageLabels` is the label data (lines with their transcription, polygon, baseline, region, reading order and
-tag); PAGE and ALTO XML are only serializations of it, each a ``PageLabels -> str`` function in :data:`EXPORTERS`.
+:class:`PageLabels` is the label data (lines with their transcription, polygon, baseline, region, reading order, tag,
+production and table cell, and the ruled lines); PAGE and ALTO XML are only serializations of it, each a
+``PageLabels -> str`` function in :data:`EXPORTERS`. PAGE writes a table as PAGE 2019 does: a ``TableRegion`` of nested
+cell ``TextRegion``s, each with a ``TableCellRole``; ALTO, which has no tables, writes each cell as a ``TextBlock``.
 """
 
 from __future__ import annotations
@@ -14,7 +16,7 @@ from xml.sax.saxutils import escape
 
 from pydantic import BaseModel, Field
 
-from diffu_page.layout.model import ROLE_NAMES, RUNNING_TEXT, TABLE
+from diffu_page.layout.model import ROLE_NAMES, RUNNING_TEXT, TABLE, CellRef, Production
 
 try:
     _VERSION = version("diffu-page")
@@ -22,6 +24,7 @@ except PackageNotFoundError:  # not installed (e.g. running from a source checko
     _VERSION = "0"
 
 type Point = tuple[int, int]
+type Rect = tuple[int, int, int, int]  # x0, y0, x1, y1
 type LabelFormat = Literal["alto", "page"]
 
 
@@ -37,15 +40,18 @@ class LineLabel(BaseModel):
     block: str = ""  # the template block the line came from; "" for labels made before blocks were kept
     order: int = 0
     tag: str = ""  # "unclear" when the line read back badly
+    production: Production = Production.HANDWRITTEN
+    cell: CellRef | None = None  # the table cell the line is written in
 
 
 class LabelRegion(BaseModel):
     """One exported region: its id, unique in the page (the kind alone when it is the page's only region of that
-    kind, else numbered in reading order), its kind and its lines in reading order."""
+    kind, else numbered in reading order), its kind, its lines in reading order and, for a table cell, the cell."""
 
     id: str
     kind: str
     lines: list[LineLabel]
+    cell: CellRef | None = None
 
 
 class PageLabels(BaseModel):
@@ -55,6 +61,7 @@ class PageLabels(BaseModel):
     height: int
     image: str = ""
     lines: list[LineLabel] = Field(default_factory=list)
+    rules: list[Rect] = Field(default_factory=list)  # the ruled lines, page px
 
 
 def _bbox(poly: list[Point]) -> tuple[int, int, int, int]:
@@ -89,8 +96,18 @@ def _ordered_regions(labels: PageLabels) -> list[LabelRegion]:
         kind = lines[0].region
         numbered[kind] += 1
         region_id = kind if per_kind[kind] == 1 else f"{kind}_{numbered[kind]}"
-        regions.append(LabelRegion(id=region_id, kind=kind, lines=lines))
+        regions.append(LabelRegion(id=region_id, kind=kind, lines=lines, cell=lines[0].cell))
     return regions
+
+
+def _rect_points(rect: Rect) -> str:
+    x0, y0, x1, y1 = rect
+    return _pts([(x0, y0), (x1, y0), (x1, y1), (x0, y1)])
+
+
+def _region_rect(lines: list[LineLabel]) -> Rect:
+    x, y, w, h = _bbox([p for line in lines for p in line.polygon])
+    return x, y, x + w, y + h
 
 
 _PAGE_NS = "http://schema.primaresearch.org/PAGE/gts/pagecontent/2019-07-15"
@@ -109,8 +126,9 @@ def _page_text_line(region: str, line: LineLabel) -> str:
     """One ``TextLine``: Coords, Baseline, TextEquiv, and the tag as Transkribus writes it into ``@custom``."""
     baseline = f'        <Baseline points="{_pts(line.baseline)}"/>\n' if line.baseline else ""
     custom = f' custom="structure {{type:{_esc(line.tag)};}}"' if line.tag else ""
+    production = "printed" if line.production is Production.PRINTED else "handwritten-cursive"
     return (
-        f'      <TextLine id="{_esc(region)}_l{line.order}" production="handwritten-cursive"{custom}>\n'
+        f'      <TextLine id="{_esc(region)}_l{line.order}" production="{production}"{custom}>\n'
         f'        <Coords points="{_pts(line.polygon)}"/>\n'
         f"{baseline}"
         f"        <TextEquiv><Unicode>{_esc(line.text)}</Unicode></TextEquiv>\n"
@@ -118,27 +136,67 @@ def _page_text_line(region: str, line: LineLabel) -> str:
     )
 
 
-def to_page_xml(labels: PageLabels) -> str:
-    """PRImA PAGE-XML (validates against the 2019 / 2013 content model): the required Metadata timestamps, an
-    explicit ``ReadingOrder``, one typed ``TextRegion`` (Coords) per region, and a ``TextLine`` (Coords, Baseline,
-    TextEquiv) per line."""
-    regions = _ordered_regions(labels)
-    refs = "\n".join(
-        f'        <RegionRefIndexed index="{i}" regionRef="{_esc(region.id)}"/>' for i, region in enumerate(regions)
+def _top_level(regions: list[LabelRegion]) -> list[list[LabelRegion]]:
+    """The page's top-level regions in reading order: each text region on its own, a table's cells together, where
+    its first cell is read."""
+    groups: dict[str, list[LabelRegion]] = {}
+    for region in regions:
+        key = f"table {region.cell.table}" if region.cell is not None else f"region {region.id}"
+        groups.setdefault(key, []).append(region)
+    return list(groups.values())
+
+
+def _page_text_region(region: LabelRegion, indent: str = "    ") -> str:
+    """One ``TextRegion``: its type, its box, a ``TableCellRole`` when it is a table cell, and its lines."""
+    role = (
+        f'{indent}  <Roles><TableCellRole rowIndex="{region.cell.row}" columnIndex="{region.cell.column}"/></Roles>\n'
+        if region.cell is not None
+        else ""
     )
+    return (
+        f'{indent}<TextRegion id="{_esc(region.id)}" type="{_page_type(region.kind)}">\n'
+        f'{indent}  <Coords points="{_rect_points(_region_rect(region.lines))}"/>\n'
+        + role
+        + "\n".join(_page_text_line(region.id, ln) for ln in region.lines)
+        + f"\n{indent}</TextRegion>"
+    )
+
+
+def _page_table(table_id: str, cells: list[LabelRegion]) -> str:
+    """One ``TableRegion``: its rows and columns, its box, and its cells as nested ``TextRegion``s."""
+    rows = len({cell.cell.row for cell in cells if cell.cell is not None})
+    columns = len({cell.cell.column for cell in cells if cell.cell is not None})
+    nested = "\n".join(_page_text_region(cell, indent="      ") for cell in cells)
+    return (
+        f'    <TableRegion id="{_esc(table_id)}" rows="{rows}" columns="{columns}">\n'
+        f'      <Coords points="{_rect_points(_region_rect([line for cell in cells for line in cell.lines]))}"/>\n'
+        f"{nested}\n    </TableRegion>"
+    )
+
+
+def to_page_xml(labels: PageLabels) -> str:
+    """PRImA PAGE-XML (validates against the 2019 content model): the required Metadata timestamps, an explicit
+    ``ReadingOrder``, one typed ``TextRegion`` (Coords) per region and one ``TableRegion`` per table (its cells
+    nested ``TextRegion``s with a ``TableCellRole``), a ``TextLine`` (Coords, Baseline, TextEquiv, production) per
+    line, and a ``SeparatorRegion`` per ruled line."""
+    top = _top_level(_ordered_regions(labels))
+    tables = [group for group in top if group[0].cell is not None]
+    table_ids = {
+        id(group[0]): "table_region" if len(tables) == 1 else f"table_region_{k}" for k, group in enumerate(tables, 1)
+    }
+    ids = [table_ids.get(id(group[0]), group[0].id) for group in top]
+    refs = "\n".join(f'        <RegionRefIndexed index="{i}" regionRef="{_esc(ref)}"/>' for i, ref in enumerate(ids))
     reading_order = (
         f'    <ReadingOrder>\n      <OrderedGroup id="ro">\n{refs}\n      </OrderedGroup>\n    </ReadingOrder>\n'
     )
-    blocks: list[str] = []
-    for region in regions:
-        rx, ry, rw, rh = _bbox([p for ln in region.lines for p in ln.polygon])
-        rcoords = _pts([(rx, ry), (rx + rw, ry), (rx + rw, ry + rh), (rx, ry + rh)])
-        blocks.append(
-            f'    <TextRegion id="{_esc(region.id)}" type="{_page_type(region.kind)}">\n'
-            f'      <Coords points="{rcoords}"/>\n'
-            + "\n".join(_page_text_line(region.id, ln) for ln in region.lines)
-            + "\n    </TextRegion>"
-        )
+    blocks = [
+        _page_table(ref, group) if group[0].cell is not None else _page_text_region(group[0])
+        for ref, group in zip(ids, top, strict=True)
+    ]
+    blocks += [
+        f'    <SeparatorRegion id="rule_{k}">\n      <Coords points="{_rect_points(rect)}"/>\n    </SeparatorRegion>'
+        for k, rect in enumerate(labels.rules, 1)
+    ]
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         f'<PcGts xmlns="{_PAGE_NS}" xmlns:xsi="{_PAGE_XSI}" xsi:schemaLocation="{_PAGE_SCHEMA}">\n'
@@ -213,7 +271,8 @@ def _alto_text_line(region: str, line: LineLabel) -> str:
 
 def to_alto(labels: PageLabels) -> str:
     """ALTO v4 in the Riksarkivet/htrflow shape: a ``Processing`` provenance block, a ``ReadingOrder``,
-    then ``TextBlock`` -> ``TextLine`` (``Shape``/``Polygon`` outline + ``BASELINE``) -> one ``String``.
+    then ``TextBlock`` -> ``TextLine`` (``Shape``/``Polygon`` outline + ``BASELINE``) -> one ``String``, a table
+    cell's lines in their own ``TextBlock``, and a ``GraphicalElement`` per ruled line.
     ``PC``/``WC`` confidences are 1.0 — this is ground truth, not a recognition guess."""
     regions = _ordered_regions(labels)
     blocks: list[str] = []
@@ -224,6 +283,10 @@ def to_alto(labels: PageLabels) -> str:
             + "\n".join(_alto_text_line(region.id, ln) for ln in region.lines)
             + "\n      </TextBlock>"
         )
+    blocks += [
+        f'      <GraphicalElement ID="rule_{k}" HPOS="{x0}" VPOS="{y0}" WIDTH="{x1 - x0}" HEIGHT="{y1 - y0}"/>'
+        for k, (x0, y0, x1, y1) in enumerate(labels.rules, 1)
+    ]
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         f'<alto xmlns:xsi="{_ALTO_XSI}" xmlns="{_ALTO_NS}" xsi:schemaLocation="{_ALTO_SCHEMA}">\n'

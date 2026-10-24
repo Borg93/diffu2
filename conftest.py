@@ -83,6 +83,83 @@ def wide_and_narrow_body_page(tmp_path: Path) -> Path:
     return path
 
 
+TABLE_COLUMNS = (150, 300, 1100, 1400, 1650)  # the register's column borders, page px
+TABLE_ROWS = 15  # a printed header row and 14 handwritten rows, 100 px apart from y 200
+
+
+@pytest.fixture
+def table_page(tmp_path: Path) -> Path:
+    """A 1800 x 1800 px ruled register in Transkribus' table form: a printed header row (N:o, Namn, År, Ort) and 14
+    handwritten rows of four cells, its five column borders ruled from the top of the table to its bottom."""
+    header = ("N:o", "Namn", "År", "Ort")
+    cells = []
+    for row in range(TABLE_ROWS):
+        top = 200 + 100 * row
+        for column, (x0, x1) in enumerate(zip(TABLE_COLUMNS, TABLE_COLUMNS[1:], strict=False)):
+            text = header[column] if row == 0 else f"r{row}c{column}"
+            production = ' production="printed"' if row == 0 else ""
+            cells.append(
+                f'<TableCell id="c{row}_{column}" row="{row}" col="{column}"{production}>'
+                f'<Coords points="{x0},{top} {x1},{top} {x1},{top + 100} {x0},{top + 100}"/>'
+                + _line(f"l{row}_{column}", x0 + 20, x1 - 20, top + 72 + 3 * column, text)  # a row's baselines jitter
+                + "</TableCell>"
+            )
+    bottom = 200 + 100 * TABLE_ROWS
+    rules = "".join(
+        f'<SeparatorRegion id="s{k}"><Coords points="{x - 1},200 {x + 1},200 {x + 1},{bottom} {x - 1},{bottom}"/>'
+        "</SeparatorRegion>"
+        for k, x in enumerate(TABLE_COLUMNS)
+    )
+    path = tmp_path / "register.xml"
+    path.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<PcGts xmlns="http://schema.primaresearch.org/PAGE/gts/pagecontent/2019-07-15">'
+        '<Page imageFilename="register.jpg" imageWidth="1800" imageHeight="1800">'
+        f'<TableRegion id="register"><Coords points="150,200 1650,200 1650,{bottom} 150,{bottom}"/>'
+        f"{''.join(cells)}</TableRegion>{rules}</Page></PcGts>",
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.fixture
+def certificate_page(tmp_path: Path) -> Path:
+    """A 900 x 1200 px printed certificate filled in by hand, as a form comes: a printed title and five rows of a
+    printed label beside a handwritten field, every piece its own one-line region, each field underlined."""
+    rows = (
+        ("Att", "Anna Lisa Ersdotter"),
+        ("född", "den 14 Mars 1832"),
+        ("i", "Bro socken och Upsala län"),
+        ("flyttar till", "Clara församling"),
+        ("Nattvard", "den 3 Maj 1857"),
+    )
+    regions = [
+        '<TextRegion id="title" type="heading" production="printed">'
+        + _line("t", 300, 600, 140, "Flyttningsbetyg")
+        + "</TextRegion>"
+    ]
+    rules = []
+    for k, (label, field) in enumerate(rows):
+        baseline = 260 + 80 * k
+        regions.append(
+            f'<TextRegion id="label{k}" production="printed">{_line(f"a{k}", 80, 200, baseline, label)}</TextRegion>'
+            f'<TextRegion id="field{k}">{_line(f"f{k}", 220, 820, baseline, field)}</TextRegion>'
+        )
+        rules.append(
+            f'<SeparatorRegion id="u{k}"><Coords points="215,{baseline + 22} 825,{baseline + 22} 825,{baseline + 24} '
+            f'215,{baseline + 24}"/></SeparatorRegion>'
+        )
+    path = tmp_path / "certificate.xml"
+    path.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<PcGts xmlns="http://schema.primaresearch.org/PAGE/gts/pagecontent/2019-07-15">'
+        '<Page imageFilename="certificate.jpg" imageWidth="900" imageHeight="1200">'
+        f"{''.join(regions)}{''.join(rules)}</Page></PcGts>",
+        encoding="utf-8",
+    )
+    return path
+
+
 TINY_FLUX3 = "hf-internal-testing/tiny-flux3-image-modular"
 TINY_FLUX3_REVISION = "9130f96f124d6c6fdd1beab63cfb6d2f1c8658a1"  # pinned: a changed fixture must not change results
 
