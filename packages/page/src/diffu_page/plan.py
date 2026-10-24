@@ -124,15 +124,13 @@ def _reference_captions(written: list[Caption], style: PageStyle, reference: Ref
     ]
 
 
-def plan_page(
-    layout: Layout, style: PageStyle, settings: CropSettings | None = None, reference: Reference | None = None
-) -> list[CropPlan]:
+def plan_page(layout: Layout, style: PageStyle, *, reference: Reference | None = None) -> list[CropPlan]:
     """The crops the v2 builder would cut from this page, each with its caption in ``style``, or drawn from a
     ``reference``, in the form its LoRA was trained on."""
     crops = crops_for_page(
         regions_of(layout),
         (layout.width, layout.height),
-        settings or CropSettings(),
+        CropSettings(),
         rules=[(rule.x0, rule.y0, rule.x1, rule.y1) for rule in layout.rules],
     )
     block_rank = {source: rank for rank, source in enumerate(dict.fromkeys(line.source for line in layout.lines))}

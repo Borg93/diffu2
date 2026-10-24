@@ -143,7 +143,7 @@ def evaluate_crop(
         gen_cer=fmean(drawn.line_cers),
         real_cer=fmean(real_cers),
         lines=[LineResult(text=ln.text, gen=g, gen_cer=gc, real=r, real_cer=rc) for ln, g, gc, r, rc in lines],
-        hands=crop_hands(drawn.image, real, crop.lines, reference, crop.reference_lines),
+        hands=crop_hands(drawn.image, real, crop.lines, reference=reference, reference_lines=crop.reference_lines),
     )
 
 

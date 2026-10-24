@@ -34,6 +34,7 @@ def crop_hands(
     drawn: Image.Image,
     real: Image.Image,
     lines: Sequence[LineRecord],
+    *,
     reference: Image.Image | None = None,
     reference_lines: Sequence[Box] | None = None,
 ) -> Hands:

@@ -75,7 +75,7 @@ class CaptionDropout(Dataset[dict[str, Any]]):
     """
 
     def __init__(
-        self, dataset: SampleSource, empty: EmptyPrompt, share: float, draw: Callable[[], float] = uniform
+        self, dataset: SampleSource, empty: EmptyPrompt, *, share: float, draw: Callable[[], float] = uniform
     ) -> None:
         super().__init__()
         self._dataset = dataset

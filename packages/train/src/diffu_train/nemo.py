@@ -109,4 +109,4 @@ class InterleavedImageEditDataloaderConfig(ImageEditDataloaderConfig):
         if not self.caption_dropout:
             return interleaved(built)
         empty = EmptyPrompt.load(Path(self.cache_dir))
-        return interleaved(built, lambda dataset: CaptionDropout(dataset, empty, self.caption_dropout))
+        return interleaved(built, lambda dataset: CaptionDropout(dataset, empty, share=self.caption_dropout))

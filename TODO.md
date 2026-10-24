@@ -507,10 +507,10 @@ Code (writing-python, diffusers):
 - [x] One row model for the eval-dir rows (EvalCrop, 24 Oct); `by_example_rows` leaves a stale caption out (24 Oct);
       the unclosed file, the dead constant, the Sampler overrides, the duplicated `load_rgb`/`jpeg` helpers and
       `sys.maxsize` are gone; exact-value edit-caption tests, the subset twin and pytest-timeout done (24 Oct).
-- [ ] Still open: one Style (PageStyle and restyle.Style, with the runner's test); positional-argument bundles
-      (`crop_hands`' optional reference pair, `plan_page`'s unused `settings`, CaptionDropout); the studio graph built
-      from dicts; the runner's `int(str(...))` round-trip (with the Ray work); `pick`'s role-line rule never exercised
-      by a test.
+- [ ] Still open: one Style (PageStyle and restyle.Style, with the runner's test); the studio graph built from dicts;
+      the runner's `int(str(...))` round-trip (with the Ray work); `pick`'s role-line rule never exercised by a test.
+      (24 Oct: `plan_page`'s unused `settings` is gone, and the optional arguments of `crop_hands`, `plan_page` and
+      CaptionDropout are keyword-only.)
 - [ ] diffu samples at FLUX.3's shift 6.93 but trains with flow_shift 6.0: write diffu's scheduler config.
 - [ ] Guider edge: `stop` < 1 leaves the step state of the previous call (diffusers' own guider shares it); diffu's index
       has Hub components with an empty subfolder; the NeMo LoRA scale assumes plain LoRA (raise on rslora/patterns).
