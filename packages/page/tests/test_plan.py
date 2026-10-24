@@ -19,7 +19,7 @@ from diffu_page.captions.records import CropRecord
 from diffu_page.captions.restyle import ReferenceCaption
 from diffu_page.crops.geometry import CropSettings, crops_for_page, regions_of
 from diffu_page.data.style_pairs import Pair, Scan, captions, describe
-from diffu_page.layout import load_xml_layout
+from diffu_page.layout import Layout, TextLine, load_xml_layout
 from diffu_page.plan import CropPlan, Reference, plan_page
 
 STYLE = PageStyle(
@@ -141,6 +141,22 @@ def test_crop_plan_refuses_a_line_whose_role_is_no_role_on_the_page(role: str) -
 
     with pytest.raises(ValidationError, match=f"role '{role}' is not one of"):
         CropPlan.model_validate(plan)
+
+
+def _block(name: str, x0: float, x1: float) -> list[TextLine]:
+    return [
+        TextLine(text=f"{name} line {k}", box=(x0, 60 + 64 * k, x1, 110 + 64 * k), baseline_y=100 + 64 * k, block=name)
+        for k in range(12)
+    ]
+
+
+def test_crops_keep_a_region_against_the_page_edge() -> None:
+    # 600 px wide plus half a pitch a side counts as a column (664 >= 640), but the page edge leaves 632
+    layout = Layout(width=1600, height=1200, lines=_block("A", 0, 600) + _block("B", 740, 1540))
+
+    crops = crops_for_page(regions_of(layout), (layout.width, layout.height), CropSettings())
+
+    assert {line.block for crop in crops for line in crop.lines} == {"A", "B"}
 
 
 REFERENCE_LINES = [[100, 50, 300, 950], [500, 50, 700, 950]]

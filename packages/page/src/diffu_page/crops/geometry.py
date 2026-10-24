@@ -75,6 +75,17 @@ class CropSettings(BaseModel):
     min_lines: int = 3
     overlap_lines: int = 2  # lines shared by consecutive windows of a column
 
+    def natural_scale(self, pitch: float) -> float:
+        """The scale that brings a page's line ``pitch`` to the target pitch (never up)."""
+        return min(1.0, self.line_spacing / pitch)
+
+
+def padded_range(left: float, right: float, pitch: float, page_width: float) -> tuple[float, float]:
+    """A column's x-range padded by half a line pitch on each side, as far as the page reaches: the range its crops
+    take, and what decides whether a region is wide enough to be a column."""
+    pad = 0.5 * pitch
+    return max(0.0, left - pad), min(page_width, right + pad)
+
 
 class Region(BaseModel):
     """A text region's lines, or a whole table's."""
@@ -132,10 +143,6 @@ class Column(BaseModel):
     def gap_to(self, box: PageBox) -> float:
         """Vertical distance from the anchor region to ``box``; 0 when they overlap."""
         return max(0.0, max(self.anchor[1], box[1]) - min(self.anchor[3], box[3]))
-
-    def width_with(self, box: PageBox) -> float:
-        """The column's width if ``box`` joined it."""
-        return max(self.right, box[2]) - min(self.left, box[0])
 
     def add(self, region: Region) -> None:
         """Join a narrow region's lines to the column."""
@@ -261,7 +268,9 @@ def _x_overlap(box: PageBox, rect: PageBox) -> float:
     return inside / max(box[2] - box[0], 1e-6)
 
 
-def text_columns(regions: list[Region], pitch: float, settings: CropSettings) -> list[list[TextLine]]:
+def text_columns(
+    regions: list[Region], pitch: float, settings: CropSettings, *, page_width: float
+) -> list[list[TextLine]]:
     """The lines of each wide text region together with the narrow regions that belong beside it.
 
     A region too narrow to be cropped on its own (a margin note, heading, page number) joins the nearest
@@ -270,23 +279,31 @@ def text_columns(regions: list[Region], pitch: float, settings: CropSettings) ->
     region's lines, so the crops show page structure and not just body text. Lines come back sorted by
     baseline.
     """
-    natural_scale = min(1.0, settings.line_spacing / pitch)
-    is_wide = [(r.box[2] - r.box[0] + pitch) * natural_scale >= settings.min_width for r in regions]
+
+    def width(left: float, right: float) -> float:
+        low, high = padded_range(left, right, pitch, page_width)
+        return high - low
+
+    is_wide = [width(r.box[0], r.box[2]) * settings.natural_scale(pitch) >= settings.min_width for r in regions]
     columns = [Column.of(region) for region, wide in zip(regions, is_wide, strict=True) if wide]
     for region, wide in zip(regions, is_wide, strict=True):
         if wide:
             continue
         box = region.box
-        homes = [c for c in columns if c.gap_to(box) <= 2 * pitch and _merge_fits(c, box, pitch, settings=settings)]
+        homes = [
+            c
+            for c in columns
+            if c.gap_to(box) <= 2 * pitch
+            and _merge_fits(width(min(c.left, box[0]), max(c.right, box[2])), pitch, settings=settings)
+        ]
         if homes:
             min(homes, key=lambda c: c.gap_to(box)).add(region)
     return [sorted(c.lines, key=lambda line: line.baseline_y) for c in columns]
 
 
-def _merge_fits(column: Column, box: PageBox, pitch: float, *, settings: CropSettings) -> bool:
-    """Whether ``column`` plus ``box``, scaled to fit the widest bucket, keeps a legible line pitch."""
-    span = column.width_with(box) + pitch
-    scale = min(1.0, settings.line_spacing / pitch, WIDEST_BUCKET / span)
+def _merge_fits(span: float, pitch: float, *, settings: CropSettings) -> bool:
+    """Whether a merged column of padded width ``span``, scaled to fit the widest bucket, keeps a legible pitch."""
+    scale = min(settings.natural_scale(pitch), WIDEST_BUCKET / span)
     return pitch * scale >= settings.min_merge_spacing
 
 
@@ -311,7 +328,9 @@ def crops_for_page(
     if pitch is not None:
         page = PageGeometry(size=size, pitch=pitch, lines=lines, rules=list(rules))
         crops = [
-            crop for column in text_columns(regions, pitch, settings) for crop in _column_crops(column, page, settings)
+            crop
+            for column in text_columns(regions, pitch, settings, page_width=size[0])
+            for crop in _column_crops(column, page, settings)
         ]
         if crops:
             return crops
@@ -344,10 +363,10 @@ def _column_crops(lines: list[TextLine], page: PageGeometry, settings: CropSetti
 
 def _column_frame(lines: list[TextLine], page: PageGeometry, settings: CropSettings) -> ColumnFrame | None:
     """The column's padded x-range and the bucket nearest its width at the target pitch; None if unfit."""
-    pad = 0.5 * page.pitch
-    left = max(0.0, min(line.box[0] for line in lines) - pad)
-    right = min(float(page.size[0]), max(line.box[2] for line in lines) + pad)
-    natural_width = (right - left) * min(1.0, settings.line_spacing / page.pitch)
+    left, right = padded_range(
+        min(line.box[0] for line in lines), max(line.box[2] for line in lines), page.pitch, page.size[0]
+    )
+    natural_width = (right - left) * settings.natural_scale(page.pitch)
     fitting = [b for b in BUCKETS if b[1] * (right - left) / b[0] <= page.size[1]]
     if natural_width < settings.min_width or not fitting:
         return None
