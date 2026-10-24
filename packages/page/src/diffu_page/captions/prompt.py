@@ -21,8 +21,26 @@ from diffu_page.crops.geometry import Crop, LayoutBox
 from diffu_page.layout.model import ROLE_NAMES, CellRef, LineKind, PageBox, Production, TextLine
 
 NUMBER_WORDS = ("no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten")
-HANDWRITTEN_PAGE = "handwritten page"
-PRINTED_PAGE = "page printed and filled in by hand"  # a crop that holds printed lines
+
+
+def scan_words(greyscale: bool) -> str:
+    """The scan, as a caption names it."""
+    return "greyscale archival scan" if greyscale else "archival scan"
+
+
+def page_words(printed: bool) -> str:
+    """The page, as a caption names it: one printed and filled in by hand when the crop holds printed lines."""
+    return "page printed and filled in by hand" if printed else "handwritten page"
+
+
+def dated(provenance: Provenance) -> str:
+    """The years an archive's caption gives, after its title (none without years)."""
+    return f", dated {provenance.years}" if provenance.years else ""
+
+
+def scan_ending(greyscale: bool) -> str:
+    """How the paper row ends: saying the scan is greyscale when it is."""
+    return ", in a greyscale scan." if greyscale else "."
 
 
 class LayoutRow(BaseModel):
@@ -96,14 +114,13 @@ def phrases_for(style: PageStyle, *, printed: bool) -> StylePhrases:
     """The style phrases of a crop's caption in ``style``; ``printed``: the crop holds printed lines, so its page is
     printed and filled in by hand."""
     provenance, look = style.provenance, style.look
-    scan = "greyscale archival scan" if look.greyscale else "archival scan"
-    when = f", dated {provenance.years}" if provenance.years else ""
-    page = PRINTED_PAGE if printed else HANDWRITTEN_PAGE
-    greyscale = ", in a greyscale scan." if look.greyscale else "."
     return StylePhrases(
-        opening=f"Flat, evenly lit {scan} of a {page} from {provenance.title}{when}. The {look.paper} paper <paper_1>",
+        opening=(
+            f"Flat, evenly lit {scan_words(look.greyscale)} of a {page_words(printed)} from {provenance.title}"
+            f"{dated(provenance)}. The {look.paper} paper <paper_1>"
+        ),
         ink_opening=f"cursive handwriting in {look.ink} ink",
-        paper_row=f"Aged {look.paper} paper of a bound archival volume{greyscale}",
+        paper_row=f"Aged {look.paper} paper of a bound archival volume{scan_ending(look.greyscale)}",
         ink_line=f"cursive script in {look.ink} ink.",
         ink_fragment=f"handwritten line in {look.ink} ink, cut off",
     )

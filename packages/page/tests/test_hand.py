@@ -44,7 +44,8 @@ def test_hand_look_measures_the_strokes_drawn_in_the_line_boxes(slant: int) -> N
 
 
 def test_hand_look_of_line_boxes_without_ink_measures_no_hand_and_no_ink() -> None:
-    page = Image.new("RGB", (600, 400), PAPER)
+    grain = np.random.default_rng(0).normal(0, 4, (400, 600, 1))  # paper's own texture, which Otsu would split
+    page = Image.fromarray(np.clip(np.array(PAPER) + grain, 0, 255).astype(np.uint8))
 
     hand = hand_look(page, LINE_BOXES)
 

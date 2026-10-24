@@ -26,15 +26,17 @@ from pydantic import BaseModel, Field
 
 from diffu_page.captions.hand import ReferenceLook, hand_words, slant_words
 from diffu_page.captions.prompt import (
-    HANDWRITTEN_PAGE,
-    PRINTED_PAGE,
     CaptionTemplate,
     LineRecord,
     PageStyle,
     StylePhrases,
     caption_text,
+    dated,
     holds_print,
+    page_words,
     phrases_for,
+    scan_ending,
+    scan_words,
 )
 from diffu_page.captions.records import CropRecord
 from diffu_page.crops.geometry import LayoutBox
@@ -81,10 +83,6 @@ def _phrases(style: PageStyle, parts: CaptionParts) -> StylePhrases:
     return phrases_for(style, printed=parts.printed)
 
 
-def _page(parts: CaptionParts) -> str:
-    return PRINTED_PAGE if parts.printed else HANDWRITTEN_PAGE
-
-
 # An image-edit record draws a new page in <ref_image_0>'s hand: FLUX.3's i2i_bbox annotation (diffusers
 # modular_pipelines/flux3/prompt_upsampler.py), "Create a ..." when the references are drawn into a new frame and
 # the reference cited by its token where content is taken from it.
@@ -92,8 +90,8 @@ def _from_reference(parts: CaptionParts) -> StylePhrases:
     """The image-edit phrases that take the hand, ink and paper from the reference and name none of them."""
     return StylePhrases(
         opening=(
-            f"Create a flat, evenly lit archival scan of a new {_page(parts)} in the hand, ink and paper of "
-            "<ref_image_0>. The paper <paper_1>"
+            f"Create a flat, evenly lit archival scan of a new {page_words(parts.printed)} in the hand, ink and paper "
+            "of <ref_image_0>. The paper <paper_1>"
         ),
         ink_opening="cursive handwriting",
         paper_row="Aged paper of a bound archival volume.",
@@ -109,12 +107,11 @@ def _from_reference_naming(parts: CaptionParts) -> StylePhrases:
     """The image-edit phrases that also name the caption's archive, years, scan, paper and ink."""
     style = parts.style
     words = _phrases(style, parts)
-    scan = "greyscale archival scan" if style.look.greyscale else "archival scan"
-    when = f", dated {style.provenance.years}" if style.provenance.years else ""
     return StylePhrases(
         opening=(
-            f"Create a flat, evenly lit {scan} of a new {_page(parts)} from {style.provenance.title}{when}, in the "
-            f"hand, ink and paper of <ref_image_0>. The {style.look.paper} paper <paper_1>"
+            f"Create a flat, evenly lit {scan_words(style.look.greyscale)} of a new {page_words(parts.printed)} from "
+            f"{style.provenance.title}{dated(style.provenance)}, in the hand, ink and paper of <ref_image_0>. "
+            f"The {style.look.paper} paper <paper_1>"
         ),
         ink_opening=words.ink_opening,
         paper_row=words.paper_row,
@@ -133,16 +130,15 @@ def _from_reference_describing(parts: CaptionParts, reference: ReferenceLook) ->
     scan, hand = reference.scan, reference.hand
     if hand.ink is None or hand.paper is None:
         raise ValueError(f"a reference without a measured ink and paper colour ({hand}) cannot be described")
-    kind = "greyscale archival scan" if scan.greyscale else "archival scan"
-    greyscale = ", in a greyscale scan." if scan.greyscale else "."
     return StylePhrases(
         opening=(
-            f"Create a flat, evenly lit {kind} of a new {_page(parts)} in the hand, ink and paper of <ref_image_0>: "
+            f"Create a flat, evenly lit {scan_words(scan.greyscale)} of a new {page_words(parts.printed)} in the hand, "
+            "ink and paper of <ref_image_0>: "
             f"{hand_words(hand)}, in {scan.ink} ink ({hand.ink}) on {scan.paper} paper ({hand.paper}). "
             f"The paper <paper_1>"
         ),
         ink_opening=f"cursive handwriting in {scan.ink} ink",
-        paper_row=f"Aged {scan.paper} paper ({hand.paper}) of a bound archival volume{greyscale}",
+        paper_row=f"Aged {scan.paper} paper ({hand.paper}) of a bound archival volume{scan_ending(scan.greyscale)}",
         ink_line=f"{slant_words(hand.slant)} in the reference's hand, in {scan.ink} ink.",
         ink_fragment=f"handwritten line in {scan.ink} ink, cut off",
     )

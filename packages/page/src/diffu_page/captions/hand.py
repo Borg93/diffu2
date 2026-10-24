@@ -86,14 +86,27 @@ class HandDistance(BaseModel):
     ink: float | None
 
 
+# Grey levels between the two sides of Otsu's split below which an image holds no ink: Otsu always splits, paper grain
+# too. Real line boxes measure 47 and up (1,265 boxes of five collections' held-out windows, faint inks and microfilm
+# among them; median 105), blank paper about 16 (24 Oct).
+MIN_INK_CONTRAST = 30
+
+
 def otsu(gray: np.ndarray) -> int:
-    """The grey level that best separates ink from paper (Otsu's threshold): pixels below it are ink."""
+    """The grey level that best separates ink from paper (Otsu's threshold): pixels below it are ink. 0 (no pixel is
+    ink) when the two sides differ by less than ``MIN_INK_CONTRAST``; an image of one grey level is all ink if it is
+    black, else all paper."""
     hist = np.bincount(np.clip(gray, 0, 255).astype(np.uint8).ravel(), minlength=256).astype(np.float64)
     p = hist / hist.sum()
     omega = np.cumsum(p)
     mu = np.cumsum(p * np.arange(256))
     between = (mu[-1] * omega - mu) ** 2 / np.maximum(omega * (1 - omega), 1e-12)
-    return int(np.argmax(between)) + 1  # the split puts the argmax level itself on the ink side
+    split = int(np.argmax(between))  # the last level on the ink side
+    ink_share = omega[split]
+    if ink_share <= 0 or ink_share >= 1:  # one grey level: no split to judge
+        return split + 1
+    ink_mean, paper_mean = mu[split] / ink_share, (mu[-1] - mu[split]) / (1 - ink_share)
+    return split + 1 if paper_mean - ink_mean >= MIN_INK_CONTRAST else 0
 
 
 def hand_look(image: Image.Image, boxes: Sequence[Box]) -> HandLook:

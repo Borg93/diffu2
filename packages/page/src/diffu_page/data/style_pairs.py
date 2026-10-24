@@ -46,7 +46,7 @@ import os
 import random
 import re
 from collections import defaultdict
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable
 from concurrent.futures import ProcessPoolExecutor
 from enum import StrEnum
 from pathlib import Path
@@ -382,11 +382,11 @@ def by_example_picks(picked: list[ExamplePair]) -> list[EvalPick]:
     ]
 
 
-def write_set(directory: Path, placements: list[Placement], manifest: str, rows: Sequence[BaseModel]) -> None:
-    """A set's files placed in ``directory`` and its rows written to ``directory / manifest``."""
-    for placement in placements:
+def write_set(directory: Path, built: TrainingSet | EvalSet, *, manifest: str) -> None:
+    """A built set's files placed in ``directory`` and its rows written to ``directory / manifest``."""
+    for placement in built.placements:
         placement.place(directory)
-    write_jsonl(directory / manifest, rows)
+    write_jsonl(directory / manifest, built.rows)
 
 
 def captions(
@@ -470,12 +470,11 @@ def main(
     held = eval_set([EvalPick(pair=pair) for pair in held_pairs], eval_caption)
     examples = eval_set(by_example_picks(example_pairs), eval_caption)
 
-    write_set(out, pairs.placements, "train.jsonl", pairs.rows)
+    write_set(out, pairs, manifest="train.jsonl")
     if val_pairs:
-        spread = validation.spread(val_pairs)
-        write_set(out / "val", spread.placements, "val.jsonl", spread.rows)
-    write_set(out / "val_eval", held.placements, "metadata.jsonl", held.rows)
-    write_set(out / "by_example", examples.placements, "metadata.jsonl", examples.rows)
+        write_set(out / "val", validation.spread(val_pairs), manifest="val.jsonl")
+    write_set(out / "val_eval", held, manifest="metadata.jsonl")
+    write_set(out / "by_example", examples, manifest="metadata.jsonl")
     build = BuildRecord(
         crops=str(crops),
         caption=caption,
