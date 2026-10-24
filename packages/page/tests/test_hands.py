@@ -24,7 +24,7 @@ def _run(directory: Path, drawing: Image.Image) -> Path:
     """An evaluate run that drew one crop as ``drawing``."""
     (directory / "generated").mkdir(parents=True)
     drawing.save(directory / "generated" / "000.png")
-    summary = Summary(n=1, failed=0, gen_cer=0.5, real_cer=0.1, loras={}, guidance=4.0, steps=2)
+    summary = Summary(n=1, failed=0, gen_cer=0.5, real_cer=0.1, loras={})
     sample = CropResult(index=0, file="a.jpg", gen_cer=0.5, real_cer=0.1, lines=[])
     (directory / "results.json").write_text(Results(summary=summary, samples=[sample], failed={}).model_dump_json())
     return directory
