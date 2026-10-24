@@ -4,14 +4,15 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from collections.abc import Callable
+from typing import Any
 
 import pytest
 
 from diffu_page.captions.hand import HandLook, ReferenceLook
 from diffu_page.captions.look import ScanLook
-from diffu_page.captions.prompt import Caption, caption_for
-from diffu_page.captions.provenance import Provenance, provenance_of
+from diffu_page.captions.prompt import caption_for
+from diffu_page.captions.provenance import Provenance
 from diffu_page.captions.records import CropRecord
 from diffu_page.captions.restyle import (
     CaptionParts,
@@ -22,37 +23,24 @@ from diffu_page.captions.restyle import (
     named_edit_caption,
     restyle,
 )
-from diffu_page.crops.geometry import Crop, CropSettings, crops_for_page
-from diffu_page.layout import load_xml_layout
-from diffu_page.plan import regions_of
+from diffu_page.crops.geometry import Crop
 
-COLLECTION = "GT-RA_arjeplogs_tingslag_20260220"
-PAGE = f"{COLLECTION}/Arjeplogs tingslag (1690-1700)/Arjeplogs tingslag (1690-1700)/page/0001.xml"
-LOOK = ScanLook(greyscale=False, paper="yellowed", ink="dark brown")
-
-
-@pytest.fixture
-def crop(body_and_notes_page: Path) -> Crop:
-    layout = load_xml_layout(body_and_notes_page)
-    return crops_for_page(regions_of(layout), (layout.width, layout.height), CropSettings())[0]
+CITED_LINES = (  # how the paragraph cites body_and_notes_crop's lines, after their ink
+    ", including two marginal note lines; the main text runs from top to bottom: <Sv_Text_1> <Sv_Text_2> <Sv_Text_3> "
+    "<Sv_Text_5> <Sv_Text_7> <Sv_Text_8> <Sv_Text_9> <Sv_Text_10> <Sv_Text_11> <Sv_Text_12> <Sv_Text_13> <Sv_Text_14>. "
+    "Two marginal note lines <Sv_Text_4> <Sv_Text_6> sit in the left margin."
+)
 
 
-def _record(crop: Crop, caption: Caption) -> CropRecord:
-    return CropRecord(
-        file_name="crop.jpg",
-        caption=caption.text,
-        collection=COLLECTION,
-        page=PAGE,
-        width=crop.size[0],
-        height=crop.size[1],
-        **LOOK.model_dump(),
-        layout=caption.layout,
-        lines=caption.lines,
-    )
+def _paragraph_and_rows(caption: str) -> tuple[str, list[dict[str, Any]]]:
+    split = caption.index(" [{")
+    return caption[:split], json.loads(caption[split + 1 :])
 
 
-def test_restyle_writes_the_caption_the_crop_gets_in_the_target_style(crop: Crop) -> None:
-    record = _record(crop, caption_for(crop, provenance_of(COLLECTION, Path(PAGE)), LOOK))
+def test_restyle_writes_the_caption_the_crop_gets_in_the_target_style(
+    body_and_notes_crop: Crop, make_record: Callable[..., CropRecord]
+) -> None:
+    record = make_record(body_and_notes_crop)
     target = Style(
         provenance=Provenance(title="the court records of Jämtlands domsaga", years="1650"),
         look=ScanLook(greyscale=True, paper="light grey", ink="black"),
@@ -60,36 +48,55 @@ def test_restyle_writes_the_caption_the_crop_gets_in_the_target_style(crop: Crop
 
     restyled = restyle(CaptionParts.of(record), target)
 
-    assert restyled == caption_for(crop, target.provenance, target.look).text
+    assert restyled == caption_for(body_and_notes_crop, target.provenance, target.look).text
 
 
-def test_edit_caption_takes_only_the_paper_from_the_reference_and_names_no_style(crop: Crop) -> None:
-    record = _record(crop, caption_for(crop, provenance_of(COLLECTION, Path(PAGE)), LOOK))
+def test_edit_caption_takes_only_the_paper_from_the_reference_and_names_no_style(
+    body_and_notes_crop: Crop, make_record: Callable[..., CropRecord]
+) -> None:
+    record = make_record(body_and_notes_crop)
 
     caption = edit_caption(CaptionParts.of(record))
 
-    rows = json.loads(caption[caption.index(" [{") + 1 :])
-    assert [(row["id"], row["from"]) for row in rows] == [
-        (row.id, "ref_image_0" if row.id == "paper_1" else "target") for row in record.layout
+    paragraph, rows = _paragraph_and_rows(caption)
+    assert paragraph == (
+        "Create a flat, evenly lit archival scan of a new handwritten page in the hand, ink and paper of <ref_image_0>. "
+        f"The paper <paper_1> carries 14 lines of cursive handwriting{CITED_LINES}"
+    )
+    assert rows == [
+        {
+            "id": "paper_1",
+            "from": "ref_image_0",
+            "src_bbox": [0, 0, 1000, 1000],
+            "tgt_bbox": [0, 0, 1000, 1000],
+            "desc": "Aged paper of a bound archival volume.",
+        },
+        *(
+            {
+                "id": row.id,
+                "from": "target",
+                "src_bbox": None,
+                "tgt_bbox": row.bbox,
+                "desc": row.desc.replace("in dark brown ink.", "in the reference's hand and ink."),
+            }
+            for row in record.layout[1:]
+        ),
     ]
-    assert "<ref_image_0>" in caption
-    assert "Arjeplogs" not in caption
-    assert "dark brown" not in caption
-    assert "yellowed" not in caption
 
 
-def test_named_edit_caption_names_the_archive_and_look_beside_the_reference(crop: Crop) -> None:
-    provenance = provenance_of(COLLECTION, Path(PAGE))
-    record = _record(crop, caption_for(crop, provenance, LOOK))
+def test_named_edit_caption_names_the_archive_and_look_beside_the_reference(
+    body_and_notes_crop: Crop, make_record: Callable[..., CropRecord]
+) -> None:
+    record = make_record(body_and_notes_crop)
 
     caption = named_edit_caption(CaptionParts.of(record))
 
-    paragraph, rows = caption[: caption.index(" [{")], json.loads(caption[caption.index(" [{") + 1 :])
-    assert paragraph.startswith(
-        f"Create a flat, evenly lit archival scan of a new handwritten page from {provenance.title}, dated "
-        f"{provenance.years}, in the hand, ink and paper of <ref_image_0>. The yellowed paper <paper_1> carries "
+    paragraph, rows = _paragraph_and_rows(caption)
+    assert paragraph == (
+        "Create a flat, evenly lit archival scan of a new handwritten page from the court minutes of Arjeplogs "
+        "tingslag, dated 1690–1700, in the hand, ink and paper of <ref_image_0>. The yellowed paper <paper_1> carries "
+        f"14 lines of cursive handwriting in dark brown ink{CITED_LINES}"
     )
-    assert "cursive handwriting in dark brown ink" in paragraph
     assert [(row["id"], row["from"]) for row in rows] == [
         (row.id, "ref_image_0" if row.id == "paper_1" else "target") for row in record.layout
     ]
@@ -98,8 +105,10 @@ def test_named_edit_caption_names_the_archive_and_look_beside_the_reference(crop
     }
 
 
-def test_described_edit_caption_describes_the_reference_in_place_of_the_crop_style(crop: Crop) -> None:
-    record = _record(crop, caption_for(crop, provenance_of(COLLECTION, Path(PAGE)), LOOK))
+def test_described_edit_caption_describes_the_reference_in_place_of_the_crop_style(
+    body_and_notes_crop: Crop, make_record: Callable[..., CropRecord]
+) -> None:
+    record = make_record(body_and_notes_crop)
     reference = ReferenceLook(
         scan=ScanLook(greyscale=True, paper="light grey", ink="black"),
         hand=HandLook(slant=33.0, stroke=0.05, letters=0.3, density=0.2, paper="#C8C8C8", ink="#202020"),
@@ -107,13 +116,13 @@ def test_described_edit_caption_describes_the_reference_in_place_of_the_crop_sty
 
     caption = described_edit_caption(CaptionParts.of(record), reference)
 
-    paragraph, rows = caption[: caption.index(" [{")], json.loads(caption[caption.index(" [{") + 1 :])
-    assert paragraph.startswith(
+    paragraph, rows = _paragraph_and_rows(caption)
+    assert paragraph == (
         "Create a flat, evenly lit greyscale archival scan of a new handwritten page in the hand, ink and paper of "
         "<ref_image_0>: right-slanted cursive, about 35 degrees, with fine pen strokes and medium-sized, closely "
-        "packed letters, in black ink (#202020) on light grey paper (#C8C8C8). The paper <paper_1> carries "
+        "packed letters, in black ink (#202020) on light grey paper (#C8C8C8). The paper <paper_1> carries 14 lines "
+        f"of cursive handwriting in black ink{CITED_LINES}"
     )
-    assert "cursive handwriting in black ink" in paragraph
     assert [(row["id"], row["from"], row["desc"]) for row in rows if row["id"] == "paper_1"] == [
         ("paper_1", "ref_image_0", "Aged light grey paper (#C8C8C8) of a bound archival volume, in a greyscale scan.")
     ]
@@ -135,17 +144,22 @@ def test_described_edit_caption_describes_the_reference_in_place_of_the_crop_sty
         ),
     ],
 )
-def test_described_edit_caption_refuses_a_reference_whose_hand_was_not_measured(crop: Crop, hand: HandLook) -> None:
-    record = _record(crop, caption_for(crop, provenance_of(COLLECTION, Path(PAGE)), LOOK))
+def test_described_edit_caption_refuses_a_reference_whose_hand_was_not_measured(
+    body_and_notes_crop: Crop, make_record: Callable[..., CropRecord], hand: HandLook
+) -> None:
+    record = make_record(body_and_notes_crop)
     reference = ReferenceLook(scan=ScanLook(greyscale=True, paper="light grey", ink="black"), hand=hand)
 
     with pytest.raises(ValueError, match="cannot be described"):
         described_edit_caption(CaptionParts.of(record), reference)
 
 
-def test_restyle_refuses_a_caption_an_older_provenance_rule_wrote(crop: Crop) -> None:
+def test_restyle_refuses_a_caption_an_older_provenance_rule_wrote(
+    body_and_notes_crop: Crop, make_record: Callable[..., CropRecord]
+) -> None:
+    record = make_record(body_and_notes_crop)
     raw_folder_name = Provenance(title="RA arjeplogs tingslag 20260220", years="1690–1700")  # before collection_key
-    record = _record(crop, caption_for(crop, raw_folder_name, LOOK))
+    stale = record.model_copy(update={"caption": caption_for(body_and_notes_crop, raw_folder_name, record.look).text})
 
     with pytest.raises(StaleCaptionError, match="crop.jpg: its caption was not written by the current caption grammar"):
-        restyle(CaptionParts.of(record), Style.of(record))
+        restyle(CaptionParts.of(stale), Style.of(stale))

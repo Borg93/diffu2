@@ -33,9 +33,7 @@ from PIL import Image
 from pydantic import BaseModel
 
 from diffu_page.captions.look import scan_look
-from diffu_page.captions.prompt import caption_for
-from diffu_page.captions.provenance import Provenance, provenance_of
-from diffu_page.captions.records import CropRecord
+from diffu_page.captions.records import CropRecord, crop_record
 from diffu_page.crops.geometry import CropSettings, Line, Region, crops_for_page
 from diffu_page.layout.page_xml import iter_local, local_name, read_page_line, reading_order_index, region_role
 from diffu_page.output import console, err_console
@@ -58,11 +56,6 @@ class Page(BaseModel):
     def id(self) -> str:
         """A stable id from the page's path."""
         return hashlib.sha1(str(self.path).encode()).hexdigest()[:12]
-
-    @property
-    def provenance(self) -> Provenance:
-        """The archive and years the page's captions name."""
-        return provenance_of(self.collection, self.path)
 
 
 def parse_page(xml_path: Path) -> list[Region]:
@@ -149,21 +142,9 @@ def write_crops(page: Page, split_dir: Path, settings: CropSettings) -> list[Cro
         left, top, right, bottom = (round(v) for v in crop.rect)
         tile = scan.crop((left, top, right, bottom)).resize(crop.size, Image.Resampling.LANCZOS)
         name = f"{page.collection}_{page.id}_{k:02d}.jpg"
-        look = scan_look(tile)
-        caption = caption_for(crop, page.provenance, look)
         tiles.append(tile)
         records.append(
-            CropRecord(
-                file_name=name,
-                caption=caption.text,
-                collection=page.collection,
-                page=str(page.path),
-                width=crop.size[0],
-                height=crop.size[1],
-                **look.model_dump(),
-                layout=caption.layout,
-                lines=caption.lines,
-            )
+            crop_record(crop, file_name=name, collection=page.collection, page=page.path, look=scan_look(tile))
         )
     for tile, record in zip(tiles, records, strict=True):
         tile.save(split_dir / record.file_name, quality=95)

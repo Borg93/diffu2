@@ -426,15 +426,32 @@ Any scanned page as a template, not only pages with PAGE/ALTO ground truth.
       (the ground truth has no SeparatorRegions; cells are not rules), a filter for the 135 of 249 tables whose cells
       overlap (Sollentuna's "tables" are paragraphs in one cell), then table crops for the per-hand LoRAs.
 - [ ] Typeface for printed lines: PAGE TextStyle@fontFamily (Fraktur vs antiqua) into the printed row's desc.
-- [ ] Forms and mixed print/hand need data (none in our ground truth); the form probe (5 templates of our own,
-      untrained FLUX.3 and Pahlman's LoRA) tests whether FLUX.3 draws them at all.
+- [x] Form probe (24 Oct; runs/form_probe, scratchpad forms/): 5 PAGE templates of our own that exist nowhere in the
+      ground truth (a letter on printed letterhead, a moving certificate, a list form, a parish register, a ledger),
+      every line printed or handwritten, every ruled line given; untrained FLUX.3 and Pahlman's hand LoRA, one seed.
+      Both draw every form: print in the typeface asked for (Fraktur, antiqua), handwriting in the fields and cells,
+      the rules and grids where the boxes put them, line CER mostly 0. Pahlman's LoRA, trained on handwriting only,
+      keeps the print printed and moves only the hand (to its 1820s hand) and the paper (darker, a scan edge, faint
+      show-through); untrained FLUX.3 writes modern copperplate on clean paper. The LoRA adds faint ruling under the
+      list form's rows that was not asked for.
+- [ ] Read-back of printed lines: the handwriting TrOCR reads the correctly drawn letterhead "KONGL. MAJ:TS OCH
+      RIKETS KAMMARRÄTT" at CER 0.71-0.80, and one-letter cells ("a", "b", "i") at 1.0, so a printed line or a single
+      character would be tagged unclear though drawn right. Read printed lines with a printed-text OCR (or don't tag
+      them from this read-back), and skip the unclear tag for lines too short to read.
+- [ ] Forms and mixed print/hand still need ground truth to train and evaluate on (none in ours).
 - [ ] Damage test queued (queue_day3.sh): the Landskapshandlingar LoRA retrained on captions stating each window's
       measured damage (scratchpad damage/: damage.py, caption_damage.py; data_flux3/hand_landskap_dmg). The current
       LoRA draws the film edges (0.36/0.39/0.33 where real 0.38/0.39/0.41) but not the stains (blotches 0.01 vs 0.12)
       or the uneven light (0.10 vs 0.17); untrained FLUX.3 none of them.
-- [ ] Per-hand LoRA from few pages (queue_day3.sh, running from 09:46): the 1715 recipe on the windows of 4 and
-      of 10 of its 36 training pages (data_flux3/hand_overstat_p4, _p10; 23 and 44 windows), 350 steps, checkpoints
-      175 and 350 on the same 8 held-out windows, beside the 36-page LoRA's eval_step_349.
+- [x] Per-hand LoRA from few pages (24 Oct): the 1715 recipe on the windows of 4 and of 10 of its 36 training
+      pages (data_flux3/hand_overstat_p4, _p10; 23 and 44 windows), 350 steps of 2, on the same 8 held-out windows
+      as the 36-page LoRA. Four pages carry the hand: by eye the three LoRAs draw one writer, and the writer
+      identifier (retrained with these lines) names the 4-page LoRA's lines as the 1715 writer 82% of the time, the
+      10-page 81%, the 36-page 81% (83% at 700 steps), the real held-out lines 87%, untrained FLUX.3 0%. Medians of
+      the hand distance (slant, stroke, letters, density): 4 pages 1.5/0.16/0.82/0.15, 36 pages 2.0/0.16/0.51/0.12,
+      untrained 11.0/0.25/0.26/0.24; letter size is the one measure that more pages improve. One drawing of the
+      10-page LoRA wrote the archive's name from the caption's prose ("records of Överståthållarämbetet") as a
+      heading: a caption word outside the layout rows can be drawn.
 - [ ] The tokenizer warns that FLUX.3 Klein's Qwen3-VL tokenizer has "an incorrect regex pattern" (transformers;
       `fix_mistral_regex=True`). Training and generation load it alike, so they agree; check whether BFL's pipeline
       sets the flag before changing it.
@@ -569,10 +586,16 @@ Data checks (23 Oct evening, the user's question: any leakage or anything weird?
 The order of the speed work (24 Oct): measure, then restructure for Ray Data, then speed up one change at a time, all
 on the Spark; the cluster only once the tests are done. Every change is gated on the hand measures and writer-ID of the
 same held-out windows (CER as information only).
-- [ ] 1. A baseline profile (queued after the form probe): seconds per crop-pipeline block for six held-out 1715 windows
-      with their LoRA (crop prompt, reference grid, text encoder, denoise, decode, read-back, labels), peak GPU memory
-      per crop, and a torch trace of two crops for Perfetto, read with pytorch-skills' profile-model. The script times
-      each Modular Diffusers block through a thin wrapper, no change to the pipeline.
+- [x] 1. Baseline profile (24 Oct; runs/profile_baseline, scratchpad profile/): six held-out 1715 windows with their
+      LoRA (FLUX.3 Klein Base, bf16, the LoRA unfused, 50 steps, guidance 4, torch 2.14.1 on the GB10). Median 142 s a
+      1024x1024 crop: denoise 139 s (98%; 100 transformer passes at ~1.4 s), read-back 1.6 s, decode 0.8 s, text
+      encoder 0.35 s, the rest ~0; peak 25.3 GB. The trace of two crops (6.1M events, streamed with
+      profile/stream_trace.py, never loaded whole) has the GPU 99.6% busy inside denoise: GPU-bound, no host gaps.
+      Kernel time: GEMM 43.5%, elementwise 35.8% (~350 us each: bandwidth-bound at the GB10's ~273 GB/s), cat/copy
+      9.0% (rotary's neg/cat/stack, fp32 casts), attention 8.6% (flash, 3 ms a call), norms 3.0%. 92,400 of the
+      141,547 aten::mm calls are the unfused rank-32 LoRA (231 adapted linears a pass); with each one's scale and add
+      over the full output, about 15% of every pass is the LoRA. The order holds: fuse the LoRA, then a regional
+      compile (it fuses the elementwise chains, the GB10's other half), then FP8 for the GEMMs.
 - [ ] 2. From that breakdown, the Ray Data split below: which steps get their own stage and resources, and the batch
       size per bucket; built on the Spark with a local Ray and measured with Ray Data's own stats before and after.
 - [ ] 3. Memory: a snapshot of one crop (pytorch-skills' analyze-memory-snapshot), to size the actors per 96 GB card
@@ -664,11 +687,19 @@ Still to do, in this order (the refactors after the fixes, the user's call):
       the runner (no Ray work yet): diffu-run keeps its own option copies and `_jpeg` until then.
 - [ ] 9, 10, 14: one PAGE/ALTO reader, one caption grammar and Style, one page-space line model. Each gated on a
       golden diff (crop rects, slots and caption bytes identical, old code against new) over every set a LoRA was
-      trained on.
-- [ ] Smaller: one `crop_record` for build_crops and test_plan; run text split at blank lines before refill; probe_set
-      refuses references whose words never differ; each package's direct imports declared; shared crop and record
-      fixtures; exact paragraphs in the plain edit-caption test; stale docstrings and YAML references to missing files;
-      generation checks `--reference-caption` against the LoRA's build.json.
+      trained on: scratchpad golden/golden.py re-cuts the 1,952 pages of layout_crops_v2/v2b (11,827 crops; the
+      val_eval rows are val's). Measured 24 Oct, before item 9: regions_of(load_xml_layout(page)) given the scan's
+      size cuts every page exactly as build_crops' parse_page (rects, sizes, captions, layout rows and line records
+      identical; only `block` gains its values), so item 9 can switch build_crops over. Generation differs on 35 of
+      the pages only because their PAGE files declare a stale size (FNA_1500, the Finnish letter recipes,
+      Byggningskollegium, Kääriäinen: the coordinates are in the scan's pixels, the crops are aligned): build_crops
+      must keep cutting at the scan's size. No trained page has a SeparatorRegion or a TableRegion.
+- [x] Smaller (24 Oct): one `crop_record` for build_crops and the tests; refill takes the text and starts a paragraph
+      after a blank line; probe_set refuses references whose words never differ; diffu-train and diffu-studio declare
+      their direct imports; shared crop and record fixtures in conftest; exact paragraphs in the edit-caption tests;
+      stale docstrings and references to missing files.
+- [ ] Still open: diffu-runner's direct imports (numpy, pillow) wait for the Ray work; generation checks
+      `--reference-caption` against the LoRA's build.json once training copies build.json into its checkpoints.
 
 ## Quality control of generated windows (plan of 24 Oct: embeddings, a tabular model, a VLM judge)
 

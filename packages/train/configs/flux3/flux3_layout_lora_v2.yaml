@@ -1,10 +1,10 @@
 # FLUX.3 Klein Base text-to-image LoRA, v2 data (layout_crops_v2: collection, years and scan type in the
-# captions, margin notes / headings / page numbers with their roles, bucket-exact crops); otherwise the
-# pilot recipe (flux3_layout_lora.yaml) with 1600 steps for the larger, style-labelled set.
+# captions, margin notes / headings / page numbers with their roles, bucket-exact crops), trained for 1600 steps
+# for the larger, style-labelled set.
 # Based on NeMo AutoModel's examples/diffusion/finetune/flux3_t2i_flow_lora.yaml (the validated T2I LoRA
 # recipe) with the overrides its FLUX.3 guide uses for few GPUs: native attention, activation checkpointing,
 # no FSDP2 prefetch. Paths come from the environment: DIFFU_REPO (this repo, required) and FLUX3_MODEL (the
-# model directory, required). run_v2.sh sets both; by hand, from the NeMo AutoModel repo root:
+# model directory, required). By hand, from the NeMo AutoModel repo root:
 #
 #   DIFFU_REPO=~/Desktop/repos/diffu2 uv run --no-sync torchrun --nproc-per-node=1 \
 #       examples/diffusion/finetune/finetune.py -c $DIFFU_REPO/packages/train/configs/flux3/flux3_layout_lora_v2.yaml

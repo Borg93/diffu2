@@ -50,7 +50,9 @@ class RefillStep(ModularPipelineBlocks):
     def inputs(self) -> list[InputParam]:
         return [
             InputParam("layout", type_hint=Layout, required=True, description="The page to write into."),
-            InputParam("text", type_hint=str, required=True, description="The running text to write."),
+            InputParam(
+                "text", type_hint=str, required=True, description="The running text; a blank line ends a paragraph."
+            ),
         ]
 
     @property
@@ -60,7 +62,7 @@ class RefillStep(ModularPipelineBlocks):
 
     def __call__(self, components: ModularPipeline, state: PipelineState) -> tuple[ModularPipeline, PipelineState]:
         block_state = self.get_block_state(state)
-        block_state.layout = refill(block_state.layout, [block_state.text])
+        block_state.layout = refill(block_state.layout, block_state.text)
         self.set_block_state(state, block_state)
         return components, state
 

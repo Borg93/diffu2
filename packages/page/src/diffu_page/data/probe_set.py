@@ -57,9 +57,17 @@ def words_of(look: ReferenceLook) -> tuple[str, ...]:
 
 
 def furthest(look: ReferenceLook, others: list[ReferenceLook]) -> int:
-    """The index of the look in ``others`` named by the most words unlike ``look``'s, the first of a tie."""
+    """The index of the look in ``others`` named by the most words unlike ``look``'s, the first of a tie.
+
+    Raises:
+        ValueError: If every look in ``others`` is named by ``look``'s words: none of them contradicts it.
+    """
     own = words_of(look)
-    return max(range(len(others)), key=lambda k: sum(a != b for a, b in zip(own, words_of(others[k]), strict=True)))
+    unlike = [sum(a != b for a, b in zip(own, words_of(other), strict=True)) for other in others]
+    best = max(range(len(others)), key=unlike.__getitem__)
+    if unlike[best] == 0:
+        raise ValueError(f"no reference is named by other words than this one ({', '.join(own)}): none contradicts it")
+    return best
 
 
 def probe_rows(

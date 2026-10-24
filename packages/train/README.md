@@ -10,5 +10,5 @@ NeMo AutoModel glue.
   - `python -m diffu_train.cache_diffu`: diffu's training cache, made with diffu's own encoder steps (`diffu_train.cache`).
   - `python -m diffu_train.cache_pairs`: the v3 pair caching.
 
-The commands and `diffu_train.nemo` run only in NeMo AutoModel's environment. `diffu_train.cache` also runs and is
-tested here.
+The commands and `diffu_train.nemo` run only in NeMo AutoModel's environment. `diffu_train.cache`, `diffu_train.dropout`
+and `diffu_train.sampler` also run and are tested here.

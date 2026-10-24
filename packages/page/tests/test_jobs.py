@@ -31,7 +31,7 @@ def test_crop_jobs_plan_page_two_of_a_run_into_named_and_seeded_crops(
 
     jobs = crop_jobs(page, 2)
 
-    plans = plan_page(refill(load_xml_layout(body_and_notes_page), [TEXT]), STYLE, reference=reference)
+    plans = plan_page(refill(load_xml_layout(body_and_notes_page), TEXT), STYLE, reference=reference)
     image = reference.image if reference else None
     assert [(job.name, job.seed, job.plan, job.reference) for job in jobs] == [
         (f"002_page_{k}", 2005 + k, plan, image) for k, plan in enumerate(plans)

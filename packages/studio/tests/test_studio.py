@@ -50,7 +50,7 @@ def test_studio_draws_one_plan_of_a_page_with_every_drawer(studio: gr.Workflow, 
     )
 
     layout = load_xml_layout(two_column_page)
-    plans = plan_page(refill(layout, [running_text(layout)]), STYLE)
+    plans = plan_page(refill(layout, running_text(layout)), STYLE)
     names = [f"two_columns_{k}" for k in range(len(plans))]
     widths = [round(plan.width * SHEET_HEIGHT / plan.height) for plan in plans]
     for sheet, archive in ((flux3_sheet, flux3_zip), (diffu_sheet, diffu_zip)):

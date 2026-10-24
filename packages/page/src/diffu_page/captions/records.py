@@ -7,8 +7,9 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from diffu_page.captions.look import ScanLook
-from diffu_page.captions.prompt import LayoutRow, LineRecord
+from diffu_page.captions.prompt import LayoutRow, LineRecord, caption_for
 from diffu_page.captions.provenance import Provenance, provenance_of
+from diffu_page.crops.geometry import Crop
 
 
 class CropRecord(BaseModel):
@@ -35,6 +36,30 @@ class CropRecord(BaseModel):
     def look(self) -> ScanLook:
         """The scan, paper and ink the crop's caption names."""
         return ScanLook(greyscale=self.greyscale, paper=self.paper, ink=self.ink)
+
+
+def crop_record(crop: Crop, *, file_name: str, collection: str, page: Path, look: ScanLook) -> CropRecord:
+    """A training crop's record: its caption, naming the page's archive and years and the scan's look, and its lines.
+
+    Args:
+        crop: The crop.
+        file_name: The crop's image, in its split's directory.
+        collection: The GT collection the page belongs to.
+        page: The page's PAGE XML, relative to the GT root (``<collection>/<volume>/<volume>/page/<name>.xml``).
+        look: The scan, paper and ink of the crop's image.
+    """
+    caption = caption_for(crop, provenance_of(collection, page), look)
+    return CropRecord(
+        file_name=file_name,
+        caption=caption.text,
+        collection=collection,
+        page=str(page),
+        width=crop.size[0],
+        height=crop.size[1],
+        **look.model_dump(),
+        layout=caption.layout,
+        lines=caption.lines,
+    )
 
 
 def read_records(metadata: Path) -> list[CropRecord]:

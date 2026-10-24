@@ -10,9 +10,8 @@ chosen by its directory alone. Two sets of blocks are built:
   and decode -> ``LineReadbackStep`` -> ``LabelExportStep``. A crop plan in; its image, per-line read-back and labels
   out. The model's auto blocks pick text-to-image or reference-conditioned denoising from the inputs (``image``).
 
-Every entry point plans pages with :class:`PagePlanBlocks` and draws each crop on its own with the crop pipeline
-(:func:`draw_crop`): ``diffu-generate`` one after another, diffu-runner on GPU actors, diffu-studio per draw node,
-``diffu-evaluate`` from stored plans.
+A page is planned with :class:`PagePlanBlocks`, and each of its crops is drawn on its own with the crop pipeline
+(:func:`draw_crop`).
 """
 
 from __future__ import annotations

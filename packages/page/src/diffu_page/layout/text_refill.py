@@ -1,22 +1,24 @@
 """Refill a layout with new text: keep a page's line geometry, write other words in its lines.
 
 A replayed ALTO/PAGE layout (:func:`load_xml_layout`) carries the page's own transcription. :func:`refill` streams
-new paragraphs through its running-text lines in reading order, each line taking about as many characters as it
-held: the page's writing density (characters per pixel of line width, the median over its fuller lines) times the
-line's width. A paragraph ends on a short line and the next starts on a fresh one; a word that overruns a line is
-split with ``¬``, as the Swedish GT transcriptions mark a break, when both halves keep at least ``MIN_SPLIT``
-characters. Lines beyond the end of the text are dropped. Other regions (page numbers, marginalia, headings,
-catchwords) keep their own text.
+new text through its running-text lines in reading order, each line taking about as many characters as it held: the
+page's writing density (characters per pixel of line width, the median over its fuller lines) times the line's
+width. A blank line in the text ends a paragraph on a short line and the next starts on a fresh one; a word that
+overruns a line is split with ``¬``, as the Swedish GT transcriptions mark a break, when both halves keep at least
+``MIN_SPLIT`` characters. Lines beyond the end of the text are dropped. Other regions (page numbers, marginalia,
+headings, catchwords) keep their own text.
 """
 
 from __future__ import annotations
 
+import re
 import statistics
 from collections import deque
 from collections.abc import Iterable
 
 from diffu_page.layout.model import RUNNING_TEXT, Layout, LineBox
 
+PARAGRAPH_BREAK = re.compile(r"\n\s*\n")  # a blank line, spaces and all
 SPLIT_MARK = "¬"
 MIN_SPLIT = 3  # characters each half of a split word keeps
 DENSITY_MIN_CHARS = 10  # lines shorter than this (paragraph ends, numbers) don't measure the writing density
@@ -76,29 +78,29 @@ def running_text(layout: Layout) -> str:
     return lines.replace(f"{SPLIT_MARK} ", "")
 
 
-def refill(layout: Layout, paragraphs: Iterable[str]) -> Layout:
+def refill(layout: Layout, text: str) -> Layout:
     """Rewrite a layout's running-text lines with new text, in reading order.
 
     Args:
         layout: The page; its running-text lines (region ``body``) set the line widths and the writing
             density, its other lines keep their text.
-        paragraphs: The new text, one paragraph per item; blank items are skipped.
+        text: The new text; a blank line ends a paragraph, and the next starts on a fresh line.
 
     Returns:
-        The layout with each running-text line holding the next part of ``paragraphs``, and without the
+        The layout with each running-text line holding the next part of ``text``, and without the
         running-text lines left over when the text runs out.
 
     Raises:
         ValueError: If no running-text line holds ``DENSITY_MIN_CHARS`` characters to measure the density by.
     """
     density = _writing_density([box for box in layout.boxes if box.region == RUNNING_TEXT])
-    text = _TextStream(paragraphs)
+    stream = _TextStream(PARAGRAPH_BREAK.split(text))
     boxes: list[LineBox] = []
     for box in layout.boxes:
         if box.region != RUNNING_TEXT:
             boxes.append(box)
             continue
-        line = text.line(max(1, round(density * box.w)))
+        line = stream.line(max(1, round(density * box.w)))
         if line is not None:
             boxes.append(box.model_copy(update={"text": line}))
     return layout.model_copy(update={"boxes": boxes})

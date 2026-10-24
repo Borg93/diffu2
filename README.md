@@ -34,11 +34,13 @@ conftest.py     test fixtures shared by the members (pages, diffusers' tiny FLUX
 
 ## Environments
 
-- **This repo** (`uv sync` builds diffu and every member): CPU checks and tests, `CUDA_VISIBLE_DEVICES="" uv run pytest`. The
-  generation tests run diffusers' tiny FLUX.3 test model end to end on CPU.
+- **This repo** (`uv sync` builds diffu and every member): CPU checks and tests, `CUDA_VISIBLE_DEVICES="" uv run pytest -n 4`.
+  The generation tests run diffusers' tiny FLUX.3 test model end to end on CPU.
 - **NeMo AutoModel** (`~/Desktop/repos/Automodel/.venv-managed`): training and the GPU jobs.
   `jobs/setup_nemo_env.sh` installs diffu, diffu-page and diffu-train into it.
-- `FLUX3_MODEL`: the FLUX.3 Klein directory (default `~/Desktop/repos/flux3-models/flux-3-image-klein-base`).
+- `FLUX3_MODEL`: the FLUX.3 Klein directory, from the environment or a `.env` file; there is no default, so a command
+  that needs it and is given no `--model` stops before loading anything. `DIFFU_HTR_MODEL` and `DIFFU_HTR_REVISION`
+  choose the read-back model and pin its revision.
 
 ## Generate
 

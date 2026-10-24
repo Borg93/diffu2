@@ -46,37 +46,45 @@ def _body_texts(layout: Layout) -> list[str]:
 
 def test_refill_flows_the_text_through_the_lines_at_the_pages_density_dropping_the_rest(page: Layout):
     paragraph = "Anno sextonhundra och tjugo den femte dagen i maj kom for ratten bonden Olof Jonsson ifran Rodon"
-    assert _body_texts(refill(page, [paragraph])) == [
+    assert _body_texts(refill(page, paragraph)) == [
         "Anno sextonhundra och tjugo den femte",
         "dagen i maj kom for ratten bonden Olof",
         "Jonsson ifran Rodon",
     ]
 
 
-def test_refill_starts_each_paragraph_on_a_fresh_line(page: Layout):
-    assert _body_texts(refill(page, ["Kort stycke.", "Nasta stycke borjar har"])) == [
-        "Kort stycke.",
-        "Nasta stycke borjar har",
-    ]
+@pytest.mark.parametrize(
+    ("text", "lines"),
+    [
+        pytest.param(
+            "Kort stycke.\n\nNasta stycke borjar har", ["Kort stycke.", "Nasta stycke borjar har"], id="blank-line"
+        ),
+        pytest.param(
+            "Kort stycke.\nNasta stycke borjar har", ["Kort stycke. Nasta stycke borjar har"], id="line-break"
+        ),
+    ],
+)
+def test_refill_starts_a_paragraph_after_a_blank_line_on_a_fresh_line(page: Layout, text: str, lines: list[str]):
+    assert _body_texts(refill(page, text)) == lines
 
 
 def test_refill_splits_a_word_that_overruns_its_line_with_the_break_mark(page: Layout):
     paragraph = "Anno 1620 kom landskapshandlingssammanstallningen fram"
-    assert _body_texts(refill(page, [paragraph])) == [
+    assert _body_texts(refill(page, paragraph)) == [
         "Anno 1620 kom landskapshandlingssammans¬",
         "tallningen fram",
     ]
 
 
 def test_refill_keeps_the_other_regions_text(page: Layout):
-    others = {box.region: box.text for box in refill(page, ["Ny text."]).boxes if box.region != "body"}
+    others = {box.region: box.text for box in refill(page, "Ny text.").boxes if box.region != "body"}
     assert others == {"page-number": "61.", "marginalia": "No 12"}
 
 
 def test_refill_refuses_a_page_without_a_line_to_measure(page: Layout):
     short = page.model_copy(update={"boxes": [box.model_copy(update={"text": "kort"}) for box in page.boxes]})
     with pytest.raises(ValueError, match="writing density"):
-        refill(short, ["Ny text."])
+        refill(short, "Ny text.")
 
 
 def test_running_text_joins_the_words_a_transcription_breaks_across_lines():

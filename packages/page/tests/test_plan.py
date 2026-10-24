@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -12,11 +13,11 @@ from PIL import Image
 from pydantic import ValidationError
 
 from diffu_page.captions.look import ScanLook
-from diffu_page.captions.prompt import LineRecord, caption_for, caption_order
-from diffu_page.captions.provenance import Provenance, provenance_of
+from diffu_page.captions.prompt import LineRecord, caption_order
+from diffu_page.captions.provenance import Provenance
 from diffu_page.captions.records import CropRecord
 from diffu_page.captions.restyle import ReferenceCaption
-from diffu_page.crops.geometry import Crop, CropSettings, crops_for_page
+from diffu_page.crops.geometry import CropSettings, crops_for_page
 from diffu_page.data.build_crops import parse_page
 from diffu_page.data.style_pairs import Pair, Scan, captions, describe
 from diffu_page.layout import load_xml_layout
@@ -112,48 +113,28 @@ def test_crop_plan_refuses_a_reading_order_that_is_not_an_order_of_its_lines() -
         CropPlan(rect=(0, 0, 10, 10), width=10, height=10, caption="", lines=lines, reading_order=[1, 1])
 
 
-COLLECTION = "GT-RA_arjeplogs_tingslag_20260220"
-PAGE = f"{COLLECTION}/Arjeplogs tingslag (1690-1700)/Arjeplogs tingslag (1690-1700)/page/0001.xml"
-LOOK = ScanLook(greyscale=False, paper="yellowed", ink="dark brown")
 REFERENCE_LINES = [[100, 50, 300, 950], [500, 50, 700, 950]]
 
 
-def _record(crop: Crop, name: str) -> CropRecord:
-    """The crop as diffu_page.data.build_crops records it for training."""
-    caption = caption_for(crop, provenance_of(COLLECTION, Path(PAGE)), LOOK)
-    return CropRecord(
-        file_name=name,
-        caption=caption.text,
-        collection=COLLECTION,
-        page=PAGE,
-        width=crop.size[0],
-        height=crop.size[1],
-        **LOOK.model_dump(),
-        layout=caption.layout,
-        lines=caption.lines,
-    )
-
-
 def test_plan_captions_a_page_drawn_from_a_reference_as_its_training_pairs_were_captioned(
-    body_and_notes_page: Path, tmp_path: Path
+    body_and_notes_page: Path, make_record: Callable[..., CropRecord], tmp_path: Path
 ) -> None:
     layout = load_xml_layout(body_and_notes_page)
     image = tmp_path / "reference.png"
     Image.linear_gradient("L").rotate(30).convert("RGB").save(image)
     reference = Reference(image=image, caption=ReferenceCaption.DESCRIBED, lines=REFERENCE_LINES)
-    style = PageStyle(provenance=provenance_of(COLLECTION, Path(PAGE)), look=LOOK)
+    crops = crops_for_page(regions_of(layout), (layout.width, layout.height), CropSettings())
+    records = [make_record(crop, f"{k}.jpg") for k, crop in enumerate(crops)]  # the page's crops as trained on
+    style = PageStyle(provenance=records[0].provenance, look=records[0].look)
 
     planned = plan_page(layout, style, reference=reference)
 
-    crops = crops_for_page(regions_of(layout), (layout.width, layout.height), CropSettings())
     lines = [LineRecord(id=f"Sv_Text_{k}", text="", role="", bbox=box) for k, box in enumerate(REFERENCE_LINES, 1)]
-    reference_crop = Scan(record=_record(crops[0], "reference.png").model_copy(update={"lines": lines}), path=image)
+    reference_crop = Scan(record=make_record(crops[0], "reference.png").model_copy(update={"lines": lines}), path=image)
     training, _ = captions(
         ReferenceCaption.DESCRIBED, named_fraction=0.0, seed=0, looks={image: describe(reference_crop)}
     )
     assert [plan.caption for plan in planned] == [
-        training(
-            Pair(target=Scan(record=_record(crop, f"{k}.jpg"), path=tmp_path / f"{k}.jpg"), reference=reference_crop)
-        )
-        for k, crop in enumerate(crops)
+        training(Pair(target=Scan(record=record, path=tmp_path / record.file_name), reference=reference_crop))
+        for record in records
     ]

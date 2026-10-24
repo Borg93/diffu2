@@ -8,7 +8,10 @@ license = "Apache-2.0"
 authors = [{ name = "Gabriel Borg" }]
 dependencies = [
     "diffu-page",
+    "diffusers",
     "gradio>=6",
+    "gradio-client>=2",
+    "pillow>=11",
     "pydantic>=2",
     "typer>=0.20",
 ]

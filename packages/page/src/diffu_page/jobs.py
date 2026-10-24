@@ -23,7 +23,8 @@ SEED_STRIDE = 1000  # page i of a run draws crop k from noise seed  seed + SEED_
 
 
 class PageJob(BaseModel):
-    """A template page to redraw: its PAGE/ALTO file, the text to write into it, the style and the noise seed.
+    """A template page to redraw: its PAGE/ALTO file, the text to write into it (a blank line ends a paragraph), the
+    style and the noise seed.
 
     ``reference`` is a crop whose hand, ink and paper to draw in (style by example) instead of the style's archive;
     the crops are then captioned as its LoRA was trained. ``id``, a plain file name such as a content hash, names and

@@ -1,5 +1,6 @@
-"""Fixtures shared by every workspace member's tests: PAGE pages to plan and draw, diffusers' tiny FLUX.3 test model,
-and a tiny diffu model repo (a tiny Qwen3.5, a tiny Qwen-Image VAE and a tiny transformer, all random weights)."""
+"""Fixtures shared by every workspace member's tests: PAGE pages to plan and draw, a crop and its training record,
+diffusers' tiny FLUX.3 test model, and a tiny diffu model repo (a tiny Qwen3.5, a tiny Qwen-Image VAE and a tiny
+transformer, all random weights)."""
 
 from __future__ import annotations
 
@@ -15,6 +16,11 @@ from safetensors.torch import save_file
 
 from diffu.configs import DiffuConfig, DiffuSize, TextEncoder, Vae
 from diffu.init import write_model_repo
+from diffu_page.captions.look import ScanLook
+from diffu_page.captions.records import CropRecord, crop_record
+from diffu_page.crops.geometry import Crop, CropSettings, crops_for_page
+from diffu_page.layout import load_xml_layout
+from diffu_page.plan import regions_of
 
 
 def _line(line_id: str, x0: int, x1: int, baseline: int, text: str) -> str:
@@ -174,6 +180,31 @@ def certificate_page(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+@pytest.fixture
+def body_and_notes_crop(body_and_notes_page: Path) -> Crop:
+    """The first training crop of ``body_and_notes_page``."""
+    layout = load_xml_layout(body_and_notes_page)
+    return crops_for_page(regions_of(layout), (layout.width, layout.height), CropSettings())[0]
+
+
+ARJEPLOGS = "GT-RA_arjeplogs_tingslag_20260220"
+ARJEPLOGS_PAGES = Path(ARJEPLOGS, "Arjeplogs tingslag (1690-1700)", "Arjeplogs tingslag (1690-1700)", "page")
+YELLOWED = ScanLook(greyscale=False, paper="yellowed", ink="dark brown")
+
+type RecordMaker = Callable[..., CropRecord]
+
+
+@pytest.fixture
+def make_record() -> RecordMaker:
+    """Records a crop as build_crops does, as a crop of a page of Arjeplogs tingslag (1690-1700) scanned yellowed with
+    dark brown ink: ``make_record(crop, file_name="crop.jpg", page="0001.xml")``."""
+
+    def make(crop: Crop, file_name: str = "crop.jpg", page: str = "0001.xml") -> CropRecord:
+        return crop_record(crop, file_name=file_name, collection=ARJEPLOGS, page=ARJEPLOGS_PAGES / page, look=YELLOWED)
+
+    return make
 
 
 TINY_FLUX3 = "hf-internal-testing/tiny-flux3-image-modular"

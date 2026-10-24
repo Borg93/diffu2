@@ -1,9 +1,9 @@
 """Guidance toward the reference image as well as the caption.
 
 FLUX.3's classifier-free guidance compares the drawing with and without the caption. The reference image's tokens go
-into both passes, so guidance never pushes toward the reference: the caption decides, and the reference barely counts
-(the control probe of 23 Oct 2026). :class:`ReferenceGuidance` adds a third pass, without the caption and without the
-reference, and combines the three as InstructPix2Pix combines its text and image scales (Brooks et al., 2023)::
+into both passes, so guidance never pushes toward the reference: the caption decides, and the reference barely
+counts. :class:`ReferenceGuidance` adds a third pass, without the caption and without the reference, and combines the
+three as InstructPix2Pix combines its text and image scales (Brooks et al., 2023)::
 
     pred = pred_unreferenced
            + reference_scale * (pred_uncond - pred_unreferenced)
