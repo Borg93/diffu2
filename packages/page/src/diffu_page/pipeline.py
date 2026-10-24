@@ -158,6 +158,8 @@ class DrawSettings(BaseModel):
         device: Where the components run.
         fuse_loras: Fuse the LoRAs into the transformer's weights at load and drop their adapter layers: no LoRA
             matmuls per step, and the transformer can be compiled; the LoRAs can't be switched or rescaled after.
+        compile_blocks: Compile the transformer's repeated blocks (torch.compile, diffusers' regional compilation) at
+            load; the first crop pays for the compilation. A run with LoRAs must fuse them first.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -170,6 +172,7 @@ class DrawSettings(BaseModel):
     text_layers: tuple[int, ...] | None = None
     device: str = "cuda"
     fuse_loras: bool = False
+    compile_blocks: bool = False
 
     def pipeline_inputs(self) -> dict[str, object]:
         """The settings a pipeline takes per call, by input name (the guidance scale and device are set at load)."""
@@ -189,15 +192,17 @@ def load_pipeline(model: Path, blocks: BlocksFor, *, loras: dict[str, Path], set
     """``blocks`` built for the model at ``model``, its components loaded (VAE in float32, the rest in bfloat16) on
     ``settings.device``, the guider at ``settings.guidance_scale`` (and ``settings.reference_guidance_scale``) and every
     LoRA of ``loras`` (NeMo ``model/`` dirs by adapter name) active, fused into the transformer when
-    ``settings.fuse_loras``.
+    ``settings.fuse_loras``, and the transformer's repeated blocks compiled when ``settings.compile_blocks``.
 
     Everything that can be checked without the model is checked first: its family, the guider and every LoRA.
 
     Raises:
-        ValueError: If the model's blocks have no family, the guidance settings do not go together, or a LoRA would
-            load at the wrong strength.
+        ValueError: If the model's blocks have no family, the guidance settings do not go together, a LoRA would
+            load at the wrong strength, or the blocks are to be compiled around LoRAs that are not fused.
         RuntimeError: If a component failed to load.
     """
+    if settings.compile_blocks and loras and not settings.fuse_loras:
+        raise ValueError("compile the transformer's blocks only with its LoRAs fused: adapter layers would recompile")
     family = model_family(model)
     guider = ReferenceGuidance(
         guidance_scale=settings.guidance_scale, reference_scale=settings.reference_guidance_scale
@@ -216,6 +221,8 @@ def load_pipeline(model: Path, blocks: BlocksFor, *, loras: dict[str, Path], set
     if loras and settings.fuse_loras:
         pipe.fuse_lora(adapter_names=list(loras))
         pipe.unload_lora_weights()
+    if settings.compile_blocks:
+        pipe.transformer.compile_repeated_blocks(fullgraph=True)
     return pipe
 
 

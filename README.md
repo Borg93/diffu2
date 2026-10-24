@@ -53,7 +53,8 @@ cd ~/Desktop/repos/Automodel && ~/Desktop/repos/diffu2/jobs/spark_guard.sh --nee
 ```
 
 `--fuse-loras` fuses the LoRAs into the transformer's weights at load: faster for a run that keeps one LoRA (the
-studio keeps its adapters, to switch them per drawer).
+studio keeps its adapters, to switch them per drawer). `--compile-blocks` then compiles the transformer's repeated
+blocks (the first crop pays for the compilation).
 
 In Python, a page planned into crop jobs on CPU, then each crop drawn by the crop pipeline (a Modular Diffusers
 pipeline), as diffu-generate and diffu-runner do it:

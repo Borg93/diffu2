@@ -607,7 +607,14 @@ same held-out windows (CER as information only).
       (FLUX.3 actors, read-back actors).
 - [ ] 4. Then the diffusers speedups, one at a time in the ranked order of the 23 Oct audit (fuse the LoRA, regional
       compile, attention backend, FP8, guidance on part of the steps, fewer steps), plus diffusers' caching of
-      transformer blocks between steps; graph breaks found with pytorch-skills' debug-graph-breaks.
+      transformer blocks between steps; graph breaks found with pytorch-skills' debug-graph-breaks. Built 24 Oct:
+      `--fuse-loras` and `--compile-blocks` (FLUX.3's two repeated block types compile with fullgraph on CPU, no
+      graph break; the tiny model draws within 2/255 of eager). Queued after diffu E1 (scratchpad
+      profile/run_fuse_ab.sh): the profile fused and fused + compiled, and the 8 held-out windows evaluated as an
+      adapter, fused and fused + compiled, against the 142 s baseline and its hand measures.
+- [ ] diffu's Qwen3.5 text encoder runs its linear-attention layers in transformers' reference PyTorch code
+      (`causal-conv1d` and `flash-linear-attention` are not installed in either environment): caching 2,000 crops
+      took about 40 minutes. Installing them into NeMo's environment needs the user's approval.
 
 Where our code does the compute engine's job, or blocks Ray Data from optimizing (review of 24 Oct; the boundary is
 right in diffu_runner: Ray does fan-out, actors, retries and the sink; these are the exceptions). On the Spark with a

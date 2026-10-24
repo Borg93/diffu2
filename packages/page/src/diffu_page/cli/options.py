@@ -30,6 +30,9 @@ Format = Annotated[LabelFormat, typer.Option("--format", help="the labels' forma
 FuseLoras = Annotated[
     bool, typer.Option(help="fuse the LoRAs into the transformer at load: faster, but they can't be switched after")
 ]
+CompileBlocks = Annotated[
+    bool, typer.Option(help="compile the transformer's repeated blocks at load (the first crop pays); fuse LoRAs first")
+]
 
 
 class Lora(BaseModel):

@@ -193,6 +193,32 @@ def test_model_family_refuses_a_repo_whose_blocks_it_does_not_know(
         model_family(tmp_path)
 
 
+def test_load_pipeline_compiles_exactly_the_transformers_repeated_blocks(tiny_flux3: Path) -> None:
+    settings = TINY_SETTINGS.model_copy(update={"compile_blocks": True})
+
+    pipe = load_pipeline(tiny_flux3, crop_blocks, loras={}, settings=settings)
+
+    compiled = {
+        type(module).__name__
+        for module in pipe.transformer.modules()
+        if getattr(module, "_compiled_call_impl", None) is not None  # what nn.Module.compile sets
+    }
+    assert compiled == {"Flux3ModeTransformerBlock", "Flux3SingleTransformerBlock"}
+
+
+def test_load_pipeline_refuses_to_compile_the_blocks_around_unfused_loras(
+    tiny_flux3: Path, crop_pipe: ModularPipeline, write_nemo_lora: Callable[..., Path]
+) -> None:
+    linear = crop_pipe.transformer.get_submodule(LORA_MODULE)
+    lora_dir = write_nemo_lora(
+        LORA_MODULE, torch.zeros(2, linear.in_features), torch.zeros(linear.out_features, 2), alpha=2
+    )
+    settings = TINY_SETTINGS.model_copy(update={"compile_blocks": True})
+
+    with pytest.raises(ValueError, match="only with its LoRAs fused"):
+        load_pipeline(tiny_flux3, crop_blocks, loras={"v2": lora_dir}, settings=settings)
+
+
 def test_draw_crop_refuses_reference_guidance_on_a_crop_without_a_reference(crop_pipe: ModularPipeline) -> None:
     guided = TINY_SETTINGS.model_copy(update={"reference_guidance_scale": 3.0})
 

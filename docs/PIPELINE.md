@@ -48,7 +48,8 @@ PAGE/ALTO page ──► LoadLayout ──► Refill ──► PlanCrops ──�
      reference only ever reaches the crops beside the captions planned for it).
    LoRAs load through the model's own LoRA loader as named adapters (`diffu_page.lora`); with
    `DrawSettings.fuse_loras` (`--fuse-loras`) they are fused into the transformer's weights at load, which saves the
-   adapters' matmuls every step but fixes the LoRAs for the run.
+   adapters' matmuls every step but fixes the LoRAs for the run; `DrawSettings.compile_blocks` (`--compile-blocks`)
+   then compiles the transformer's repeated blocks (diffusers' regional compilation), refused around unfused LoRAs.
 
 Who runs what: every entry point plans pages with `PagePlanBlocks` and draws each crop on its own with the crop
 pipeline (`pipeline.draw_crop`). `diffu-generate` draws a run's crop jobs one after another; diffu-runner plans pages

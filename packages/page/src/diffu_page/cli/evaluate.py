@@ -25,6 +25,7 @@ from pydantic import BaseModel
 from diffu_page.captions.prompt import LineRecord
 from diffu_page.cli.options import (
     DEFAULTS,
+    CompileBlocks,
     Device,
     FuseLoras,
     Guidance,
@@ -165,6 +166,7 @@ def evaluate(
     device: Device = DEFAULTS.device,
     max_line_cer: MaxLineCer = DEFAULTS.max_line_cer,
     fuse_loras: FuseLoras = DEFAULTS.fuse_loras,
+    compile_blocks: CompileBlocks = DEFAULTS.compile_blocks,
 ) -> None:
     """Draw held-out crops from their stored captions and compare their read-back with the real crops'."""
     model = required_model(model)
@@ -183,6 +185,7 @@ def evaluate(
         text_layers=tuple(text_layer) if text_layer else None,
         device=device,
         fuse_loras=fuse_loras,
+        compile_blocks=compile_blocks,
     )
     pipe = load_pipeline(model, crop_blocks, loras=loras, settings=draw_settings)
     samples: list[CropResult] = []

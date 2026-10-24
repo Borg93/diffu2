@@ -34,6 +34,7 @@ from diffu_page.captions.provenance import Provenance
 from diffu_page.captions.restyle import ReferenceCaption
 from diffu_page.cli.options import (
     DEFAULTS,
+    CompileBlocks,
     Device,
     Format,
     FuseLoras,
@@ -192,6 +193,7 @@ def generate(
     max_line_cer: MaxLineCer = DEFAULTS.max_line_cer,
     label_format: Format = DEFAULTS.label_format,
     fuse_loras: FuseLoras = DEFAULTS.fuse_loras,
+    compile_blocks: CompileBlocks = DEFAULTS.compile_blocks,
     profile_dir: Annotated[Path | None, typer.Option("--profile", help="write a trace of crops 2-3 here")] = None,
 ) -> None:
     """Draw every crop of the templates, refilled with the text, in the given style."""
@@ -215,6 +217,7 @@ def generate(
         text_layers=tuple(text_layer) if text_layer else None,
         device=device,
         fuse_loras=fuse_loras,
+        compile_blocks=compile_blocks,
     )
     loras = {adapter.name: adapter.path for adapter in lora or []}
     pipe = load_pipeline(model, crop_blocks, loras=loras, settings=draw_settings)
