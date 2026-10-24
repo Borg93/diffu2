@@ -20,6 +20,7 @@ import gradio as gr
 import typer
 
 from diffu_page.captions.look import ScanLook
+from diffu_page.captions.prompt import PageStyle
 from diffu_page.captions.provenance import Provenance
 from diffu_page.cli.options import (
     DEFAULTS,
@@ -33,7 +34,6 @@ from diffu_page.cli.options import (
 )
 from diffu_page.output import console
 from diffu_page.pipeline import DrawSettings
-from diffu_page.plan import PageStyle
 from diffu_page.settings import settings
 from diffu_studio.graph import studio_graph
 from diffu_studio.nodes import Drawer, load_draw_nodes, plan_node

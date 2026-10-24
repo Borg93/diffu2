@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from diffu_page.plan import PageStyle
+from diffu_page.captions.prompt import PageStyle
 
 type Node = dict[str, Any]
 

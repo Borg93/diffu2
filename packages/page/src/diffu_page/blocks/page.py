@@ -8,8 +8,9 @@ from typing import override
 
 from diffusers.modular_pipelines import InputParam, ModularPipeline, ModularPipelineBlocks, OutputParam, PipelineState
 
+from diffu_page.captions.prompt import PageStyle
 from diffu_page.layout import Layout, load_xml_layout, refill
-from diffu_page.plan import PageStyle, Reference, plan_page
+from diffu_page.plan import Reference, plan_page
 
 
 class LoadLayoutStep(ModularPipelineBlocks):

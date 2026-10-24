@@ -13,14 +13,14 @@ from PIL import Image
 from pydantic import ValidationError
 
 from diffu_page.captions.look import ScanLook
-from diffu_page.captions.prompt import LineRecord
+from diffu_page.captions.prompt import LineRecord, PageStyle
 from diffu_page.captions.provenance import Provenance
 from diffu_page.captions.records import CropRecord
 from diffu_page.captions.restyle import ReferenceCaption
 from diffu_page.crops.geometry import CropSettings, crops_for_page, regions_of
 from diffu_page.data.style_pairs import Pair, Scan, captions, describe
 from diffu_page.layout import load_xml_layout
-from diffu_page.plan import CropPlan, PageStyle, Reference, plan_page
+from diffu_page.plan import CropPlan, Reference, plan_page
 
 STYLE = PageStyle(
     provenance=Provenance(title="the archive", years="1700"),
@@ -146,7 +146,7 @@ def test_plan_captions_a_page_drawn_from_a_reference_as_its_training_pairs_were_
     reference = Reference(image=image, caption=ReferenceCaption.DESCRIBED, lines=REFERENCE_LINES)
     crops = crops_for_page(regions_of(layout), (layout.width, layout.height), CropSettings())
     records = [make_record(crop, f"{k}.jpg") for k, crop in enumerate(crops)]  # the page's crops as trained on
-    style = PageStyle(provenance=records[0].provenance, look=records[0].look)
+    style = records[0].style
 
     planned = plan_page(layout, style, reference=reference)
 

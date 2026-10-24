@@ -15,9 +15,10 @@ from PIL import Image
 from pydantic import BaseModel, field_validator
 
 from diffu_page.blocks import crop_identity
+from diffu_page.captions.prompt import PageStyle
 from diffu_page.output import plain_file_name
 from diffu_page.pipeline import PagePlanBlocks
-from diffu_page.plan import CropPlan, PageStyle, Reference
+from diffu_page.plan import CropPlan, Reference
 
 SEED_STRIDE = 1000  # page i of a run draws crop k from noise seed  seed + SEED_STRIDE * i + k
 

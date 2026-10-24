@@ -22,7 +22,7 @@ from typer.testing import CliRunner
 
 from diffu_page.blocks import DrawnCrop
 from diffu_page.captions.look import ScanLook
-from diffu_page.captions.prompt import LineRecord
+from diffu_page.captions.prompt import LineRecord, PageStyle
 from diffu_page.captions.provenance import Provenance
 from diffu_page.cli.generate import Summary, draw_pages
 from diffu_page.cli.generate import app as generate_app
@@ -30,7 +30,7 @@ from diffu_page.crops.grid import as_reference
 from diffu_page.jobs import PageJob
 from diffu_page.lora import ADAPTER_CONFIG, ADAPTER_WEIGHTS, nemo_lora_state_dict
 from diffu_page.pipeline import DrawSettings, crop_blocks, draw_crop, load_pipeline, model_family
-from diffu_page.plan import CropPlan, PageStyle, Reference
+from diffu_page.plan import CropPlan, Reference
 
 TINY_SETTINGS = DrawSettings(steps=2, guidance_scale=4.0, text_layers=(1,), device="cpu")
 LORA_MODULE = "single_transformer_blocks.0.attn.to_q"

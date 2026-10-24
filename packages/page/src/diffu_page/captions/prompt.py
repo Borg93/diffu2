@@ -56,6 +56,16 @@ class Caption(BaseModel):
     lines: list[LineRecord]
 
 
+class PageStyle(BaseModel):
+    """The style a page is drawn in, named in every crop's caption: its archive (and years) and its scan, paper and
+    ink."""
+
+    model_config = ConfigDict(frozen=True)
+
+    provenance: Provenance
+    look: ScanLook
+
+
 class StylePhrases(BaseModel):
     """The phrases of a caption that carry its style (the archive, its years, the scan, the paper and the ink): the
     one place the caption grammar spells them, so restyling (:mod:`diffu_page.captions.restyle`) rewrites exactly
@@ -70,9 +80,10 @@ class StylePhrases(BaseModel):
     ink_fragment: str  # inside every fragment row's desc
 
 
-def phrases_for(provenance: Provenance, look: ScanLook, *, printed: bool) -> StylePhrases:
-    """The style phrases of a crop's caption in ``provenance`` and ``look``; ``printed``: the crop holds printed
-    lines, so its page is printed and filled in by hand."""
+def phrases_for(style: PageStyle, *, printed: bool) -> StylePhrases:
+    """The style phrases of a crop's caption in ``style``; ``printed``: the crop holds printed lines, so its page is
+    printed and filled in by hand."""
+    provenance, look = style.provenance, style.look
     scan = "greyscale archival scan" if look.greyscale else "archival scan"
     when = f", dated {provenance.years}" if provenance.years else ""
     page = PRINTED_PAGE if printed else HANDWRITTEN_PAGE
@@ -91,7 +102,7 @@ def caption_order(lines: list[TextLine]) -> list[TextLine]:
     return sorted(lines, key=lambda line: (line.baseline_y, line.box[0]))
 
 
-def caption_for(crop: Crop, provenance: Provenance, look: ScanLook) -> Caption:
+def caption_for(crop: Crop, style: PageStyle) -> Caption:
     """The FLUX.3 layout prompt of a crop: one English paragraph citing every element as ``<id>``, a space, the
     layout rows as JSON.
 
@@ -110,7 +121,7 @@ def caption_for(crop: Crop, provenance: Provenance, look: ScanLook) -> Caption:
     ]
     rules = [(f"rule_{k}", rule) for k, rule in enumerate(crop.rules, 1)]
     column = _body_column([line for _, line in numbered if line.cell is None] or [line for _, line in numbered])
-    phrases = phrases_for(provenance, look, printed=any(line.production is Production.PRINTED for _, line in numbered))
+    phrases = phrases_for(style, printed=any(line.production is Production.PRINTED for _, line in numbered))
     layout = [
         LayoutRow(id="paper_1", bbox=(0, 0, 1000, 1000), desc=phrases.paper_row),
         *(

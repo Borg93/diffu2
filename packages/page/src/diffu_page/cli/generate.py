@@ -30,6 +30,7 @@ from torch.profiler import ProfilerActivity, profile, schedule
 
 from diffu_page.blocks import DrawnCrop
 from diffu_page.captions.look import Ink, Paper, ScanLook
+from diffu_page.captions.prompt import PageStyle
 from diffu_page.captions.provenance import Provenance
 from diffu_page.captions.restyle import ReferenceCaption
 from diffu_page.cli.options import (
@@ -52,7 +53,7 @@ from diffu_page.jobs import CropJob, PageJob, crop_jobs
 from diffu_page.layout import load_xml_layout, running_text
 from diffu_page.output import JPEG_QUALITY, console, err_console
 from diffu_page.pipeline import DrawSettings, crop_blocks, draw_crop, load_pipeline
-from diffu_page.plan import PageStyle, Reference
+from diffu_page.plan import Reference
 from diffu_page.settings import settings
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")

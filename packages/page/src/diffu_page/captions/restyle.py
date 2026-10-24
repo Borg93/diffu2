@@ -1,8 +1,8 @@
 """The style words of a v2 layout caption: swap in another archive's, or hand them to a reference image.
 
 A caption from ``diffu_page.captions.prompt.caption_for`` is a paragraph, a space and the crop's layout rows as JSON.
-Its style comes from the crop's ``Provenance`` (archive, years) and ``ScanLook`` (scan, paper, ink), in the phrases
-``phrases_for`` spells: the paragraph's opening sentence and its ink, the paper row, the ink of every handwritten line
+Its style is a ``PageStyle`` (the archive and its years; the scan, paper and ink), in the phrases ``phrases_for``
+spells: the paragraph's opening sentence and its ink, the paper row, the ink of every handwritten line
 row and of every fragment row. A printed line's row (black printer's ink whatever the scan) and a ruled line's row
 name no style and are left as written. Each function here rewrites those phrases of a :class:`CaptionParts` (a
 training record's caption, or a planned crop's):
@@ -29,16 +29,15 @@ from enum import StrEnum
 from pydantic import BaseModel, Field, ValidationError
 
 from diffu_page.captions.hand import ReferenceLook, hand_words, slant_words
-from diffu_page.captions.look import ScanLook
 from diffu_page.captions.prompt import (
     HANDWRITTEN_PAGE,
     PRINTED_PAGE,
     LayoutRow,
     LineRecord,
+    PageStyle,
     StylePhrases,
     phrases_for,
 )
-from diffu_page.captions.provenance import Provenance
 from diffu_page.captions.records import CropRecord
 from diffu_page.crops.geometry import LayoutBox
 from diffu_page.layout.model import Production
@@ -57,18 +56,6 @@ class ReferenceCaption(StrEnum):
     DESCRIBED = "described"  # the reference's measured hand, ink and paper in words too (described_edit_caption: v3d)
 
 
-class Style(BaseModel):
-    """What a caption says a crop looks like: its archive (and years) and its scan, paper and ink."""
-
-    provenance: Provenance
-    look: ScanLook
-
-    @classmethod
-    def of(cls, record: CropRecord) -> Style:
-        """The style a crop record's caption names."""
-        return cls(provenance=record.provenance, look=record.look)
-
-
 class CaptionParts(BaseModel):
     """A v2 caption and what it was written from: its layout rows, its lines and the style it names."""
 
@@ -76,7 +63,7 @@ class CaptionParts(BaseModel):
     text: str
     layout: list[LayoutRow]
     lines: list[LineRecord]
-    style: Style
+    style: PageStyle
 
     @classmethod
     def of(cls, record: CropRecord) -> CaptionParts:
@@ -86,7 +73,7 @@ class CaptionParts(BaseModel):
             text=record.caption,
             layout=record.layout,
             lines=record.lines,
-            style=Style.of(record),
+            style=record.style,
         )
 
     @property
@@ -116,9 +103,9 @@ def _written_by_this_grammar(parts: CaptionParts) -> Generator[None]:
         ) from error
 
 
-def _phrases(style: Style, parts: CaptionParts) -> StylePhrases:
+def _phrases(style: PageStyle, parts: CaptionParts) -> StylePhrases:
     """The style phrases of ``parts``' caption written in ``style``."""
-    return phrases_for(style.provenance, style.look, printed=parts.printed)
+    return phrases_for(style, printed=parts.printed)
 
 
 def _page(parts: CaptionParts) -> str:
@@ -256,7 +243,7 @@ def _restyled_desc(row: LayoutRow, old: StylePhrases, new: StylePhrases, unstyle
     return row.desc.removesuffix(old.ink_line) + new.ink_line
 
 
-def restyle(parts: CaptionParts, target: Style) -> str:
+def restyle(parts: CaptionParts, target: PageStyle) -> str:
     """The caption naming ``target``'s archive, years, scan, paper and ink instead of its own."""
     old, new = _phrases(parts.style, parts), _phrases(target, parts)
     with _written_by_this_grammar(parts):

@@ -9,10 +9,11 @@ from pathlib import Path
 import pytest
 
 from diffu_page.captions.look import ScanLook
+from diffu_page.captions.prompt import PageStyle
 from diffu_page.captions.provenance import Provenance
 from diffu_page.jobs import PageJob, crop_jobs
 from diffu_page.layout import load_xml_layout, refill
-from diffu_page.plan import PageStyle, Reference, plan_page
+from diffu_page.plan import Reference, plan_page
 
 STYLE = PageStyle(
     provenance=Provenance(title="the archive", years="1700"), look=ScanLook(greyscale=False, paper="cream", ink="brown")

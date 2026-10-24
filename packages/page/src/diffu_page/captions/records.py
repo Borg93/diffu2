@@ -7,7 +7,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from diffu_page.captions.look import Ink, Paper, ScanLook
-from diffu_page.captions.prompt import LayoutRow, LineRecord, caption_for
+from diffu_page.captions.prompt import LayoutRow, LineRecord, PageStyle, caption_for
 from diffu_page.captions.provenance import Provenance, provenance_of
 from diffu_page.crops.geometry import Crop
 
@@ -37,6 +37,11 @@ class CropRecord(BaseModel):
         """The scan, paper and ink the crop's caption names."""
         return ScanLook(greyscale=self.greyscale, paper=self.paper, ink=self.ink)
 
+    @property
+    def style(self) -> PageStyle:
+        """The style the crop's caption names: its archive and years, and its scan, paper and ink."""
+        return PageStyle(provenance=self.provenance, look=self.look)
+
 
 def crop_record(crop: Crop, *, file_name: str, collection: str, page: Path, look: ScanLook) -> CropRecord:
     """A training crop's record: its caption, naming the page's archive and years and the scan's look, and its lines.
@@ -48,7 +53,7 @@ def crop_record(crop: Crop, *, file_name: str, collection: str, page: Path, look
         page: The page's PAGE XML, relative to the GT root (``<collection>/<volume>/<volume>/page/<name>.xml``).
         look: The scan, paper and ink of the crop's image.
     """
-    caption = caption_for(crop, provenance_of(collection, page), look)
+    caption = caption_for(crop, PageStyle(provenance=provenance_of(collection, page), look=look))
     return CropRecord(
         file_name=file_name,
         caption=caption.text,

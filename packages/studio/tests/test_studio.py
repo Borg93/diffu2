@@ -17,11 +17,11 @@ from PIL import Image
 from pydantic import ValidationError
 
 from diffu_page.captions.look import ScanLook
-from diffu_page.captions.prompt import LineRecord
+from diffu_page.captions.prompt import LineRecord, PageStyle
 from diffu_page.captions.provenance import Provenance
 from diffu_page.layout import load_xml_layout, refill, running_text
 from diffu_page.pipeline import DrawSettings
-from diffu_page.plan import CropPlan, PageStyle, plan_page
+from diffu_page.plan import CropPlan, plan_page
 from diffu_studio.nodes import SHEET_GAP, SHEET_HEIGHT, Drawer, PlannedPage, load_draw_nodes
 from diffu_studio.studio import build_studio
 

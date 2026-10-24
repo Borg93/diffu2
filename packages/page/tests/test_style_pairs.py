@@ -11,7 +11,7 @@ import pytest
 from PIL import Image
 from typer.testing import CliRunner
 
-from diffu_page.captions.prompt import LineRecord, caption_for
+from diffu_page.captions.prompt import LineRecord, PageStyle, caption_for
 from diffu_page.captions.provenance import Provenance
 from diffu_page.captions.records import CropRecord
 from diffu_page.captions.restyle import CaptionParts, edit_caption
@@ -41,7 +41,8 @@ def _scans(make_record: Callable[..., CropRecord], crop: Crop, directory: Path, 
     for k in range(6):
         record = make_record(crop, f"{k}.jpg", page=f"{k // 2:04d}.xml")
         if record.file_name == stale:
-            record = record.model_copy(update={"caption": caption_for(crop, RAW_FOLDER_NAME, record.look).text})
+            stale_style = PageStyle(provenance=RAW_FOLDER_NAME, look=record.look)
+            record = record.model_copy(update={"caption": caption_for(crop, stale_style).text})
         Image.new("RGB", crop.size, "white").save(directory / record.file_name)
         scans.append(Scan(record=record, path=directory / record.file_name))
     return scans

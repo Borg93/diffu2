@@ -5,7 +5,7 @@ lines, so the crops come out of the same windowing (whole lines, about 1 megapix
 sizes) and the same caption grammar as the training crops. A table is planned as one region, so its windows hold whole
 rows across it, and the page's ruled lines are kept in the windows they cross; a page without tables, printed lines or
 ruled lines is planned exactly as before.
-The style is a ``Provenance`` (archive, years) and a ``ScanLook`` (scan, paper, ink), as in every v2 caption. A page
+The style is a ``PageStyle`` (the archive and its years; the scan, paper and ink), as in every v2 caption. A page
 drawn from a :class:`Reference` (style by example) is captioned as the reference pairs were (v3 on): its style's
 words give way to the reference, in the caption form the LoRA in use was trained on. CPU only.
 """
@@ -18,20 +18,11 @@ from typing import Self
 from pydantic import BaseModel, Field, model_validator
 
 from diffu_page.captions.hand import ReferenceLook, measure_reference
-from diffu_page.captions.look import ScanLook
-from diffu_page.captions.prompt import Caption, LineRecord, caption_for, caption_order
-from diffu_page.captions.provenance import Provenance
+from diffu_page.captions.prompt import Caption, LineRecord, PageStyle, caption_for, caption_order
 from diffu_page.captions.records import read_records
-from diffu_page.captions.restyle import CaptionParts, ReferenceCaption, Style, reference_caption
+from diffu_page.captions.restyle import CaptionParts, ReferenceCaption, reference_caption
 from diffu_page.crops.geometry import Crop, CropSettings, LayoutBox, crops_for_page, regions_of
 from diffu_page.layout import Layout
-
-
-class PageStyle(BaseModel):
-    """The style a page is drawn in, named in every crop's caption."""
-
-    provenance: Provenance
-    look: ScanLook
 
 
 class Reference(BaseModel):
@@ -111,11 +102,11 @@ def _plan(crop: Crop, caption: Caption, text: str, block_rank: dict[str, int]) -
 def _reference_captions(written: list[Caption], style: PageStyle, reference: Reference) -> list[str]:
     """The v2 captions ``written`` in ``style``, as a crop drawn from ``reference`` is captioned (the reference
     measured once)."""
-    look, words = reference.look(), Style(provenance=style.provenance, look=style.look)
+    look = reference.look()
     return [
         reference_caption(
             CaptionParts(
-                name=f"planned crop {k}", text=caption.text, layout=caption.layout, lines=caption.lines, style=words
+                name=f"planned crop {k}", text=caption.text, layout=caption.layout, lines=caption.lines, style=style
             ),
             reference.caption,
             look,
@@ -134,7 +125,7 @@ def plan_page(layout: Layout, style: PageStyle, *, reference: Reference | None =
         rules=[(rule.x0, rule.y0, rule.x1, rule.y1) for rule in layout.rules],
     )
     block_rank = {source: rank for rank, source in enumerate(dict.fromkeys(line.source for line in layout.lines))}
-    written = [caption_for(crop, style.provenance, style.look) for crop in crops]
+    written = [caption_for(crop, style) for crop in crops]
     texts = (
         [caption.text for caption in written] if reference is None else _reference_captions(written, style, reference)
     )

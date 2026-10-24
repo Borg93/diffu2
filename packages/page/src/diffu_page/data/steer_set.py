@@ -24,9 +24,10 @@ import typer
 from pydantic import BaseModel
 
 from diffu_page.captions.look import ScanLook
+from diffu_page.captions.prompt import PageStyle
 from diffu_page.captions.provenance import Provenance, collection_key
 from diffu_page.captions.records import CropRecord, read_records
-from diffu_page.captions.restyle import CaptionParts, Style, restyle
+from diffu_page.captions.restyle import CaptionParts, restyle
 from diffu_page.evalset import EvalCrop, write_jsonl
 from diffu_page.output import console
 
@@ -52,7 +53,7 @@ DEFAULT_TEMPLATES = (1, 17)  # the val_eval rows the steering test uses
 class ArchiveStyle(BaseModel):
     """An archive's commonest look in the v2 training crops, with one crop showing it."""
 
-    style: Style
+    style: PageStyle
     example: Path
 
 
@@ -60,7 +61,7 @@ class Variant(BaseModel):
     """One way to draw a template: its label, its style, and a real crop showing that style."""
 
     label: str
-    style: Style
+    style: PageStyle
     example: Path | None = None
 
 
@@ -78,7 +79,7 @@ def archive_style(train: list[CropRecord], key: str, crops_dir: Path) -> Archive
     years = Counter(record.provenance.years for record in typical).most_common(1)[0][0]
     provenance = Provenance(title=typical[0].provenance.title, years=years)
     return ArchiveStyle(
-        style=Style(provenance=provenance, look=look), example=crops_dir / "train" / typical[0].file_name
+        style=PageStyle(provenance=provenance, look=look), example=crops_dir / "train" / typical[0].file_name
     )
 
 
@@ -89,7 +90,7 @@ def look_label(look: ScanLook) -> str:
 
 def variants(template: CropRecord, archives: dict[str, ArchiveStyle]) -> list[Variant]:
     """Every distinct variant of a template, its own style first."""
-    own = Style.of(template)
+    own = template.style
     candidates = [
         Variant(label="as written", style=own),
         *(Variant(label=f"archive: {key}", style=a.style, example=a.example) for key, a in archives.items()),

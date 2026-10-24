@@ -12,13 +12,12 @@ import pytest
 
 from diffu_page.captions.hand import HandLook, ReferenceLook
 from diffu_page.captions.look import ScanLook
-from diffu_page.captions.prompt import caption_for
+from diffu_page.captions.prompt import PageStyle, caption_for
 from diffu_page.captions.provenance import Provenance
 from diffu_page.captions.records import CropRecord
 from diffu_page.captions.restyle import (
     CaptionParts,
     StaleCaptionError,
-    Style,
     described_edit_caption,
     edit_caption,
     named_edit_caption,
@@ -43,14 +42,14 @@ def test_restyle_writes_the_caption_the_crop_gets_in_the_target_style(
     body_and_notes_crop: Crop, make_record: Callable[..., CropRecord]
 ) -> None:
     record = make_record(body_and_notes_crop)
-    target = Style(
+    target = PageStyle(
         provenance=Provenance(title="the court records of Jämtlands domsaga", years="1650"),
         look=ScanLook(greyscale=True, paper="light grey", ink="black"),
     )
 
     restyled = restyle(CaptionParts.of(record), target)
 
-    assert restyled == caption_for(body_and_notes_crop, target.provenance, target.look).text
+    assert restyled == caption_for(body_and_notes_crop, target).text
 
 
 @pytest.fixture
@@ -65,14 +64,14 @@ def test_restyle_writes_the_caption_a_form_crop_gets_in_the_target_style(
     certificate_crop: Crop, make_record: Callable[..., CropRecord]
 ) -> None:
     record = make_record(certificate_crop)
-    target = Style(
+    target = PageStyle(
         provenance=Provenance(title="the court records of Jämtlands domsaga", years="1650"),
         look=ScanLook(greyscale=True, paper="light grey", ink="black"),
     )
 
     restyled = restyle(CaptionParts.of(record), target)
 
-    assert restyled == caption_for(certificate_crop, target.provenance, target.look).text
+    assert restyled == caption_for(certificate_crop, target).text
 
 
 def test_edit_caption_takes_only_the_paper_from_the_reference_and_names_no_style(
@@ -183,7 +182,8 @@ def test_restyle_refuses_a_caption_an_older_provenance_rule_wrote(
 ) -> None:
     record = make_record(body_and_notes_crop)
     raw_folder_name = Provenance(title="RA arjeplogs tingslag 20260220", years="1690–1700")  # before collection_key
-    stale = record.model_copy(update={"caption": caption_for(body_and_notes_crop, raw_folder_name, record.look).text})
+    stale_style = PageStyle(provenance=raw_folder_name, look=record.look)
+    stale = record.model_copy(update={"caption": caption_for(body_and_notes_crop, stale_style).text})
 
     with pytest.raises(StaleCaptionError, match="crop.jpg: its caption was not written by the current caption grammar"):
-        restyle(CaptionParts.of(stale), Style.of(stale))
+        restyle(CaptionParts.of(stale), stale.style)
