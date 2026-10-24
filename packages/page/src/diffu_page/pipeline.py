@@ -221,8 +221,8 @@ def load_pipeline(model: Path, blocks: BlocksFor, *, loras: dict[str, Path], set
     if loras and settings.fuse_loras:
         pipe.fuse_lora(adapter_names=list(loras))
         pipe.unload_lora_weights()
-    if settings.compile_blocks:
-        pipe.transformer.compile_repeated_blocks(fullgraph=True)
+    if settings.compile_blocks:  # dynamic: crop sizes and caption lengths vary, and each new shape would recompile
+        pipe.transformer.compile_repeated_blocks(fullgraph=True, dynamic=True)
     return pipe
 
 
