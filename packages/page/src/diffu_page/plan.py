@@ -12,7 +12,6 @@ words give way to the reference, in the caption form the LoRA in use was trained
 
 from __future__ import annotations
 
-from operator import attrgetter
 from pathlib import Path
 from typing import Self
 
@@ -24,8 +23,8 @@ from diffu_page.captions.prompt import Caption, LineRecord, caption_for, caption
 from diffu_page.captions.provenance import Provenance
 from diffu_page.captions.records import read_records
 from diffu_page.captions.restyle import CaptionParts, ReferenceCaption, Style, reference_caption
-from diffu_page.crops.geometry import Crop, CropSettings, Line, Region, crops_for_page
-from diffu_page.layout import ROLE_NAMES, TABLE, Layout, LineBox
+from diffu_page.crops.geometry import Crop, CropSettings, crops_for_page, regions_of
+from diffu_page.layout import Layout
 
 
 class PageStyle(BaseModel):
@@ -91,41 +90,6 @@ class CropPlan(BaseModel):
         return self
 
 
-def _source(box: LineBox) -> str:
-    """The block a line came from, as reading order tracks it."""
-    return f"{box.region}|{box.block}"
-
-
-def _line(box: LineBox) -> Line:
-    x0, y0, x1, y1 = box.x, box.y, box.x + box.w, box.y + box.h
-    return Line(
-        polygon=[(x0, y0), (x1, y0), (x1, y1), (x0, y1)],
-        baseline_y=box.baseline_y,
-        text=box.text,
-        role=box.region if box.region in ROLE_NAMES else "",
-        source=_source(box),
-        production=box.production,
-        cell=box.cell,
-    )
-
-
-def _region_key(box: LineBox) -> tuple[str, str]:
-    """The region a line is planned in: its table for a table cell's line, else its region and block."""
-    if box.cell is not None:
-        return TABLE, box.cell.table
-    return box.region, box.block
-
-
-def regions_of(layout: Layout) -> list[Region]:
-    """The layout's text lines grouped by region and source block (a table's by table), in reading order, each
-    group's lines top to bottom. A table line without a cell (an old layout) is left out, as before."""
-    grouped: dict[tuple[str, str], list[Line]] = {}
-    for box in layout.boxes:
-        if box.text.strip() and (box.region != TABLE or box.cell is not None):
-            grouped.setdefault(_region_key(box), []).append(_line(box))
-    return [Region(lines=sorted(lines, key=attrgetter("baseline_y"))) for lines in grouped.values()]
-
-
 def _reading_order(crop: Crop, block_rank: dict[str, int]) -> list[int]:
     """The crop's lines (in caption numbering) in reading order: by their block's place on the page, then down."""
     numbered = caption_order(crop.lines)
@@ -169,7 +133,7 @@ def plan_page(
         settings or CropSettings(),
         rules=[(rule.x0, rule.y0, rule.x1, rule.y1) for rule in layout.rules],
     )
-    block_rank = {source: rank for rank, source in enumerate(dict.fromkeys(_source(box) for box in layout.boxes))}
+    block_rank = {source: rank for rank, source in enumerate(dict.fromkeys(box.source for box in layout.boxes))}
     written = [caption_for(crop, style.provenance, style.look) for crop in crops]
     texts = (
         [caption.text for caption in written] if reference is None else _reference_captions(written, style, reference)

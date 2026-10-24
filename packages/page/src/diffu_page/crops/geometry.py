@@ -11,10 +11,11 @@ from __future__ import annotations
 import statistics
 from collections.abc import Sequence
 from itertools import pairwise
+from operator import attrgetter
 
 from pydantic import BaseModel, Field
 
-from diffu_page.layout.model import CellRef, Production
+from diffu_page.layout.model import ROLE_NAMES, TABLE, CellRef, Layout, LineBox, Production
 
 type Box = tuple[float, float, float, float]  # x0, y0, x1, y1 in page pixels
 
@@ -112,6 +113,37 @@ class Region(BaseModel):
             max(b[2] for b in boxes),
             max(b[3] for b in boxes),
         )
+
+
+def regions_of(layout: Layout) -> list[Region]:
+    """The layout's text lines grouped into the regions crops are cut from: a table's lines by table, the others by
+    region and block, in reading order, each region's lines top to bottom. A table line without a cell (an old
+    layout) is left out."""
+    grouped: dict[tuple[str, str], list[Line]] = {}
+    for box in layout.boxes:
+        if box.text.strip() and (box.region != TABLE or box.cell is not None):
+            grouped.setdefault(_region_key(box), []).append(_line(box))
+    return [Region(lines=sorted(lines, key=attrgetter("baseline_y"))) for lines in grouped.values()]
+
+
+def _region_key(box: LineBox) -> tuple[str, str]:
+    """The region a line is cut in: its table for a table cell's line, else its region and block."""
+    if box.cell is not None:
+        return TABLE, box.cell.table
+    return box.region, box.block
+
+
+def _line(box: LineBox) -> Line:
+    x0, y0, x1, y1 = box.x, box.y, box.x + box.w, box.y + box.h
+    return Line(
+        polygon=[(x0, y0), (x1, y0), (x1, y1), (x0, y1)],
+        baseline_y=box.baseline_y,
+        text=box.text,
+        role=box.region if box.region in ROLE_NAMES else "",
+        source=box.source,
+        production=box.production,
+        cell=box.cell,
+    )
 
 
 class Column(BaseModel):

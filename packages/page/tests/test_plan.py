@@ -13,15 +13,14 @@ from PIL import Image
 from pydantic import ValidationError
 
 from diffu_page.captions.look import ScanLook
-from diffu_page.captions.prompt import LineRecord, caption_order
+from diffu_page.captions.prompt import LineRecord
 from diffu_page.captions.provenance import Provenance
 from diffu_page.captions.records import CropRecord
 from diffu_page.captions.restyle import ReferenceCaption
-from diffu_page.crops.geometry import CropSettings, crops_for_page
-from diffu_page.data.build_crops import parse_page
+from diffu_page.crops.geometry import CropSettings, crops_for_page, regions_of
 from diffu_page.data.style_pairs import Pair, Scan, captions, describe
 from diffu_page.layout import load_xml_layout
-from diffu_page.plan import CropPlan, PageStyle, Reference, plan_page, regions_of
+from diffu_page.plan import CropPlan, PageStyle, Reference, plan_page
 
 STYLE = PageStyle(
     provenance=Provenance(title="the archive", years="1700"),
@@ -82,16 +81,6 @@ def test_plan_plans_a_form_whose_every_line_is_its_own_region(certificate_page: 
     plans = plan_page(layout, STYLE)
 
     assert {line.text for plan in plans for line in plan.lines} == {box.text for box in layout.boxes}
-
-
-def test_plan_cuts_a_page_where_the_training_builder_cut_it(body_and_notes_page: Path) -> None:
-    trained = crops_for_page(parse_page(body_and_notes_page), (2000, 1900), CropSettings())
-
-    planned = plan_page(load_xml_layout(body_and_notes_page), STYLE)
-
-    assert [(plan.rect, [line.bbox for line in plan.lines]) for plan in planned] == [
-        (crop.rect, [crop.slot(line) for line in caption_order(crop.lines)]) for crop in trained
-    ]
 
 
 def test_plan_records_where_each_lines_baseline_lies_on_its_crop(body_and_notes_page: Path) -> None:

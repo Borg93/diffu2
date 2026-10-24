@@ -1,6 +1,5 @@
-"""Reading PAGE (and ALTO) XML, namespace-agnostic: the one reader the training-crop builder
-(:mod:`diffu_page.data.build_crops`) and the layout replay (:mod:`diffu_page.layout.xml_replay`) share, so a page is
-read the same way when its crops are cut for training and when it is planned for generation.
+"""Reading PAGE XML, namespace-agnostic: a line's text, outline and baseline, a region's type and reading order. The
+pieces :mod:`diffu_page.layout.xml_replay` reads a page's layout with.
 """
 
 from __future__ import annotations

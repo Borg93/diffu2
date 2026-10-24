@@ -18,9 +18,8 @@ from diffu.configs import DiffuConfig, DiffuSize, TextEncoder, Vae
 from diffu.init import write_model_repo
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.records import CropRecord, crop_record
-from diffu_page.crops.geometry import Crop, CropSettings, crops_for_page
+from diffu_page.crops.geometry import Crop, CropSettings, crops_for_page, regions_of
 from diffu_page.layout import load_xml_layout
-from diffu_page.plan import regions_of
 
 
 def _line(line_id: str, x0: int, x1: int, baseline: int, text: str) -> str:

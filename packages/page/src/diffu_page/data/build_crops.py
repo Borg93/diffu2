@@ -34,8 +34,9 @@ from pydantic import BaseModel
 
 from diffu_page.captions.look import scan_look
 from diffu_page.captions.records import CropRecord, crop_record
-from diffu_page.crops.geometry import CropSettings, Line, Region, crops_for_page
-from diffu_page.layout.page_xml import iter_local, local_name, read_page_line, reading_order_index, region_role
+from diffu_page.crops.geometry import CropSettings, Region, crops_for_page, regions_of
+from diffu_page.layout import load_xml_layout
+from diffu_page.layout.page_xml import local_name
 from diffu_page.output import console, err_console
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
@@ -56,33 +57,6 @@ class Page(BaseModel):
     def id(self) -> str:
         """A stable id from the page's path."""
         return hashlib.sha1(str(self.path).encode()).hexdigest()[:12]
-
-
-def parse_page(xml_path: Path) -> list[Region]:
-    """A PAGE XML page's text regions in reading order, each with its transcribed lines from top to bottom.
-
-    Raises:
-        ValueError: If the file holds no PAGE ``Page`` element.
-    """
-    pages = iter_local(ET.parse(xml_path).getroot(), "Page")
-    if not pages:
-        raise ValueError(f"{xml_path} holds no PAGE Page element")
-    page = pages[0]
-    ordered: list[tuple[int, Region]] = []
-    for position, element in enumerate(iter_local(page, "TextRegion")):
-        role = region_role(element)
-        read = (read_page_line(child) for child in element if local_name(child.tag) == "TextLine")
-        lines = sorted(
-            (
-                Line(polygon=line.polygon, baseline_y=line.baseline_y, text=line.text, role=role)
-                for line in read
-                if line
-            ),
-            key=lambda line: line.baseline_y,
-        )
-        if lines:
-            ordered.append((reading_order_index(element, position), Region(lines=lines)))
-    return [region for _, region in sorted(ordered, key=lambda item: item[0])]
 
 
 def sample_pages(collection_dir: Path, count: int, rng: random.Random) -> tuple[list[Page], dict[str, str]]:
@@ -109,7 +83,7 @@ def _load_page(collection_dir: Path, xml_path: Path) -> Page | None:
     scan = _find_scan(xml_path)
     if scan is None:
         return None
-    regions = parse_page(xml_path)
+    regions = regions_of(load_xml_layout(xml_path))
     if not regions:
         return None
     return Page(

@@ -691,15 +691,19 @@ Still to do, in this order (the refactors after the fixes, the user's call):
       `DrawSettings()`, max_line_cer in DrawSettings (`--max-line-cer`), `--reference-guidance` for generate,
       LabelFormat a StrEnum, MAX_SEQUENCE_LENGTH and COMPONENT_DTYPES from diffu, one JPEG quality and helper. Not in
       the runner (no Ray work yet): diffu-run keeps its own option copies and `_jpeg` until then.
-- [ ] 9, 10, 14: one PAGE/ALTO reader, one caption grammar and Style, one page-space line model. Each gated on a
-      golden diff (crop rects, slots and caption bytes identical, old code against new) over every set a LoRA was
-      trained on: scratchpad golden/golden.py re-cuts the 1,952 pages of layout_crops_v2/v2b (11,827 crops; the
-      val_eval rows are val's). Measured 24 Oct, before item 9: regions_of(load_xml_layout(page)) given the scan's
-      size cuts every page exactly as build_crops' parse_page (rects, sizes, captions, layout rows and line records
-      identical; only `block` gains its values), so item 9 can switch build_crops over. Generation differs on 35 of
-      the pages only because their PAGE files declare a stale size (FNA_1500, the Finnish letter recipes,
-      Byggningskollegium, Kääriäinen: the coordinates are in the scan's pixels, the crops are aligned): build_crops
-      must keep cutting at the scan's size. No trained page has a SeparatorRegion or a TableRegion.
+- [x] 9. (24 Oct) One reader: build_crops cuts training crops from `regions_of(load_xml_layout(page))` at the scan's
+      size (parse_page and the builder-versus-planner test are gone); `regions_of` lives beside Region in crops; an
+      element without an id is keyed by its place, so it stays a region of its own (ALTO TextBlocks, PAGE regions,
+      tables, cells); an ALTO page in other units than pixels is refused; a page that cannot be read names its file.
+      Golden diff over the 1,952 trained pages: generation byte-identical; training identical in every crop's rect,
+      size, caption, layout rows and line records, the lines now carrying their block.
+- [ ] 10, 14: one caption grammar and Style, one page-space line model. Each gated on the golden diff (crop rects,
+      slots and caption bytes identical, old code against new) over every set a LoRA was trained on: scratchpad
+      golden/golden.py re-cuts the 1,952 pages of layout_crops_v2/v2b (11,827 crops; the val_eval rows are val's) on
+      the training path and the generation path. The two paths differ on 35 pages only by the page size: their PAGE
+      files declare a stale size (FNA_1500, the Finnish letter recipes, Kääriäinen: the coordinates are in the scan's
+      pixels) or describe the TIFF beside the cut JPEG (Byggningskollegium), so training cuts at the scan's size and
+      generation at the declared one. No trained page has a SeparatorRegion or a TableRegion.
 - [x] Smaller (24 Oct): one `crop_record` for build_crops and the tests; refill takes the text and starts a paragraph
       after a blank line; probe_set refuses references whose words never differ; diffu-train and diffu-studio declare
       their direct imports; shared crop and record fixtures in conftest; exact paragraphs in the edit-caption tests;

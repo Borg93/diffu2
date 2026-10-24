@@ -70,6 +70,11 @@ class LineBox(BaseModel):
     production: Production = Production.HANDWRITTEN
     cell: CellRef | None = None  # set for a table cell's line
 
+    @property
+    def source(self) -> str:
+        """The block the line came from, as reading order tracks it: its region and block."""
+        return f"{self.region}|{self.block}"
+
 
 class Layout(BaseModel):
     """A page's size (px), its text lines in reading order and its ruled lines."""

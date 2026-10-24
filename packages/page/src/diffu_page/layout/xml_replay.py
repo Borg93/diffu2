@@ -1,8 +1,9 @@
 """A page layout from a real PAGE or ALTO XML file.
 
-PAGE lines are read with :mod:`diffu_page.layout.page_xml`, the reader the training-crop builder uses, so a page is
-planned for generation exactly as its training crops were cut: the same outlines, baselines, region roles and
-Transkribus reading order. A PAGE table is read in either form a template comes in: Transkribus' ``TableCell``
+This is the one reader: the training-crop builder (:mod:`diffu_page.data.build_crops`) cuts its crops from this
+layout and the planner plans generation from it, so a page is planned exactly as its training crops were cut: the same
+outlines, baselines, region roles and Transkribus reading order. An element without an id is keyed by its place on the
+page, so it stays a region of its own. A PAGE table is read in either form a template comes in: Transkribus' ``TableCell``
 (``@row``, ``@col``) or PAGE 2019's nested ``TextRegion`` with a ``TableCellRole``. A line's ``@production`` (else its
 region's, its cell's or its table's) says whether it is printed; ``SeparatorRegion``s are the page's ruled lines. ALTO
 lines come from their ``HPOS``/``VPOS``/``WIDTH``/``HEIGHT`` box and ``String``s; ALTO has no tables or production.
@@ -86,21 +87,32 @@ def _box(line: PageLine, region: str, block: str, *, production: Production, cel
     )
 
 
+def _key(element: ET.Element, kind: str, position: int) -> str:
+    """An element's id (PAGE ``@id``, ALTO ``@ID``), else its place among the page's elements of its kind, so that
+    elements without an id stay apart."""
+    return element.get("id") or element.get("ID") or f"#{kind}{position}"
+
+
 def _region_lines(
-    element: ET.Element, region: str, *, production: Production = Production.HANDWRITTEN, cell: CellRef | None = None
+    element: ET.Element,
+    region: str,
+    block: str,
+    *,
+    production: Production = Production.HANDWRITTEN,
+    cell: CellRef | None = None,
 ) -> list[LineBox]:
     """The lines of a PAGE region (direct ``TextLine`` children), top to bottom; ``production`` is what the region's
     container makes them unless the region or a line says otherwise."""
     own = _production(element, production)
     boxes = [
-        _box(read, region, element.get("id", ""), production=_production(line, own), cell=cell)
+        _box(read, region, block, production=_production(line, own), cell=cell)
         for line in element
         if local_name(line.tag) == "TextLine" and (read := read_page_line(line)) is not None
     ]
     return sorted(boxes, key=lambda box: box.baseline_y)
 
 
-def _cell_ref(table: ET.Element, cell: ET.Element) -> CellRef | None:
+def _cell_ref(table: ET.Element, table_key: str, cell: ET.Element) -> CellRef | None:
     """Where a table's child sits: a Transkribus ``TableCell``'s ``@row``/``@col``, a PAGE 2019 ``TextRegion``'s
     ``TableCellRole``; None for any other child.
 
@@ -111,28 +123,26 @@ def _cell_ref(table: ET.Element, cell: ET.Element) -> CellRef | None:
         case "TableCell":
             row, column = cell.get("row"), cell.get("col")
             if row is None or column is None:
-                raise ValueError(f"TableCell {cell.get('id', '')!r} of table {table.get('id', '')!r} has no row or col")
-            return CellRef(table=table.get("id", ""), row=int(row), column=int(column))
+                raise ValueError(f"TableCell {cell.get('id', '')!r} of table {table_key!r} has no row or col")
+            return CellRef(table=table_key, row=int(row), column=int(column))
         case "TextRegion":
             roles = child(cell, "Roles")
             role = child(roles, "TableCellRole") if roles is not None else None
             if role is None:
                 return None
-            return CellRef(
-                table=table.get("id", ""), row=int(role.get("rowIndex", 0)), column=int(role.get("columnIndex", 0))
-            )
+            return CellRef(table=table_key, row=int(role.get("rowIndex", 0)), column=int(role.get("columnIndex", 0)))
         case _:
             return None
 
 
-def _table_lines(table: ET.Element) -> list[LineBox]:
+def _table_lines(table: ET.Element, table_key: str) -> list[LineBox]:
     """A table's lines, cell by cell in file order, each cell's top to bottom."""
     production = _production(table, Production.HANDWRITTEN)
     return [
         line
-        for cell in table
-        if (ref := _cell_ref(table, cell)) is not None
-        for line in _region_lines(cell, TABLE, production=production, cell=ref)
+        for k, cell in enumerate(table)
+        if (ref := _cell_ref(table, table_key, cell)) is not None
+        for line in _region_lines(cell, TABLE, _key(cell, "cell", k), production=production, cell=ref)
     ]
 
 
@@ -142,8 +152,12 @@ def _page_lines(root: ET.Element) -> list[LineBox]:
     in_table = {id(element) for table in tables for element in table.iter()}
     text_regions = [element for element in iter_local(root, "TextRegion") if id(element) not in in_table]
     regions = sorted(enumerate(text_regions), key=lambda item: reading_order_index(item[1], item[0]))
-    text = [line for _, element in regions for line in _region_lines(element, region_role(element) or RUNNING_TEXT)]
-    return text + [line for table in tables for line in _table_lines(table)]
+    text = [
+        line
+        for position, element in regions
+        for line in _region_lines(element, region_role(element) or RUNNING_TEXT, _key(element, "region", position))
+    ]
+    return text + [line for k, table in enumerate(tables) for line in _table_lines(table, _key(table, "table", k))]
 
 
 def _page_rules(root: ET.Element) -> list[Rule]:
@@ -174,12 +188,24 @@ def _alto_line(line: ET.Element, block: str) -> LineBox | None:
 def _alto_lines(root: ET.Element) -> list[LineBox]:
     """An ALTO file's lines, block by block in file order."""
     lines = (
-        _alto_line(line, block.get("ID", ""))
-        for block in iter_local(root, "TextBlock")
+        _alto_line(line, _key(block, "block", k))
+        for k, block in enumerate(iter_local(root, "TextBlock"))
         for line in block
         if local_name(line.tag) == "TextLine"
     )
     return [line for line in lines if line is not None]
+
+
+def _require_pixels(root: ET.Element) -> None:
+    """Refuse an ALTO page whose ``MeasurementUnit`` is not pixels (``mm10``, ``inch1200``): its coordinates would
+    be read as pixels.
+
+    Raises:
+        ValueError: If the page names another unit.
+    """
+    unit = next(((e.text or "").strip() for e in root.iter() if local_name(e.tag) == "MeasurementUnit"), "pixel")
+    if unit != "pixel":
+        raise ValueError(f"the page is measured in {unit}, not pixels")
 
 
 def load_xml_layout(xml_path: Path) -> Layout:
@@ -187,11 +213,19 @@ def load_xml_layout(xml_path: Path) -> Layout:
     lines.
 
     Raises:
-        ValueError: If the file's ``Page`` element is missing or has no size, a line's production is not one PAGE
-            defines, or a table cell has no row or column.
+        ValueError: If the file is not well-formed XML, its ``Page`` element is missing or has no size, an ALTO page is
+            measured in other units than pixels, a line's production is not one PAGE defines, or a table cell has no
+            row or column; the message names the file.
     """
-    root = ET.parse(xml_path).getroot()
+    try:
+        return _layout(ET.parse(xml_path).getroot())
+    except (ET.ParseError, ValueError) as error:
+        raise ValueError(f"{xml_path}: {error}") from error
+
+
+def _layout(root: ET.Element) -> Layout:
     width, height = _page_size(root)
     if local_name(root.tag) == "alto":
+        _require_pixels(root)
         return Layout(width=width, height=height, boxes=_alto_lines(root))
     return Layout(width=width, height=height, boxes=_page_lines(root), rules=_page_rules(root))

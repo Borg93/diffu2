@@ -3,10 +3,12 @@ reading order."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
+from diffu_page.crops.geometry import regions_of
 from diffu_page.layout import CellRef, Production, Rule, load_xml_layout
 
 _NS = "http://schema.primaresearch.org/PAGE/gts/pagecontent/2013-07-15"
@@ -137,15 +139,21 @@ def test_replay_takes_the_baseline_from_the_lines_baseline_points(tmp_path: Path
     assert load_xml_layout(page).boxes[0].baseline_y == 242.0
 
 
-def test_replay_reads_an_alto_page(tmp_path: Path) -> None:
-    alto = tmp_path / "page.alto.xml"
-    alto.write_text(
-        '<?xml version="1.0"?><alto xmlns="http://www.loc.gov/standards/alto/ns-v4#"><Layout>'
-        '<Page WIDTH="6000" HEIGHT="5000"><PrintSpace><TextBlock ID="b1">'
-        '<TextLine HPOS="100" VPOS="200" WIDTH="300" HEIGHT="50" BASELINE="100,240 400,240">'
-        '<String CONTENT="Hej"/><String CONTENT="du"/></TextLine>'
-        "</TextBlock></PrintSpace></Page></Layout></alto>",
+def _alto(tmp_path: Path, blocks: str, description: str = "") -> Path:
+    path = tmp_path / "page.alto.xml"
+    path.write_text(
+        f'<?xml version="1.0"?><alto xmlns="http://www.loc.gov/standards/alto/ns-v4#">{description}<Layout>'
+        f'<Page WIDTH="6000" HEIGHT="5000"><PrintSpace>{blocks}</PrintSpace></Page></Layout></alto>',
         encoding="utf-8",
+    )
+    return path
+
+
+def test_replay_reads_an_alto_page(tmp_path: Path) -> None:
+    alto = _alto(
+        tmp_path,
+        '<TextBlock ID="b1"><TextLine HPOS="100" VPOS="200" WIDTH="300" HEIGHT="50" BASELINE="100,240 400,240">'
+        '<String CONTENT="Hej"/><String CONTENT="du"/></TextLine></TextBlock>',
     )
 
     layout = load_xml_layout(alto)
@@ -154,3 +162,46 @@ def test_replay_reads_an_alto_page(tmp_path: Path) -> None:
     assert [(b.text, b.x, b.y, b.w, b.h, b.baseline_y, b.block) for b in layout.boxes] == [
         ("Hej du", 100.0, 200.0, 300.0, 50.0, 240.0, "b1")
     ]
+
+
+def _id_less_alto(tmp_path: Path) -> Path:
+    line = '<TextLine HPOS="{x}" VPOS="200" WIDTH="300" HEIGHT="50"><String CONTENT="{text}"/></TextLine>'
+    blocks = (f"<TextBlock>{line.format(x=x, text=text)}</TextBlock>" for x, text in ((100, "left"), (3000, "right")))
+    return _alto(tmp_path, "".join(blocks))
+
+
+def _id_less_page(tmp_path: Path) -> Path:
+    return _page(
+        tmp_path,
+        "<TextRegion>" + _line("l", "100,200 400,200 400,250 100,250", "left") + "</TextRegion>"
+        "<TextRegion>" + _line("r", "600,200 900,200 900,250 600,250", "right") + "</TextRegion>",
+    )
+
+
+@pytest.mark.parametrize("page", [pytest.param(_id_less_alto, id="alto"), pytest.param(_id_less_page, id="page")])
+def test_replay_keeps_blocks_without_an_id_apart(tmp_path: Path, page: Callable[[Path], Path]) -> None:
+    layout = load_xml_layout(page(tmp_path))
+
+    regions = regions_of(layout)
+
+    assert [[line.text for line in region.lines] for region in regions] == [["left"], ["right"]]
+
+
+def test_replay_refuses_an_alto_page_measured_in_other_units_than_pixels(tmp_path: Path) -> None:
+    alto = _alto(
+        tmp_path,
+        '<TextBlock ID="b1"><TextLine HPOS="10" VPOS="20" WIDTH="30" HEIGHT="5"><String CONTENT="Hej"/>'
+        "</TextLine></TextBlock>",
+        description="<Description><MeasurementUnit>mm10</MeasurementUnit></Description>",
+    )
+
+    with pytest.raises(ValueError, match="measured in mm10, not pixels"):
+        load_xml_layout(alto)
+
+
+def test_replay_names_the_file_it_cannot_parse(tmp_path: Path) -> None:
+    page = tmp_path / "0007.xml"
+    page.write_text('<?xml version="1.0"?><PcGts', encoding="utf-8")  # cut off mid-write
+
+    with pytest.raises(ValueError, match="0007.xml"):
+        load_xml_layout(page)
