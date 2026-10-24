@@ -42,7 +42,7 @@ def pick(records: list[CropRecord], count: int) -> list[CropRecord]:
     names = sorted(chosen)
     if len(names) > count:
         step = (len(names) - 1) / max(count - 1, 1)
-        names = list(dict.fromkeys(names[round(i * step)] for i in range(count)))
+        names = [names[round(i * step)] for i in range(count)]  # step > 1: no two picks round to one name
     return [chosen[name] for name in names]
 
 

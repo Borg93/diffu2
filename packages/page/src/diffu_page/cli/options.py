@@ -17,7 +17,7 @@ DEFAULTS = DrawSettings()  # every draw option's default comes from here
 
 Steps = Annotated[int, typer.Option(min=1, help="denoising steps per crop")]
 Guidance = Annotated[float, typer.Option(help="how hard guidance pushes toward the caption")]
-ReferenceGuidance = Annotated[
+ReferenceGuidanceScale = Annotated[
     float, typer.Option(help="how hard guidance also pushes toward the reference image (1: not at all)")
 ]
 GuidanceStop = Annotated[
@@ -68,6 +68,15 @@ def parse_lora(value: str) -> Lora:
     if missing:
         raise typer.BadParameter(f"{path} is not a NeMo LoRA model dir: it has no {' or '.join(missing)}")
     return Lora(name=name, path=path)
+
+
+Model = Annotated[Path | None, typer.Option(help="the model directory (FLUX.3 Klein or diffu); default $FLUX3_MODEL")]
+Loras = Annotated[list[Lora] | None, typer.Option(parser=parse_lora, help="name=<NeMo LoRA model dir>")]
+
+
+def text_layers(layers: list[int] | None) -> tuple[int, ...] | None:
+    """The ``--text-layer`` options as ``DrawSettings`` takes them: None (the model's own layers) when none is given."""
+    return tuple(layers) if layers else None
 
 
 def lora_dirs(loras: list[Lora] | None) -> dict[str, Path]:

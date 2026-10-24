@@ -17,6 +17,7 @@ A page is planned with :class:`PagePlanBlocks`, and each of its crops is drawn o
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Callable
 from pathlib import Path
 from typing import override
@@ -181,6 +182,11 @@ class DrawSettings(BaseModel):
     fuse_loras: bool = False
     compile_blocks: bool = False
 
+    @property
+    def guides_reference(self) -> bool:
+        """Whether guidance also pushes toward the reference image (a third pass a step)."""
+        return not math.isclose(self.reference_guidance_scale, 1.0)
+
     def pipeline_inputs(self) -> dict[str, object]:
         """The settings a pipeline takes per call, by input name (the guidance scale and device are set at load)."""
         layers = {} if self.text_layers is None else {"text_encoder_out_layers": self.text_layers}
@@ -251,7 +257,7 @@ def draw_crop(
     Raises:
         ValueError: If ``settings`` guide toward a reference and there is none, before anything is drawn.
     """
-    if reference is None and settings.reference_guidance_scale != 1.0:
+    if reference is None and settings.guides_reference:
         raise ValueError("reference guidance needs a reference image: draw this crop at reference_guidance_scale 1")
     reference_input = {} if reference is None else {"image": reference}
     # The text encoder step encodes the negative caption only if the guider guides at its current step, which until the

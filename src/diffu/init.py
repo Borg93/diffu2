@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated
 
 import diffusers
 import torch
@@ -21,7 +21,7 @@ from diffusers import AutoencoderKLQwenImage, Flux3Transformer2DModel
 from rich.console import Console
 from transformers import AutoTokenizer, Qwen3_5ForConditionalGeneration
 
-from diffu.configs import SIZES, DiffuConfig
+from diffu.configs import SIZES, DiffuConfig, SizeName
 from diffu.modular_pipelines.diffu import DiffuAutoBlocks, DiffuModularPipeline
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
@@ -96,7 +96,7 @@ def write_model_repo(transformer: Flux3Transformer2DModel, config: DiffuConfig, 
 @app.command()
 def main(
     out: Annotated[Path, typer.Option(help="the new model repo's directory")],
-    size: Annotated[Literal["S", "M"], typer.Option(help="the transformer size")] = "S",
+    size: Annotated[SizeName, typer.Option(help="the transformer size")] = "S",
     seed: Annotated[int, typer.Option(help="the seed of the random weights")] = 0,
 ) -> None:
     """Write a diffu model repo with freshly initialised weights."""

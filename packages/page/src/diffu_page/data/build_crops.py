@@ -37,7 +37,9 @@ from diffu_page.captions.records import CropRecord, crop_record
 from diffu_page.crops.geometry import CropSettings, Region, crops_for_page, regions_of
 from diffu_page.layout import load_xml_layout
 from diffu_page.layout.page_xml import local_name
-from diffu_page.output import console, err_console
+from diffu_page.output import console, err_console, load_rgb
+
+TILE_QUALITY = 95  # the training tiles: what the LoRAs learn from, a step above the drawn crops
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 
@@ -125,8 +127,7 @@ def split_of(page: Page, val_frac: float) -> str:
 def write_crops(page: Page, split_dir: Path, settings: CropSettings) -> list[CropRecord]:
     """Cut a page into crops, save them as JPEGs in ``split_dir`` and return their metadata records. Every crop is cut
     and captioned before any is saved, so a page that fails leaves no tile without its record."""
-    with Image.open(page.scan) as img:
-        scan = img.convert("RGB")
+    scan = load_rgb(page.scan)
     tiles: list[Image.Image] = []
     records: list[CropRecord] = []
     for k, crop in enumerate(crops_for_page(page.regions, scan.size, settings)):
@@ -138,7 +139,7 @@ def write_crops(page: Page, split_dir: Path, settings: CropSettings) -> list[Cro
             crop_record(crop, file_name=name, collection=page.collection, page=page.path, look=scan_look(tile))
         )
     for tile, record in zip(tiles, records, strict=True):
-        tile.save(split_dir / record.file_name, quality=95)
+        tile.save(split_dir / record.file_name, quality=TILE_QUALITY)
     return records
 
 
@@ -182,7 +183,7 @@ def build(
                         continue
                     metadata[split].writelines(f"{record.model_dump_json()}\n" for record in records)
                     totals.update(pages=1, crops=len(records), lines=sum(len(record.lines) for record in records))
-                console.print(f"{collection}: {dict(totals)}")
+                console.print(f"{collection}: {dict(totals)} so far")
     finally:
         (out / "failed_pages.json").write_text(json.dumps(failed, indent=1, ensure_ascii=False), encoding="utf-8")
     return failed

@@ -16,7 +16,7 @@ from pydantic import BaseModel, field_validator
 
 from diffu_page.blocks import crop_identity
 from diffu_page.captions.prompt import PageStyle
-from diffu_page.output import plain_file_name
+from diffu_page.output import load_rgb, plain_file_name
 from diffu_page.pipeline import PagePlanBlocks
 from diffu_page.plan import CropPlan, Reference
 
@@ -66,10 +66,7 @@ class CropJob(BaseModel):
 
     def reference_image(self) -> Image.Image | None:
         """The image the crop is drawn from, as RGB; None without a reference."""
-        if self.reference is None:
-            return None
-        with Image.open(self.reference) as image:
-            return image.convert("RGB")
+        return None if self.reference is None else load_rgb(self.reference)
 
 
 def crop_jobs(page: PageJob, index: int) -> list[CropJob]:

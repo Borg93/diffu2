@@ -41,14 +41,15 @@ from diffu_page.cli.options import (
     FuseLoras,
     Guidance,
     GuidanceStop,
-    Lora,
+    Loras,
     MaxLineCer,
-    ReferenceGuidance,
+    Model,
+    ReferenceGuidanceScale,
     Steps,
     TextLayers,
     lora_dirs,
-    parse_lora,
     required_model,
+    text_layers,
 )
 from diffu_page.jobs import CropJob, PageJob, crop_jobs
 from diffu_page.layout import load_xml_layout, running_text
@@ -177,10 +178,8 @@ def generate(
     text_from: Annotated[list[Path], typer.Option(help="a PAGE/ALTO page whose text to write (repeat it)")],
     out: Annotated[Path, typer.Option(help="where the crops, labels and summary.json go")],
     title: Annotated[str, typer.Option(help="the archive, as the captions name it")],
-    model: Annotated[
-        Path | None, typer.Option(help="the model directory (FLUX.3 Klein or diffu); default $FLUX3_MODEL")
-    ] = settings.flux3_model,
-    lora: Annotated[list[Lora] | None, typer.Option(parser=parse_lora, help="name=<NeMo LoRA model dir>")] = None,
+    model: Model = settings.flux3_model,
+    lora: Loras = None,
     years: str = "",
     greyscale: Annotated[bool, typer.Option("--greyscale/--colour")] = False,
     paper: Annotated[Paper, typer.Option(help="the paper's colour, as the captions name it")] = Paper.CREAM,
@@ -194,7 +193,7 @@ def generate(
     ] = ReferenceCaption.PLAIN,
     steps: Steps = DEFAULTS.steps,
     guidance: Guidance = DEFAULTS.guidance_scale,
-    reference_guidance: ReferenceGuidance = DEFAULTS.reference_guidance_scale,
+    reference_guidance: ReferenceGuidanceScale = DEFAULTS.reference_guidance_scale,
     guidance_stop: GuidanceStop = DEFAULTS.guidance_stop,
     seed: int = 0,
     text_layer: TextLayers = None,
@@ -207,7 +206,19 @@ def generate(
 ) -> None:
     """Draw every crop of the templates, refilled with the text, in the given style."""
     model = required_model(model)
-    if reference is None and reference_guidance != 1.0:
+    draw_settings = DrawSettings(
+        steps=steps,
+        guidance_scale=guidance,
+        reference_guidance_scale=reference_guidance,
+        guidance_stop=guidance_stop,
+        label_format=label_format,
+        max_line_cer=max_line_cer,
+        text_layers=text_layers(text_layer),
+        device=device,
+        fuse_loras=fuse_loras,
+        compile_blocks=compile_blocks,
+    )
+    if reference is None and draw_settings.guides_reference:
         raise typer.BadParameter("there is no --reference to guide toward", param_hint="--reference-guidance")
     if reference is None and reference_caption is not ReferenceCaption.PLAIN:
         raise typer.BadParameter("there is no --reference to describe", param_hint="--reference-caption")
@@ -219,18 +230,6 @@ def generate(
     pages = [
         PageJob(template=template, text=text, style=style, seed=seed, reference=drawn_from) for template in templates
     ]
-    draw_settings = DrawSettings(
-        steps=steps,
-        guidance_scale=guidance,
-        reference_guidance_scale=reference_guidance,
-        guidance_stop=guidance_stop,
-        label_format=label_format,
-        max_line_cer=max_line_cer,
-        text_layers=tuple(text_layer) if text_layer else None,
-        device=device,
-        fuse_loras=fuse_loras,
-        compile_blocks=compile_blocks,
-    )
     loras = lora_dirs(lora)
     jobs, failed = plan_jobs(pages)  # before the model loads: a run whose pages plan to nothing loads none
     crops: list[CropResult] = []

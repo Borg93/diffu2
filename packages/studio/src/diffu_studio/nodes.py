@@ -24,11 +24,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from diffu_page.blocks import DrawnCrop, crop_identity
 from diffu_page.captions.prompt import PageStyle
+from diffu_page.crops.geometry import pixel_box
 from diffu_page.layout import load_xml_layout, running_text
 from diffu_page.output import JPEG_QUALITY, jpeg_bytes, plain_file_name
 from diffu_page.pipeline import DrawSettings, PagePlanBlocks, crop_blocks, draw_crop, load_pipeline
 from diffu_page.plan import CropPlan
-from diffu_page.readback import pixel_box
 from diffu_studio.graph import draw_fn
 
 SHEET_HEIGHT = 512  # px: every crop of a sheet is scaled to it

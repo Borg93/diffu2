@@ -30,6 +30,7 @@ from diffu_page.cli.options import (
     named_path,
     parse_lora,
     required_model,
+    text_layers,
 )
 from diffu_page.output import console
 from diffu_page.pipeline import DrawSettings
@@ -99,9 +100,7 @@ def main(
 ) -> None:
     """Serve the studio: one draw node per drawer, all fed by one plan."""
     drawers = with_loras(drawer or [Drawer(name="flux3", model=required_model(settings.flux3_model))], lora or [])
-    draw_settings = DrawSettings(
-        guidance_scale=guidance, text_layers=tuple(text_layer) if text_layer else None, device=device
-    )
+    draw_settings = DrawSettings(guidance_scale=guidance, text_layers=text_layers(text_layer), device=device)
     try:
         studio = build_studio(drawers, settings=draw_settings, out=out)
     except ValueError as error:  # the drawers or settings, refused before a model loads

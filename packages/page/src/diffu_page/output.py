@@ -11,7 +11,7 @@ from rich.console import Console
 
 console = Console()
 err_console = Console(stderr=True, style="bold red")
-JPEG_QUALITY = 92  # every crop, sheet and reference written as JPEG
+JPEG_QUALITY = 92  # drawn crops, sheets and references (training tiles: build_crops' TILE_QUALITY)
 
 
 def jpeg_bytes(image: Image.Image) -> bytes:

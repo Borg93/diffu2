@@ -24,6 +24,7 @@ from PIL import Image
 from pydantic import BaseModel
 
 from diffu_page.captions.look import ScanLook, band_name, scan_look
+from diffu_page.crops.geometry import pixel_box
 from diffu_page.crops.grid import as_reference
 
 LINE_HEIGHT = 80  # px a line is scaled to before it is measured: its strokes then span about 4-12 px
@@ -50,7 +51,8 @@ DENSITY_WORDS = ((0.104, "widely spaced"), (0.146, "evenly spaced"), (math.inf, 
 
 class HandLook(BaseModel):
     """A crop's handwriting, measured. Lengths are shares of the line height. A measure the image does not allow is
-    None: no measurable line box, no ink in the line boxes, no paper (an image of nothing but ink) or no ink at all."""
+    None: no measurable line box, no ink in the line boxes (the density is then 0), no paper (an image of nothing but
+    ink) or no ink at all."""
 
     model_config = {"frozen": True}
 
@@ -177,9 +179,8 @@ def _scaled_lines(gray: np.ndarray, boxes: Sequence[Box]) -> list[tuple[np.ndarr
     """Each measurable line box cut out, scaled to ``LINE_HEIGHT`` rows, with its own ink threshold."""
     height, width = gray.shape
     lines: list[tuple[np.ndarray, int]] = []
-    for y0, x0, y1, x1 in boxes:
-        top, bottom = round(y0 * height / 1000), round(y1 * height / 1000)
-        left, right = round(x0 * width / 1000), round(x1 * width / 1000)
+    for box in boxes:
+        left, top, right, bottom = (round(v) for v in pixel_box(box, (width, height)))
         if bottom - top < MIN_BOX[0] or right - left < MIN_BOX[1]:
             continue
         crop = Image.fromarray(gray[top:bottom, left:right].astype(np.uint8))

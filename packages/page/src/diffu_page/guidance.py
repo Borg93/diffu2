@@ -62,7 +62,14 @@ class ReferenceGuidance(ClassifierFreeGuidance):
         stop: float = 1.0,
         enabled: bool = True,
     ) -> None:
-        super().__init__(guidance_scale, guidance_rescale, use_original_formulation, start, stop, enabled)
+        super().__init__(
+            guidance_scale=guidance_scale,
+            guidance_rescale=guidance_rescale,
+            use_original_formulation=use_original_formulation,
+            start=start,
+            stop=stop,
+            enabled=enabled,
+        )
         unguided = 0.0 if use_original_formulation else 1.0  # the caption scale at which diffusers runs one pass
         if math.isclose(guidance_scale, unguided) and not math.isclose(reference_scale, 1.0):
             raise ValueError("reference guidance needs caption guidance: this guidance_scale runs no uncaptioned pass")

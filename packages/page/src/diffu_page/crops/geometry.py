@@ -19,6 +19,14 @@ from diffu_page.layout.model import Layout, LineKind, PageBox, TextLine
 
 type LayoutBox = tuple[int, int, int, int]  # y0, x0, y1, x1 on 0-1000 of a crop: FLUX.3's layout boxes
 
+
+def pixel_box(bbox: Sequence[int], size: tuple[int, int]) -> tuple[float, float, float, float]:
+    """A layout box (``y0, x0, y1, x1`` on 0-1000) as ``(x0, y0, x1, y1)`` pixels of an image of ``size``."""
+    width, height = size
+    y0, x0, y1, x1 = bbox
+    return x0 * width / 1000, y0 * height / 1000, x1 * width / 1000, y1 * height / 1000
+
+
 # NeMo's image buckets for --resolution_preset 1024p (MultiTierBucketCalculator, quantization 64), (w, h).
 # Preprocessing fits an image to the bucket nearest its aspect by a cover-resize and a center crop, which
 # would trim a crop's edge lines out from under their boxes; a crop saved at a bucket's exact size is not cut.

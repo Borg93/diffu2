@@ -3,8 +3,7 @@
 A :class:`diffu_page.layout.Layout` (a real PAGE or ALTO page, refilled with new text) becomes the v2 crop builder's
 lines, so the crops come out of the same windowing (whole lines, about 1 megapixel at a 64 px line pitch, NeMo bucket
 sizes) and the same caption grammar as the training crops. A table is planned as one region, so its windows hold whole
-rows across it, and the page's ruled lines are kept in the windows they cross; a page without tables, printed lines or
-ruled lines is planned exactly as before.
+rows across it, and the page's ruled lines are kept in the windows they cross.
 The style is a ``PageStyle`` (the archive and its years; the scan, paper and ink), as in every v2 caption. A page
 drawn from a :class:`Reference` (style by example) is captioned as the reference pairs were (v3 on): its style's
 words give way to the reference, in the caption form the LoRA in use was trained on. CPU only.

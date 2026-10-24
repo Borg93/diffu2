@@ -55,9 +55,13 @@ class HandsReport(BaseModel):
 def drawn_hands(crop: EvalCrop, crops: Path, drawing: Path) -> Hands:
     """The hands of ``crop`` drawn as ``drawing``: its real crop resized to the drawing, as evaluate reads it back."""
     drawn = load_rgb(drawing)
-    reference = load_rgb(crops / crop.reference) if crop.reference else None
-    real = load_rgb(crops / crop.file_name).resize(drawn.size)
-    return crop_hands(drawn, real, crop.lines, reference=reference, reference_lines=crop.reference_lines)
+    return crop_hands(
+        drawn,
+        crop.real_image(crops, drawn.size),
+        crop.lines,
+        reference=crop.reference_image(crops),
+        reference_lines=crop.reference_lines,
+    )
 
 
 def measure_run(crops: Path, run: Path) -> HandsReport:

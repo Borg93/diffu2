@@ -10,8 +10,7 @@ from typer.testing import CliRunner
 
 from diffu_page.captions.hand import hand_look
 from diffu_page.captions.prompt import LineRecord
-from diffu_page.cli.evaluate import CropResult, Results, Summary
-from diffu_page.cli.hands import HandsReport, app
+from diffu_page.cli.hands import DrawnSample, EvaluateRun, HandsReport, app
 from diffu_page.evalset import EvalCrop
 
 LINES = [
@@ -22,12 +21,11 @@ REFERENCE_LINES = [[100, 50, 300, 950], [500, 50, 700, 950]]
 
 
 def _run(directory: Path, drawing: Image.Image) -> Path:
-    """An evaluate run that drew one crop as ``drawing``."""
+    """An evaluate run that drew one crop as ``drawing``, as the hands CLI reads it."""
     (directory / "generated").mkdir(parents=True)
     drawing.save(directory / "generated" / "000.png")
-    summary = Summary(n=1, failed=0, gen_cer=0.5, real_cer=0.1, loras={})
-    sample = CropResult(index=0, file="a.jpg", gen_cer=0.5, real_cer=0.1, lines=[])
-    (directory / "results.json").write_text(Results(summary=summary, samples=[sample], failed={}).model_dump_json())
+    run = EvaluateRun(samples=[DrawnSample(index=0, file="a.jpg")])
+    (directory / "results.json").write_text(run.model_dump_json())
     return directory
 
 

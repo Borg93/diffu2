@@ -7,6 +7,8 @@ autoencoder.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel
 
 # Qwen3.5-4B's full-attention outputs spread over its depth: the orthographic early layers, the compositional middle and
@@ -34,7 +36,8 @@ class DiffuSize(BaseModel):
 
 DIFFU_S = DiffuSize(num_attention_heads=12, mode_layers=2, joint_layers=12)  # hidden 1536, 618M parameters
 DIFFU_M = DiffuSize(num_attention_heads=16, mode_layers=4, joint_layers=16)  # hidden 2048, 1.64B parameters
-SIZES: dict[str, DiffuSize] = {"S": DIFFU_S, "M": DIFFU_M}
+SizeName = Literal["S", "M"]  # an assignment, not a type statement: typer reads it at runtime
+SIZES: dict[SizeName, DiffuSize] = {"S": DIFFU_S, "M": DIFFU_M}
 
 
 class TextEncoder(BaseModel):

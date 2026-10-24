@@ -27,6 +27,7 @@ import typer
 from diffu_page.captions.hand import ReferenceLook, hand_bands, measure_reference, slant_words
 from diffu_page.captions.records import CropRecord, read_records
 from diffu_page.captions.restyle import CaptionParts, described_edit_caption, edit_caption
+from diffu_page.crops.geometry import LayoutBox
 from diffu_page.data.style_pairs import link
 from diffu_page.evalset import ReferencedCrop, read_jsonl, write_jsonl
 from diffu_page.output import console
@@ -40,7 +41,7 @@ class ProbeRow(ReferencedCrop):
     """An eval row of the probe: for ``contradicting/``, the reference its words describe instead of its own."""
 
     words_from: str | None = None
-    words_lines: list[list[int]] | None = None
+    words_lines: list[LayoutBox] | None = None
 
 
 def words_of(look: ReferenceLook) -> tuple[str, ...]:

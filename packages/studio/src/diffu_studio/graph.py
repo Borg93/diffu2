@@ -134,7 +134,7 @@ def edge(source: Node, output: str, target: Node, input_: str) -> Edge:
     )
 
 
-def _reference(node_id: str, label: str, port_type: PortType, default: JsonValue, row: int) -> Reference:
+def _reference(node_id: str, label: str, port_type: PortType, *, default: JsonValue, row: int) -> Reference:
     return Reference(
         id=node_id,
         label=label,
@@ -147,7 +147,7 @@ def _reference(node_id: str, label: str, port_type: PortType, default: JsonValue
     )
 
 
-def _subject(node_id: str, label: str, port_type: PortType, row: int) -> Subject:
+def _subject(node_id: str, label: str, port_type: PortType, *, row: int) -> Subject:
     return Subject(
         id=node_id,
         label=label,
@@ -161,11 +161,11 @@ def _subject(node_id: str, label: str, port_type: PortType, row: int) -> Subject
 
 def studio_graph(drawers: list[str], style: PageStyle) -> WorkflowGraph:
     """The canvas for ``drawers`` (by name), its style reference set to ``style``."""
-    template = _reference("ref_template", "Template", PortType.FILE, None, 0)
-    text = _reference("ref_text", "Text (blank: the template's own)", PortType.TEXT, "", 1)
-    style_reference = _reference("ref_style", "Style", PortType.JSON, style.model_dump(mode="json"), 2)
-    seed = _reference("ref_seed", "Seed", PortType.NUMBER, 0, 3)
-    steps = _reference("ref_steps", "Steps", PortType.NUMBER, 50, 4)
+    template = _reference("ref_template", "Template", PortType.FILE, default=None, row=0)
+    text = _reference("ref_text", "Text (blank: the template's own)", PortType.TEXT, default="", row=1)
+    style_reference = _reference("ref_style", "Style", PortType.JSON, default=style.model_dump(mode="json"), row=2)
+    seed = _reference("ref_seed", "Seed", PortType.NUMBER, default=0, row=3)
+    steps = _reference("ref_steps", "Steps", PortType.NUMBER, default=50, row=4)
     plan = Operator(
         id="op_plan",
         label="Plan the page",
@@ -203,8 +203,8 @@ def studio_graph(drawers: list[str], style: PageStyle) -> WorkflowGraph:
             x=2 * _COLUMN,
             y=2 * row * _ROW,
         )
-        crops = _subject(f"sub_{name}_crops", f"{name} crops", PortType.IMAGE, 2 * row)
-        labels = _subject(f"sub_{name}_labels", f"{name} labels", PortType.FILE, 2 * row + 1)
+        crops = _subject(f"sub_{name}_crops", f"{name} crops", PortType.IMAGE, row=2 * row)
+        labels = _subject(f"sub_{name}_labels", f"{name} labels", PortType.FILE, row=2 * row + 1)
         draws.append(draw)
         subjects += [crops, labels]
         edges += [

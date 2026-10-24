@@ -15,10 +15,10 @@ from diffusers.modular_pipelines import (
 )
 from transformers import TrOCRProcessor, VisionEncoderDecoderModel
 
-from diffu_page.crops.geometry import SLOT_ABOVE_BASELINE, SLOT_BELOW_BASELINE
+from diffu_page.crops.geometry import SLOT_ABOVE_BASELINE, SLOT_BELOW_BASELINE, pixel_box
 from diffu_page.labels import LabelFormat, LineLabel, PageLabels, Rect, export
 from diffu_page.plan import CropPlan
-from diffu_page.readback import pixel_box, read_lines
+from diffu_page.readback import read_lines
 from diffu_page.settings import settings
 
 MAX_LINE_CER = 0.25  # a line that reads back with a higher CER is labelled unclear

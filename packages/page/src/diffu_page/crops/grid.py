@@ -15,16 +15,11 @@ LARGEST_BUCKET_PIXELS = max(width * height for width, height in BUCKETS)  # NeMo
 REF_PIXELS = 512 * 1024  # a reference image's size: the hand smaller than in the ~1 MP target, at half its tokens
 
 
-def fit_to_grid(image: Image.Image, max_pixels: int) -> Image.Image:
-    """``image`` scaled under ``max_pixels``, each side floored to a multiple of ``LATENT_GRID`` (as NeMo's cache
-    encoder resizes it: squashed onto the grid, never padded)."""
-    scale = min(1.0, (max_pixels / (image.width * image.height)) ** 0.5)
+def as_reference(image: Image.Image) -> Image.Image:
+    """``image`` as a reference image is drawn from, in training and generation alike: scaled under ``REF_PIXELS``,
+    each side floored to a multiple of ``LATENT_GRID`` as NeMo's cache encoder resizes it (squashed onto the grid,
+    never padded), so an image already there is unchanged."""
+    scale = min(1.0, (REF_PIXELS / (image.width * image.height)) ** 0.5)
     width = max(LATENT_GRID, int(image.width * scale) // LATENT_GRID * LATENT_GRID)
     height = max(LATENT_GRID, int(image.height * scale) // LATENT_GRID * LATENT_GRID)
     return image.convert("RGB").resize((width, height), Image.Resampling.LANCZOS)
-
-
-def as_reference(image: Image.Image) -> Image.Image:
-    """``image`` as a reference image is drawn from, in training and generation alike: on the grid under
-    ``REF_PIXELS`` (an image already there is unchanged)."""
-    return fit_to_grid(image, REF_PIXELS)

@@ -8,10 +8,12 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Self
 
+from PIL import Image
 from pydantic import BaseModel, model_validator
 
 from diffu_page.captions.prompt import LineRecord
 from diffu_page.crops.geometry import LayoutBox
+from diffu_page.output import load_rgb
 from diffu_page.plan import CropPlan
 
 
@@ -53,6 +55,14 @@ class EvalCrop(CropRow):
         if (self.reference is None) != (self.reference_lines is None):
             raise ValueError(f"{self.file_name}: a reference and its line boxes go together, one without the other")
         return self
+
+    def reference_image(self, crops: Path) -> Image.Image | None:
+        """The reference image, from the set's dir ``crops``; None without one."""
+        return None if self.reference is None else load_rgb(crops / self.reference)
+
+    def real_image(self, crops: Path, size: tuple[int, int]) -> Image.Image:
+        """The real crop at a drawing's ``size``: as it is read back and its hand measured beside the drawing."""
+        return load_rgb(crops / self.file_name).resize(size)
 
 
 class ReferencedCrop(CropRow):

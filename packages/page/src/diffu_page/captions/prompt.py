@@ -155,10 +155,10 @@ def caption_for(crop: Crop, style: PageStyle) -> Caption:
     and BFL's layout-prompt guide: medium, setting and light first; each ``<id>`` cited beside the words that
     name it, with its position in words as well as in its box; visible details (paper and ink colour) rather
     than names alone; every visible text a row quoting its words with style and alignment. A text line's id is
-    its language code + ``_Text_`` + its index in reading order (``Sv_Text_1``). Lines cut by the top or bottom
-    edge get a ``fragment_k`` row, so the model learns that unprompted ink appears only where a row says so.
-    A printed line's row says it is printed, a table cell's line's that it sits in a table cell, and each ruled
-    line of the crop gets a ``rule_k`` row; a crop with none of them is captioned exactly as before.
+    ``Sv_Text_`` and its place in :func:`caption_order` (top to bottom, then left to right). Lines cut by the top
+    or bottom edge get a ``fragment_k`` row, so the model learns that unprompted ink appears only where a row says
+    so. A printed line's row says it is printed, a table cell's line's that it sits in a table cell, and each ruled
+    line of the crop gets a ``rule_k`` row.
     """
     numbered = [(f"Sv_Text_{i}", line) for i, line in enumerate(caption_order(crop.lines), start=1)]
     fragments = [

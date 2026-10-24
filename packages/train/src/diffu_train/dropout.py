@@ -70,8 +70,9 @@ class CaptionDropout(Dataset[dict[str, Any]]):
     """A NeMo image-edit dataset whose samples each carry the empty prompt instead of their caption with probability
     ``share``: target and reference stay, and the sample's text token count follows its prompt.
 
-    Each draw is ``draw()``, by default Python's ``random`` (``uniform``), which the DataLoader seeds in every worker
-    from its generator each epoch: a pair loses its caption in some epochs and not others, reproducibly.
+    Each draw is ``draw()``, by default Python's ``random`` (``uniform``), which the DataLoader seeds once in each
+    worker as it starts (NeMo's workers persist across epochs, so the draws run on from epoch to epoch): a pair loses
+    its caption in some epochs and not others. A resumed run's workers restart their streams from the run's seed.
     """
 
     def __init__(

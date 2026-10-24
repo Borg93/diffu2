@@ -18,7 +18,8 @@ import typer
 from PIL import Image, ImageDraw
 from pydantic import BaseModel
 
-from diffu_page.output import console, load_rgb
+from diffu_page.evalset import generated_path, read_jsonl
+from diffu_page.output import JPEG_QUALITY, console, load_rgb
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 
@@ -28,7 +29,8 @@ GAP = 10
 
 
 class Prompt(BaseModel):
-    """What a sheet needs of a set's prompt (a steering or by-example ``diffu_page.evalset.EvalCrop``)."""
+    """What a sheet needs of a set's prompt (a steering or by-example ``diffu_page.evalset.EvalCrop``): its template and
+    variant, which an eval row may leave out and a steering row may not."""
 
     template: int
     variant: str
@@ -84,19 +86,18 @@ def sheets(
     run: Annotated[Path, typer.Option(help="the diffu_page.cli.evaluate output dir of that set")],
 ) -> None:
     """Lay out one contact sheet per template of a steering run."""
-    with (steer / "metadata.jsonl").open(encoding="utf-8") as metadata:
-        prompts = [Prompt.model_validate_json(line) for line in metadata]
+    prompts = read_jsonl(steer / "metadata.jsonl", Prompt)
     results = Results.model_validate_json((run / "results.json").read_text())
     by_template: dict[int, list[Image.Image]] = defaultdict(list)
     for sample in results.samples:
         prompt = prompts[sample.index]
-        panels = [load_rgb(run / "generated" / f"{sample.index:03d}.png")]
+        panels = [load_rgb(generated_path(run, sample.index))]
         if prompt.example:
             panels.append(load_rgb(steer / prompt.example))
         by_template[prompt.template].append(labelled_row(label_of(prompt, sample), panels))
     for template, rows in by_template.items():
         out = run / f"steer_template_{template}.jpg"
-        stack(rows).save(out, quality=88)
+        stack(rows).save(out, quality=JPEG_QUALITY)
         console.print(out)
 
 
