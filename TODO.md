@@ -511,9 +511,9 @@ Code (writing-python, diffusers):
       the unclosed file, the dead constant, the Sampler overrides, the duplicated `load_rgb`/`jpeg` helpers and
       `sys.maxsize` are gone; exact-value edit-caption tests, the subset twin and pytest-timeout done (24 Oct).
 - [ ] Still open: one Style (PageStyle and restyle.Style, with the runner's test); the studio graph built from dicts;
-      the runner's `int(str(...))` round-trip (with the Ray work); `pick`'s role-line rule never exercised by a test.
-      (24 Oct: `plan_page`'s unused `settings` is gone, and the optional arguments of `crop_hands`, `plan_page` and
-      CaptionDropout are keyword-only.)
+      the runner's `int(str(...))` round-trip (with the Ray work). (24 Oct: `plan_page`'s unused `settings` is gone,
+      the optional arguments of `crop_hands`, `plan_page` and CaptionDropout are keyword-only, and `pick`'s preference
+      for a crop with a margin note has its test.)
 - [x] diffu sampled at FLUX.3's shift 6.93 but trained with flow_shift 6.0: `diffu-export` (24 Oct) writes a trained
       repo's scheduler at its checkpoint's `flow_matching.flow_shift`.
 - [x] Guider: at `stop` < 1 the guider kept the previous crop's last step, so the next crop's text encoder step (which
