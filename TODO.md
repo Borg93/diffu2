@@ -758,6 +758,25 @@ Still to do, in this order (the refactors after the fixes, the user's call):
 - [ ] Still open: diffu-runner's direct imports (numpy, pillow) wait for the Ray work; generation checks
       `--reference-caption` against the LoRA's build.json once training copies build.json into its checkpoints.
 
+## Audit of 24 Oct evening (three reviewers against writing-python: 44 findings, each verified before fixing)
+
+- [x] Bugs fixed, each with a test that goes red without its fix (36aa1b5, 4de3c58, 35fc8c8, 011cbca, b4ebf12):
+      ALTO baselines in all three allowed forms; table cells refuse a missing index; PAGE tables of a window counted
+      from 0; line roles checked when a plan is read; a failed device stops generate and evaluate instead of failing
+      every later crop; pages planned before the model loads; a repeated --lora name and a described caption without
+      a reference refused; diffu-export refuses a directory that holds a model; the studio refuses two drawers of one
+      name and fused LoRAs on a shared model; style_pairs' val/ holds only the kept pairs' files; --template bounded;
+      --limit bounded; a line box of blank paper measures no hand (MIN_INK_CONTRAST, measured on 1,265 real boxes);
+      a wide region against the page edge is cropped (no trained page had one: golden diff byte-identical).
+- [x] Redundancy and shape (a9a3d0a, 011cbca): pixel_box, the caption's style words, the --model/--lora/--text-layer
+      options, "guides toward the reference", the real crop and reference of an eval row each written once;
+      evaluate_crops beside draw_pages; required result fields; keyword calls; docs that said what the code does not.
+- [ ] Caption grammar: "carries 1 lines" and "carries 0 lines of cursive handwriting" (an all-printed crop). Change it
+      only with the next caption rebuild: the LoRAs were trained on the grammar as it is.
+- [ ] load_pipeline's blocks parameter is always crop_blocks, but the Ray runner passes it: with the Ray work.
+- [ ] Hand measures of drawings scored before 24 Oct evening counted empty line boxes as hands; compare runs only when
+      both are scored with the contrast floor (diffu-hands rescores a saved run).
+
 ## Quality control of generated windows (plan of 24 Oct: embeddings, a tabular model, a VLM judge)
 
 The plan: embed every generated window (TIPSv2 or Nemotron 3.5 Embed), reduce the embedding, give it with our own
