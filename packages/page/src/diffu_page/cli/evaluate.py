@@ -25,7 +25,7 @@ from pydantic import BaseModel
 
 from diffu_page.captions.hand import Box, HandDistance, HandLook, hand_distance, hand_look, lab
 from diffu_page.captions.prompt import LineRecord
-from diffu_page.cli.options import Lora, parse_lora
+from diffu_page.cli.options import Lora, parse_lora, required_model
 from diffu_page.crops.grid import as_reference
 from diffu_page.output import console, err_console
 from diffu_page.pipeline import DrawSettings, crop_blocks, draw_crop, load_pipeline
@@ -316,7 +316,9 @@ def evaluate(
         Path, typer.Option(help="a split dir of diffu_page.data.build_crops (or steer_set / style_pairs)")
     ],
     out: Annotated[Path, typer.Option(help="where the sheets, generated/ and results.json go")],
-    model: Annotated[Path, typer.Option(help="the model directory (FLUX.3 Klein or diffu)")] = settings.flux3_model,
+    model: Annotated[
+        Path | None, typer.Option(help="the model directory (FLUX.3 Klein or diffu); default $FLUX3_MODEL")
+    ] = settings.flux3_model,
     lora: Annotated[list[Lora] | None, typer.Option(parser=parse_lora, help="name=<NeMo LoRA model dir>")] = None,
     n: Annotated[int, typer.Option("-n", help="crops to evaluate")] = 16,
     steps: int = 50,
@@ -331,7 +333,12 @@ def evaluate(
     device: Annotated[str, typer.Option(help="where the models run")] = "cuda",
 ) -> None:
     """Draw held-out crops from their stored captions and compare their read-back with the real crops'."""
+    model = required_model(model)
     eval_crops = read_crops(crops, n)
+    if reference_guidance != 1.0 and not any(crop.reference for crop in eval_crops):
+        raise typer.BadParameter(
+            "these crops name no reference image to guide toward", param_hint="--reference-guidance"
+        )
     (out / "generated").mkdir(parents=True, exist_ok=True)
     loras = {adapter.name: adapter.path for adapter in lora or []}
     draw_settings = DrawSettings(

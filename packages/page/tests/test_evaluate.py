@@ -128,6 +128,20 @@ def test_evaluate_guides_toward_each_crops_reference_when_asked(tiny_flux3: Path
     assert drawn[1] != drawn[0]
 
 
+def test_evaluate_refuses_reference_guidance_on_crops_without_references_before_it_loads(tmp_path: Path) -> None:
+    crops = _eval_set(tmp_path / "crops", [_crop("a.jpg"), _crop("b.jpg")])
+
+    result = CliRunner().invoke(
+        app,
+        ["--crops", str(crops), "--out", str(tmp_path / "out"), "--model", str(tmp_path / "no_model")]
+        + ["--reference-guidance", "3"],
+    )
+
+    message = " ".join(result.output.replace("│", " ").split())  # rich wraps the error panel at 80 columns
+    assert result.exit_code == 2  # a usage error, raised before the (missing) model would have been read
+    assert "these crops name no reference image to guide toward" in message
+
+
 def _median_of_measured(values: list[float | None]) -> float | None:
     measured = [value for value in values if value is not None]
     return median(measured) if measured else None

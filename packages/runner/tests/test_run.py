@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 import ray
 from PIL import Image
+from pydantic import ValidationError
 
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.prompt import LineRecord
@@ -17,7 +18,7 @@ from diffu_page.captions.provenance import Provenance
 from diffu_page.jobs import CropJob, PageJob, crop_jobs
 from diffu_page.pipeline import DrawSettings
 from diffu_page.plan import CropPlan, PageStyle
-from diffu_runner.run import RunConfig, draw_dataset, plan_dataset
+from diffu_runner.run import RunConfig, draw_dataset, plan_dataset, run
 
 STYLE = PageStyle(
     provenance=Provenance(title="the archive", years="1700"), look=ScanLook(greyscale=False, paper="cream", ink="brown")
@@ -71,3 +72,31 @@ def test_draw_dataset_draws_every_crop_and_keeps_a_failed_one_with_its_error(
     assert by_name["drawn"]["error"] == ""
     assert by_name["failed"]["image"] == b""
     assert by_name["failed"]["error"].startswith("FileNotFoundError: ")
+
+
+@pytest.mark.parametrize(
+    ("drawers", "gpus", "device", "error"),
+    [
+        pytest.param(0, 1.0, "cuda", "greater than or equal to 1", id="no-drawer"),
+        pytest.param(1, 0.0, "cuda", "a drawer with no GPU must draw on the CPU", id="cuda-without-a-gpu"),
+    ],
+)
+def test_run_config_refuses_drawers_that_cannot_draw(
+    tiny_flux3: Path, drawers: int, gpus: float, device: str, error: str
+) -> None:
+    with pytest.raises(ValidationError, match=error):
+        RunConfig(
+            model=tiny_flux3,
+            loras={},
+            settings=DrawSettings(device=device),
+            drawers=drawers,
+            gpus_per_drawer=gpus,
+        )
+
+
+def test_run_refuses_an_out_that_already_holds_a_run(tiny_flux3: Path, tmp_path: Path) -> None:
+    (tmp_path / "run_meta.json").write_text("{}")
+    config = RunConfig(model=tiny_flux3, loras={}, settings=DrawSettings(device="cpu"), gpus_per_drawer=0)
+
+    with pytest.raises(FileExistsError, match="already holds a run"):
+        run([], config, tmp_path)

@@ -5,7 +5,7 @@
 # Based on NeMo AutoModel's examples/diffusion/finetune/flux3_i2i_flow.yaml with the image-editing LoRA block of
 # its FLUX.3 guide (docs/model-coverage/diffusion/black-forest-labs/flux3-image-klein.mdx), which also trains the
 # reference-image stream. Paths come from the environment: DIFFU_REPO (this repo, required) and FLUX3_MODEL (the
-# model, default the Hub repo). run_v3.sh sets both; by hand, from the NeMo AutoModel repo root:
+# model directory, required). run_v3.sh sets both; by hand, from the NeMo AutoModel repo root:
 #
 #   DIFFU_REPO=~/Desktop/repos/diffu2 uv run --no-sync torchrun \
 #       --nproc-per-node=1 examples/diffusion/finetune/finetune.py -c $DIFFU_REPO/packages/train/configs/flux3/flux3_style_ref_lora_v3.yaml
@@ -30,7 +30,7 @@ dist_env:
   timeout_minutes: 30
 
 model:
-  pretrained_model_name_or_path: ${FLUX3_MODEL,black-forest-labs/flux-3-image-klein-base}
+  pretrained_model_name_or_path: ${FLUX3_MODEL}
   model_type: "flux3"
   mode: "finetune"
   cache_dir: null

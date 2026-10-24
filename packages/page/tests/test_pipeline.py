@@ -2,13 +2,12 @@
 
 The tiny model draws noise, so every line reads back badly: what is checked is the wiring (a plan in, an image of the
 plan's size with one label per line out; a reference image drawn from as it was resized for training, and guided
-toward when asked; the page pipeline drawing every planned crop exactly as the crop pipeline draws it, from the page's
-reference when it has one) and that a NeMo LoRA loads at its trained strength.
+toward when asked; diffu-generate drawing each planned crop on its own, so one that fails costs no other) and that a
+NeMo LoRA loads at its trained strength.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
@@ -18,16 +17,18 @@ import pytest
 import torch
 from diffusers.modular_pipelines import ModularPipeline
 from PIL import Image
+from safetensors.torch import load_file, save_file
 
 from diffu_page.blocks import DrawnCrop
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.prompt import LineRecord
 from diffu_page.captions.provenance import Provenance
+from diffu_page.cli.generate import draw_pages
 from diffu_page.crops.grid import REF_PIXELS, as_reference
-from diffu_page.layout import load_xml_layout, refill
-from diffu_page.lora import load_nemo_lora
-from diffu_page.pipeline import DrawSettings, crop_blocks, draw_crop, load_pipeline, model_family, page_blocks
-from diffu_page.plan import CropPlan, PageStyle, Reference, plan_page
+from diffu_page.jobs import PageJob
+from diffu_page.lora import ADAPTER_CONFIG, ADAPTER_WEIGHTS, nemo_lora_state_dict
+from diffu_page.pipeline import DrawSettings, crop_blocks, draw_crop, load_pipeline, model_family
+from diffu_page.plan import CropPlan, PageStyle, Reference
 
 TINY_SETTINGS = DrawSettings(steps=2, guidance_scale=4.0, text_layers=(1,), device="cpu")
 LORA_MODULE = "single_transformer_blocks.0.attn.to_q"
@@ -145,59 +146,96 @@ def test_crop_pipeline_draws_from_a_reference_as_resized_for_training(crop_pipe:
     assert crop.image.tobytes() == as_trained.image.tobytes()
 
 
-def _identity(crop: DrawnCrop) -> tuple[str, CropPlan, str, str]:
-    """A crop's name, plan, image digest and labels: what must match between two draws of it."""
-    return crop.name, crop.plan, hashlib.sha256(crop.image.tobytes()).hexdigest(), crop.labels_xml
-
-
-@pytest.mark.parametrize("drawn_from_reference", [pytest.param(False, id="style"), pytest.param(True, id="reference")])
-def test_page_pipeline_draws_every_crop_as_the_crop_pipeline_draws_it(
-    tiny_flux3: Path, crop_pipe: ModularPipeline, two_column_page: Path, tmp_path: Path, drawn_from_reference: bool
+def test_draw_pages_records_a_crop_it_cannot_draw_by_name_and_saves_the_other_crops(
+    crop_pipe: ModularPipeline, two_column_page: Path, wide_and_narrow_body_page: Path, tmp_path: Path
 ) -> None:
-    reference = None
-    if drawn_from_reference:
-        _off_grid_reference().save(tmp_path / "reference.png")
-        reference = Reference(image=tmp_path / "reference.png")
-    page_pipe = load_pipeline(tiny_flux3, page_blocks, loras={}, settings=TINY_SETTINGS)
-    plans = plan_page(refill(load_xml_layout(two_column_page), [TEXT]), STYLE, reference=reference)
-    image = _off_grid_reference() if drawn_from_reference else None
-    expected = [
-        draw_crop(crop_pipe, plan, name=f"p_{k}", seed=7 + k, reference=image, settings=TINY_SETTINGS)
-        for k, plan in enumerate(plans)
+    unreadable = Reference(image=tmp_path / "missing.png")  # planned without it; each of its crops fails to read it
+    pages = [
+        PageJob(template=two_column_page, text=TEXT, style=STYLE, reference=unreadable),
+        PageJob(template=wide_and_narrow_body_page, text=TEXT, style=STYLE),
     ]
 
-    crops: list[DrawnCrop] = page_pipe(
-        template=two_column_page,
-        text=TEXT,
-        style=STYLE,
-        reference=reference,
-        page_name="p",
-        seed=7,
-        **TINY_SETTINGS.pipeline_inputs(),
-        output="crops",
-    )
+    crops, failed = draw_pages(crop_pipe, pages, settings=TINY_SETTINGS, out=tmp_path, prof=None)
 
-    assert [_identity(crop) for crop in crops] == [_identity(crop) for crop in expected]
+    assert [crop.name for crop in crops] == ["001_wide_and_narrow_0"]
+    assert {name: error.split(":")[0] for name, error in failed.items()} == {
+        "000_two_columns_0": "FileNotFoundError",
+        "000_two_columns_1": "FileNotFoundError",
+    }
+    assert sorted(path.name for path in tmp_path.glob("0*")) == [
+        "001_wide_and_narrow_0.jpg",
+        "001_wide_and_narrow_0.xml",
+    ]
 
 
-def test_model_family_refuses_a_repo_whose_blocks_it_does_not_know(tmp_path: Path) -> None:
-    (tmp_path / "modular_model_index.json").write_text(json.dumps({"_blocks_class_name": "OtherAutoBlocks"}))
+@pytest.mark.parametrize(
+    ("index", "error"),
+    [
+        pytest.param(
+            {"_blocks_class_name": "OtherAutoBlocks"},
+            "names the blocks 'OtherAutoBlocks'; the known model families are",
+            id="unknown",
+        ),
+        pytest.param({}, "names no _blocks_class_name", id="unnamed"),
+    ],
+)
+def test_model_family_refuses_a_repo_whose_blocks_it_does_not_know(
+    tmp_path: Path, index: dict[str, str], error: str
+) -> None:
+    (tmp_path / "modular_model_index.json").write_text(json.dumps(index))
 
-    with pytest.raises(ValueError, match="names the blocks 'OtherAutoBlocks'; the known model families are"):
+    with pytest.raises(ValueError, match=error):
         model_family(tmp_path)
 
 
-def test_nemo_lora_loads_at_its_trained_strength(tiny_flux3: Path, write_nemo_lora: Callable[..., Path]) -> None:
+def test_draw_crop_refuses_reference_guidance_on_a_crop_without_a_reference(crop_pipe: ModularPipeline) -> None:
+    guided = TINY_SETTINGS.model_copy(update={"reference_guidance_scale": 3.0})
+
+    with pytest.raises(ValueError, match="reference guidance needs a reference image"):
+        draw_crop(crop_pipe, _plan(), name="000", seed=0, reference=None, settings=guided)
+
+
+def test_nemo_lora_loads_at_its_trained_strength(
+    tiny_flux3: Path, crop_pipe: ModularPipeline, write_nemo_lora: Callable[..., Path]
+) -> None:
     torch.manual_seed(0)
-    pipe = load_pipeline(tiny_flux3, crop_blocks, loras={}, settings=TINY_SETTINGS)
-    linear = pipe.transformer.get_submodule(LORA_MODULE)
+    linear = crop_pipe.transformer.get_submodule(LORA_MODULE)
     a = torch.randn(2, linear.in_features)
     b = torch.randn(linear.out_features, 2)
     lora_dir = write_nemo_lora(LORA_MODULE, a, b, alpha=4)  # scale alpha / r = 2
     x = torch.randn(3, linear.in_features)
     expected = linear(x.to(linear.weight.dtype)).float() + 2 * x @ a.T @ b.T
 
-    load_nemo_lora(pipe, lora_dir, "v2")
+    pipe = load_pipeline(tiny_flux3, crop_blocks, loras={"v2": lora_dir}, settings=TINY_SETTINGS)
 
     got = pipe.transformer.get_submodule(LORA_MODULE)(x.to(linear.weight.dtype)).float()
     torch.testing.assert_close(got, expected, rtol=2e-2, atol=2e-1)
+
+
+def _rslora(lora_dir: Path) -> None:
+    config = json.loads((lora_dir / ADAPTER_CONFIG).read_text())
+    (lora_dir / ADAPTER_CONFIG).write_text(json.dumps({**config, "use_rslora": True}))
+
+
+def _unprefixed(lora_dir: Path) -> None:
+    weights = load_file(lora_dir / ADAPTER_WEIGHTS)
+    save_file(
+        {key.removeprefix("base_model.model."): value for key, value in weights.items()}, lora_dir / ADAPTER_WEIGHTS
+    )
+
+
+@pytest.mark.parametrize(
+    ("spoil", "error"),
+    [
+        pytest.param(_rslora, "rsLoRA", id="rslora"),
+        pytest.param(_unprefixed, "lack NeMo's 'base_model.model.' prefix", id="not-nemo"),
+    ],
+)
+def test_nemo_lora_refuses_a_checkpoint_it_would_load_at_the_wrong_strength_or_place(
+    write_nemo_lora: Callable[..., Path], spoil: Callable[[Path], None], error: str
+) -> None:
+    lora_dir = write_nemo_lora(LORA_MODULE, torch.randn(2, 8), torch.randn(8, 2), alpha=4)
+    spoil(lora_dir)
+
+    with pytest.raises(ValueError, match=error):
+        nemo_lora_state_dict(lora_dir)

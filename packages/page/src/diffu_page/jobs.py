@@ -1,15 +1,16 @@
 """The work units of a generation run: a page to draw, and the crops it is planned into.
 
 A :class:`PageJob` is a real template page, the text to write into it and the style to draw it in (one per line of a
-run file). The page pipeline draws a page whole; diffu-runner plans it on CPU into :class:`CropJob` s
-(:func:`crop_jobs`) that GPU actors draw one by one with the crop pipeline. Both name and seed a page's crops with
-``crop_identity``, so a page comes out the same either way.
+run file). Each page is planned on CPU into :class:`CropJob` s (:func:`crop_jobs`), and each crop job is drawn on its
+own with the crop pipeline: by diffu-generate one after another, by diffu-runner's GPU actors in parallel. Crops are
+named and seeded by ``crop_identity``, so a page comes out the same either way.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
+from PIL import Image
 from pydantic import BaseModel
 
 from diffu_page.blocks import crop_identity
@@ -50,14 +51,27 @@ class CropJob(BaseModel):
     seed: int
     reference: Path | None = None
 
+    def reference_image(self) -> Image.Image | None:
+        """The image the crop is drawn from, as RGB; None without a reference."""
+        if self.reference is None:
+            return None
+        with Image.open(self.reference) as image:
+            return image.convert("RGB")
+
 
 def crop_jobs(page: PageJob, index: int) -> list[CropJob]:
-    """Page ``index`` of a run, planned into its crops by :class:`PagePlanBlocks` and named and seeded as the page
-    pipeline names and seeds them."""
+    """Page ``index`` of a run, planned into its crops by :class:`PagePlanBlocks`, each named and seeded by
+    ``crop_identity``.
+
+    Raises:
+        ValueError: If the page plans to no crops: it would silently drop out of the run.
+    """
     planner = PagePlanBlocks().init_pipeline()
     plans = planner(
         template=page.template, text=page.text, style=page.style, reference=page.reference, output="crop_plans"
     )
+    if not plans:
+        raise ValueError(f"{page.template} plans to no crops: no window of it holds enough whole lines")
     image = page.reference.image if page.reference else None
     jobs: list[CropJob] = []
     for k, plan in enumerate(plans):

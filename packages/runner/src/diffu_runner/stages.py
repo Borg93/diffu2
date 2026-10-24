@@ -52,13 +52,6 @@ def _jpeg(image: Image.Image) -> bytes:
     return buffer.getvalue()
 
 
-def _reference(path: Path | None) -> Image.Image | None:
-    if path is None:
-        return None
-    with Image.open(path) as image:
-        return image.convert("RGB")
-
-
 class DrawActor:
     """A Ray Data actor holding one crop pipeline (:func:`diffu_page.pipeline.crop_blocks`): loaded once, then each
     batch of crop rows drawn.
@@ -81,7 +74,7 @@ class DrawActor:
                 job.plan,
                 name=job.name,
                 seed=job.seed,
-                reference=_reference(job.reference),
+                reference=job.reference_image(),
                 settings=self._settings,
             )
         except Exception as error:  # flag, don't drop: a failed crop stays in the run with its error

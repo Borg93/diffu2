@@ -11,17 +11,17 @@ from __future__ import annotations
 
 import datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Self
 
 import ray
 import typer
-from pydantic import BaseModel
-from ray.data import Dataset
+from pydantic import BaseModel, Field, model_validator
+from ray.data import Dataset, SaveMode
 
-from diffu_page.cli.options import Lora, parse_lora
+from diffu_page.cli.options import Lora, parse_lora, required_model
 from diffu_page.jobs import PageJob
 from diffu_page.output import console
-from diffu_page.pipeline import DrawSettings
+from diffu_page.pipeline import DrawSettings, model_family
 from diffu_page.settings import settings
 from diffu_runner.stages import DrawActor, page_rows, plan_rows
 
@@ -36,8 +36,14 @@ class RunConfig(BaseModel):
     model: Path
     loras: dict[str, Path]
     settings: DrawSettings
-    drawers: int = 1  # GPU actors, each holding one crop pipeline
-    gpus_per_drawer: float = 1.0  # several actors share a GPU below 1 (the inference cluster's cards have 96 GB)
+    drawers: int = Field(default=1, ge=1)  # GPU actors, each holding one crop pipeline
+    gpus_per_drawer: float = Field(default=1.0, ge=0)  # several actors share a GPU below 1 (the cluster's cards: 96 GB)
+
+    @model_validator(mode="after")
+    def _draws_where_it_runs(self) -> Self:
+        if self.gpus_per_drawer == 0 and self.settings.device != "cpu":
+            raise ValueError(f"a drawer with no GPU must draw on the CPU, not on {self.settings.device!r}")
+        return self
 
 
 class RunMeta(BaseModel):
@@ -78,11 +84,19 @@ def draw_dataset(crops: Dataset, config: RunConfig) -> Dataset:
 
 
 def run(pages: list[PageJob], config: RunConfig, out: Path) -> None:
-    """Plan, draw and write every page's crops to ``out``; connects to the Ray cluster ``ray.init`` finds."""
+    """Plan, draw and write every page's crops to ``out``; connects to the Ray cluster ``ray.init`` finds.
+
+    Raises:
+        FileExistsError: If ``out`` already holds a run: its crops would be mixed with this run's.
+        ValueError: If the model's blocks have no family, checked before Ray starts.
+    """
+    if (out / "run_meta.json").exists() or (out / "crops").exists():
+        raise FileExistsError(f"{out} already holds a run: give a new --out")
+    model_family(config.model)
     if not ray.is_initialized():
         ray.init()
     started = datetime.datetime.now(datetime.UTC).isoformat()
-    draw_dataset(plan_dataset(pages), config).write_parquet(str(out / "crops"))
+    draw_dataset(plan_dataset(pages), config).write_parquet(str(out / "crops"), mode=SaveMode.CREATE)
     meta = RunMeta(config=config, pages=len(pages), started=started)
     (out / "run_meta.json").write_text(meta.model_dump_json(indent=1), encoding="utf-8")
 
@@ -91,7 +105,9 @@ def run(pages: list[PageJob], config: RunConfig, out: Path) -> None:
 def main(
     jobs: Annotated[Path, typer.Option(help="the run's pages: one diffu_page.jobs.PageJob per line")],
     out: Annotated[Path, typer.Option(help="where crops/*.parquet and run_meta.json go")],
-    model: Annotated[Path, typer.Option(help="the model directory (FLUX.3 Klein or diffu)")] = settings.flux3_model,
+    model: Annotated[
+        Path | None, typer.Option(help="the model directory (FLUX.3 Klein or diffu); default $FLUX3_MODEL")
+    ] = settings.flux3_model,
     lora: Annotated[list[Lora] | None, typer.Option(parser=parse_lora, help="name=<NeMo LoRA model dir>")] = None,
     drawers: Annotated[int, typer.Option(help="GPU actors, each holding one crop pipeline")] = 1,
     gpus_per_drawer: Annotated[float, typer.Option(help="the share of a GPU each actor takes")] = 1.0,
@@ -104,7 +120,7 @@ def main(
 ) -> None:
     """Generate a run's pages across a Ray cluster."""
     config = RunConfig(
-        model=model,
+        model=required_model(model),
         loras={adapter.name: adapter.path for adapter in lora or []},
         settings=DrawSettings(
             steps=steps, guidance_scale=guidance, text_layers=tuple(text_layer) if text_layer else None, device=device

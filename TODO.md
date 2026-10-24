@@ -59,8 +59,9 @@ Done 2026-10-21.
 - [x] Members by role: diffu-page (page data, our blocks, the page and crop pipelines, the CLIs), diffu (the model),
       diffu-train (NeMo glue), diffu-runner (Ray), diffu-studio (Gradio). Pilot LoRA config pruned.
 - [x] Every step is a Modular Diffusers block (`diffu_page.blocks`): `LoadLayoutStep`, `RefillStep`, `PlanCropsStep`;
-      `CropPromptStep`, `ReferenceGridStep` before a model's own blocks; `LineReadbackStep`, `LabelExportStep` after;
-      `CropLoopStep` draws every crop of a page. The model is chosen by its directory (`pipeline.FAMILIES`, keyed by
+      `CropPromptStep`, `ReferenceGridStep` before a model's own blocks; `LineReadbackStep`, `LabelExportStep` after.
+      (`CropLoopStep`, which drew every crop of a page in one call, was removed on 24 Oct: every entry point now draws
+      crop jobs one by one.) The model is chosen by its directory (`pipeline.FAMILIES`, keyed by
       the blocks its `modular_model_index.json` names), so FLUX.3 Klein and diffu run through the same blocks. The
       generator class (`CropGenerator`) and diffu-gen are gone: the CLIs, the runner and the studio call pipelines.
 - [x] diffu-runner on the crop pipeline: pages planned with `PagePlanBlocks` on CPU workers, one crop per block, GPU
@@ -108,9 +109,8 @@ test red-checked); not yet run on the GPU with FLUX.3 Klein.
 
 - [x] Our blocks around the model's own, declared like diffusers declares FLUX.3's: `pipeline.crop_blocks` (crop
       prompt, reference grid, the model's text encoder / VAE encoder / denoise / decode, read-back, labels; workflows
-      `text2image` / `image_conditioned`), `pipeline.page_blocks` (the plan steps, then the crop blocks once per crop),
-      `pipeline.PagePlanBlocks` (no model). The page pipeline draws every crop exactly as the crop pipeline draws it
-      (test).
+      `text2image` / `image_conditioned`) and `pipeline.PagePlanBlocks` (no model). The page pipeline
+      (`page_blocks`) is gone since 24 Oct: diffu-generate draws each planned crop on its own, as the runner does.
 - [x] One crop pipeline serves v2 and v3: the model's auto blocks choose reference-conditioned denoising when an
       `image` is passed.
 - [x] TrOCR loads through `load_components` from the read-back block's `ComponentSpec`;
@@ -488,9 +488,9 @@ Code (writing-python, diffusers):
 - [ ] Tests: exact-value asserts in the edit-caption tests (test_restyle), `pick`'s role-line rule never exercised,
       a subset twin (tests/test_diffu.py size test), pytest-timeout so a hung Ray test fails alone.
 - [ ] diffu samples at FLUX.3's shift 6.93 but trains with flow_shift 6.0: write diffu's scheduler config.
-- [ ] Guider edge: `stop` < 1 leaves the step state of the previous call (diffusers' own guider shares it); CropLoopStep
-      re-implements ModularPipeline.__call__'s state seeding (the page-equals-crop test is the tripwire); diffu's index
+- [ ] Guider edge: `stop` < 1 leaves the step state of the previous call (diffusers' own guider shares it); diffu's index
       has Hub components with an empty subfolder; the NeMo LoRA scale assumes plain LoRA (raise on rslora/patterns).
+      (CropLoopStep's copy of ModularPipeline.__call__'s state seeding went with it on 24 Oct.)
 
 Inference speed (ranked; re-profile on torch 2.14.1 first, one change at a time, gated on CER and the hand metrics):
 - [ ] 1. Fuse the LoRA (`fuse_lora` + `unload_lora_weights` after `set_adapters`; re-fuse from a kept base copy or
@@ -541,6 +541,21 @@ Data checks (23 Oct evening, the user's question: any leakage or anything weird?
 - [ ] Runs on our Ray cluster's Blackwell GPUs (96 GB each, sm_120). Re-profile there before optimizing; measure
       FP8 / NVFP4, fewer steps, a compiled transformer, several actors per card.
 
+The order of the speed work (24 Oct): measure, then restructure for Ray Data, then speed up one change at a time, all
+on the Spark; the cluster only once the tests are done. Every change is gated on the hand measures and writer-ID of the
+same held-out windows (CER as information only).
+- [ ] 1. A baseline profile (queued after the form probe): seconds per crop-pipeline block for six held-out 1715 windows
+      with their LoRA (crop prompt, reference grid, text encoder, denoise, decode, read-back, labels), peak GPU memory
+      per crop, and a torch trace of two crops for Perfetto, read with pytorch-skills' profile-model. The script times
+      each Modular Diffusers block through a thin wrapper, no change to the pipeline.
+- [ ] 2. From that breakdown, the Ray Data split below: which steps get their own stage and resources, and the batch
+      size per bucket; built on the Spark with a local Ray and measured with Ray Data's own stats before and after.
+- [ ] 3. Memory: a snapshot of one crop (pytorch-skills' analyze-memory-snapshot), to size the actors per 96 GB card
+      (FLUX.3 actors, read-back actors).
+- [ ] 4. Then the diffusers speedups, one at a time in the ranked order of the 23 Oct audit (fuse the LoRA, regional
+      compile, attention backend, FP8, guidance on part of the steps, fewer steps), plus diffusers' caching of
+      transformer blocks between steps; graph breaks found with pytorch-skills' debug-graph-breaks.
+
 Where our code does the compute engine's job, or blocks Ray Data from optimizing (review of 24 Oct; the boundary is
 right in diffu_runner: Ray does fan-out, actors, retries and the sink; these are the exceptions). On the Spark with a
 local Ray, profiled before and after; no cluster runs until the tests are done:
@@ -552,8 +567,9 @@ local Ray, profiled before and after; no cluster runs until the tests are done:
 - [ ] The driver reads every job into a list (`read_pages` -> `from_items`) and names and seeds crops by the page's
       position in the run file (two run files reuse the same seeds): read jobs with `ray.data.read_json`, and give
       every page a content-based id (template, text and style hashed) that names and seeds its crops.
-- [ ] Our own parallelism: `style_pairs` runs a `ProcessPoolExecutor`; `page_blocks` loops over crops inside a
-      pipeline (to remove, the user's call of 24 Oct, when generate draws per crop).
+- [ ] Our own parallelism: `style_pairs` runs a `ProcessPoolExecutor`: build the pairs as a Ray Data map over pages.
+- [x] `page_blocks` looped over a page's crops inside one pipeline call: removed (24 Oct, the user's call); generate
+      draws crop jobs one by one, so one failed crop costs no other.
 - [ ] `DrawActor` catches every exception as a failed crop, CUDA faults included: let CUDA errors (OOM, illegal
       access) raise so Ray restarts the actor; keep per-crop rows for content errors only.
 

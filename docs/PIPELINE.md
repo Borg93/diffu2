@@ -40,16 +40,16 @@ PAGE/ALTO page ──► LoadLayout ──► Refill ──► PlanCrops ──�
      `LineReadbackStep` (TrOCR reads every line box) and `LabelExportStep` (ALTO or PAGE labels; a line that reads back
      badly is tagged `unclear`). The model's auto blocks choose plain or reference-conditioned denoising from the
      inputs, so v2 (style by name) and v3 (style by example) share it.
-   - `page_blocks`: the plan steps, `LoadReferenceStep` (the page's reference crop as the crops' `image`, so a
-     reference only ever reaches the crops beside the captions planned for it), then `CropLoopStep`, which runs the
-     crop blocks once per planned crop (crop k from noise seed `seed + k`).
-   - `PagePlanBlocks`: the plan steps alone, no model.
+   - `PagePlanBlocks`: the plan steps alone, no model. `jobs.crop_jobs` turns a page's plans into crop jobs, crop k
+     named `<page>_<k>` and drawn from noise seed `seed + k`, each with the page's reference image if it has one (so a
+     reference only ever reaches the crops beside the captions planned for it).
    LoRAs load through the model's own LoRA loader as named adapters (`diffu_page.lora`).
 
-Who runs what: `diffu-generate` runs the page pipeline; `diffu-evaluate` the crop pipeline; diffu-runner plans pages
-with `PagePlanBlocks` on CPU workers and draws one crop per block with the crop pipeline on GPU actors; diffu-studio
-shows the same two seams as `gr.Workflow` nodes: a plan node (`PagePlanBlocks`) feeding a draw node per model (its crop
-pipeline). All of them name and seed crops alike, so a page comes out the same from any of them.
+Who runs what: every entry point plans pages with `PagePlanBlocks` and draws each crop on its own with the crop
+pipeline (`pipeline.draw_crop`). `diffu-generate` draws a run's crop jobs one after another; diffu-runner plans pages
+on CPU workers and draws one crop per block on GPU actors; diffu-studio shows the same two seams as `gr.Workflow`
+nodes, a plan node (`PagePlanBlocks`) feeding a draw node per model; `diffu-evaluate` draws stored plans. All of them
+name and seed crops alike, so a page comes out the same from any of them.
 
 ## Training (NeMo AutoModel)
 

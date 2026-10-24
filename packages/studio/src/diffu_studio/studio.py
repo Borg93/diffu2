@@ -21,7 +21,7 @@ import typer
 
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.provenance import Provenance
-from diffu_page.cli.options import Lora, parse_lora
+from diffu_page.cli.options import Lora, named_path, parse_lora, required_model
 from diffu_page.output import console
 from diffu_page.pipeline import DrawSettings
 from diffu_page.plan import PageStyle
@@ -52,8 +52,8 @@ def parse_drawer(value: str) -> Drawer:
     Raises:
         typer.BadParameter: If ``value`` is not ``name=<dir>``.
     """
-    named = parse_lora(value)
-    return Drawer(name=named.name, model=named.path)
+    name, model = named_path(value, "name=<model dir>")
+    return Drawer(name=name, model=model)
 
 
 def with_loras(drawers: list[Drawer], loras: list[Lora]) -> list[Drawer]:
@@ -91,7 +91,7 @@ def main(
     port: Annotated[int, typer.Option(help="the port the studio serves on")] = 7860,
 ) -> None:
     """Serve the studio: one draw node per drawer, all fed by one plan."""
-    drawers = with_loras(drawer or [Drawer(name="flux3", model=settings.flux3_model)], lora or [])
+    drawers = with_loras(drawer or [Drawer(name="flux3", model=required_model(settings.flux3_model))], lora or [])
     draw_settings = DrawSettings(
         guidance_scale=guidance, text_layers=tuple(text_layer) if text_layer else None, device=device
     )

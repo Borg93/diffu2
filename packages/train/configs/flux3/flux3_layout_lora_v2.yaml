@@ -4,7 +4,7 @@
 # Based on NeMo AutoModel's examples/diffusion/finetune/flux3_t2i_flow_lora.yaml (the validated T2I LoRA
 # recipe) with the overrides its FLUX.3 guide uses for few GPUs: native attention, activation checkpointing,
 # no FSDP2 prefetch. Paths come from the environment: DIFFU_REPO (this repo, required) and FLUX3_MODEL (the
-# model, default the Hub repo). run_v2.sh sets both; by hand, from the NeMo AutoModel repo root:
+# model directory, required). run_v2.sh sets both; by hand, from the NeMo AutoModel repo root:
 #
 #   DIFFU_REPO=~/Desktop/repos/diffu2 uv run --no-sync torchrun --nproc-per-node=1 \
 #       examples/diffusion/finetune/finetune.py -c $DIFFU_REPO/packages/train/configs/flux3/flux3_layout_lora_v2.yaml
@@ -29,7 +29,7 @@ dist_env:
   timeout_minutes: 30
 
 model:
-  pretrained_model_name_or_path: ${FLUX3_MODEL,black-forest-labs/flux-3-image-klein-base}
+  pretrained_model_name_or_path: ${FLUX3_MODEL}
   model_type: "flux3"
   mode: "finetune"
   cache_dir: null

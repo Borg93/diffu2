@@ -2,18 +2,17 @@
 
 A model repo (FLUX.3 Klein for the reference runs; diffu, FLUX.3's architecture with our own weights) names its blocks
 in ``modular_model_index.json``; :data:`FAMILIES` maps those to the model's blocks and pipeline class, so a model is
-chosen by its directory alone. Three sets of blocks are built:
+chosen by its directory alone. Two sets of blocks are built:
 
 - :class:`PagePlanBlocks` (no model): ``LoadLayoutStep`` -> ``RefillStep`` -> ``PlanCropsStep``. A template page, a
   text, a style and optionally a reference crop in; the crops to draw out, captioned for the reference if there is one.
 - :func:`crop_blocks`: ``CropPromptStep`` -> ``ReferenceGridStep`` -> the model's text encoder, VAE encoder, denoise
   and decode -> ``LineReadbackStep`` -> ``LabelExportStep``. A crop plan in; its image, per-line read-back and labels
   out. The model's auto blocks pick text-to-image or reference-conditioned denoising from the inputs (``image``).
-- :func:`page_blocks`: the plan steps, ``LoadReferenceStep`` (the reference's image, the crops' ``image``), then
-  ``CropLoopStep`` running the crop blocks once per planned crop.
 
-``diffu-generate`` and diffu-studio run the page pipeline; ``diffu-evaluate`` and diffu-runner's GPU actors run the
-crop pipeline, after diffu-runner has planned the pages on CPU workers with :class:`PagePlanBlocks`.
+Every entry point plans pages with :class:`PagePlanBlocks` and draws each crop on its own with the crop pipeline
+(:func:`draw_crop`): ``diffu-generate`` one after another, diffu-runner on GPU actors, diffu-studio per draw node,
+``diffu-evaluate`` from stored plans.
 """
 
 from __future__ import annotations
@@ -27,26 +26,24 @@ import torch
 from diffusers import Flux3AutoBlocks, Flux3ModularPipeline
 from diffusers.modular_pipelines import ModularPipeline, OutputParam, SequentialPipelineBlocks
 from PIL import Image
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from diffu.modular_pipelines.diffu import DiffuAutoBlocks, DiffuModularPipeline
 from diffu.modular_pipelines.loading import require_loaded
 from diffu_page.blocks import (
     CROP_OUTPUTS,
-    CropLoopStep,
     CropPromptStep,
     DrawnCrop,
     LabelExportStep,
     LineReadbackStep,
     LoadLayoutStep,
-    LoadReferenceStep,
     PlanCropsStep,
     ReferenceGridStep,
     RefillStep,
 )
 from diffu_page.guidance import ReferenceGuidance
 from diffu_page.labels import LabelFormat
-from diffu_page.lora import load_nemo_lora
+from diffu_page.lora import nemo_lora_state_dict
 from diffu_page.plan import CropPlan
 from diffu_page.readback import materialize_position_tables
 
@@ -75,7 +72,9 @@ def model_family(model: Path) -> ModelFamily:
         ValueError: If no family has those blocks.
     """
     index = json.loads((model / "modular_model_index.json").read_text(encoding="utf-8"))
-    blocks = index["_blocks_class_name"]
+    blocks = index.get("_blocks_class_name")
+    if blocks is None:
+        raise ValueError(f"{model}/modular_model_index.json names no _blocks_class_name")
     if blocks not in FAMILIES:
         raise ValueError(f"{model} names the blocks {blocks!r}; the known model families are {sorted(FAMILIES)}")
     return FAMILIES[blocks]
@@ -144,37 +143,6 @@ class PagePlanBlocks(SequentialPipelineBlocks):
         return [OutputParam("crop_plans", type_hint=list, description="The page's CropPlans, in page order.")]
 
 
-class PageBlocks(SequentialPipelineBlocks):
-    """A template page, a text and a style in; every crop of it drawn, read back and labelled out (built by
-    :func:`page_blocks`)."""
-
-    _workflow_map = {
-        "text2image": {"template": True, "text": True, "style": True},
-        "image_conditioned": {"template": True, "text": True, "style": True, "reference": True},
-    }
-
-    @property
-    @override
-    def description(self) -> str:
-        return (
-            "Plans a PAGE/ALTO template refilled with new text as crops, then draws, reads back and labels every crop "
-            "with a model's own blocks."
-        )
-
-    @property
-    @override
-    def outputs(self) -> list[OutputParam]:
-        return [OutputParam("crops", type_hint=list, description="Every crop drawn (DrawnCrop), in plan order.")]
-
-
-def page_blocks(family: ModelFamily) -> PageBlocks:
-    """The plan steps, the reference's image, then ``family``'s crop blocks once per planned crop."""
-    draw_crops = CropLoopStep.from_blocks_dict({"draw_crop": crop_blocks(family)})
-    return PageBlocks.from_blocks_dict(
-        {**PagePlanBlocks().sub_blocks, "load_reference": LoadReferenceStep(), "draw_crops": draw_crops}
-    )
-
-
 class DrawSettings(BaseModel):
     """How every crop is drawn.
 
@@ -191,7 +159,7 @@ class DrawSettings(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    steps: int = 50
+    steps: int = Field(default=50, ge=1)
     guidance_scale: float = 4.0
     reference_guidance_scale: float = 1.0
     label_format: LabelFormat = "alto"
@@ -212,22 +180,26 @@ def load_pipeline(model: Path, blocks: BlocksFor, *, loras: dict[str, Path], set
     ``settings.device``, the guider at ``settings.guidance_scale`` (and ``settings.reference_guidance_scale``) and every
     LoRA of ``loras`` (NeMo ``model/`` dirs by adapter name) active.
 
+    Everything that can be checked without the model is checked first: its family, the guider and every LoRA.
+
     Raises:
-        ValueError: If the model's blocks have no family.
+        ValueError: If the model's blocks have no family, the guidance settings do not go together, or a LoRA would
+            load at the wrong strength.
         RuntimeError: If a component failed to load.
     """
     family = model_family(model)
-    pipe = family.pipeline(blocks=blocks(family), pretrained_model_name_or_path=str(model))
-    pipe.load_components(dtype={"vae": torch.float32, "default": torch.bfloat16})
-    require_loaded(pipe)
     guider = ReferenceGuidance(
         guidance_scale=settings.guidance_scale, reference_scale=settings.reference_guidance_scale
     )
+    adapters = {name: nemo_lora_state_dict(lora_dir) for name, lora_dir in loras.items()}
+    pipe = family.pipeline(blocks=blocks(family), pretrained_model_name_or_path=str(model))
+    pipe.load_components(dtype={"vae": torch.float32, "default": torch.bfloat16})
+    require_loaded(pipe)
     pipe.update_components(guider=guider)
     pipe.to(settings.device)
     materialize_position_tables(pipe.htr_model)
-    for name, lora_dir in loras.items():
-        load_nemo_lora(pipe, lora_dir, name)
+    for name, state_dict in adapters.items():
+        pipe.load_lora_weights(state_dict, adapter_name=name)
     if loras:
         pipe.set_adapters(list(loras))
     return pipe
@@ -243,7 +215,13 @@ def draw_crop(
     settings: DrawSettings,
 ) -> DrawnCrop:
     """One crop drawn by a crop pipeline (:func:`crop_blocks`) from noise seed ``seed``, conditioned on ``reference``
-    when there is one."""
+    when there is one.
+
+    Raises:
+        ValueError: If ``settings`` guide toward a reference and there is none, before anything is drawn.
+    """
+    if reference is None and settings.reference_guidance_scale != 1.0:
+        raise ValueError("reference guidance needs a reference image: draw this crop at reference_guidance_scale 1")
     reference_input = {} if reference is None else {"image": reference}
     outputs = pipe(
         crop_plan=plan,

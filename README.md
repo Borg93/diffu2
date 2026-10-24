@@ -21,7 +21,7 @@ what runs it. Everything that draws is a Modular Diffusers pipeline: our blocks 
 | `packages/page` | diffu-page | Archive pages as data (`layout/`, `crops/`, `captions/`, plans, labels, the training-data builders in `data/`), our blocks (`blocks/`), the page and crop pipelines (`pipeline.py`) and their CLIs: `diffu-generate`, `diffu-evaluate`, `diffu-sheets` | torch, diffusers, transformers |
 | `packages/train` | diffu-train | NeMo AutoModel glue: the training configs (`configs/flux3/`, `configs/diffu/`), dataloader configs, the v3 pair cache and diffu's training cache | NeMo AutoModel (its environment only) |
 | `packages/runner` | diffu-runner | Generation at scale on a Ray cluster: pages planned on CPU workers, crops drawn by GPU actors each holding a crop pipeline | ray |
-| `packages/studio` | diffu-studio | The page pipeline as a `gr.Workflow` canvas: a plan node feeding one draw node per drawer (a model and its LoRAs), so models draw the same page side by side; app view and REST endpoint included | gradio |
+| `packages/studio` | diffu-studio | The pipeline as a `gr.Workflow` canvas: a plan node feeding one draw node per drawer (a model and its LoRAs), so models draw the same page side by side; app view and REST endpoint included | gradio |
 
 Package names keep the `diffu-` prefix (imports `diffu_page`, ...) so they stay unique in NeMo's shared environment.
 
@@ -50,14 +50,16 @@ cd ~/Desktop/repos/Automodel && ~/Desktop/repos/diffu2/jobs/spark_guard.sh --nee
     --title "the court records of Jämtlands domsaga" --paper cream --ink "dark brown"
 ```
 
-In Python, the page pipeline (a Modular Diffusers pipeline: call it with the page, get every crop back):
+In Python, a page planned into crop jobs on CPU, then each crop drawn by the crop pipeline (a Modular Diffusers
+pipeline), as diffu-generate and diffu-runner do it:
 
 ```python
 from pathlib import Path
 
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.provenance import Provenance
-from diffu_page.pipeline import DrawSettings, load_pipeline, page_blocks
+from diffu_page.jobs import PageJob, crop_jobs
+from diffu_page.pipeline import DrawSettings, crop_blocks, draw_crop, load_pipeline
 from diffu_page.plan import PageStyle
 
 style = PageStyle(
@@ -65,9 +67,14 @@ style = PageStyle(
     look=ScanLook(greyscale=False, paper="cream", ink="dark brown"),
 )
 settings = DrawSettings(steps=50)
-pipe = load_pipeline(model_dir, page_blocks, loras={"v2": lora_dir}, settings=settings)
-crops = pipe(template=Path("page.xml"), text=text, style=style, seed=0, **settings.pipeline_inputs(), output="crops")
+pipe = load_pipeline(model_dir, crop_blocks, loras={"v2": lora_dir}, settings=settings)
+page = PageJob(template=Path("page.xml"), text=text, style=style, seed=0)
+crops = [
+    draw_crop(pipe, job.plan, name=job.name, seed=job.seed, reference=job.reference_image(), settings=settings)
+    for job in crop_jobs(page, 0)
+]
 # each crop: .image, .labels_xml (ALTO), .line_reads, .line_cers, .unclear_lines
-# with a reference-style LoRA, add the crop to draw in the hand of, captioned as that LoRA was trained:
-#   reference=Reference.of_crop(Path("crop.jpg"), ReferenceCaption.PLAIN)  (diffu_page.plan, diffu_page.captions.restyle)
+# with a reference-style LoRA, give the page the crop to draw in the hand of, captioned as that LoRA was trained:
+#   PageJob(..., reference=Reference.of_crop(Path("crop.jpg"), ReferenceCaption.PLAIN))
+#   (diffu_page.plan, diffu_page.captions.restyle)
 ```

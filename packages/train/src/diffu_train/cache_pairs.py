@@ -26,6 +26,7 @@ from nemo_automodel.components.models.flux3.preprocessing import (
 )
 from nemo_automodel.components.models.flux3.text_encoding import encode_text_qwen3vl, load_qwen3vl_text_stack
 
+from diffu_page.cli.options import required_model
 from diffu_page.crops.grid import LARGEST_BUCKET_PIXELS
 from diffu_page.output import console
 from diffu_page.settings import settings
@@ -53,10 +54,13 @@ def empty_prompt(model: Path, device: str) -> EmptyPrompt:
 def main(
     manifest: Annotated[Path, typer.Option(help="diffu_page.data.style_pairs' train.jsonl")],
     out: Annotated[Path, typer.Option(help="the cache directory")],
-    model: Annotated[Path, typer.Option(help="the FLUX.3 model directory")] = settings.flux3_model,
+    model: Annotated[Path | None, typer.Option(help="the FLUX.3 model directory; default $FLUX3_MODEL")] = (
+        settings.flux3_model
+    ),
     limit: Annotated[int | None, typer.Option(help="cache only the first N pairs (a smoke test)")] = None,
 ) -> None:
     """Cache the v3 reference pairs with NeMo AutoModel's FLUX.3 image-edit encoder."""
+    model = required_model(model)
     rows = first_rows(manifest, limit) if limit else manifest
     encoder = Flux3ImageEditCacheEncoder(model_name=str(model), max_sequence_length=MAX_SEQUENCE_LENGTH)
     metadata = encoder.encode_manifest(

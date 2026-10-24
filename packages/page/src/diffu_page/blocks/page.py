@@ -1,6 +1,5 @@
-"""The page steps that run before any model: a template page read as its layout, refilled with new text, planned
-into the crops a model draws, and the reference crop (if any) loaded for the crops to be drawn from. CPU only; they
-need no components."""
+"""The page steps that run before any model: a template page read as its layout, refilled with new text and planned
+into the crops a model draws. CPU only; they need no components."""
 
 from __future__ import annotations
 
@@ -8,7 +7,6 @@ from pathlib import Path
 from typing import override
 
 from diffusers.modular_pipelines import InputParam, ModularPipeline, ModularPipelineBlocks, OutputParam, PipelineState
-from PIL import Image
 
 from diffu_page.layout import Layout, load_xml_layout, refill
 from diffu_page.plan import PageStyle, Reference, plan_page
@@ -98,34 +96,5 @@ class PlanCropsStep(ModularPipelineBlocks):
     def __call__(self, components: ModularPipeline, state: PipelineState) -> tuple[ModularPipeline, PipelineState]:
         block_state = self.get_block_state(state)
         block_state.crop_plans = plan_page(block_state.layout, block_state.style, reference=block_state.reference)
-        self.set_block_state(state, block_state)
-        return components, state
-
-
-class LoadReferenceStep(ModularPipelineBlocks):
-    """The page's reference crop as the image every crop is drawn from; no image without a reference, so a reference
-    image only ever reaches the crops beside the captions planned for it."""
-
-    @property
-    @override
-    def description(self) -> str:
-        return "Loads the page's reference crop (diffu_page.plan.Reference) as the `image` each crop is drawn from."
-
-    @property
-    @override
-    def inputs(self) -> list[InputParam]:
-        return [InputParam("reference", type_hint=Reference, description="The crop to draw the page in the hand of.")]
-
-    @property
-    @override
-    def intermediate_outputs(self) -> list[OutputParam]:
-        return [OutputParam("image", type_hint=Image.Image, description="The reference image (RGB), or None.")]
-
-    def __call__(self, components: ModularPipeline, state: PipelineState) -> tuple[ModularPipeline, PipelineState]:
-        block_state = self.get_block_state(state)
-        block_state.image = None
-        if block_state.reference is not None:
-            with Image.open(block_state.reference.image) as image:
-                block_state.image = image.convert("RGB")
         self.set_block_state(state, block_state)
         return components, state

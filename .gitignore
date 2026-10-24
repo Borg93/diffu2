@@ -21,3 +21,6 @@ runs/
 *.pth
 
 .DS_Store
+
+# local settings (FLUX3_MODEL=...): read by diffu_page.settings, never committed
+.env
