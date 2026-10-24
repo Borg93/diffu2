@@ -47,6 +47,10 @@ from diffu_page.lora import nemo_lora_state_dict
 from diffu_page.plan import CropPlan
 from diffu_page.readback import materialize_position_tables
 
+# Errors after which the device cannot be trusted: a run stops there instead of failing every later crop, and is not
+# retried into the same out-of-memory (which once froze the DGX Spark's unified memory)
+DEVICE_ERRORS = (torch.OutOfMemoryError, torch.AcceleratorError)
+
 
 class ModelFamily(BaseModel):
     """A model family's own blocks and pipeline class, and the blocks of its that generation leaves out."""

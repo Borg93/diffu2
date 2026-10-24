@@ -70,6 +70,22 @@ def parse_lora(value: str) -> Lora:
     return Lora(name=name, path=path)
 
 
+def lora_dirs(loras: list[Lora] | None) -> dict[str, Path]:
+    """The LoRA model dirs by adapter name.
+
+    Raises:
+        typer.BadParameter: If two LoRAs share a name: the later would silently replace the earlier.
+    """
+    dirs: dict[str, Path] = {}
+    for lora in loras or []:
+        if lora.name in dirs:
+            raise typer.BadParameter(
+                f"two LoRAs are named {lora.name!r}: {dirs[lora.name]} and {lora.path}", param_hint="--lora"
+            )
+        dirs[lora.name] = lora.path
+    return dirs
+
+
 def required_model(model: Path | None) -> Path:
     """The model directory a command draws with: ``--model``, else ``FLUX3_MODEL``.
 

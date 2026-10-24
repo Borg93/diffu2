@@ -46,13 +46,14 @@ from diffu_page.cli.options import (
     ReferenceGuidance,
     Steps,
     TextLayers,
+    lora_dirs,
     parse_lora,
     required_model,
 )
 from diffu_page.jobs import CropJob, PageJob, crop_jobs
 from diffu_page.layout import load_xml_layout, running_text
 from diffu_page.output import JPEG_QUALITY, console, err_console
-from diffu_page.pipeline import DrawSettings, crop_blocks, draw_crop, load_pipeline
+from diffu_page.pipeline import DEVICE_ERRORS, DrawSettings, crop_blocks, draw_crop, load_pipeline
 from diffu_page.plan import Reference
 from diffu_page.settings import settings
 
@@ -102,8 +103,8 @@ def _draw(pipe: ModularPipeline, job: CropJob, *, settings: DrawSettings, out: P
     return result
 
 
-def _planned(pages: list[PageJob]) -> tuple[list[CropJob], dict[str, str]]:
-    """Every page's crop jobs, and the error of each page that cannot be planned, by page name."""
+def plan_jobs(pages: list[PageJob]) -> tuple[list[CropJob], dict[str, str]]:
+    """Every page's crop jobs, and the error of each page that cannot be planned, by page name (CPU)."""
     jobs: list[CropJob] = []
     failed: dict[str, str] = {}
     for index, page in enumerate(pages):
@@ -116,15 +117,20 @@ def _planned(pages: list[PageJob]) -> tuple[list[CropJob], dict[str, str]]:
 
 
 def draw_pages(
-    pipe: ModularPipeline, pages: list[PageJob], *, settings: DrawSettings, out: Path, prof: profile | None
+    pipe: ModularPipeline, jobs: list[CropJob], *, settings: DrawSettings, out: Path, prof: profile | None
 ) -> tuple[list[CropResult], dict[str, str]]:
-    """Every crop of every page drawn by the crop pipeline and saved; a page that cannot be planned and a crop that
-    cannot be drawn are recorded by name with their error, and the rest still run."""
-    jobs, failed = _planned(pages)
+    """Every planned crop drawn by the crop pipeline and saved; a crop that cannot be drawn is recorded by name with
+    its error and the rest still run, unless the device failed: then every crop after it is recorded as not drawn."""
     results: list[CropResult] = []
-    for job in jobs:
+    failed: dict[str, str] = {}
+    for k, job in enumerate(jobs):
         try:
             results.append(_draw(pipe, job, settings=settings, out=out))
+        except DEVICE_ERRORS as error:
+            failed[job.name] = f"{type(error).__name__}: {error}"
+            failed |= {later.name: "not drawn: the device failed on an earlier crop" for later in jobs[k + 1 :]}
+            err_console.print(f"{job.name} failed on the device, the run stops: {failed[job.name]}")
+            break
         except Exception as error:  # one crop must not cost the page's other crops; the summary records it
             failed[job.name] = f"{type(error).__name__}: {error}"
             err_console.print(f"{job.name} failed: {failed[job.name]}")
@@ -201,8 +207,10 @@ def generate(
 ) -> None:
     """Draw every crop of the templates, refilled with the text, in the given style."""
     model = required_model(model)
-    if reference_guidance != 1.0 and reference is None:
+    if reference is None and reference_guidance != 1.0:
         raise typer.BadParameter("there is no --reference to guide toward", param_hint="--reference-guidance")
+    if reference is None and reference_caption is not ReferenceCaption.PLAIN:
+        raise typer.BadParameter("there is no --reference to describe", param_hint="--reference-caption")
     style = PageStyle(
         provenance=Provenance(title=title, years=years), look=ScanLook(greyscale=greyscale, paper=paper, ink=ink)
     )
@@ -223,11 +231,15 @@ def generate(
         fuse_loras=fuse_loras,
         compile_blocks=compile_blocks,
     )
-    loras = {adapter.name: adapter.path for adapter in lora or []}
-    pipe = load_pipeline(model, crop_blocks, loras=loras, settings=draw_settings)
+    loras = lora_dirs(lora)
+    jobs, failed = plan_jobs(pages)  # before the model loads: a run whose pages plan to nothing loads none
+    crops: list[CropResult] = []
     out.mkdir(parents=True, exist_ok=True)
-    with _profiler(profile_dir) as prof:
-        crops, failed = draw_pages(pipe, pages, settings=draw_settings, out=out, prof=prof)
+    if jobs:
+        pipe = load_pipeline(model, crop_blocks, loras=loras, settings=draw_settings)
+        with _profiler(profile_dir) as prof:
+            crops, draw_failed = draw_pages(pipe, jobs, settings=draw_settings, out=out, prof=prof)
+        failed |= draw_failed
     summary = Summary(
         model=str(model),
         loras={name: str(path) for name, path in loras.items()},

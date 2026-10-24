@@ -35,13 +35,14 @@ from diffu_page.cli.options import (
     ReferenceGuidance,
     Steps,
     TextLayers,
+    lora_dirs,
     parse_lora,
     required_model,
 )
 from diffu_page.evalset import EvalCrop, generated_path, read_crops
 from diffu_page.fidelity import HandFidelity, Hands, crop_hands, hand_fidelity
 from diffu_page.output import console, err_console, load_rgb
-from diffu_page.pipeline import DrawSettings, crop_blocks, draw_crop, load_pipeline
+from diffu_page.pipeline import DEVICE_ERRORS, DrawSettings, crop_blocks, draw_crop, load_pipeline
 from diffu_page.readback import pixel_box, read_lines
 from diffu_page.settings import settings
 
@@ -158,7 +159,7 @@ def evaluate(
         Path | None, typer.Option(help="the model directory (FLUX.3 Klein or diffu); default $FLUX3_MODEL")
     ] = settings.flux3_model,
     lora: Annotated[list[Lora] | None, typer.Option(parser=parse_lora, help="name=<NeMo LoRA model dir>")] = None,
-    n: Annotated[int, typer.Option("-n", help="crops to evaluate")] = 16,
+    n: Annotated[int, typer.Option("-n", min=1, help="crops to evaluate")] = 16,
     steps: Steps = DEFAULTS.steps,
     guidance: Guidance = DEFAULTS.guidance_scale,
     reference_guidance: ReferenceGuidance = DEFAULTS.reference_guidance_scale,
@@ -178,7 +179,7 @@ def evaluate(
             "these crops name no reference image to guide toward", param_hint="--reference-guidance"
         )
     (out / "generated").mkdir(parents=True, exist_ok=True)
-    loras = {adapter.name: adapter.path for adapter in lora or []}
+    loras = lora_dirs(lora)
     draw_settings = DrawSettings(
         steps=steps,
         guidance_scale=guidance,
@@ -199,6 +200,11 @@ def evaluate(
             sample = evaluate_crop(
                 pipe, crop, index=k, seed=crop_seed, crops_dir=crops, out=out, settings=draw_settings
             )
+        except DEVICE_ERRORS as error:
+            failed[k] = f"{type(error).__name__}: {error}"
+            failed |= dict.fromkeys(range(k + 1, len(eval_crops)), "not drawn: the device failed on an earlier crop")
+            err_console.print(f"{k:3d} {crop.file_name} failed on the device, the evaluation stops: {failed[k]}")
+            break
         except Exception as error:  # one crop must not end a long evaluation; results.json records it
             failed[k] = f"{type(error).__name__}: {error}"
             err_console.print(f"{k:3d} {crop.file_name} failed: {failed[k]}")

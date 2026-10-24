@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 import typer
 
-from diffu_page.cli.options import parse_lora, required_model
+from diffu_page.cli.options import Lora, lora_dirs, parse_lora, required_model
 from diffu_page.settings import Settings
 
 
@@ -25,3 +25,10 @@ def test_a_command_given_neither_flux3_model_nor_model_asks_for_one(
 
     with pytest.raises(typer.BadParameter, match="set FLUX3_MODEL"):
         required_model(Settings().flux3_model)
+
+
+def test_lora_dirs_refuse_two_loras_of_one_name(tmp_path: Path) -> None:
+    loras = [Lora(name="v2", path=tmp_path / "a"), Lora(name="v2", path=tmp_path / "b")]
+
+    with pytest.raises(typer.BadParameter, match="two LoRAs are named 'v2'"):
+        lora_dirs(loras)

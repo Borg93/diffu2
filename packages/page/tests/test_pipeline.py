@@ -24,7 +24,7 @@ from diffu_page.blocks import DrawnCrop
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.prompt import LineRecord, PageStyle
 from diffu_page.captions.provenance import Provenance
-from diffu_page.cli.generate import Summary, draw_pages
+from diffu_page.cli.generate import Summary, draw_pages, plan_jobs
 from diffu_page.cli.generate import app as generate_app
 from diffu_page.crops.grid import as_reference
 from diffu_page.jobs import PageJob
@@ -126,8 +126,11 @@ def test_draw_pages_records_a_crop_it_cannot_draw_by_name_and_saves_the_other_cr
         PageJob(template=wide_and_narrow_body_page, text=TEXT, style=STYLE),
     ]
 
-    crops, failed = draw_pages(crop_pipe, pages, settings=TINY_SETTINGS, out=tmp_path, prof=None)
+    jobs, unplanned = plan_jobs(pages)
 
+    crops, failed = draw_pages(crop_pipe, jobs, settings=TINY_SETTINGS, out=tmp_path, prof=None)
+
+    assert unplanned == {}
     assert [crop.name for crop in crops] == ["001_wide_and_narrow_0"]
     assert {name: error.split(":")[0] for name, error in failed.items()} == {
         "000_two_columns_0": "FileNotFoundError",
@@ -139,31 +142,60 @@ def test_draw_pages_records_a_crop_it_cannot_draw_by_name_and_saves_the_other_cr
     ]
 
 
-def test_generate_refuses_reference_guidance_without_a_reference_before_it_loads(
-    one_line_page: Path, body_and_notes_page: Path, tmp_path: Path
+def test_draw_pages_stops_when_the_device_fails_and_records_the_crops_left_undrawn(
+    crop_pipe: ModularPipeline, two_column_page: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    jobs, _ = plan_jobs([PageJob(template=two_column_page, text=TEXT, style=STYLE)])
+
+    def out_of_memory(*args: object, **kwargs: object) -> None:
+        raise torch.OutOfMemoryError("CUDA out of memory")
+
+    monkeypatch.setattr(crop_pipe.transformer, "forward", out_of_memory)
+
+    crops, failed = draw_pages(crop_pipe, jobs, settings=TINY_SETTINGS, out=tmp_path, prof=None)
+
+    assert (crops, failed) == (
+        [],
+        {
+            "000_two_columns_0": "OutOfMemoryError: CUDA out of memory",
+            "000_two_columns_1": "not drawn: the device failed on an earlier crop",
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    ("option", "refusal"),
+    [
+        pytest.param(["--reference-guidance", "3"], "there is no --reference to guide toward", id="guidance"),
+        pytest.param(["--reference-caption", "described"], "there is no --reference to describe", id="caption"),
+    ],
+)
+def test_generate_refuses_a_reference_option_without_a_reference_before_it_loads(
+    one_line_page: Path, body_and_notes_page: Path, tmp_path: Path, option: list[str], refusal: str
 ) -> None:
     args = ["--templates", str(one_line_page), "--text-from", str(body_and_notes_page), "--title", "the archive"]
-    args += ["--model", str(tmp_path / "no_model"), "--out", str(tmp_path / "out"), "--reference-guidance", "3"]
+    args += ["--model", str(tmp_path / "no_model"), "--out", str(tmp_path / "out"), *option]
 
     result = CliRunner().invoke(generate_app, args)
 
     message = " ".join(result.output.replace("│", " ").split())  # rich wraps the error panel at 80 columns
     assert result.exit_code == 2  # a usage error, raised before the (missing) model would have been read
-    assert "there is no --reference to guide toward" in message
+    assert refusal in message
 
 
-def test_generate_records_what_drew_the_run_and_a_page_that_plans_to_no_crop(
-    tiny_flux3: Path, one_line_page: Path, body_and_notes_page: Path, tmp_path: Path
+def test_generate_records_a_page_that_plans_to_no_crop_without_loading_the_model(
+    one_line_page: Path, body_and_notes_page: Path, tmp_path: Path
 ) -> None:
+    no_model = tmp_path / "no_model"  # never read: no page plans to a crop
     args = ["--templates", str(one_line_page), "--text-from", str(body_and_notes_page), "--title", "the archive"]
-    args += ["--model", str(tiny_flux3), "--out", str(tmp_path), "--steps", "2", "--text-layer", "1", "--device", "cpu"]
+    args += ["--model", str(no_model), "--out", str(tmp_path), "--steps", "2", "--text-layer", "1", "--device", "cpu"]
 
     result = CliRunner().invoke(generate_app, args)
 
     summary = Summary.model_validate_json((tmp_path / "summary.json").read_text())
     assert result.exit_code == 1
     assert (summary.model, summary.seed, summary.settings, summary.crops) == (
-        str(tiny_flux3),
+        str(no_model),
         0,
         DrawSettings(steps=2, text_layers=(1,), device="cpu"),
         [],
