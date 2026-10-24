@@ -15,7 +15,7 @@ from diffu_page.captions.records import CropRecord
 from diffu_page.captions.restyle import CaptionParts, described_edit_caption, edit_caption
 from diffu_page.crops.geometry import CropSettings, crops_for_page
 from diffu_page.data.probe_set import probe_rows
-from diffu_page.data.style_pairs import EvalRow
+from diffu_page.evalset import ReferencedCrop
 from diffu_page.layout import load_xml_layout
 from diffu_page.plan import regions_of
 
@@ -59,7 +59,7 @@ def test_probe_captions_each_crop_plain_described_and_described_as_the_most_unli
     records: dict[str, CropRecord],
 ) -> None:
     rows = [
-        EvalRow(
+        ReferencedCrop(
             file_name=name,
             caption=record.caption,
             lines=record.lines,

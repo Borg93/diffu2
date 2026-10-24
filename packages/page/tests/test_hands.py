@@ -10,8 +10,9 @@ from typer.testing import CliRunner
 
 from diffu_page.captions.hand import hand_look
 from diffu_page.captions.prompt import LineRecord
-from diffu_page.cli.evaluate import CropResult, EvalCrop, Results, Summary
+from diffu_page.cli.evaluate import CropResult, Results, Summary
 from diffu_page.cli.hands import HandsReport, app
+from diffu_page.evalset import EvalCrop
 
 LINES = [
     LineRecord(id="Sv_Text_1", text="Göteborgs poliskammare", role="", bbox=[0, 0, 500, 1000]),

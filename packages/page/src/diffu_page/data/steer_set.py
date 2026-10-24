@@ -24,10 +24,10 @@ import typer
 from pydantic import BaseModel
 
 from diffu_page.captions.look import ScanLook
-from diffu_page.captions.prompt import LineRecord
 from diffu_page.captions.provenance import Provenance, collection_key
 from diffu_page.captions.records import CropRecord, read_records
 from diffu_page.captions.restyle import CaptionParts, Style, restyle
+from diffu_page.evalset import EvalCrop, write_jsonl
 from diffu_page.output import console
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
@@ -47,20 +47,6 @@ LOOKS = (  # a colour scan, a microfilm, an old yellowed colour scan
 )
 SEED = 1000  # template t's variants all use SEED + t
 DEFAULT_TEMPLATES = (1, 17)  # the val_eval rows the steering test uses
-
-
-class SteerRow(BaseModel):
-    """One prompt of the steering test, in the shape ``diffu_page.cli.evaluate`` reads."""
-
-    file_name: str  # the template's scan (the eval's "real" side)
-    caption: str
-    lines: list[LineRecord]
-    width: int
-    height: int
-    seed: int
-    template: int
-    variant: str
-    example: str | None  # a real crop in the variant's archive style, relative to the output dir
 
 
 class ArchiveStyle(BaseModel):
@@ -116,9 +102,9 @@ def variants(template: CropRecord, archives: dict[str, ArchiveStyle]) -> list[Va
     return distinct
 
 
-def steer_row(template: CropRecord, variant: Variant, index: int) -> SteerRow:
+def steer_row(template: CropRecord, variant: Variant, index: int) -> EvalCrop:
     """The steering prompt drawing ``template`` as ``variant``, from template ``index``'s noise."""
-    return SteerRow(
+    return EvalCrop(
         file_name=template.file_name,
         caption=restyle(CaptionParts.of(template), variant.style),
         lines=template.lines,
@@ -148,12 +134,12 @@ def main(
     (out / "examples").mkdir(parents=True, exist_ok=True)
     for archive in archives.values():
         shutil.copy2(archive.example, out / "examples" / archive.example.name)
-    rows: list[SteerRow] = []
+    rows: list[EvalCrop] = []
     for t in templates or DEFAULT_TEMPLATES:
         template = held_out[t]
         shutil.copy2(crops / "val_eval" / template.file_name, out / template.file_name)
         rows += [steer_row(template, variant, t) for variant in variants(template, archives)]
-    (out / "metadata.jsonl").write_text("".join(row.model_dump_json() + "\n" for row in rows), encoding="utf-8")
+    write_jsonl(out / "metadata.jsonl", rows)
     console.print(f"{len(rows)} prompts -> {out}")
     for archive_name, archive in archives.items():
         console.print(f"  {archive_name}: {archive.style.model_dump()}")

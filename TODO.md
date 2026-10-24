@@ -656,7 +656,7 @@ Still to do, in this order (the refactors after the fixes, the user's call):
 - [ ] 15. Tests of long-running state: the interleaved sampler resumed from `state_dict` yields exactly the rest of an
       epoch; the runner's draw test calls `run()` and reads the Parquet and run_meta.json back; pytest-timeout; then
       prune the suite with per-test coverage (testing-python's recipe).
-- [ ] 11. One eval-run module: EvalCrop the one row model (reference and reference_lines together), read_jsonl and
+- [x] 11. (24 Oct) One eval-run module: EvalCrop the one row model (reference and reference_lines together), read_jsonl and
       write_jsonl, generated_path, the hand-fidelity statistics out of the CLI module.
 - [x] 12. Draw options and shared constants declared once (24 Oct): Annotated option aliases with defaults from one
       `DrawSettings()`, max_line_cer in DrawSettings (`--max-line-cer`), `--reference-guidance` for generate,

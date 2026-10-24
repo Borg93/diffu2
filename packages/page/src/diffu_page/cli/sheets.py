@@ -28,7 +28,7 @@ GAP = 10
 
 
 class Prompt(BaseModel):
-    """What a sheet needs of a set's prompt (``diffu_page.data.steer_set.SteerRow`` or ``style_pairs.EvalRow``)."""
+    """What a sheet needs of a set's prompt (a steering or by-example ``diffu_page.evalset.EvalCrop``)."""
 
     template: int
     variant: str

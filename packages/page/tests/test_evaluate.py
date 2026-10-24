@@ -9,11 +9,14 @@ from statistics import median
 
 import pytest
 from PIL import Image
+from pydantic import ValidationError
 from typer.testing import CliRunner, Result
 
 from diffu_page.captions.hand import HandDistance, HandLook, hand_distance, hand_look
 from diffu_page.captions.prompt import LineRecord
-from diffu_page.cli.evaluate import EvalCrop, Hands, Results, Summary, app, carry_over, read_crops
+from diffu_page.cli.evaluate import Results, Summary, app
+from diffu_page.evalset import EvalCrop, read_crops
+from diffu_page.fidelity import Hands, carry_over
 from diffu_page.pipeline import DrawSettings
 
 LINES = [
@@ -167,8 +170,13 @@ def test_carry_over_is_the_slope_of_the_measured_hands_on_their_references() -> 
     )
 
 
+def test_eval_crop_refuses_a_reference_without_the_line_boxes_that_measure_its_hand() -> None:
+    with pytest.raises(ValidationError, match="a reference and its line boxes go together"):
+        _crop("a.jpg", reference="ref.png")
+
+
 def test_read_crops_refuses_a_set_where_only_some_crops_name_a_reference(tmp_path: Path) -> None:
-    crops = _eval_set(tmp_path / "crops", [_crop("a.jpg", reference="ref.jpg"), _crop("b.jpg")])
+    crops = _eval_set(tmp_path / "crops", [_crop("a.jpg", "ref.jpg", REFERENCE_LINES), _crop("b.jpg")])
 
     with pytest.raises(ValueError, match="1 of 2 crops name a reference image: all or none must"):
         read_crops(crops, 2)

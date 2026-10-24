@@ -27,7 +27,8 @@ import typer
 from diffu_page.captions.hand import ReferenceLook, hand_bands, measure_reference, slant_words
 from diffu_page.captions.records import CropRecord, read_records
 from diffu_page.captions.restyle import CaptionParts, described_edit_caption, edit_caption
-from diffu_page.data.style_pairs import EvalRow, link, write_rows
+from diffu_page.data.style_pairs import link
+from diffu_page.evalset import ReferencedCrop, read_jsonl, write_jsonl
 from diffu_page.output import console
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
@@ -35,7 +36,7 @@ app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 FORMS = ("plain", "described", "contradicting")
 
 
-class ProbeRow(EvalRow):
+class ProbeRow(ReferencedCrop):
     """An eval row of the probe: for ``contradicting/``, the reference its words describe instead of its own."""
 
     words_from: str | None = None
@@ -62,7 +63,7 @@ def furthest(look: ReferenceLook, others: list[ReferenceLook]) -> int:
 
 
 def probe_rows(
-    rows: list[EvalRow], records: dict[str, CropRecord], looks: list[ReferenceLook]
+    rows: list[ReferencedCrop], records: dict[str, CropRecord], looks: list[ReferenceLook]
 ) -> dict[str, list[ProbeRow]]:
     """``rows`` captioned three ways (``FORMS``) from their target records and their references' ``looks``."""
     probe: dict[str, list[ProbeRow]] = {form: [] for form in FORMS}
@@ -94,7 +95,7 @@ def main(
     ),
 ) -> None:
     """Write the probe's three eval dirs."""
-    rows = [EvalRow.model_validate_json(line) for line in (pairs / "metadata.jsonl").open(encoding="utf-8")]
+    rows = read_jsonl(pairs / "metadata.jsonl", ReferencedCrop)
     records = {
         record.file_name: record
         for split in ("train", "val", "val_eval")
@@ -106,7 +107,7 @@ def main(
         for row in probe:
             link(pairs / row.file_name, out / form / row.file_name)
             link(pairs / row.reference, out / form / row.reference)
-        write_rows(out / form / "metadata.jsonl", probe)
+        write_jsonl(out / form / "metadata.jsonl", probe)
     (out / "looks.json").write_text(
         json.dumps({row.reference: look.model_dump() for row, look in zip(rows, looks, strict=True)}, indent=1),
         encoding="utf-8",

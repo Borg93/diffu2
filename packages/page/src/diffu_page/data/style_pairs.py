@@ -58,7 +58,6 @@ from PIL import Image
 from pydantic import BaseModel
 
 from diffu_page.captions.hand import ReferenceLook, measure_reference
-from diffu_page.captions.prompt import LineRecord
 from diffu_page.captions.provenance import collection_key
 from diffu_page.captions.records import CropRecord, read_records
 from diffu_page.captions.restyle import (
@@ -70,6 +69,7 @@ from diffu_page.captions.restyle import (
 )
 from diffu_page.crops.grid import as_reference
 from diffu_page.data.steer_set import ARCHIVES, DEFAULT_TEMPLATES, SEED, archive_style
+from diffu_page.evalset import ReferencedCrop, write_jsonl
 from diffu_page.output import JPEG_QUALITY, console
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
@@ -141,27 +141,11 @@ class TrainingSet(BaseModel):
     placements: list[Placement]
 
 
-class EvalRow(BaseModel):
-    """One crop of a ``diffu_page.cli.evaluate`` dir with a reference image."""
-
-    file_name: str
-    caption: str
-    lines: list[LineRecord]
-    width: int
-    height: int
-    reference: str  # relative to the eval dir
-    reference_lines: list[list[int]]  # the reference's line boxes (0-1000, y first), for the hand-fidelity check
-    seed: int | None = None
-    template: int | None = None
-    variant: str | None = None
-    example: str | None = None  # diffu_page.cli.sheets shows it beside the generated crop
-
-
 class EvalSet(BaseModel):
     """An eval dir's rows, the crops left out because their caption predates the caption grammar, and the files the
     rows need."""
 
-    rows: list[EvalRow]
+    rows: list[ReferencedCrop]
     stale: list[str]
     placements: list[Placement]
 
@@ -290,10 +274,10 @@ def describe_all(scans: Iterable[Scan], workers: int) -> dict[Path, ReferenceLoo
     return {scan.path: look for scan, look in zip(unique, looks, strict=True)}
 
 
-def eval_row(pick: EvalPick, caption: CaptionFor) -> EvalRow:
+def eval_row(pick: EvalPick, caption: CaptionFor) -> ReferencedCrop:
     """An eval crop of the pick's target drawn in its reference's hand (its files: ``eval_placements``)."""
     target, reference = pick.pair.target, pick.pair.reference
-    return EvalRow(
+    return ReferencedCrop(
         file_name=target.record.file_name,
         caption=caption(pick.pair),
         lines=target.record.lines,
@@ -319,12 +303,6 @@ def eval_placements(pair: Pair) -> list[Placement]:
 def renumbered(row: ManifestRow, index: int) -> ManifestRow:
     """``row`` at ``index`` of a manifest (NeMo requires the row indices to count from 0)."""
     return row.model_copy(update={"metadata": row.metadata.model_copy(update={"row_index": index})})
-
-
-def write_rows(path: Path, rows: Sequence[BaseModel]) -> None:
-    """Write ``rows`` as JSON lines."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("".join(row.model_dump_json() + "\n" for row in rows), encoding="utf-8")
 
 
 def training_pairs(pairs: list[Pair], caption: CaptionFor) -> TrainingSet:
@@ -361,7 +339,7 @@ def training_pairs(pairs: list[Pair], caption: CaptionFor) -> TrainingSet:
 def eval_set(picks: list[EvalPick], caption: CaptionFor) -> EvalSet:
     """Each pick as an eval crop, with the files the rows need; a crop whose caption predates the caption grammar is
     left out, as in ``training_pairs``."""
-    rows: list[EvalRow] = []
+    rows: list[ReferencedCrop] = []
     stale: list[str] = []
     placements: list[Placement] = []
     for pick in picks:
@@ -422,7 +400,7 @@ def write_set(directory: Path, placements: list[Placement], manifest: str, rows:
     """A set's files placed in ``directory`` and its rows written to ``directory / manifest``."""
     for placement in placements:
         placement.place(directory)
-    write_rows(directory / manifest, rows)
+    write_jsonl(directory / manifest, rows)
 
 
 def captions(

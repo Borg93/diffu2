@@ -13,9 +13,8 @@ from the reference at all (``HandFidelity``). Writes contact sheets (``[referenc
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from pathlib import Path
-from statistics import fmean, linear_regression, median, pstdev
+from statistics import fmean
 from typing import Annotated
 
 import typer
@@ -23,7 +22,6 @@ from diffusers.modular_pipelines import ModularPipeline
 from PIL import Image, ImageDraw
 from pydantic import BaseModel
 
-from diffu_page.captions.hand import Box, HandDistance, HandLook, hand_distance, hand_look, lab
 from diffu_page.captions.prompt import LineRecord
 from diffu_page.cli.options import (
     DEFAULTS,
@@ -37,42 +35,16 @@ from diffu_page.cli.options import (
     parse_lora,
     required_model,
 )
-from diffu_page.crops.grid import as_reference
+from diffu_page.evalset import EvalCrop, generated_path, read_crops
+from diffu_page.fidelity import HandFidelity, Hands, crop_hands, hand_fidelity
 from diffu_page.output import console, err_console, load_rgb
 from diffu_page.pipeline import DrawSettings, crop_blocks, draw_crop, load_pipeline
-from diffu_page.plan import CropPlan
 from diffu_page.readback import pixel_box, read_lines
 from diffu_page.settings import settings
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 
 SHEET_GAP = 8  # px between the panels of a contact sheet
-MIN_SPREAD = 1.0  # a carry-over needs references that vary by this much (L* or b* units, degrees of slant)
-
-
-class EvalCrop(BaseModel):
-    """A held-out crop as diffu_page.data.build_crops (or steer_set / style_pairs) wrote it."""
-
-    file_name: str
-    caption: str
-    width: int
-    height: int
-    lines: list[LineRecord]
-    reference: str | None = None
-    reference_lines: list[list[int]] | None = None  # the reference's line boxes, to measure its hand
-    seed: int | None = None
-    variant: str | None = None
-
-    def plan(self) -> CropPlan:
-        """The crop as a plan: its stored caption and boxes, lines read top to bottom as numbered."""
-        return CropPlan(
-            rect=(0, 0, self.width, self.height),
-            width=self.width,
-            height=self.height,
-            caption=self.caption,
-            lines=self.lines,
-            reading_order=list(range(len(self.lines))),
-        )
 
 
 class LineResult(BaseModel):
@@ -83,136 +55,6 @@ class LineResult(BaseModel):
     gen_cer: float
     real: str
     real_cer: float
-
-
-class Hands(BaseModel):
-    """A drawn crop's hand beside its real crop's, both measured in the crop's line boxes, and beside its
-    reference's, measured in the reference's at the reference size; and how far apart they are."""
-
-    drawn: HandLook
-    real: HandLook
-    reference: HandLook | None = None
-    to_real: HandDistance
-    to_reference: HandDistance | None = None
-    real_to_reference: HandDistance | None = None  # the pair's own gap: how alike the two real hands are
-
-
-def crop_hands(
-    drawn: Image.Image,
-    real: Image.Image,
-    lines: Sequence[LineRecord],
-    reference: Image.Image | None = None,
-    reference_lines: Sequence[Box] | None = None,
-) -> Hands:
-    """The hands of a drawn crop, its real crop and, given its line boxes, its reference."""
-    boxes = [line.bbox for line in lines]
-    drawn_hand, real_hand = hand_look(drawn, boxes), hand_look(real, boxes)
-    if reference is None or not reference_lines:
-        return Hands(drawn=drawn_hand, real=real_hand, to_real=hand_distance(drawn_hand, real_hand))
-    reference_hand = hand_look(as_reference(reference), reference_lines)
-    return Hands(
-        drawn=drawn_hand,
-        real=real_hand,
-        reference=reference_hand,
-        to_real=hand_distance(drawn_hand, real_hand),
-        to_reference=hand_distance(drawn_hand, reference_hand),
-        real_to_reference=hand_distance(real_hand, reference_hand),
-    )
-
-
-class CarryOver(BaseModel):
-    """How much of the references' variation reaches the hands across the crops: the least-squares slope of a hand's
-    measure on its reference's (1: follows the reference fully; 0: ignores it). Colours by CIE L*a*b* lightness L* and
-    yellowness b* (cream and brown against grey and black). None where fewer than three crops have the measure or the
-    references vary by less than ``MIN_SPREAD`` (the yellowness of grey inks is 0 plus rounding).
-
-    Unlike a median distance, a slope is not fooled by a model's default: ink drawn near-black whatever the reference
-    lands close to every black-inked reference, but its slope stays at 0."""
-
-    paper_lightness: float | None
-    paper_yellowness: float | None
-    ink_lightness: float | None
-    ink_yellowness: float | None
-    slant: float | None
-
-
-def _slope(pairs: Sequence[tuple[float, float]]) -> float | None:
-    references = [x for x, _ in pairs]
-    if len(pairs) < 3 or pstdev(references) < MIN_SPREAD:
-        return None
-    return linear_regression(references, [y for _, y in pairs]).slope
-
-
-def carry_over(pairs: Sequence[tuple[HandLook, HandLook]]) -> CarryOver:
-    """How much of the references' variation reaches the hands in ``pairs`` of (reference, hand)."""
-
-    def colour(field: str, axis: int) -> float | None:
-        measured = [(getattr(reference, field), getattr(hand, field)) for reference, hand in pairs]
-        return _slope([(lab(a)[axis], lab(b)[axis]) for a, b in measured if a is not None and b is not None])
-
-    slants = [
-        (reference.slant, hand.slant)
-        for reference, hand in pairs
-        if reference.slant is not None and hand.slant is not None
-    ]
-    return CarryOver(
-        paper_lightness=colour("paper", 0),
-        paper_yellowness=colour("paper", 2),
-        ink_lightness=colour("ink", 0),
-        ink_yellowness=colour("ink", 2),
-        slant=_slope(slants),
-    )
-
-
-class HandFidelity(BaseModel):
-    """Medians over the drawn crops of each ``HandDistance`` measure: a drawn hand's distance to its real crop's;
-    over the crops with a measured reference, its distance to its own reference's, to the other crops' references
-    (chance: no lower than this when the reference's hand is ignored), and the real crop's distance to its
-    reference's. And the carry-over from the references to the drawn hands, beside the carry-over to the real crops
-    (what the references can tell of the real hands: the ceiling)."""
-
-    to_real: HandDistance
-    to_reference: HandDistance | None = None
-    to_other_references: HandDistance | None = None
-    real_to_reference: HandDistance | None = None
-    carry_over: CarryOver | None = None
-    real_carry_over: CarryOver | None = None
-
-
-def _median(values: list[float | None]) -> float | None:
-    present = [value for value in values if value is not None]
-    return median(present) if present else None
-
-
-def _medians(distances: list[HandDistance]) -> HandDistance:
-    return HandDistance.model_validate(
-        {field: _median([getattr(distance, field) for distance in distances]) for field in HandDistance.model_fields}
-    )
-
-
-def hand_fidelity(hands: Sequence[Hands]) -> HandFidelity:
-    """The medians of ``hands`` (at least one)."""
-    fidelity = HandFidelity(to_real=_medians([hand.to_real for hand in hands]))
-    referenced = [hand for hand in hands if hand.reference is not None]
-    if not referenced:
-        return fidelity
-    others = [
-        hand_distance(hand.drawn, other.reference)
-        for hand in referenced
-        for other in referenced
-        if other is not hand and other.reference is not None
-    ]
-    return fidelity.model_copy(
-        update={
-            "to_reference": _medians([hand.to_reference for hand in referenced if hand.to_reference is not None]),
-            "to_other_references": _medians(others) if others else None,
-            "real_to_reference": _medians(
-                [hand.real_to_reference for hand in referenced if hand.real_to_reference is not None]
-            ),
-            "carry_over": carry_over([(hand.reference, hand.drawn) for hand in referenced if hand.reference]),
-            "real_carry_over": carry_over([(hand.reference, hand.real) for hand in referenced if hand.reference]),
-        }
-    )
 
 
 class CropResult(BaseModel):
@@ -271,20 +113,6 @@ def contact_sheet(panels: list[Image.Image], lines: list[LineRecord]) -> Image.I
     return sheet
 
 
-def read_crops(crops_dir: Path, n: int) -> list[EvalCrop]:
-    """The first ``n`` crops of a split dir.
-
-    Raises:
-        ValueError: If some but not all of them name a reference image.
-    """
-    with (crops_dir / "metadata.jsonl").open(encoding="utf-8") as metadata:
-        crops = [EvalCrop.model_validate_json(line) for line in metadata][:n]
-    with_reference = sum(crop.reference is not None for crop in crops)
-    if with_reference not in (0, len(crops)):
-        raise ValueError(f"{with_reference} of {len(crops)} crops name a reference image: all or none must")
-    return crops
-
-
 def evaluate_crop(
     pipe: ModularPipeline,
     crop: EvalCrop,
@@ -300,7 +128,7 @@ def evaluate_crop(
     plan = crop.plan()
     reference = load_rgb(crops_dir / crop.reference) if crop.reference else None
     drawn = draw_crop(pipe, plan, name=f"{index:03d}", seed=seed, reference=reference, settings=settings)
-    drawn.image.save(out / "generated" / f"{index:03d}.png")
+    drawn.image.save(generated_path(out, index))
     real = load_rgb(crops_dir / crop.file_name).resize(drawn.image.size)
     real_reads, real_cers = read_lines(real, plan.lines, model=pipe.htr_model, processor=pipe.htr_processor)
     panels = [reference, real, drawn.image] if reference else [real, drawn.image]

@@ -9,17 +9,31 @@ runs on one eval set. Writes ``hands.json`` (each crop's ``Hands`` and the run's
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from typing import Annotated
 
 import typer
 from pydantic import BaseModel
 
-from diffu_page.cli.evaluate import EvalCrop, HandFidelity, Hands, Results, crop_hands, hand_fidelity, read_crops
+from diffu_page.evalset import EvalCrop, generated_path, read_crops
+from diffu_page.fidelity import HandFidelity, Hands, crop_hands, hand_fidelity
 from diffu_page.output import load_rgb
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
+
+
+class DrawnSample(BaseModel):
+    """What the hands CLI needs of a crop in evaluate's ``results.json``: which crop of the set it drew."""
+
+    index: int
+    file: str
+    variant: str | None = None
+
+
+class EvaluateRun(BaseModel):
+    """What the hands CLI needs of evaluate's ``results.json``: the crops it drew."""
+
+    samples: list[DrawnSample]
 
 
 class CropHands(BaseModel):
@@ -48,14 +62,14 @@ def drawn_hands(crop: EvalCrop, crops: Path, drawing: Path) -> Hands:
 
 def measure_run(crops: Path, run: Path) -> HandsReport:
     """Every drawn crop of the evaluate run in ``run`` measured against the eval set in ``crops``."""
-    eval_crops = read_crops(crops, sys.maxsize)
-    results = Results.model_validate_json((run / "results.json").read_text(encoding="utf-8"))
+    eval_crops = read_crops(crops)
+    results = EvaluateRun.model_validate_json((run / "results.json").read_text(encoding="utf-8"))
     samples = [
         CropHands(
             index=sample.index,
             file=sample.file,
             variant=sample.variant,
-            hands=drawn_hands(eval_crops[sample.index], crops, run / "generated" / f"{sample.index:03d}.png"),
+            hands=drawn_hands(eval_crops[sample.index], crops, generated_path(run, sample.index)),
         )
         for sample in results.samples
     ]
