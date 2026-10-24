@@ -151,6 +151,8 @@ class DrawSettings(BaseModel):
         guidance_scale: Classifier-free guidance scale; exactly 1 samples without guidance (one pass a step).
         reference_guidance_scale: How hard guidance also pushes toward the reference image (:mod:`diffu_page.guidance`,
             a third pass per step); 1 guides the caption alone.
+        guidance_stop: The fraction of the steps after which guidance stops: one pass a step after it; 1 guides every
+            step.
         label_format: ``alto`` or ``page``.
         max_line_cer: The read-back CER above which a line's label is tagged ``unclear``.
         text_layers: The text-encoder hidden layers stacked into the prompt embeddings; ``None`` is the model's own
@@ -167,6 +169,7 @@ class DrawSettings(BaseModel):
     steps: int = Field(default=50, ge=1)
     guidance_scale: float = 4.0
     reference_guidance_scale: float = 1.0
+    guidance_stop: float = Field(default=1.0, ge=0.0, le=1.0)
     label_format: LabelFormat = LabelFormat.ALTO
     max_line_cer: float = MAX_LINE_CER
     text_layers: tuple[int, ...] | None = None
@@ -190,7 +193,8 @@ type BlocksFor = Callable[[ModelFamily], SequentialPipelineBlocks]
 
 def load_pipeline(model: Path, blocks: BlocksFor, *, loras: dict[str, Path], settings: DrawSettings) -> ModularPipeline:
     """``blocks`` built for the model at ``model``, its components loaded (VAE in float32, the rest in bfloat16) on
-    ``settings.device``, the guider at ``settings.guidance_scale`` (and ``settings.reference_guidance_scale``) and every
+    ``settings.device``, the guider at ``settings.guidance_scale`` (and ``settings.reference_guidance_scale``) until
+    ``settings.guidance_stop``, and every
     LoRA of ``loras`` (NeMo ``model/`` dirs by adapter name) active, fused into the transformer when
     ``settings.fuse_loras``, and the transformer's repeated blocks compiled when ``settings.compile_blocks``.
 
@@ -205,7 +209,9 @@ def load_pipeline(model: Path, blocks: BlocksFor, *, loras: dict[str, Path], set
         raise ValueError("compile the transformer's blocks only with its LoRAs fused: adapter layers would recompile")
     family = model_family(model)
     guider = ReferenceGuidance(
-        guidance_scale=settings.guidance_scale, reference_scale=settings.reference_guidance_scale
+        guidance_scale=settings.guidance_scale,
+        reference_scale=settings.reference_guidance_scale,
+        stop=settings.guidance_stop,
     )
     adapters = {name: nemo_lora_state_dict(lora_dir) for name, lora_dir in loras.items()}
     pipe = family.pipeline(blocks=blocks(family), pretrained_model_name_or_path=str(model))
@@ -244,6 +250,9 @@ def draw_crop(
     if reference is None and settings.reference_guidance_scale != 1.0:
         raise ValueError("reference guidance needs a reference image: draw this crop at reference_guidance_scale 1")
     reference_input = {} if reference is None else {"image": reference}
+    # The text encoder step encodes the negative caption only if the guider guides at its current step, which until the
+    # denoise loop starts is the previous crop's last: past guidance_stop, this crop would lose its negative caption.
+    pipe.guider.set_state(step=0, num_inference_steps=settings.steps, timestep=None)
     outputs = pipe(
         crop_plan=plan,
         generator=torch.Generator().manual_seed(seed),

@@ -20,6 +20,9 @@ Guidance = Annotated[float, typer.Option(help="how hard guidance pushes toward t
 ReferenceGuidance = Annotated[
     float, typer.Option(help="how hard guidance also pushes toward the reference image (1: not at all)")
 ]
+GuidanceStop = Annotated[
+    float, typer.Option(min=0.0, max=1.0, help="the fraction of the steps after which guidance stops (1: every step)")
+]
 TextLayers = Annotated[
     list[int] | None,
     typer.Option("--text-layer", help="a text-encoder layer to stack (repeat it; default: the model's own)"),

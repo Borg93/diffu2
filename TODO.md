@@ -516,9 +516,13 @@ Code (writing-python, diffusers):
       CaptionDropout are keyword-only.)
 - [x] diffu sampled at FLUX.3's shift 6.93 but trained with flow_shift 6.0: `diffu-export` (24 Oct) writes a trained
       repo's scheduler at its checkpoint's `flow_matching.flow_shift`.
-- [ ] Guider edge: `stop` < 1 leaves the step state of the previous call (diffusers' own guider shares it); diffu's index
-      has Hub components with an empty subfolder; the NeMo LoRA scale assumes plain LoRA (raise on rslora/patterns).
-      (CropLoopStep's copy of ModularPipeline.__call__'s state seeding went with it on 24 Oct.)
+- [x] Guider: at `stop` < 1 the guider kept the previous crop's last step, so the next crop's text encoder step (which
+      asks the guider at its current step) skipped the negative caption and the crop crashed: `draw_crop` sets the
+      guider to step 0 first (24 Oct, with `--guidance-stop`). The NeMo LoRA loader refuses rsLoRA and per-module
+      ranks or alphas. (CropLoopStep's copy of ModularPipeline.__call__'s state seeding went on 24 Oct.)
+- [x] diffu's index names its Hub components (text encoder, tokenizer) with an empty subfolder: harmless (checked
+      24 Oct). diffusers takes a component from a local repo only when its files are in that subfolder, and a diffu
+      repo's root holds only the index; transformers reads subfolder "" as the Hub repo's root.
 
 Inference speed (ranked; re-profile on torch 2.14.1 first, one change at a time, gated on CER and the hand metrics):
 - [ ] 1. Fuse the LoRA (`fuse_lora` + `unload_lora_weights` after `set_adapters`; `unfuse_lora()` restores the base for
@@ -535,9 +539,10 @@ Inference speed (ranked; re-profile on torch 2.14.1 first, one change at a time,
       sm_120. BFL's fp8r and nvfp4 Klein transformers load through `BFLQuantizationConfig` (runs without a LoRA; LoRA on
       quantized weights is not documented: fuse, then quantize, one hand per actor). NVFP4 needs FlashInfer, nvcc and
       CUDA >= 12.9 on sm_120 (sm_121 not stated).
-- [ ] Sweeps: CFG `stop` 0.6-0.8 (with three passes, 0.7 cuts 150 transformer passes to 120); steps 50/40/30 x shift
-      6.93/16 x guidance 3.5/4.0 (we use 4.0 with 6.93, which matches neither diffusers' 3.5/6.93 nor BFL's code
-      4.0/16); cuDNN attention (`set_attention_backend("_native_cudnn")`; attention is 8% of GPU time on the GB10).
+- [ ] Sweeps: CFG `stop` 0.6-0.8 (`--guidance-stop`, 24 Oct; with three passes, 0.7 cuts 150 transformer passes to
+      120); steps 50/40/30 x shift 6.93/16 x guidance 3.5/4.0 (we use 4.0 with 6.93, which matches neither diffusers'
+      3.5/6.93 nor BFL's code 4.0/16); cuDNN attention (`set_attention_backend("_native_cudnn")`; attention is 8% of
+      GPU time on the GB10).
 - [ ] FLUX.3 Klein distilled (16 steps, no CFG, ~6x) for FLUX.3 research runs; base-trained LoRAs on it are unverified,
       and it has no guider, so no reference guidance.
 - [ ] Exact savings from the diffusers docs (read 24 Oct; 0.42.0.dev0 has every API named): split the crop pipeline into

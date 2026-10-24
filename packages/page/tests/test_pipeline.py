@@ -226,6 +226,19 @@ def test_draw_crop_refuses_reference_guidance_on_a_crop_without_a_reference(crop
         draw_crop(crop_pipe, _plan(), name="000", seed=0, reference=None, settings=guided)
 
 
+def test_draw_crop_guides_each_crop_only_until_guidance_stop(tiny_flux3: Path) -> None:
+    settings = TINY_SETTINGS.model_copy(update={"guidance_stop": 0.5})
+    pipe = load_pipeline(tiny_flux3, crop_blocks, loras={}, settings=settings)
+    first = draw_crop(pipe, _plan(), name="000", seed=0, reference=None, settings=settings)
+    passes: list[str] = []
+    pipe.transformer.register_forward_hook(lambda *_: passes.append("pass"))
+
+    again = draw_crop(pipe, _plan(), name="000", seed=0, reference=None, settings=settings)
+
+    assert len(passes) == 3  # of the 2 steps, the first guided (2 passes) and the second not
+    assert again.image.tobytes() == first.image.tobytes()
+
+
 @pytest.mark.parametrize("fuse", [pytest.param(False, id="adapter"), pytest.param(True, id="fused")])
 def test_nemo_lora_loads_at_its_trained_strength(
     tiny_flux3: Path, crop_pipe: ModularPipeline, write_nemo_lora: Callable[..., Path], fuse: bool
