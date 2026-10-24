@@ -66,8 +66,15 @@ class Page(BaseModel):
 
 
 def parse_page(xml_path: Path) -> list[Region]:
-    """A PAGE XML page's text regions in reading order, each with its transcribed lines from top to bottom."""
-    page = iter_local(ET.parse(xml_path).getroot(), "Page")[0]
+    """A PAGE XML page's text regions in reading order, each with its transcribed lines from top to bottom.
+
+    Raises:
+        ValueError: If the file holds no PAGE ``Page`` element.
+    """
+    pages = iter_local(ET.parse(xml_path).getroot(), "Page")
+    if not pages:
+        raise ValueError(f"{xml_path} holds no PAGE Page element")
+    page = pages[0]
     ordered: list[tuple[int, Region]] = []
     for position, element in enumerate(iter_local(page, "TextRegion")):
         role = region_role(element)
@@ -85,18 +92,24 @@ def parse_page(xml_path: Path) -> list[Region]:
     return [region for _, region in sorted(ordered, key=lambda item: item[0])]
 
 
-def sample_pages(collection_dir: Path, count: int, rng: random.Random) -> list[Page]:
-    """Up to ``count`` random pages of a collection with a scan and transcribed text."""
+def sample_pages(collection_dir: Path, count: int, rng: random.Random) -> tuple[list[Page], dict[str, str]]:
+    """Up to ``count`` random pages of a collection with a scan and transcribed text, and the pages that could not be
+    read, by path, with their error."""
     xml_paths = sorted(p for p in collection_dir.rglob("page/*.xml") if not p.name.startswith("._"))  # "._*": macOS
     rng.shuffle(xml_paths)
     pages: list[Page] = []
+    failed: dict[str, str] = {}
     for xml_path in xml_paths:
         if len(pages) == count:
             break
-        page = _load_page(collection_dir, xml_path)
+        try:
+            page = _load_page(collection_dir, xml_path)
+        except Exception as error:  # one unreadable page (a truncated XML) must not end the build; it is reported
+            failed[str(xml_path.relative_to(collection_dir.parent))] = f"{type(error).__name__}: {error}"
+            continue
         if page is not None:
             pages.append(page)
-    return pages
+    return pages, failed
 
 
 def _load_page(collection_dir: Path, xml_path: Path) -> Page | None:
@@ -126,17 +139,19 @@ def split_of(page: Page, val_frac: float) -> str:
 
 
 def write_crops(page: Page, split_dir: Path, settings: CropSettings) -> list[CropRecord]:
-    """Cut a page into crops, save them as JPEGs in ``split_dir`` and return their metadata records."""
+    """Cut a page into crops, save them as JPEGs in ``split_dir`` and return their metadata records. Every crop is cut
+    and captioned before any is saved, so a page that fails leaves no tile without its record."""
     with Image.open(page.scan) as img:
         scan = img.convert("RGB")
+    tiles: list[Image.Image] = []
     records: list[CropRecord] = []
     for k, crop in enumerate(crops_for_page(page.regions, scan.size, settings)):
         left, top, right, bottom = (round(v) for v in crop.rect)
         tile = scan.crop((left, top, right, bottom)).resize(crop.size, Image.Resampling.LANCZOS)
         name = f"{page.collection}_{page.id}_{k:02d}.jpg"
-        tile.save(split_dir / name, quality=95)
         look = scan_look(tile)
         caption = caption_for(crop, page.provenance, look)
+        tiles.append(tile)
         records.append(
             CropRecord(
                 file_name=name,
@@ -150,6 +165,8 @@ def write_crops(page: Page, split_dir: Path, settings: CropSettings) -> list[Cro
                 lines=caption.lines,
             )
         )
+    for tile, record in zip(tiles, records, strict=True):
+        tile.save(split_dir / record.file_name, quality=95)
     return records
 
 
@@ -171,24 +188,31 @@ def build(
     """Cut ``max_pages`` random pages of each collection into crops, written under ``out/<split>``.
 
     Returns:
-        The pages that failed, by path, with their error; the others are written.
+        The pages that failed, by path, with their error; the others are written. They are also written to
+        ``out/failed_pages.json``, even when the build stops early.
     """
     rng = random.Random(seed)
     totals: Counter[str] = Counter()
     failed: dict[str, str] = {}
-    with ExitStack() as stack:
-        metadata = {split: stack.enter_context(_create_metadata(out / split)) for split in SPLITS}
-        for collection in collections:
-            for page in sample_pages(gt_root / collection, max_pages, rng):
-                split = split_of(page, val_frac)
-                try:
-                    records = write_crops(page, out / split, settings)
-                except Exception as error:  # one unreadable page must not end the build; it is reported
-                    failed[str(page.path)] = f"{type(error).__name__}: {error}"
-                    continue
-                metadata[split].writelines(f"{record.model_dump_json()}\n" for record in records)
-                totals.update(pages=1, crops=len(records), lines=sum(len(record.lines) for record in records))
-            console.print(f"{collection}: {dict(totals)}")
+    out.mkdir(parents=True, exist_ok=True)
+    try:
+        with ExitStack() as stack:
+            metadata = {split: stack.enter_context(_create_metadata(out / split)) for split in SPLITS}
+            for collection in collections:
+                pages, unreadable = sample_pages(gt_root / collection, max_pages, rng)
+                failed.update(unreadable)
+                for page in pages:
+                    split = split_of(page, val_frac)
+                    try:
+                        records = write_crops(page, out / split, settings)
+                    except Exception as error:  # one unreadable page must not end the build; it is reported
+                        failed[str(page.path)] = f"{type(error).__name__}: {error}"
+                        continue
+                    metadata[split].writelines(f"{record.model_dump_json()}\n" for record in records)
+                    totals.update(pages=1, crops=len(records), lines=sum(len(record.lines) for record in records))
+                console.print(f"{collection}: {dict(totals)}")
+    finally:
+        (out / "failed_pages.json").write_text(json.dumps(failed, indent=1, ensure_ascii=False), encoding="utf-8")
     return failed
 
 
@@ -218,6 +242,10 @@ def main(
     ] = CropSettings().overlap_lines,
 ) -> None:
     """Cut GT pages into FLUX.3 training crops with layout captions."""
+    if out_dir.exists() and any(out_dir.iterdir()):
+        raise typer.BadParameter(
+            f"{out_dir} is not empty: an earlier build's crops would stay beside this one's", param_hint="--out-dir"
+        )
     Image.MAX_IMAGE_PIXELS = None  # archival spreads exceed PIL's decompression-bomb default
     root = gt_root.expanduser()
     settings = CropSettings(
@@ -230,7 +258,6 @@ def main(
     )
     names = collections or sorted(p.name for p in root.iterdir() if p.is_dir())
     failed = build(root, names, out_dir, max_pages=max_pages, val_frac=val_frac, seed=seed, settings=settings)
-    (out_dir / "failed_pages.json").write_text(json.dumps(failed, indent=1, ensure_ascii=False), encoding="utf-8")
     if failed:
         err_console.print(f"{len(failed)} pages failed, see {out_dir / 'failed_pages.json'}")
         raise typer.Exit(code=1)
