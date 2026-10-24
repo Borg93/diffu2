@@ -591,3 +591,84 @@ an executor (Ray Data, a Ray actor pool, Xenna, a Slurm array) decides how it ru
       using Curator itself (its executors, resumability, failure manifests and diagnostics for free) against its
       weight (loguru, lmdb, dataclass stages, Ray >= 2.57 coupling). Its image stages (CLIP embeddings, aesthetic and
       NSFW filters, dedup) could also curate our real crops and filter generated windows.
+
+## Quality control of generated windows (plan of 24 Oct: embeddings, a tabular model, a VLM judge)
+
+The plan: embed every generated window (TIPSv2 or Nemotron 3.5 Embed), reduce the embedding, give it with our own
+measures to NVIDIA's KumoTabular as a QC model, and let Nemotron 3.5 Super VL judge as a VLM. Production QC runs as
+Ray Data stages on the Blackwell cluster (96 GB cards); the Spark only tests each piece, one GPU job at a time through
+jobs/spark_guard.sh. Every source below was read in full on 24 Oct. Findings that shape the plan:
+- KumoTabular (github.com/NVIDIA/structured-data-models; code Apache-2.0, weights `nvidia/Kumo-Tabular` v1.0.1
+  OpenMDW-1.1, 28M-215M, a pip package, `.pt` loaded `weights_only=True`, no remote code; CUDA or CPU) learns in
+  context: labelled rows in, predictions for new rows in one forward pass, classification (10 classes a pass) or
+  regression (999 quantiles). Numerical features only, so an embedding is N numerical columns. The default recipe
+  keeps at most 500 columns and does not reduce them (`sp.PCA` exists, opt-in, and replaces the whole numerical
+  block). It was pretrained on tables of up to 100 columns and contexts of 1k-60k rows, and degrades when query rows
+  come from another distribution than the context. Its context needs examples of every class.
+- KumoAnomaly, sdm's label-free model (NV-Tesseract-AD, arXiv 2610.12754; weights `nvidia/Kumo-Anomaly` Apache-2.0,
+  32 MB, `.pth` loaded `weights_only=True`, no remote code), scores every row zero-shot: after ImputeMean, PCA to 40
+  columns and MinMaxScale it hides alternating blocks of 25 rows in windows of 100 and reconstructs them by
+  conditional diffusion from the visible blocks, with a time embedding per row; a row's score is its mean absolute
+  reconstruction error, and two thresholds (SCS, MACS) label anomalies. It is built for ordered rows: its card also
+  evaluates it on SECOM, wafers in production order with 1,558 process features. For us that order is the production
+  stream: generated windows in the order a run draws them.
+- TIPSv2 (Google DeepMind, CVPR 2026, arXiv 2604.12012, Apache-2.0; B/L/SO400m/g with 768-1536-d, two global tokens
+  and 32x32 patch features at 448 px) is native in Transformers since 5.14 (we have 5.20.1), though its Hub repos
+  still ship custom code: load it natively with remote code off and check the outputs. Nemotron-3.5-Embed-1B/8B
+  (OpenMDW-1.1, native `Mistral3Model`, no custom code; 2048-/4096-d, truncatable to the first 1024 or 512 dims and
+  renormalised) embeds page images for retrieval. Neither was trained or evaluated on handwriting: TIPSv2 on natural
+  images, Nemotron Embed on printed documents (its image retrieval not evaluated in Swedish). Avoid the colembed and
+  omni-embed models (non-commercial) and llama-nemotron-embed-vl (custom code).
+- Nemotron 3.5 Super VL 120B-A12B NVFP4 (OpenMDW-1.1, which leaves outputs unrestricted; 75 GB of weights; listed
+  for one DGX Spark or one 96 GB RTX PRO 6000; vLLM, SGLang, TRT-LLM): one tile per image up to about 3.4 MP,
+  reasoning off/medium/on, OCRBench v2 EN 68.3, no handwriting numbers, card languages en/es/fr/de/it/ja (Swedish
+  only in its pretraining web data). **Every serving recipe needs trust_remote_code** (custom NemotronH Omni modules),
+  which our rule keeps off: the user decides whether to allow it once we have read the code and pinned a revision.
+  The smaller VL models (Nano-Omni-30B-A3B NVFP4 21 GB, Nano-12B-v2-VL, Bolt-74B-A9B) need it too. On the Spark a
+  third party measured about 100 GiB resident, ~19 tok/s (38 with the LiLiCorr drafter), an 11-minute start: a test
+  takes the whole box; in production it is one replica per 96 GB card.
+- vision-intern (github.com/merveenoyan/vision-intern; README says MIT but the repo has no licence file: ideas only):
+  the judge sees a numbered overlay of the boxes, never coordinates, and answers JSON `{id, verdict, score, reason}`;
+  an LLM writes one positive definition per class, approved once by a human; judges from different model families
+  vote (`min_agree`, mean score) beside deterministic geometry checks; it calls its own scores uncalibrated and
+  scores the result against human labels. Its flaw to avoid: a dead or unparsable judge silently votes "incorrect".
+- The retriever blog (huggingface.co/blog/nvidia/nemotron-retriever-world-class-agentic-retrieval, 21 Oct): agentic
+  retrieval over Nemotron 3.5 Embed, Rerank (custom code) and Parse (disclaims handwriting). For us the embedder is a
+  tool for nearest-real-window search (reference picking, near-copies of training windows) more than for QC.
+
+- [ ] Probe first, on the Spark: embed the real held-out windows and the LoRA and untrained FLUX.3 drawings of the four
+      per-hand volumes with TIPSv2-L/SO400m and Nemotron-3.5-Embed-1B (windows tiled or padded to the 448 px square,
+      not squashed). Per embedding: does kNN retrieve the right writer, and does a linear probe separate real from
+      drawn, as well as our writer-ID CNN does? An embedding that does not carry the hand cannot judge it.
+- [ ] A label-free realism baseline: a window's kNN distance to the real windows of its hand and layout type.
+- [ ] KumoAnomaly on the stream: per run and generator version, the windows in drawing order, their embedding
+      components and our measures as columns. Inject known failures into a stream of good windows (blank and black
+      drawings, windows of the wrong LoRA, untrained FLUX.3 windows, a caption batch gone wrong) and check that it
+      flags them and nothing else. In production it runs on each run's stream and stops or reroutes a run that drifts.
+      Also try it as a per-window realism score: blocks of real and drawn windows alternating, so each drawn block is
+      reconstructed from real ones; adopted only if it beats the kNN baseline.
+- [ ] KumoTabular QC: rows are windows; at most ~100 numerical columns (the chosen embedding's PCA, fit on the
+      context's real windows, beside our hand measures, writer-ID probabilities, rule geometry checks, CER as
+      information only); target real vs drawn (a classifier two-sample test whose P(real) is the realism score) and,
+      once we have them, judged or archivist verdicts. One context per generator version and hand. It is adopted only
+      if it beats the kNN baseline on held-out labels.
+- [ ] The VLM judge, once remote code is decided: numbered PAGE line, cell and rule overlays; pairwise questions
+      (which of two windows is the real one; is the drawn window in the reference's hand); verdicts as JSON with
+      reasons; a failed call is no verdict, never a vote. It labels the context set and audits samples (a few
+      thousand windows a day per replica), not every window. Our deterministic checks stay the gates.
+- [ ] A calibration set: the archivist blind test's windows, labelled once, to calibrate the judge and KumoTabular.
+- [ ] Production: QC as Ray Data stages after drawing: embedding actors (fractional GPUs), KumoTabular fit once per
+      context and `predict` in `map_batches`, judge replicas through vLLM on whole 96 GB cards for the sampled windows.
+
+Templates outside our ground truth: DocLayout-YOLO's Mesh-candidate BestFit (github.com/opendatalab/DocLayout-YOLO,
+`mesh-candidate_bestfit/`, read in full; arXiv 2410.12628; the code is AGPL-3.0, so reimplement from the paper, never
+copy). It builds pages as 2-D bin packing: from a pool of category-wise element crops it samples 500 candidates
+(99 % large), places one at random, then repeatedly takes the grid of every placed element's edges, keeps the empty
+rectangles and puts the candidate that fills one best at its centre; it stops when nothing fits or after five small
+elements, shrinks each element to 80-95 % for white space, renders with PyMuPDF at random page sizes and writes YOLO
+labels. Pretraining on its 300k synthetic pages (DocSynth-300K) improved layout detection.
+- [ ] BestFit as a template generator: region boxes (sizes from our ground truth's regions, tables and forms) packed
+      into new pages, each region refilled with lines, ruled lines and table cells, then planned into windows as any
+      template. Windows then show new contexts (a note beside a table, a heading over a form).
+- [ ] A cheap baseline beside it: real ground-truth regions pasted into BestFit layouts with their PAGE lines (real
+      hands, exact labels, no drawing), with the seams checked, to compare against drawn windows for VLM training.
