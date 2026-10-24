@@ -543,11 +543,18 @@ Code (writing-python, diffusers):
       repo's root holds only the index; transformers reads subfolder "" as the Hub repo's root.
 
 Inference speed (ranked; re-profile on torch 2.14.1 first, one change at a time, gated on CER and the hand metrics):
-- [ ] 1. Fuse the LoRA (`fuse_lora` + `unload_lora_weights` after `set_adapters`; `unfuse_lora()` restores the base for
-      a per-hand swap, or hotswap instead of fusing): est. 15-20% on the GB10 (the docs give no figure); prerequisite
-      for compile, FP8 and QKV fusion. Built 24 Oct (`--fuse-loras`); measured tonight.
-- [ ] 2. Built 24 Oct (`--compile-blocks`, dynamic shapes: on CPU a static compile recompiled for every new crop size,
-      5-7 s a crop, the dynamic one 2.9 s after the first); measured tonight. Regional compile
+- [x] 1. Fuse the LoRA (`fuse_lora` + `unload_lora_weights` after `set_adapters`; `unfuse_lora()` restores the base for
+      a per-hand swap, or hotswap instead of fusing): prerequisite for compile, FP8 and QKV fusion. Measured 24 Oct
+      (runs/fuse_ab, the 1715 LoRA, 5 profiled crops, 8 held-out windows; scratchpad profile/compare_fuse.py): 1.36x
+      (140.5 -> 103.4 s a crop), more than the 15-20% estimated. The same drawings: hand distances to the real crops
+      equal within noise (slant 2.5 / 2.5, letters 0.35 / 0.36, ink dE 22.5 / 22.7), mean pixel difference 1.5 of
+      255, identical by eye.
+- [x] 2. Regional compile on the fused LoRA, measured 24 Oct (same run): 1.94x over the unfused baseline (72.5 s a
+      crop), 1.43x over fused alone; the first crop pays ~8 s for compiling (78 s, the others 63-79 s by size); GPU
+      peak unchanged (25 GB); drawings within 0.8 of 255 of fused, the hand measures equal. Long runs pass
+      `--fuse-loras --compile-blocks` (the defaults stay off: CPU tests would compile). Built 24 Oct
+      (`--compile-blocks`, dynamic shapes: on CPU a static compile recompiled for every new crop size,
+      5-7 s a crop, the dynamic one 2.9 s after the first). Regional compile
       (`transformer.compile_repeated_blocks(fullgraph=True, dynamic=True)`; `dynamic` because
       captions pad in 80-token steps and the guidance passes differ in length; our guider's hook stays outside the
       compiled blocks): the docs say full compile's speedup with 8-10x shorter compile time; their benchmarks show
@@ -640,9 +647,9 @@ same held-out windows (CER as information only).
       compile, attention backend, FP8, guidance on part of the steps, fewer steps), plus diffusers' caching of
       transformer blocks between steps; graph breaks found with pytorch-skills' debug-graph-breaks. Built 24 Oct:
       `--fuse-loras` and `--compile-blocks` (FLUX.3's two repeated block types compile with fullgraph on CPU, no
-      graph break; the tiny model draws within 2/255 of eager). Queued after diffu E1 (scratchpad
-      profile/run_fuse_ab.sh): the profile fused and fused + compiled, and the 8 held-out windows evaluated as an
-      adapter, fused and fused + compiled, against the 142 s baseline and its hand measures.
+      graph break; the tiny model draws within 2/255 of eager). Measured 24 Oct: fused 1.36x, fused + compiled
+      1.94x, the same drawings and hands (Inference speed, items 1 and 2). Next in the order: the attention backend,
+      FP8, guidance stopped early (the CFG stop sweep, queued).
 - [ ] NeMo AutoModel moves the transformer to bf16 with `.to()`, so FLUX.3's `norm_q`/`norm_k` (diffusers'
       `_keep_in_fp32_modules`) train in bf16 in every LoRA and diffu run, while load_pipeline loads them in float32
       (the log warns: "should be kept in float32"). Measure whether it matters: one LoRA drawn with those norms in
