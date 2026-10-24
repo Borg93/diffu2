@@ -100,7 +100,8 @@ Done 2026-10-21.
       before any v2 retrain or new derived set: 521 records carry the raw folder name, and restyle now refuses them
       (`StaleCaptionError`). Rebuilt as `data_flux3/layout_crops_v2b` (2026-10-23) for v3d; v2's sets stay as they
       were trained.
-- [ ] After tonight's queue: delete the one-off job chains in `jobs/flux3/` that have run (steer, pages smoke, v3).
+- [x] The one-off job chains in `jobs/flux3/` that ran (steer, pages smoke, v3, v3b, the control probe) are deleted
+      (24 Oct; git history keeps them); v3c, its guidance run and v3d wait for the v3d decision.
 
 ## Modular Diffusers (checked against huggingface.co/blog/modular-diffusers and the diffusers source, 2026-10-21)
 
@@ -292,9 +293,9 @@ Any scanned page as a template, not only pages with PAGE/ALTO ground truth.
       trackio); v3d's config holds it, and its smoke run scores it once.
 - [ ] Job scripts: the 5-step smoke runs need `--lr_scheduler.lr_warmup_steps 1` and an empty checkpoint dir (both
       fixed 2026-10-21, `069bd47`, `4a8d3b4`); keep any new job script on that pattern.
-- [x] v3b (`jobs/flux3/run_v3b.sh`): v3's pairs, half the captions also naming the archive and look. The words win:
-      named in words, the template's own paper overrides the reference's (by-example paper dE 8.3 to the reference
-      vs 8.9 to the other references, against v3's 5.0 vs 10.5).
+- [x] v3b (its job chain is in git history): v3's pairs, half the captions also naming the archive and look. The
+      words win: named in words, the template's own paper overrides the reference's (by-example paper dE 8.3 to the
+      reference vs 8.9 to the other references, against v3's 5.0 vs 10.5).
 - [ ] Hand fidelity (`diffu_page.captions.hand`, in every `diffu-evaluate` results.json since 2026-10-23;
       `diffu_page.cli.hands` rescored v3 and v3b): v3's held-out drawings follow their reference's paper (CIE76 dE
       6.2 vs 10.8 to the other references; the real crop is 3.6 from it) and partly its slant (9 deg vs 12; real 6),
@@ -303,10 +304,9 @@ Any scanned page as a template, not only pages with PAGE/ALTO ground truth.
       to_other_references in v3c's and v3d's results.
 - [x] Queue since 11:56 23 Oct, done: the control probe ran; v3d stopped while caching (15:54 23 Oct) for the
       per-hand LoRA pilot, the user's call, and is not trained (whether to, now that four pages per writer suffice,
-      is the user's call). The plan as it stood (`queue_v3d_first.sh` in the session scratchpad,
-      `runs/queue_v3d_first.log`): the
-      control probe (`jobs/flux3/run_probe.sh`: base FLUX.3 draws v3c's held-out crops with plain, described and
-      contradicting captions: do described words move the hand at all?), then v3d (`jobs/flux3/run_v3d.sh`: described
+      is the user's call). The plan as it stood (`runs/queue_v3d_first.log`): the control probe (done; its job chain
+      is in git history: base FLUX.3 draws v3c's held-out crops with plain, described and contradicting captions: do
+      described words move the hand at all?), then v3d (`jobs/flux3/run_v3d.sh`: described
       captions from the rebuilt crops, caption dropout 0.1, constant LR, 3,000 steps; results ~16:00 24 Oct), diffu
       E1, v3c from zero (the control for v3d: same-hand references without the description; trackio
       `flux3_v3c_lora_rerun`), and v3c at guidance 2.5 and 3.5 (`run_guidance_v3c.sh`). v3c's first run was stopped
@@ -468,7 +468,7 @@ Any scanned page as a template, not only pages with PAGE/ALTO ground truth.
       `fix_mistral_regex=True`). Training and generation load it alike, so they agree; check whether BFL's pipeline
       sets the flag before changing it.
 - [x] Read the profile (`runs/flux3_pages/smoke/profile/trace.json`, 2.8 GB: two 1472x640 crops, 50 steps, FLUX.3
-      Klein Base **with the v2 LoRA unfused** (`jobs/flux3/run_pages_smoke.sh` passes `--lora v2=...`), torch 2.10 from
+      Klein Base **with the v2 LoRA unfused** (the deleted pages smoke chain passed `--lora v2=...`), torch 2.10 from
       the NeMo env, which warns that the GB10's capability 12.1 is outside its build; pytorch-skills:profile-model as a
       streaming pass, session scratchpad profile/analyze_trace.py, 32 s). GPU-bound: the GPU is busy 99.5% of the run.
       Denoising is 97.5% of the kernel time (2.66 s a step with guidance's two passes), text encoding 0.4%, the VAE
