@@ -676,9 +676,15 @@ Still to do, in this order (the refactors after the fixes, the user's call):
 - [x] 2. (24 Oct) ALTO carries what PAGE carries: a `Tags` element (an OtherTag for unclear, a StructureTag per region kind) and
       TAGREFS on lines and blocks; one test over both exporters; validate ALTO against the 4.4 XSD; check PAGE's
       unclear tag against a real Transkribus export (it writes `unclear {offset:..; length:..;}`).
-- [ ] 15. Tests of long-running state: the interleaved sampler resumed from `state_dict` yields exactly the rest of an
-      epoch; the runner's draw test calls `run()` and reads the Parquet and run_meta.json back; pytest-timeout; then
-      prune the suite with per-test coverage (testing-python's recipe).
+- [x] 15. (24 Oct) The interleaved sampler resumed from `state_dict` yields exactly the rest of an epoch;
+      pytest-timeout and pytest-xdist; the suite pruned with per-test coverage (testing-python's recipe): of 136 tests
+      none runs no production line outside the runner, 64 lie within another's lines, 4 asserted nothing a kept test
+      does not and are gone (union of executed lines 1,893 before and after; each red-checked on its kept test).
+- [ ] The runner's draw test calls `run()` and reads the Parquet and run_meta.json back; its RunConfig `[no-drawer]`
+      case runs no production line (Pydantic's min_length refuses it): both wait for the Ray work.
+- [ ] The suite's time is two tests (the studio's draw test 6.5 min, draw_pages 2.8 min, of ~12 in one process): both
+      draw whole planned pages (bucket-sized crops) and read every line back with the real TrOCR on CPU. Profile one
+      (cProfile or py-spy) before choosing a fix: smaller test pages, or a tiny read-back model for the tests.
 - [x] 11. (24 Oct) One eval-run module: EvalCrop the one row model (reference and reference_lines together), read_jsonl and
       write_jsonl, generated_path, the hand-fidelity statistics out of the CLI module.
 - [x] 12. Draw options and shared constants declared once (24 Oct): Annotated option aliases with defaults from one
@@ -745,6 +751,12 @@ jobs/spark_guard.sh. Every source below was read in full on 24 Oct. Findings tha
   retrieval over Nemotron 3.5 Embed, Rerank (custom code) and Parse (disclaims handwriting). For us the embedder is a
   tool for nearest-real-window search (reference picking, near-copies of training windows) more than for QC.
 
+- [ ] Alignment of the training crops (found 24 Oct): a crop cut from the wrong image has its line boxes on blank
+      paper. Byggningskollegium's JPEG/TIFF pairs did that to 15 trained pages (119 crops of layout_crops_v2/v2b, some
+      with every box on blank paper); build_crops now cuts the image the PAGE file names. An ink-inside-the-boxes
+      measure (scratchpad golden/alignment.py) finds no other: its lowest crops are faint brown hands, aligned. To
+      check a whole set, read its real crops' lines back with the HTR model (a misaligned crop reads as nothing): CER
+      as a QC signal on our own ground truth, not as a judge of generated windows.
 - [ ] Probe first, on the Spark: embed the real held-out windows and the LoRA and untrained FLUX.3 drawings of the four
       per-hand volumes with TIPSv2-L/SO400m and Nemotron-3.5-Embed-1B (windows tiled or padded to the 448 px square,
       not squashed). Per embedding: does kNN retrieve the right writer, and does a linear probe separate real from

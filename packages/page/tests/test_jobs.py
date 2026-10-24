@@ -1,6 +1,6 @@
 """A run's pages planned into crop jobs: cut by the plan steps exactly as the page is planned (captioned for its
-reference when it has one), each named and seeded by its page's place in the run; a page that plans to nothing is
-refused, not silently dropped from the run."""
+reference when it has one), each named and seeded by its page's place in the run or by its id. A page that plans to
+nothing is refused, not dropped from the run: test_pipeline's generate test reads the refusal from the summary."""
 
 from __future__ import annotations
 
@@ -36,11 +36,6 @@ def test_crop_jobs_plan_page_two_of_a_run_into_named_and_seeded_crops(
     assert [(job.name, job.seed, job.plan, job.reference) for job in jobs] == [
         (f"002_page_{k}", 2005 + k, plan, image) for k, plan in enumerate(plans)
     ]
-
-
-def test_crop_jobs_refuse_a_template_that_plans_to_no_crops(one_line_page: Path) -> None:
-    with pytest.raises(ValueError, match="plans to no crops"):
-        crop_jobs(PageJob(template=one_line_page, text=TEXT, style=STYLE), 0)
 
 
 def test_crop_jobs_name_and_seed_a_page_with_an_id_alike_wherever_it_stands_in_a_run(body_and_notes_page: Path) -> None:

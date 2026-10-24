@@ -64,29 +64,18 @@ def _referenced_set(crops_dir: Path) -> tuple[Path, list[Image.Image]]:
     return crops, references
 
 
-def test_evaluate_scores_every_crop_into_results(tiny_flux3: Path, tmp_path: Path) -> None:
-    crops = _eval_set(tmp_path / "crops", [_crop("a.jpg"), _crop("b.jpg")])
-
-    result = _evaluate(tiny_flux3, crops, tmp_path / "out")
-
-    results = Results.model_validate_json((tmp_path / "out" / "results.json").read_text())
-    assert result.exit_code == 0
-    assert [(sample.index, sample.file) for sample in results.samples] == [(0, "a.jpg"), (1, "b.jpg")]
-    assert results.failed == {}
-    last = [line for line in result.output.splitlines() if line.strip()][-1]
-    assert Summary.model_validate_json(last) == results.summary  # one line, for the job logs
-
-
 def test_evaluate_records_a_failed_crop_and_scores_the_rest(tiny_flux3: Path, tmp_path: Path) -> None:
     crops = _eval_set(tmp_path / "crops", [_crop("a.jpg"), _crop("b.jpg")])
     (crops / "b.jpg").unlink()  # its real crop can't be read back
 
-    exit_code = _evaluate(tiny_flux3, crops, tmp_path / "out").exit_code
+    result = _evaluate(tiny_flux3, crops, tmp_path / "out")
 
     results = Results.model_validate_json((tmp_path / "out" / "results.json").read_text())
-    assert exit_code == 1
-    assert [sample.file for sample in results.samples] == ["a.jpg"]
+    assert result.exit_code == 1
+    assert [(sample.index, sample.file) for sample in results.samples] == [(0, "a.jpg")]
     assert list(results.failed) == [1]
+    last = [line for line in result.output.splitlines() if line.strip()][-1]
+    assert Summary.model_validate_json(last) == results.summary  # one line, for the job logs
 
 
 def test_evaluate_measures_each_drawn_hand_beside_its_real_crop_and_its_reference(

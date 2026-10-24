@@ -38,12 +38,6 @@ def _draw(pipe: DiffuModularPipeline, **inputs: object) -> Image.Image:
     return images[0]
 
 
-def test_diffu_draws_an_image_of_the_requested_size(pipe: DiffuModularPipeline) -> None:
-    image = _draw(pipe, height=64, width=48)
-
-    assert image.size == (48, 64)
-
-
 def test_diffu_draws_differently_from_a_reference_image(pipe: DiffuModularPipeline) -> None:
     plain = _draw(pipe, height=64, width=64)
 

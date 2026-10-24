@@ -104,19 +104,6 @@ def test_crop_pipeline_conditions_a_crop_on_its_reference_image(crop_pipe: Modul
     assert crop.image.tobytes() != plain.image.tobytes()
 
 
-def test_crop_pipeline_guided_toward_its_reference_draws_otherwise_than_guided_by_the_caption_alone(
-    tiny_flux3: Path, crop_pipe: ModularPipeline
-) -> None:
-    reference = Image.new("RGB", (48, 32), "white")
-    settings = TINY_SETTINGS.model_copy(update={"reference_guidance_scale": 3.0})
-    guided_pipe = load_pipeline(tiny_flux3, crop_blocks, loras={}, settings=settings)
-    caption_guided = _draw(crop_pipe, reference)
-
-    reference_guided = draw_crop(guided_pipe, _plan(), name="000", seed=0, reference=reference, settings=settings)
-
-    assert reference_guided.image.tobytes() != caption_guided.image.tobytes()
-
-
 def _off_grid_reference() -> Image.Image:
     return Image.linear_gradient("L").resize((50, 34)).convert("RGB")
 
@@ -181,7 +168,9 @@ def test_generate_records_what_drew_the_run_and_a_page_that_plans_to_no_crop(
         DrawSettings(steps=2, text_layers=(1,), device="cpu"),
         [],
     )
-    assert {name: error.split(":")[0] for name, error in summary.failed.items()} == {"000_one_line": "ValueError"}
+    assert summary.failed == {
+        "000_one_line": f"ValueError: {one_line_page} plans to no crops: no window of it holds enough whole lines"
+    }
 
 
 @pytest.mark.parametrize(
