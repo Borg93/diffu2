@@ -5,7 +5,7 @@
 #   2. cache the first 2,000 v2 training crops with diffu's own encoders           data_flux3/cache_diffu_smoke
 #   3. a 5-step training run: fails fast, and its log shows memory and step time
 #   4. train 2,000 steps x 8 crops (packages/train/configs/diffu/diffu_s_smoke.yaml)  runs/diffu_s_smoke
-#   5. the trained transformer as a diffu repo, drawn on the 24 held-out crops     runs/diffu_s_smoke/eval_final
+#   5. the last checkpoint as a diffu repo (diffu-export), on the 24 held-out crops  runs/diffu_s_smoke/eval_final
 # A failed eval is logged; failed caching or training stops the run. A rerun skips a finished init or cache. Needs
 # jobs/setup_nemo_env.sh to have installed diffu, diffu-page and diffu-train into NeMo's environment. Run detached:
 #
@@ -68,11 +68,10 @@ step "4/5 train diffu-S"
 train train
 
 step "5/5 the final checkpoint on the held-out crops"
-# a local repo loads the transformer in its own transformer/ dir, so the init repo's index plus the export is a model
+# the init repo's components, the trained transformer and a scheduler at the shift the run trained at
 final=$(ls -d "$OUT"/epoch_*_step_* | sort -V | tail -1)
-mkdir -p "$OUT/model"
-cp "$INIT/modular_model_index.json" "$OUT/model/"
-ln -sfn "$final/model/consolidated" "$OUT/model/transformer"
+rm -rf "$OUT/model"  # an earlier export: links and configs only
+CUDA_VISIBLE_DEVICES="" "$REPO/.venv/bin/diffu-export" --checkpoint "$final" --init "$INIT" --out "$OUT/model"
 if "$GUARD" --need-gb 30 --name diffu-eval --log "$OUT/guard.log" -- \
     "$PY" -m diffu_page.cli.evaluate --crops "$CROPS/val_eval" --model "$OUT/model" -n 1000 --steps 50 \
     --out "$OUT/eval_final" > "$OUT/eval_final.log" 2>&1; then
