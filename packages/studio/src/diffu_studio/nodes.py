@@ -20,7 +20,7 @@ from urllib.parse import unquote
 from diffusers.modular_pipelines import ModularPipeline
 from gradio_client import utils as client_utils
 from PIL import Image, ImageDraw
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from diffu_page.blocks import DrawnCrop, crop_identity
 from diffu_page.layout import load_xml_layout, running_text
@@ -44,10 +44,18 @@ class Drawer(BaseModel):
 
 
 class PlannedPage(BaseModel):
-    """What the plan node hands the draw nodes: the page's name and its crop plans."""
+    """What the plan node hands the draw nodes: the page's name and its crop plans. The name comes from the client
+    and the draw nodes build file names from it, so it must be a plain file name."""
 
     page: str
     plans: list[CropPlan]
+
+    @field_validator("page")
+    @classmethod
+    def _plain_file_name(cls, page: str) -> str:
+        if page in ("", ".", "..") or Path(page).name != page:
+            raise ValueError(f"a page's name must be a plain file name, not a path: {page!r}")
+        return page
 
 
 def local_path(value: object) -> Path:

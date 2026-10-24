@@ -14,6 +14,7 @@ import torch
 from diffusers import Flux3Transformer2DModel
 from gradio_client import Client, handle_file
 from PIL import Image
+from pydantic import ValidationError
 
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.prompt import LineRecord
@@ -95,3 +96,9 @@ def test_draw_nodes_on_one_model_switch_its_loras_per_drawer(
 
     assert base == _pixels(plain["draw_plain"](_small_page(), 3, 2)[0])
     assert with_lora != base
+
+
+@pytest.mark.parametrize("page", [pytest.param("../../escaped", id="path"), pytest.param("..", id="parent")])
+def test_planned_page_refuses_a_name_that_would_write_outside_the_out_dir(page: str) -> None:
+    with pytest.raises(ValidationError, match="must be a plain file name"):
+        PlannedPage.model_validate({"page": page, "plans": []})
