@@ -854,6 +854,24 @@ Still to do, in this order (the refactors after the fixes, the user's call):
       `use_duck_shape=False` as the fp16 docs pair with dynamic=True if any; `enable_lora_hotswap` for compiled
       one-LoRA-at-a-time runs; `Flux3ImageProcessor(vae_latent_channels=16)` for the Qwen-Image VAE.
 
+## Tests of 25 Oct (looked at by eye beside the real scans, then measured; writer identification where the hand is the question)
+
+- [x] **Guidance 2 fixes most of the LoRAs' dark ink** (runs/guidance_hand, compare_*.txt; 8 held-out windows each):
+      1715 book guidance 4 / 3 / 2: ink stands out 131 / 125 / 116 (real 96), ink colour gap 22.5 / 18.2 / 12.6, paper
+      gap 6.3 / 5.9 / 5.1; Pahlman colour gap 24.3 / 22.6 / 16.8, ink unevenness 9.5 / 11.1 / 13.7 (real 16.1). Ink
+      colour closer in 8 of 8 windows on both. The writer stays: identified as the volume 86% / 98% at guidance 2
+      (guidance 4 83% / 97%, real 87% / 97%). Read-back CER of the 1715 book rises at 2 (0.081 -> 0.136), not at 3.
+      Next: guidance 2 as the hand LoRAs' default once the caption-dropout LoRA (queued) is in.
+- [x] Add-on strength 0.85 / 0.7 (runs/sweep_hand): the ink stands out more (137 / 140), its colour unchanged, only the
+      paper closer; at 0.7 the hand drifts toward FLUX.3's own. Not the fix.
+- [x] Colour stated in captions (runs/flux3_hand_overstat_ink/compare.txt): trained in, the ink core is unchanged (gap
+      23.5); asked of the plain LoRA, closer in 8 of 8 windows but only 22.5 -> 21.6. Not the lever.
+- [x] Four pages on all four volumes (writer/report_few_all.json): 4-page LoRAs identified as their volume 82% (1715),
+      97% (Pahlman), 97% (Kopparberg), 82% (Landskapshandlingar; real lines 31% on that faded film); by eye the same hand
+      as the all-pages LoRAs.
+- [x] The ink-only second pass (BFL's edit wording): smears the ink into blotches on every window. The second pass is
+      dropped in every form.
+
 ## Quality control of generated windows (plan of 24 Oct: embeddings, a tabular model, a VLM judge)
 
 The plan: embed every generated window (TIPSv2 or Nemotron 3.5 Embed), reduce the embedding, give it with our own
