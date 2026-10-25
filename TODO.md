@@ -873,6 +873,13 @@ Still to do, in this order (the refactors after the fixes, the user's call):
       22.5 / 12.6 / 7.8, ink stands out 131 / 116 / 100 (real 96), read-back CER 0.08 / 0.14 / 0.43. At 1 the ink looks
       real but the text garbles ("Swar" -> "Ocnr"): wrong labels. The caption-dropout LoRA (training) should keep the
       text at low guidance.
+- [x] **Caption dropout does not fix the LoRAs' ink** (runs/flux3_hand_overstat_drop/compare.txt; the 1715 LoRA retrained
+      with caption dropout 0.1, 700 steps): guidance 4 / 2 / 1: ink colour gap 33.2 / 15.9 / 7.8 (the plain LoRA 22.5 /
+      12.6 / 7.8), read-back CER 0.071 / 0.105 / 0.45 (plain 0.081 / 0.136 / 0.43). It shifts the balance toward text
+      and away from real ink, and the text still garbles at guidance 1. The dark ink is learned from the pages and
+      amplified by guidance; dropout does not stop it. Best setting stays the plain LoRA at guidance 2. diffu keeps
+      dropout (it needs it for guidance at all), not as an ink fix. (By eye at guidance 4 the dropout LoRA first looked
+      browner; measured and looked again, it is darker.)
 - [x] Knob sweep (runs/sweep_hand, 1715 LoRA): sampling shift 3 / 16 barely change anything (ink gap 22.4 / 22.8);
       **28 steps draw the same as 50** (gap 22.6, CER 0.083, denoising 36 s instead of ~65); a second seed gives the
       same page look with different strokes (variety comes from text, layout and volume, not seeds).
