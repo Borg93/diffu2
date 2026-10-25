@@ -229,6 +229,15 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
       strokes on the lines (E1 drew noise), at 1 a cleaner page. No letters yet (read-back CER 1.01 / 0.95, real
       0.10); hand gaps at guidance 1 about E1's (slant 11.0, letters 0.50, ink dE 21.5, paper dE 5.6). Letters need
       more than caption-only training on 2,000 crops: E2 with the glyph map next.
+- [x] **E2** (25 Oct 15:07-21:27, `jobs/diffu/run_e2.sh`): E1b's weights, 3,000 steps at the 512-px stage (scale
+      0.5, shift 3), 2,000 crops; a text-only arm against a glyph-map arm (`diffu_page.glyphs` as the one reference
+      image), drawn at guidance 4 and 1 on the 24 held-out windows (`data_flux3/e2_val_eval`). Seen beside the real
+      windows: the glyph arm puts a row of writing on every real line, at its place, length and indent (index lists
+      come out as short entries one per line, as in the scan); the text arm draws rows that drift off the lines and
+      leaves gaps. Measured: the per-row ink profile correlates with the real window's at 0.51 (glyph) against 0.03
+      (text), the glyph arm higher on 21 of 24. Neither writes letters: read-back CER 0.75 / 0.74 at guidance 4,
+      0.74 / 0.71 at guidance 1. The glyph map is the layout control to keep; letter shapes need far more than
+      2,000 crops and 3,000 steps of a 618M model from scratch, i.e. pretraining (HPC decision).
 - [ ] **More than one crop per micro-batch**: NeMo's collate pads mixed text windows with zeros and FLUX.3's
       adapter passes no text mask, so the transformer would attend to zeros generation never feeds (it attends to
       its padding). At one crop per micro-batch (E1, E1b) nothing is padded. Before E2 raises `local_batch_size`:
