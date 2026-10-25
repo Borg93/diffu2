@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import override
 
 import torch
-from diffusers import Flux3AutoBlocks, Flux3ModularPipeline
+from diffusers import FlowMatchEulerDiscreteScheduler, Flux3AutoBlocks, Flux3ModularPipeline
 from diffusers.modular_pipelines import ModularPipeline, OutputParam, SequentialPipelineBlocks
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
@@ -163,6 +163,10 @@ class DrawSettings(BaseModel):
         text_layers: The text-encoder hidden layers stacked into the prompt embeddings; ``None`` is the model's own
             choice (FLUX.3: every 4th of Qwen3-VL's).
         device: Where the components run.
+        sampling_shift: The timestep shift the scheduler samples at; ``None`` is the model's own (FLUX.3's 6.93, which
+            its LoRAs trained at; a diffu export's, the shift it trained at).
+        lora_scale: How strongly every LoRA applies: 1 at its trained strength, 0 not at all (diffusers'
+            ``set_adapters`` weights, which fusing keeps).
         fuse_loras: Fuse the LoRAs into the transformer's weights at load and drop their adapter layers: no LoRA
             matmuls per step, and the transformer can be compiled; the LoRAs can't be switched or rescaled after.
         compile_blocks: Compile the transformer's repeated blocks (torch.compile, diffusers' regional compilation) at
@@ -179,6 +183,8 @@ class DrawSettings(BaseModel):
     max_line_cer: float = MAX_LINE_CER
     text_layers: tuple[int, ...] | None = None
     device: str = "cuda"
+    sampling_shift: float | None = Field(default=None, gt=0.0)
+    lora_scale: float = Field(default=1.0, ge=0.0)
     fuse_loras: bool = False
     compile_blocks: bool = False
 
@@ -228,12 +234,16 @@ def load_pipeline(model: Path, blocks: BlocksFor, *, loras: dict[str, Path], set
     pipe.load_components(dtype=COMPONENT_DTYPES)
     require_loaded(pipe)
     pipe.update_components(guider=guider)
+    if settings.sampling_shift is not None:
+        pipe.update_components(
+            scheduler=FlowMatchEulerDiscreteScheduler.from_config(pipe.scheduler.config, shift=settings.sampling_shift)
+        )
     pipe.to(settings.device)
     materialize_position_tables(pipe.htr_model)
     for name, state_dict in adapters.items():
         pipe.load_lora_weights(state_dict, adapter_name=name)
     if loras:
-        pipe.set_adapters(list(loras))
+        pipe.set_adapters(list(loras), adapter_weights=[settings.lora_scale] * len(loras))
     if loras and settings.fuse_loras:
         pipe.fuse_lora(adapter_names=list(loras))
         pipe.unload_lora_weights()

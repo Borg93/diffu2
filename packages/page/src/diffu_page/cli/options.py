@@ -30,6 +30,12 @@ TextLayers = Annotated[
 Device = Annotated[str, typer.Option(help="where the models run")]
 MaxLineCer = Annotated[float, typer.Option(help="the read-back CER above which a line's label is tagged unclear")]
 Format = Annotated[LabelFormat, typer.Option("--format", help="the labels' format")]
+SamplingShift = Annotated[
+    float | None, typer.Option(min=0.0, help="the timestep shift to sample at (default: the model's own)")
+]
+LoraScale = Annotated[
+    float, typer.Option(min=0.0, help="how strongly the LoRAs apply: 1 at their trained strength, 0 not at all")
+]
 FuseLoras = Annotated[
     bool, typer.Option(help="fuse the LoRAs into the transformer at load: faster, but they can't be switched after")
 ]

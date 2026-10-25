@@ -258,6 +258,17 @@ def test_draw_crop_refuses_reference_guidance_on_a_crop_without_a_reference(crop
         draw_crop(crop_pipe, _plan(), name="000", seed=0, reference=None, settings=guided)
 
 
+def test_load_pipeline_samples_at_the_shift_asked_for_and_the_models_own_by_default(tiny_flux3: Path) -> None:
+    drawn = {}
+    for name, shift in (("default", None), ("own", 6.93), ("16", 16.0)):
+        settings = TINY_SETTINGS.model_copy(update={"sampling_shift": shift})
+        pipe = load_pipeline(tiny_flux3, crop_blocks, loras={}, settings=settings)
+        drawn[name] = draw_crop(pipe, _plan(), name="000", seed=0, reference=None, settings=settings).image.tobytes()
+
+    assert drawn["own"] == drawn["default"]
+    assert drawn["16"] != drawn["default"]
+
+
 def test_draw_crop_guides_each_crop_only_until_guidance_stop(tiny_flux3: Path) -> None:
     settings = TINY_SETTINGS.model_copy(update={"guidance_stop": 0.5})
     pipe = load_pipeline(tiny_flux3, crop_blocks, loras={}, settings=settings)
@@ -272,8 +283,9 @@ def test_draw_crop_guides_each_crop_only_until_guidance_stop(tiny_flux3: Path) -
 
 
 @pytest.mark.parametrize("fuse", [pytest.param(False, id="adapter"), pytest.param(True, id="fused")])
-def test_nemo_lora_loads_at_its_trained_strength(
-    tiny_flux3: Path, crop_pipe: ModularPipeline, write_nemo_lora: Callable[..., Path], fuse: bool
+@pytest.mark.parametrize("strength", [pytest.param(1.0, id="trained"), pytest.param(0.5, id="half")])
+def test_nemo_lora_loads_at_its_trained_strength_times_the_lora_scale(
+    tiny_flux3: Path, crop_pipe: ModularPipeline, write_nemo_lora: Callable[..., Path], fuse: bool, strength: float
 ) -> None:
     torch.manual_seed(0)
     linear = crop_pipe.transformer.get_submodule(LORA_MODULE)
@@ -281,8 +293,8 @@ def test_nemo_lora_loads_at_its_trained_strength(
     b = torch.randn(linear.out_features, 2)
     lora_dir = write_nemo_lora(LORA_MODULE, a, b, alpha=4)  # scale alpha / r = 2
     x = torch.randn(3, linear.in_features)
-    expected = linear(x.to(linear.weight.dtype)).float() + 2 * x @ a.T @ b.T
-    settings = TINY_SETTINGS.model_copy(update={"fuse_loras": fuse})
+    expected = linear(x.to(linear.weight.dtype)).float() + strength * 2 * x @ a.T @ b.T
+    settings = TINY_SETTINGS.model_copy(update={"fuse_loras": fuse, "lora_scale": strength})
 
     pipe = load_pipeline(tiny_flux3, crop_blocks, loras={"v2": lora_dir}, settings=settings)
 
