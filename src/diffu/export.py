@@ -25,7 +25,6 @@ from diffu.init import INDEX, index_entry
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 console = Console()
-err_console = Console(stderr=True)
 
 
 def trained_shift(checkpoint: Path) -> float:
@@ -58,7 +57,7 @@ def export(checkpoint: Path, init: Path, out: Path) -> float:
             ``save_consolidated: final``, NeMo writes one for the last checkpoint only) or its config names no flow
             shift.
     """
-    if (out / INDEX).exists() or (out / "transformer").exists():
+    if (out / INDEX).exists() or (out / "transformer").is_symlink() or (out / "transformer").exists():
         raise ValueError(f"{out} already holds a model; give a new directory")
     transformer = checkpoint / "model" / "consolidated"
     if not (transformer / "config.json").is_file():
@@ -88,9 +87,8 @@ def main(
     """Write a diffu model repo of a trained checkpoint, sampled at the timestep shift it trained at."""
     try:
         shift = export(checkpoint, init, out)
-    except ValueError as error:
-        err_console.print(str(error))
-        raise typer.Exit(code=1) from error
+    except ValueError as error:  # every refusal is about the arguments: a usage error
+        raise typer.BadParameter(str(error)) from error
     console.print(f"{checkpoint.name} at shift {shift:g} -> {out}")
 
 

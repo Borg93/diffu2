@@ -830,6 +830,30 @@ Still to do, in this order (the refactors after the fixes, the user's call):
 - [ ] Hand measures of drawings scored before 24 Oct evening counted empty line boxes as hands; compare runs only when
       both are scored with the contrast floor (diffu-hands rescores a saved run).
 
+## Audit of 25 Oct morning (three reviewers: writing-python/testing-python, the diffusers skills and docs, BFL's FLUX skills and Klein material; each finding verified)
+
+- [x] Fixed (red-checked, both type checkers 0, suite 169 passed): the empty prompt is cached first (seconds) in
+      `cache_diffu` and `cache_pairs`, not after hours of crops; `cache_pairs --device`; a dropped text-to-image crop's
+      `prompt` is "" too; `EmptyPrompt.load -> Self`; `diffu-init` and `diffu-export` refuse as usage errors (exit 2);
+      `diffu-export` treats a dangling `transformer` link as a model; stale docstrings and the E1b config comment.
+- [ ] **The hand LoRAs trained without caption dropout and are drawn at guidance 4** (cfg_dropout_prob 0, no
+      caption_dropout; diffusers' Klein trainer README: use caption dropout so CFG works): E1's mistake on a LoRA, and
+      a likely cause of their too-dark ink. Queued (scratchpad dropout_lora/run.sh, runs/flux3_hand_overstat_drop):
+      the plain 1715 LoRA at guidance 1, then the LoRA retrained with caption dropout 0.1 drawn at 4, 2 and 1. If it
+      fixes the ink, every per-volume LoRA trains with it.
+- [ ] A NeMo-environment test of the dropout wiring (a 2-crop cache, `InterleavedTextToImageDataloaderConfig` with
+      caption_dropout, a collated batch's prompt_embeds): today only the E1b smoke grep and a hand check cover it.
+- [ ] Captions (BFL): the archive title and years open every caption and may act as a colour grade (run the
+      archival-formats control probe without them); "aged" in every paper row is a trigger word (use the colour and
+      hex); "its words are not legible" -> "illegible"; hex belongs in the line rows that carry the ink. The second
+      pass's templates asked for stains outright and broke BFL's edit rules (1-2 sentences, no negations): the
+      ink-only template is rewritten so (runs/chain_hand/*/plans_ink.json, median ink colour).
+- [ ] diffusers: `diffu-init` could write its index with `ModularPipeline.save_pretrained(overwrite_modular_index=True)`
+      instead of by hand; diffu loads only through `DiffuModularPipeline.from_pretrained` (the generic entry points need
+      trust_remote_code, forbidden here): say so in the README; check recompiles (`TORCH_LOGS=recompiles`) and set
+      `use_duck_shape=False` as the fp16 docs pair with dynamic=True if any; `enable_lora_hotswap` for compiled
+      one-LoRA-at-a-time runs; `Flux3ImageProcessor(vae_latent_channels=16)` for the Qwen-Image VAE.
+
 ## Quality control of generated windows (plan of 24 Oct: embeddings, a tabular model, a VLM judge)
 
 The plan: embed every generated window (TIPSv2 or Nemotron 3.5 Embed), reduce the embedding, give it with our own

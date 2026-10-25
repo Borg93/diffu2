@@ -40,6 +40,7 @@ def main(
     calculator = MultiTierBucketCalculator(quantization=64)
     out.mkdir(parents=True, exist_ok=True)
     encoders = DiffuEncoders.load(model, device)
+    write_empty_prompt(encoders, out)  # first: seconds, where the crops take hours
     run = cache_crops(
         records,
         crops,
@@ -47,7 +48,6 @@ def main(
         out=out,
         bucket_id=lambda width, height: calculator.get_bucket_for_image(width, height)["id"],
     )
-    write_empty_prompt(encoders, out)
     (out / "failed.json").write_text(json.dumps(run.failed, indent=1), encoding="utf-8")
     if run.failed:
         err_console.print(f"{len(run.failed)} of {len(records)} crops failed: see {out / 'failed.json'}")

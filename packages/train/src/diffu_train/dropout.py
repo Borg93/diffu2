@@ -16,13 +16,13 @@ from __future__ import annotations
 import random
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, Self
 
 import torch
 from pydantic import BaseModel, ConfigDict
 from torch.utils.data import Dataset
 
-EMPTY_PROMPT_FILE = "empty_prompt.pt"  # in a pair cache dir
+EMPTY_PROMPT_FILE = "empty_prompt.pt"  # beside a cache's metadata.json
 
 type Sample = Mapping[str, Any]  # one item of NeMo's ImageEditDataset or TextToImageDataset
 type Item = dict[str, Any]  # an item as the dataset hands it on
@@ -30,7 +30,8 @@ type Blank = Callable[[Sample], Item]  # an item with the empty prompt in place 
 
 
 class SampleSource(Protocol):
-    """What caption dropout draws its samples from: NeMo's ImageEditDataset, or any sized, indexed source."""
+    """What caption dropout draws its samples from: NeMo's ImageEditDataset or TextToImageDataset, or any sized,
+    indexed source."""
 
     def __len__(self) -> int: ...
 
@@ -51,7 +52,7 @@ class EmptyPrompt(BaseModel):
     mask: torch.Tensor  # [sequence]
 
     @classmethod
-    def load(cls, cache_dir: Path) -> EmptyPrompt:
+    def load(cls, cache_dir: Path) -> Self:
         """The empty prompt cached in ``cache_dir``.
 
         Raises:
@@ -84,7 +85,7 @@ class EmptyPrompt(BaseModel):
     def into_text_to_image(self, sample: Sample) -> Item:
         """A text-to-image crop (NeMo's TextToImageDataset item, whose mask NeMo's collate makes from its length) with
         the empty prompt in place of its caption."""
-        return {**sample, "prompt_embeds": self.embeddings}
+        return {**sample, "prompt_embeds": self.embeddings, "prompt": ""}
 
 
 class CaptionDropout(Dataset[Item]):
@@ -92,7 +93,7 @@ class CaptionDropout(Dataset[Item]):
     put in by ``blank`` (``EmptyPrompt.into_image_edit`` or ``into_text_to_image``).
 
     Each draw is ``draw()``, by default Python's ``random`` (``uniform``), which the DataLoader seeds once in each
-    worker as it starts (NeMo's workers persist across epochs, so the draws run on from epoch to epoch): a pair loses
+    worker as it starts (NeMo's workers persist across epochs, so the draws run on from epoch to epoch): an item loses
     its caption in some epochs and not others. A resumed run's workers restart their streams from the run's seed.
     """
 

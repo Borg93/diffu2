@@ -58,10 +58,13 @@ def main(
         settings.flux3_model
     ),
     limit: Annotated[int | None, typer.Option(min=1, help="cache only the first N pairs (a smoke test)")] = None,
+    device: Annotated[str, typer.Option(help="where the text encoder runs")] = "cuda",
 ) -> None:
     """Cache the v3 reference pairs with NeMo AutoModel's FLUX.3 image-edit encoder."""
     model = required_model(model)
     rows = manifest if limit is None else write_first_rows(manifest, limit)
+    out.mkdir(parents=True, exist_ok=True)
+    empty_prompt(model, device).save(out)  # first: seconds, where the pairs take hours
     encoder = Flux3ImageEditCacheEncoder(model_name=str(model), max_sequence_length=MAX_SEQUENCE_LENGTH)
     metadata = encoder.encode_manifest(
         manifest_path=rows,
@@ -71,7 +74,6 @@ def main(
         num_gpus=1,
         verify=False,
     )
-    empty_prompt(model, "cuda" if torch.cuda.is_available() else "cpu").save(out)
     console.print(f"cached {rows} and the empty prompt -> {metadata}")
 
 

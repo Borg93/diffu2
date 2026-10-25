@@ -75,8 +75,8 @@ fsdp:
   enable_fsdp2_prefetch: false
 
 # Logit-normal timesteps with a constant shift of 6 for ~1 MP crops: the design study's ~3 at 512², scaled by
-# sqrt(tokens). No loss weighting and no uniform mix, as in NeMo's pretraining recipe. No CFG dropout yet: NeMo would
-# zero the text embeddings, while diffu's null is the empty prompt: caption_dropout in the dataloader swaps it in.
+# sqrt(tokens). No loss weighting and no uniform mix, as in NeMo's pretraining recipe. NeMo's cfg_dropout stays 0: it
+# zeroes the text embeddings, while diffu's null is the empty prompt, which caption_dropout in the dataloader swaps in.
 flow_matching:
   adapter_type: "flux3"
   timestep_sampling: "logit_normal"

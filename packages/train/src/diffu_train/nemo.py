@@ -1,4 +1,4 @@
-"""Interleaved aspect-ratio buckets for NeMo AutoModel's FLUX.3 LoRA training.
+"""Interleaved aspect-ratio buckets and caption dropout for NeMo AutoModel's training: FLUX.3's LoRAs and diffu.
 
 NeMo's ``SequentialBucketSampler`` walks the buckets one after another: every batch of one crop shape, then
 every batch of the next. A run shorter than an epoch (v2: 1,600 steps x 4 crops over 11,329 crops) therefore

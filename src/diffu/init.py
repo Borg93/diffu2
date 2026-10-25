@@ -26,7 +26,6 @@ from diffu.modular_pipelines.diffu import DiffuAutoBlocks, DiffuModularPipeline
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 console = Console()
-err_console = Console(stderr=True)
 
 INDEX = "modular_model_index.json"
 
@@ -101,8 +100,7 @@ def main(
 ) -> None:
     """Write a diffu model repo with freshly initialised weights."""
     if (out / INDEX).exists():
-        err_console.print(f"{out} already holds a model; give a new directory")
-        raise typer.Exit(code=1)
+        raise typer.BadParameter(f"{out} already holds a model; give a new directory", param_hint="--out")
     config = DiffuConfig(size=SIZES[size])
     transformer = init_transformer(config, seed=seed)
     write_model_repo(transformer, config, out)

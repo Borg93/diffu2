@@ -91,7 +91,7 @@ def test_diffu_init_refuses_a_directory_that_holds_a_model(tmp_path: Path) -> No
 
     result = CliRunner().invoke(app, ["--out", str(tmp_path)])
 
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert sorted(path.name for path in tmp_path.iterdir()) == [INDEX]
 
 
@@ -145,6 +145,15 @@ def test_diffu_export_refuses_a_directory_that_holds_a_model(
         export(checkpoint, tiny_diffu, tmp_path / "model")
 
     assert sorted(path.name for path in (tmp_path / "model").iterdir()) == exported
+
+
+def test_diffu_export_refuses_a_directory_with_a_dangling_transformer_link(tiny_diffu: Path, tmp_path: Path) -> None:
+    out = tmp_path / "model"
+    out.mkdir()
+    (out / "transformer").symlink_to(tmp_path / "gone", target_is_directory=True)
+
+    with pytest.raises(ValueError, match="already holds a model"):
+        export(_nemo_checkpoint(tmp_path / "epoch_0_step_4", None, flow_shift=6.0), tiny_diffu, out)
 
 
 def _latents() -> torch.Tensor:

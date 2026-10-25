@@ -45,12 +45,18 @@ def test_caption_dropout_trains_a_dropped_pair_on_the_empty_prompt_and_keeps_the
 def test_caption_dropout_trains_a_dropped_crop_of_diffu_on_the_empty_prompt_and_keeps_the_rest() -> None:
     empty = EmptyPrompt(embeddings=torch.full((80, 8), 7.0), mask=torch.ones(80, dtype=torch.long))
     crops = [
-        {"latent": torch.full((64, 2, 2), float(k)), "prompt_embeds": torch.full((160, 8), float(k))} for k in (0, 1)
+        {
+            "latent": torch.full((64, 2, 2), float(k)),
+            "prompt_embeds": torch.full((160, 8), float(k)),
+            "prompt": f"crop {k}",
+        }
+        for k in (0, 1)
     ]
     dataset = CaptionDropout(crops, empty.into_text_to_image, share=0.1, draw=iter([0.05, 0.5]).__next__)
 
     dropped, kept = dataset[0], dataset[1]
 
     assert torch.equal(dropped["prompt_embeds"], torch.full((80, 8), 7.0))
+    assert dropped["prompt"] == ""  # NeMo's batch names the caption the crop trained on
     assert dropped["latent"] is crops[0]["latent"]
     assert kept == crops[1]
