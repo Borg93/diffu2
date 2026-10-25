@@ -235,9 +235,12 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
       windows: the glyph arm puts a row of writing on every real line, at its place, length and indent (index lists
       come out as short entries one per line, as in the scan); the text arm draws rows that drift off the lines and
       leaves gaps. Measured: the per-row ink profile correlates with the real window's at 0.51 (glyph) against 0.03
-      (text), the glyph arm higher on 21 of 24. Neither writes letters: read-back CER 0.75 / 0.74 at guidance 4,
-      0.74 / 0.71 at guidance 1. The glyph map is the layout control to keep; letter shapes need far more than
+      (text), the glyph arm higher on 21 of 24. Neither writes letters: read-back CER (glyph / text) 1.01 / 0.99 at
+      guidance 4, 1.01 / 0.96 at guidance 1 (results.json; the real windows 0.11). The glyph map is the layout control to keep; letter shapes need far more than
       2,000 crops and 3,000 steps of a 618M model from scratch, i.e. pretraining (HPC decision).
+- [ ] **E2b** (queued 25 Oct 21:51 after the whole-page redraw, `jobs/diffu/run_e2b.sh`,
+      `configs/diffu/diffu_s_e2b_glyph.yaml`): E2's glyph arm on all 11,329 training crops, 10,000 steps of 8, drawn
+      at steps 5,000 and 10,000: does more data and training start to form letters on the Spark?
 - [ ] **More than one crop per micro-batch**: NeMo's collate pads mixed text windows with zeros and FLUX.3's
       adapter passes no text mask, so the transformer would attend to zeros generation never feeds (it attends to
       its padding). At one crop per micro-batch (E1, E1b) nothing is padded. Before E2 raises `local_batch_size`:
