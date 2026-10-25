@@ -223,10 +223,12 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
       (diffusers' FLUX.3 denoise loop). diffusers' FLUX.3 trainer pads it to the dropped sample's window instead,
       because it batches several samples. Checked in NeMo's environment on E1's cache: the log line, 31 of 400
       dropped, a batch builds.
-- [ ] **E1b** (queued 24 Oct after the CFG stop sweep, `jobs/diffu/run_e1b.sh`, `configs/diffu/diffu_s_e1b.yaml`):
-      E1's weights, 3,000 more steps x 8 with caption dropout 0.1, drawn at guidance 4 and 1. Does guidance now
-      draw a page, and better than without it; do letters start to form? The smoke step stops the run if NeMo's
-      log lacks the dropout line.
+- [x] **E1b** (25 Oct 01:55-06:14, `jobs/diffu/run_e1b.sh`, `configs/diffu/diffu_s_e1b.yaml`): E1's weights, 3,000
+      more steps x 8 with caption dropout 0.1, drawn at guidance 4 and 1 (runs/diffu_s_e1b/compare.txt; sheet in the
+      session scratchpad e1/e1b.webp). Guidance works now: at 4 it draws a page with dense rows of writing-like
+      strokes on the lines (E1 drew noise), at 1 a cleaner page. No letters yet (read-back CER 1.01 / 0.95, real
+      0.10); hand gaps at guidance 1 about E1's (slant 11.0, letters 0.50, ink dE 21.5, paper dE 5.6). Letters need
+      more than caption-only training on 2,000 crops: E2 with the glyph map next.
 - [ ] **More than one crop per micro-batch**: NeMo's collate pads mixed text windows with zeros and FLUX.3's
       adapter passes no text mask, so the transformer would attend to zeros generation never feeds (it attends to
       its padding). At one crop per micro-batch (E1, E1b) nothing is padded. Before E2 raises `local_batch_size`:
@@ -498,6 +500,13 @@ Any scanned page as a template, not only pages with PAGE/ALTO ground truth.
       untrained 11.0/0.25/0.26/0.24; letter size is the one measure that more pages improve. One drawing of the
       10-page LoRA wrote the archive's name from the caption's prose ("records of Överståthållarämbetet") as a
       heading: a caption word outside the layout rows can be drawn.
+- [x] Four pages on other hands (24-25 Oct, scratchpad hand/run_few_pages_named.sh; writer/report_few_named.json):
+      Pahlman's and Kopparberg's 4-page LoRAs (350 steps) on their 8 held-out windows. Writer identification, real /
+      full LoRA / 4 pages: Pahlman 97% / 97% / 97%, Kopparberg 74% / 94% / 97%. Hand gaps (slant, stroke, letters,
+      density), full -> 4 pages: Pahlman 4.0/0.12/0.27/0.26 -> 2.0/0.06/0.24/0.09, Kopparberg 3.5/0.15/0.77/0.38 ->
+      3.0/0.16/0.57/0.35 (untrained 4.0/0.92/0.40/0.94). Pahlman's 4-page ink is lighter (stands out 137 against 164,
+      real 126) because its four pages have lighter ink, not because of fewer pages (the 1715 4- and 10-page LoRAs'
+      ink is as dark as the 36-page one's). Four pages hold on 3 of 3 volumes; Landskapshandlingar queued.
 - [ ] The tokenizer warns that FLUX.3 Klein's Qwen3-VL tokenizer has "an incorrect regex pattern" (transformers;
       `fix_mistral_regex=True`). Training and generation load it alike, so they agree; check whether BFL's pipeline
       sets the flag before changing it.
@@ -669,7 +678,9 @@ same held-out windows (CER as information only).
       `--fuse-loras` and `--compile-blocks` (FLUX.3's two repeated block types compile with fullgraph on CPU, no
       graph break; the tiny model draws within 2/255 of eager). Measured 24 Oct: fused 1.36x, fused + compiled
       1.94x, the same drawings and hands (Inference speed, items 1 and 2). Next in the order: the attention backend,
-      FP8, guidance stopped early (the CFG stop sweep, queued).
+      FP8. Guidance stopped early (25 Oct, runs/stop_sweep/compare.txt; 1715 LoRA, 8 windows): stopping at 80/70/60%
+      of the steps leaves the ink and paper as they are but loosens the hand and the reading (slant gap 2.5 -> 3.5 /
+      4.0 / 4.0, CER 0.085 -> 0.096 / 0.113 / 0.144) for at most ~20% of the denoising: dropped.
 - [ ] NeMo AutoModel moves the transformer to bf16 with `.to()`, so FLUX.3's `norm_q`/`norm_k` (diffusers'
       `_keep_in_fp32_modules`) train in bf16 in every LoRA and diffu run, while load_pipeline loads them in float32
       (the log warns: "should be kept in float32"). Measure whether it matters: one LoRA drawn with those norms in
