@@ -1,7 +1,9 @@
 #!/bin/bash
-# E2b: does more data and training make diffu's letters form? E2's glyph arm (runs/diffu_s_e2_glyph/model) continued on
-# all 11,329 v2 training crops at the 512-px stage, 10,000 steps of 8 (packages/train/configs/diffu/diffu_s_e2b_glyph.yaml).
-# Cached, smoke-tested (5 steps; the run stops if NeMo's log lacks the caption dropout line), trained, then the step-5,000
+# E2b: does more data and training make diffu's letters form? diffu-S on FLUX.3's own text encoder (Qwen3-VL-4B-Instruct,
+# its 8 layers), started from E2's glyph arm (runs/diffu_s_e2_glyph/model) wherever the weights fit: all but the text
+# projection, which the wider text embeddings re-initialise (diffu-init --weights-from). Trained on all 11,329 v2
+# training crops at the 512-px stage with their glyph maps, 10,000 steps of 8
+# (packages/train/configs/diffu/diffu_s_e2b_glyph.yaml). Initialised, cached, smoke-tested (5 steps; the run stops if NeMo's log lacks the caption dropout line), trained, then the step-5,000
 # checkpoint and the last are exported (diffu-export) and drawn on E2's 24 held-out windows with their glyph maps
 # (data_flux3/e2_val_eval/glyphs), so E2 (step 3,000), 5,000 and 10,000 show the trend. One GPU job at a time through
 # jobs/spark_guard.sh. Run detached:
@@ -16,7 +18,8 @@ PY="$AUTOMODEL/.venv-managed/bin/python"
 TORCHRUN="$AUTOMODEL/.venv-managed/bin/torchrun"
 GUARD="$REPO/jobs/spark_guard.sh"
 CROPS="$REPO/data_flux3/layout_crops_v2"
-INIT="$REPO/runs/diffu_s_e2_glyph/model"
+E2="$REPO/runs/diffu_s_e2_glyph/model"
+INIT="$REPO/runs/diffu_s_vl_init"
 EVAL="$REPO/data_flux3/e2_val_eval/glyphs"
 CACHE="$REPO/data_flux3/cache_diffu_e2b_glyph"
 CONFIG="$REPO/packages/train/configs/diffu/diffu_s_e2b_glyph.yaml"
@@ -24,10 +27,14 @@ OUT="$REPO/runs/diffu_s_e2b_glyph"
 export CUDA_VISIBLE_DEVICES=0
 export DIFFU_REPO="$REPO" DIFFU_INIT="$INIT" DIFFU_CACHE="$CACHE"
 
-[ -f "$INIT/modular_model_index.json" ] || { echo "no E2 glyph export at $INIT: run jobs/diffu/run_e2.sh first"; exit 1; }
+[ -f "$E2/modular_model_index.json" ] || { echo "no E2 glyph export at $E2: run jobs/diffu/run_e2.sh first"; exit 1; }
 [ -f "$EVAL/metadata.jsonl" ] || { echo "no held-out glyph windows at $EVAL: run jobs/diffu/run_e2.sh first"; exit 1; }
 step() { echo "=== $(date '+%F %T') $*"; }
 mkdir -p "$OUT"
+
+step "diffu-S on FLUX.3's text encoder, from E2's weights"
+[ -f "$INIT/modular_model_index.json" ] ||
+    CUDA_VISIBLE_DEVICES="" "$REPO/.venv/bin/diffu-init" --size S --out "$INIT" --weights-from "$E2"
 
 step "cache all training crops at scale 0.5 (diffu_train.cache_glyphs)"
 if [ ! -f "$CACHE/metadata.json" ]; then  # metadata.json is written last: it marks a finished cache

@@ -221,10 +221,10 @@ TINY_FLUX3_VAE = {
 
 
 @pytest.fixture(scope="session")
-def tiny_flux3(tmp_path_factory: pytest.TempPathFactory) -> Path:
+def tiny_flux3(tiny_flux3_snapshot: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
     """diffusers' tiny FLUX.3 test model (a few MB, downloaded once into the Hugging Face cache), copied with a tiny VAE
     that downsamples 8x as FLUX.3's does, so a crop is drawn from as many tokens as the real model draws it from."""
-    snapshot = Path(snapshot_download(TINY_FLUX3, revision=TINY_FLUX3_REVISION))
+    snapshot = tiny_flux3_snapshot
     repo = tmp_path_factory.mktemp("flux3")
     shutil.copytree(snapshot, repo, ignore=shutil.ignore_patterns("vae"), dirs_exist_ok=True)
     torch.manual_seed(0)
@@ -234,9 +234,6 @@ def tiny_flux3(tmp_path_factory: pytest.TempPathFactory) -> Path:
     vae.save_pretrained(repo / "vae")
     return repo
 
-
-TINY_QWEN35 = "hf-internal-testing/tiny-flux3-prompt-upsampler"
-TINY_QWEN35_REVISION = "21114f3e05b4f947f6980ad71de1e3ee0f280b0e"  # pinned: a changed fixture must not change results
 
 # 8x downsampling like the real Qwen-Image VAE, so a token is 16 px as in diffu; latent statistics that are not the
 # identity, so normalization is exercised
@@ -252,9 +249,9 @@ TINY_QWEN_IMAGE_VAE = {
 
 
 @pytest.fixture(scope="session")
-def tiny_qwen35() -> Path:
-    """A tiny Qwen3.5 model and tokenizer (diffusers' FLUX.3 prompt-upsampler test model, a few MB)."""
-    return Path(snapshot_download(TINY_QWEN35, revision=TINY_QWEN35_REVISION))
+def tiny_flux3_snapshot() -> Path:
+    """diffusers' tiny FLUX.3 test model as downloaded: its tiny Qwen3-VL text encoder and processor among it."""
+    return Path(snapshot_download(TINY_FLUX3, revision=TINY_FLUX3_REVISION))
 
 
 @pytest.fixture(scope="session")
@@ -263,12 +260,20 @@ def tiny_diffu_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest.fixture(scope="session")
-def tiny_diffu_config(tiny_qwen35: Path, tiny_diffu_dir: Path) -> DiffuConfig:
-    """A tiny diffu: 2 heads of 8, one per-mode and one joint block, the tiny Qwen3.5's middle layer, a 4-channel VAE
-    kept in the repo."""
+def tiny_diffu_config(tiny_flux3_snapshot: Path, tiny_diffu_dir: Path) -> DiffuConfig:
+    """A tiny diffu: 2 heads of 8, one per-mode and one joint block, tiny FLUX.3's Qwen3-VL at its middle layer, a
+    4-channel VAE kept in the repo."""
+    text_encoder = TextEncoder(
+        repo=str(tiny_flux3_snapshot),
+        revision=None,
+        encoder_subfolder="text_encoder",
+        processor_subfolder="tokenizer",
+        layers=(1,),
+        hidden_size=16,
+    )
     return DiffuConfig(
         size=DiffuSize(num_attention_heads=2, attention_head_dim=8, mode_layers=1, joint_layers=1),
-        text_encoder=TextEncoder(repo=str(tiny_qwen35), revision=None, layers=(1,), hidden_size=32),
+        text_encoder=text_encoder,
         vae=Vae(repo=str(tiny_diffu_dir), revision=None, subfolder="vae", latent_channels=4),
     )
 

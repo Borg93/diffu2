@@ -2,7 +2,7 @@
 
 The denoise step is diffusers' ``Flux3AutoCoreDenoiseStep`` unchanged: it reads the latent channels from the transformer
 and the latent grid from the pipeline's ``vae_scale_factor``, so it runs diffu's 64-channel Qwen-Image latents and
-Qwen3.5 embeddings as it runs FLUX.3's.
+its Qwen3-VL embeddings (FLUX.3's text encoder) as it runs FLUX.3's.
 """
 
 from __future__ import annotations
@@ -75,7 +75,7 @@ class DiffuAutoBlocks(SequentialPipelineBlocks):
     def description(self) -> str:
         return (
             "Auto blocks that perform text-to-image and image-to-image generation using diffu: FLUX.3's architecture "
-            "with diffu's weights, a Qwen3.5 text encoder and the Qwen-Image VAE."
+            "with diffu's weights, FLUX.3's text encoder (Qwen3-VL) and the Qwen-Image VAE."
         )
 
     @property

@@ -1,7 +1,7 @@
 [project]
 name = "diffu"
 version = "0.1.0"
-description = "diffu: our page model, FLUX.3's architecture (diffusers' Flux3Transformer2DModel and Modular Diffusers blocks) with our own weights, a Qwen3.5 text encoder and the Qwen-Image VAE."
+description = "diffu: our page model, FLUX.3's architecture (diffusers' Flux3Transformer2DModel and Modular Diffusers blocks) with our own weights, FLUX.3's text encoder (Qwen3-VL-4B-Instruct) and the Qwen-Image VAE."
 readme = "README.md"
 requires-python = ">=3.12,<3.14"  # 3.12: NeMo AutoModel's environment runs diffu-page and diffu-train; 3.14 breaks pydantic's `from __future__ import annotations` models
 license = "Apache-2.0"

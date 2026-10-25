@@ -1,6 +1,10 @@
 """A diffu model repo with freshly initialised weights: what NeMo AutoModel trains from and Modular Diffusers loads.
 
     diffu-init --size S --out runs/diffu/init_s
+    diffu-init --size S --out runs/diffu/init_s_vl --weights-from runs/diffu_s_e2_glyph/model
+
+With ``--weights-from`` the new model starts from a trained diffu's weights wherever their shapes agree; the rest (the
+text projection, when the text encoder changed) keep their fresh init.
 
 Writes ``<out>/transformer/`` (config and weights) and ``<out>/modular_model_index.json``, which names the pipeline
 and its blocks, the text layers, and the text encoder and VAE by pinned Hub revision. NeMo AutoModel's finetune mode
@@ -19,7 +23,7 @@ import torch
 import typer
 from diffusers import AutoencoderKLQwenImage, Flux3Transformer2DModel
 from rich.console import Console
-from transformers import AutoTokenizer, Qwen3_5ForConditionalGeneration
+from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 
 from diffu.configs import SIZES, DiffuConfig, SizeName
 from diffu.modular_pipelines.diffu import DiffuAutoBlocks, DiffuModularPipeline
@@ -51,6 +55,19 @@ def init_transformer(config: DiffuConfig, *, seed: int) -> Flux3Transformer2DMod
     return transformer
 
 
+def warm_start(transformer: Flux3Transformer2DModel, source: Path) -> list[str]:
+    """Load into ``transformer`` every weight of the diffu repo at ``source`` with the same name and shape.
+
+    Returns:
+        The names of the weights that keep their fresh init, because ``source`` has none of that shape.
+    """
+    trained = Flux3Transformer2DModel.from_pretrained(source, subfolder="transformer").state_dict()
+    own = transformer.state_dict()
+    fresh = [name for name, weight in own.items() if name not in trained or trained[name].shape != weight.shape]
+    transformer.load_state_dict({**own, **{name: trained[name] for name in own if name not in fresh}})
+    return fresh
+
+
 def index_entry(library: str, cls: type, *, repo: str, revision: str | None, subfolder: str) -> list[object]:
     """One component of a modular_model_index.json: its library, its class and where it loads from."""
     spec = {
@@ -73,9 +90,15 @@ def model_index(config: DiffuConfig, repo: Path) -> dict[str, object]:
         "_diffusers_version": diffusers.__version__,
         "text_layers": list(text.layers),
         "text_encoder": index_entry(
-            "transformers", Qwen3_5ForConditionalGeneration, repo=text.repo, revision=text.revision, subfolder=""
+            "transformers",
+            Qwen3VLForConditionalGeneration,
+            repo=text.repo,
+            revision=text.revision,
+            subfolder=text.encoder_subfolder,
         ),
-        "tokenizer": index_entry("transformers", AutoTokenizer, repo=text.repo, revision=text.revision, subfolder=""),
+        "tokenizer": index_entry(
+            "transformers", AutoProcessor, repo=text.repo, revision=text.revision, subfolder=text.processor_subfolder
+        ),
         "transformer": index_entry(
             "diffusers", Flux3Transformer2DModel, repo=str(repo), revision=None, subfolder="transformer"
         ),
@@ -97,12 +120,20 @@ def main(
     out: Annotated[Path, typer.Option(help="the new model repo's directory")],
     size: Annotated[SizeName, typer.Option(help="the transformer size")] = "S",
     seed: Annotated[int, typer.Option(help="the seed of the random weights")] = 0,
+    weights_from: Annotated[
+        Path | None, typer.Option(help="a trained diffu repo to start from wherever the shapes agree")
+    ] = None,
 ) -> None:
-    """Write a diffu model repo with freshly initialised weights."""
+    """Write a diffu model repo with freshly initialised weights, or a trained one's where they fit."""
     if (out / INDEX).exists():
         raise typer.BadParameter(f"{out} already holds a model; give a new directory", param_hint="--out")
+    if weights_from is not None and not (weights_from / INDEX).exists():
+        raise typer.BadParameter(f"{weights_from} holds no diffu model", param_hint="--weights-from")
     config = DiffuConfig(size=SIZES[size])
     transformer = init_transformer(config, seed=seed)
+    if weights_from is not None:
+        fresh = warm_start(transformer, weights_from)
+        console.print(f"from {weights_from}: all weights but {', '.join(fresh) or 'none'}")
     write_model_repo(transformer, config, out)
     parameters = sum(parameter.numel() for parameter in transformer.parameters())
     console.print(f"diffu-{size}: {parameters / 1e6:.1f}M parameters -> {out}")

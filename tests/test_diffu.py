@@ -10,15 +10,16 @@ import pytest
 import torch
 import yaml
 from diffusers import Flux3Transformer2DModel
-from diffusers.modular_pipelines.flux3.encoders import Flux3VaeEncoderStep
+from diffusers.modular_pipelines import SequentialPipelineBlocks
+from diffusers.modular_pipelines.flux3.encoders import Flux3TextEncoderStep, Flux3VaeEncoderStep
 from PIL import Image
-from transformers import AutoTokenizer, Qwen3_5ForConditionalGeneration
+from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 from typer.testing import CliRunner
 
 from diffu.configs import DiffuConfig
 from diffu.export import app as export_app
 from diffu.export import export
-from diffu.init import INDEX, app, init_transformer, write_model_repo
+from diffu.init import INDEX, app, init_transformer, warm_start, write_model_repo
 from diffu.latents import patchify, unpatchify
 from diffu.modular_pipelines.diffu import DiffuModularPipeline
 from diffu.modular_pipelines.diffu.encoders import prompt_embeds
@@ -51,21 +52,25 @@ def test_diffu_draws_differently_from_a_reference_image(pipe: DiffuModularPipeli
 
 
 @pytest.mark.parametrize(
-    ("prompt", "window"),
+    "prompt",
     [
-        pytest.param("Ett protokoll", 80, id="one-window"),
-        pytest.param("ord " * 100, 160, id="two-windows"),
+        pytest.param("Ett protokoll", id="one-window"),
+        pytest.param("ord " * 100, id="two-windows"),
     ],
 )
-def test_prompt_embeds_pad_the_window_to_a_multiple_of_80(tiny_qwen35: Path, prompt: str, window: int) -> None:
-    text_encoder = Qwen3_5ForConditionalGeneration.from_pretrained(tiny_qwen35)
-    tokenizer = AutoTokenizer.from_pretrained(tiny_qwen35)
+def test_prompt_embeds_are_flux3s(tiny_flux3_snapshot: Path, prompt: str) -> None:
+    text_encoder = Qwen3VLForConditionalGeneration.from_pretrained(tiny_flux3_snapshot, subfolder="text_encoder")
+    processor = AutoProcessor.from_pretrained(tiny_flux3_snapshot, subfolder="tokenizer")
+    flux3 = SequentialPipelineBlocks.from_blocks_dict({"text_encoder": Flux3TextEncoderStep()}).init_pipeline()
+    flux3.update_components(text_encoder=text_encoder, tokenizer=processor)
 
     embeds = prompt_embeds(
-        text_encoder, tokenizer, prompt, layers=(0, 1), max_sequence_length=8192, device=torch.device("cpu")
+        text_encoder, processor, prompt, layers=(0, 1), max_sequence_length=8192, device=torch.device("cpu")
     )
 
-    assert embeds.shape == (1, window, 2 * 32)
+    expected = flux3(prompt=prompt, text_encoder_out_layers=(0, 1), output="prompt_embeds")
+    assert embeds.shape == expected.shape
+    assert torch.equal(embeds, expected)
 
 
 def test_init_transformer_predicts_zero_velocity_once_saved_and_loaded(
@@ -76,7 +81,7 @@ def test_init_transformer_predicts_zero_velocity_once_saved_and_loaded(
 
     velocity = transformer(
         hidden_states=torch.randn(1, 6, 16),
-        encoder_hidden_states=torch.randn(1, 3, 32),
+        encoder_hidden_states=torch.randn(1, 3, 16),
         timestep=torch.tensor([0.5]),
         img_ids=torch.zeros(6, 4),
         txt_ids=torch.zeros(3, 4),
@@ -93,6 +98,23 @@ def test_diffu_init_refuses_a_directory_that_holds_a_model(tmp_path: Path) -> No
 
     assert result.exit_code == 2
     assert sorted(path.name for path in tmp_path.iterdir()) == [INDEX]
+
+
+def test_warm_start_keeps_a_trained_models_weights_but_the_new_text_projection(
+    tiny_diffu: Path, tiny_diffu_config: DiffuConfig
+) -> None:
+    wider_text = tiny_diffu_config.model_copy(
+        update={"text_encoder": tiny_diffu_config.text_encoder.model_copy(update={"layers": (0, 1)})}
+    )
+    transformer = init_transformer(wider_text, seed=1)
+    fresh_projection = transformer.context_embedder.weight.clone()
+
+    fresh = warm_start(transformer, tiny_diffu)
+
+    trained = Flux3Transformer2DModel.from_pretrained(tiny_diffu, subfolder="transformer").state_dict()
+    assert fresh == ["context_embedder.weight"]
+    assert torch.equal(transformer.context_embedder.weight, fresh_projection)
+    assert all(torch.equal(weight, trained[name]) for name, weight in transformer.state_dict().items() if name not in fresh)
 
 
 def _nemo_checkpoint(path: Path, transformer: Flux3Transformer2DModel | None, *, flow_shift: float) -> Path:

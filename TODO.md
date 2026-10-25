@@ -183,7 +183,7 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
       4 + 16); Klein is 5.54B. `diffu-init` writes a model repo that `from_pretrained` and NeMo's finetune mode load;
       `diffu-export` makes a run's last checkpoint a model repo, its scheduler at the run's `flow_matching.flow_shift`.
       Start with S.
-- [x] **Text encoder**: Qwen3.5-4B (Apache-2.0), chat template with thinking off, 80-token windows, hidden layers 4,
+- [x] **Text encoder** (until 25 Oct; now FLUX.3's Qwen3-VL, see E2b): Qwen3.5-4B (Apache-2.0), chat template with thinking off, 80-token windows, hidden layers 4,
       12, 20 and 28 stacked (10,240 wide: the early orthographic, middle compositional and late layers; never 32, the
       post-norm state). Its BPE hides 3 of 4 å/ä/ö inside merged subwords and no layer spells an unseen subword
       linearly, so exact spelling may need the glyph map (below).
@@ -238,9 +238,20 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
       (text), the glyph arm higher on 21 of 24. Neither writes letters: read-back CER (glyph / text) 1.01 / 0.99 at
       guidance 4, 1.01 / 0.96 at guidance 1 (results.json; the real windows 0.11). The glyph map is the layout control to keep; letter shapes need far more than
       2,000 crops and 3,000 steps of a 618M model from scratch, i.e. pretraining (HPC decision).
-- [ ] **E2b** (queued 25 Oct 21:51 after the whole-page redraw, `jobs/diffu/run_e2b.sh`,
-      `configs/diffu/diffu_s_e2b_glyph.yaml`): E2's glyph arm on all 11,329 training crops, 10,000 steps of 8, drawn
-      at steps 5,000 and 10,000: does more data and training start to form letters on the Spark?
+- [x] **FLUX.3's text encoder** (the user, 25 Oct: "use similar architecture as flux ofc ... the same component"):
+      diffu now embeds prompts with Qwen3-VL-4B-Instruct (Apache-2.0, from Qwen's repo, byte-identical to FLUX.3
+      Klein Base's text_encoder/) and FLUX.3's 8 layers 4, 8, ... 32, its chat template and 80-token windows;
+      `test_prompt_embeds_are_flux3s` pins diffu's embeddings equal to diffusers' `Flux3TextEncoderStep`. The VAE
+      stays Qwen-Image's: FLUX.3's autoencoder has no licence of its own, so it is under the FLUX Kommunity licence.
+      Only the transformer's text projection changes shape (`context_embedder`, 10,240 -> 20,480 inputs);
+      `diffu-init --weights-from` starts a new model from a trained one wherever the shapes agree.
+- [ ] **E2b** (`jobs/diffu/run_e2b.sh`, `configs/diffu/diffu_s_e2b_glyph.yaml`): diffu-S on FLUX.3's text encoder
+      from E2's glyph-arm weights (all but the text projection), all 11,329 training crops with glyph maps, 10,000
+      steps of 8, drawn at steps 5,000 and 10,000: does more data and training start to form letters on the Spark?
+- [x] **Whole pages at guidance 2, 28 steps** (25 Oct 21:49, runs/fullpage_g2, the 1715 letter book's LoRA): the
+      same trade as the windows. Ink colour gap to the real scan 30.8/34.1/19.7/30.5 -> 19.6/20.8/16.6/20.6 on the
+      4 pages (paper unchanged, still cleaner than the real); read-back CER 0.062/0.072/0.211/0.068 ->
+      0.099/0.105/0.337/0.113. By eye: thinner, browner strokes closer to the scan, the same clerk's hand.
 - [ ] **More than one crop per micro-batch**: NeMo's collate pads mixed text windows with zeros and FLUX.3's
       adapter passes no text mask, so the transformer would attend to zeros generation never feeds (it attends to
       its padding). At one crop per micro-batch (E1, E1b) nothing is padded. Before E2 raises `local_batch_size`:

@@ -2,7 +2,7 @@
 
 Each crop's latents (``diffu.latents.encode_latents``) and prompt embeddings
 (``diffu.modular_pipelines.diffu.encoders.prompt_embeds``) are made by the functions diffu's own pipeline runs, so
-training sees what generation will: the same Qwen3.5 layers and 80-token windows, the same Qwen-Image VAE latents and
+training sees what generation will: FLUX.3's text encoder and layers, the same 80-token windows, the same Qwen-Image VAE latents and
 normalization, the same image preprocessing (FLUX.3's image processor). The files are laid out as NeMo's
 ``TextToImageDataset`` reads them: ``<out>/<W>x<H>/<md5>.pt`` per crop, ``metadata_shard_NNNN.json`` listing them,
 and ``metadata.json`` naming the shards; beside them ``empty_prompt.pt``, the empty prompt encoded as a caption, which

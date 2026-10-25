@@ -1,7 +1,10 @@
-"""diffu's encoder blocks: the prompt through Qwen3.5, reference images through the Qwen-Image VAE.
+"""diffu's encoder blocks: the prompt through FLUX.3's text encoder (Qwen3-VL), reference images through the
+Qwen-Image VAE.
 
 Their contracts are FLUX.3's (``Flux3TextEncoderStep``, ``Flux3VaeEncoderStep``), so FLUX.3's own denoise blocks run on
-their outputs unchanged.
+their outputs unchanged. The prompt embeddings are FLUX.3's own for the same layers (pinned by
+``test_prompt_embeds_are_flux3s``); diffu's step adds the model's own layers as a config, so training caches and drawing
+stack the layers the model was trained on.
 """
 
 from __future__ import annotations
@@ -15,9 +18,9 @@ import torch
 from diffusers import AutoencoderKLQwenImage
 from diffusers.modular_pipelines import ComponentSpec, InputParam, ModularPipelineBlocks, OutputParam, PipelineState
 from diffusers.modular_pipelines.modular_pipeline_utils import ConfigSpec
-from transformers import AutoTokenizer, PreTrainedTokenizerBase, Qwen3_5ForConditionalGeneration
+from transformers import AutoProcessor, ProcessorMixin, Qwen3VLForConditionalGeneration
 
-from diffu.configs import QWEN35_LAYERS
+from diffu.configs import FLUX3_TEXT_LAYERS
 from diffu.latents import encode_latents
 
 if TYPE_CHECKING:
@@ -32,8 +35,8 @@ MAX_SEQUENCE_LENGTH = 8192  # prompt tokens the text encoder reads at most; trai
 
 
 def prompt_embeds(
-    text_encoder: Qwen3_5ForConditionalGeneration,
-    tokenizer: PreTrainedTokenizerBase,
+    text_encoder: Qwen3VLForConditionalGeneration,
+    processor: ProcessorMixin,
     prompt: str,
     *,
     layers: Sequence[int],
@@ -42,12 +45,11 @@ def prompt_embeds(
 ) -> torch.Tensor:
     """One prompt's embeddings ``(1, window, len(layers) * hidden)``.
 
-    The prompt goes through the chat template with thinking off, is right-padded to a multiple of :data:`TEXT_WINDOW`
-    tokens (at most ``max_sequence_length``), and the hidden states at ``layers`` are stacked on channels.
+    As FLUX.3 embeds a prompt: through the chat template, right-padded to a multiple of :data:`TEXT_WINDOW` tokens (at
+    most ``max_sequence_length``), the hidden states at ``layers`` stacked on channels.
     """
-    text = tokenizer.apply_chat_template(
-        [{"role": "user", "content": prompt}], tokenize=False, add_generation_prompt=True, enable_thinking=False
-    )
+    text = processor.apply_chat_template([{"role": "user", "content": prompt}], tokenize=False, add_generation_prompt=True)
+    tokenizer = processor.tokenizer
     real_length = len(tokenizer(text, truncation=True, max_length=max_sequence_length)["input_ids"])
     window = min(math.ceil(real_length / TEXT_WINDOW) * TEXT_WINDOW, max_sequence_length)
     inputs = tokenizer(
@@ -88,7 +90,7 @@ def _encodes_negative(components: DiffuModularPipeline, negative_prompt: str | N
 
 
 class DiffuTextEncoderStep(ModularPipelineBlocks):
-    """The prompt, and under classifier-free guidance the negative (empty) prompt, as Qwen3.5 embeddings."""
+    """The prompt, and under classifier-free guidance the negative (empty) prompt, as FLUX.3's Qwen3-VL embeddings."""
 
     model_name = "diffu"
 
@@ -96,7 +98,7 @@ class DiffuTextEncoderStep(ModularPipelineBlocks):
     @override
     def description(self) -> str:
         return (
-            "Text encoder step that embeds the prompt with Qwen3.5 (chat template, thinking off), right-padded to a "
+            "Text encoder step that embeds the prompt with Qwen3-VL as FLUX.3 does (chat template), right-padded to a "
             f"multiple of {TEXT_WINDOW} tokens, its chosen hidden layers stacked on channels. One prompt per call."
         )
 
@@ -104,8 +106,8 @@ class DiffuTextEncoderStep(ModularPipelineBlocks):
     @override
     def expected_components(self) -> list[ComponentSpec]:
         return [
-            ComponentSpec("text_encoder", Qwen3_5ForConditionalGeneration),
-            ComponentSpec("tokenizer", AutoTokenizer),
+            ComponentSpec("text_encoder", Qwen3VLForConditionalGeneration),
+            ComponentSpec("tokenizer", AutoProcessor),
         ]
 
     @property
@@ -114,7 +116,7 @@ class DiffuTextEncoderStep(ModularPipelineBlocks):
         return [
             ConfigSpec(
                 "text_layers",
-                QWEN35_LAYERS,
+                FLUX3_TEXT_LAYERS,
                 description="The text-encoder hidden layers the model was trained on (its modular_model_index.json).",
             )
         ]
@@ -146,7 +148,7 @@ class DiffuTextEncoderStep(ModularPipelineBlocks):
                 "prompt_embeds",
                 kwargs_type="denoiser_input_fields",
                 type_hint=torch.Tensor,
-                description="Text embeddings (stacked Qwen3.5 hidden states) used to guide the image generation",
+                description="Text embeddings (stacked Qwen3-VL hidden states) used to guide the image generation",
             ),
             OutputParam(
                 "negative_prompt_embeds",

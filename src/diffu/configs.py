@@ -1,8 +1,9 @@
 """What fixes a diffu model: its transformer size, its text encoder with the layers it stacks, and its VAE.
 
 diffu is FLUX.3's architecture with our own weights: diffusers' ``Flux3Transformer2DModel`` built from a config with
-random weights, a Qwen3.5 text encoder and the Qwen-Image VAE (both Apache-2.0). No FLUX.3 weights, outputs or
-autoencoder.
+random weights, FLUX.3's own text encoder (Qwen3-VL-4B-Instruct, the same layers stacked) and the Qwen-Image VAE (both
+Apache-2.0). No FLUX.3 transformer weights, outputs or autoencoder: FLUX.3's autoencoder is under its non-commercial
+licence.
 """
 
 from __future__ import annotations
@@ -11,9 +12,8 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-# Qwen3.5-4B's full-attention outputs spread over its depth: the orthographic early layers, the compositional middle and
-# the late semantic layers. Never its last index (32): transformers puts the final norm's output there.
-QWEN35_LAYERS = (4, 12, 20, 28)
+# The Qwen3-VL hidden layers FLUX.3 stacks into its prompt embeddings (diffusers' Flux3TextEncoderStep)
+FLUX3_TEXT_LAYERS = (4, 8, 12, 16, 20, 24, 28, 32)
 
 
 class DiffuSize(BaseModel):
@@ -41,20 +41,25 @@ SIZES: dict[SizeName, DiffuSize] = {"S": DIFFU_S, "M": DIFFU_M}
 
 
 class TextEncoder(BaseModel):
-    """The text encoder and the hidden layers whose states are stacked into the prompt embeddings.
+    """The text encoder and the hidden layers whose states are stacked into the prompt embeddings: FLUX.3's.
 
     Attributes:
-        repo: A Qwen3.5 model: Hub repo id or local directory.
+        repo: A Qwen3-VL model: Hub repo id or local directory.
         revision: Its pinned Hub revision; ``None`` for a local directory.
+        encoder_subfolder: Where the model sits in the repo.
+        processor_subfolder: Where its processor (tokenizer and chat template) sits in the repo.
         layers: The ``hidden_states`` indices stacked on channels.
         hidden_size: The encoder's hidden width.
     """
 
     model_config = {"frozen": True}
 
-    repo: str = "Qwen/Qwen3.5-4B"
-    revision: str | None = "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"
-    layers: tuple[int, ...] = QWEN35_LAYERS
+    # byte-identical to the text_encoder/ of black-forest-labs/flux-3-image-klein-base, from Qwen's own repo
+    repo: str = "Qwen/Qwen3-VL-4B-Instruct"
+    revision: str | None = "ebb281ec70b05090aa6165b016eac8ec08e71b17"
+    encoder_subfolder: str = ""
+    processor_subfolder: str = ""
+    layers: tuple[int, ...] = FLUX3_TEXT_LAYERS
     hidden_size: int = 2560
 
 

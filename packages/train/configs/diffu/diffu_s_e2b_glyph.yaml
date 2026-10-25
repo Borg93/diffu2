@@ -1,5 +1,6 @@
-# E2b, glyph map at scale: E2's glyph arm continued (runs/diffu_s_e2_glyph/model) on all 11,329 v2 training crops
-# instead of 2,000, 10,000 steps of 8 (about 7 epochs), caption dropout 0.1. E2 drew a row of writing on every real line
+# E2b, glyph map at scale on FLUX.3's text encoder: diffu-S with Qwen3-VL-4B-Instruct's 8 layers, started from E2's glyph
+# arm wherever the weights fit (runs/diffu_s_vl_init: all but the re-initialised text projection), on all 11,329 v2
+# training crops instead of 2,000, 10,000 steps of 8 (about 7 epochs), caption dropout 0.1. E2 drew a row of writing on every real line
 # (row profile 0.51 against the text arm's 0.03) but no letters (read-back CER 0.75): does more data and training start
 # to form letters on the Spark, before diffu pretraining at scale?
 #
@@ -7,7 +8,7 @@
 # passes no text mask, so a batch of more would attend to zeros generation never feeds (TODO, "More than one crop per
 # micro-batch").
 #
-# Paths come from the environment: DIFFU_REPO, DIFFU_INIT (E2's glyph export) and DIFFU_CACHE; jobs/diffu/run_e2b.sh
+# Paths come from the environment: DIFFU_REPO, DIFFU_INIT (runs/diffu_s_vl_init) and DIFFU_CACHE; jobs/diffu/run_e2b.sh
 # sets them.
 # Metrics to the local trackio project "diffu" (~/.cache/huggingface/trackio; no Space): `trackio list runs --project
 # diffu`. The job scripts name each run (--trackio.name).
