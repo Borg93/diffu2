@@ -869,6 +869,22 @@ Still to do, in this order (the refactors after the fixes, the user's call):
 - [x] Four pages on all four volumes (writer/report_few_all.json): 4-page LoRAs identified as their volume 82% (1715),
       97% (Pahlman), 97% (Kopparberg), 82% (Landskapshandlingar; real lines 31% on that faded film); by eye the same hand
       as the all-pages LoRAs.
+- [x] **Guidance trades ink realism against text** (the plain 1715 LoRA, 8 windows): guidance 4 / 2 / 1: ink colour gap
+      22.5 / 12.6 / 7.8, ink stands out 131 / 116 / 100 (real 96), read-back CER 0.08 / 0.14 / 0.43. At 1 the ink looks
+      real but the text garbles ("Swar" -> "Ocnr"): wrong labels. The caption-dropout LoRA (training) should keep the
+      text at low guidance.
+- [x] Knob sweep (runs/sweep_hand, 1715 LoRA): sampling shift 3 / 16 barely change anything (ink gap 22.4 / 22.8);
+      **28 steps draw the same as 50** (gap 22.6, CER 0.083, denoising 36 s instead of ~65); a second seed gives the
+      same page look with different strokes (variety comes from text, layout and volume, not seeds).
+- [x] **Whole pages at once work** (runs/fullpage, scratchpad fullpage/stage_pages.py): the 4 held-out 1715 spreads,
+      each one 2.5 MP window with the LoRA from its own layout and text: coherent openings (gutter, month headings,
+      years, page numbers, signatures in place), 44-47 lines at CER 0.062-0.072 as windows; the index page with 29-px
+      lines is legible by eye (CER 0.21). Ink darker (guidance 4), paper cleaner. Next: redraw at guidance 2, 28 steps;
+      a whole-page mode in the generator with page-level labels.
+- [x] Profile of the fused + compiled setup (runs/profile_compiled_trace, pytorch-skills profile-model): GPU busy 99.8%
+      of denoising; matrix multiplies 70% (44% unfused), attention 18%, compiled fused ops 11%, eager small steps 1.4%
+      (48% unfused); kernels under 10 us are 0.2% of the time; no recompiles (regions 0/0 and 1/0 only). Next speed-ups:
+      28 steps (~1.8x), FP8 matmuls, the two guidance passes batched.
 - [x] The ink-only second pass (BFL's edit wording): smears the ink into blotches on every window. The second pass is
       dropped in every form.
 
