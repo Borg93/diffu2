@@ -1,0 +1,118 @@
+# E2c, glyph map: diffu-S at the 512-px stage (crops scaled by 0.5), continued from E1b's weights
+# (runs/diffu_s_e1b/model), 3,000 steps of 8, caption dropout 0.1. E2 asks whether the glyph map makes letters form:
+# E1b draws writing-like strokes but no letters from captions alone. Two arms on the same 2,000 crops, steps and seed;
+# this one draws from the caption and the crop's glyph map (diffu_page.glyphs: each line's text set into its box) as
+# its reference image (diffu_train.cache_glyphs --scale 0.5).
+#
+# One crop per micro-batch (8 per optimizer step): NeMo pads mixed caption lengths with zeros and FLUX.3's adapter
+# passes no text mask, so a batch of more would attend to zeros generation never feeds (TODO, "More than one crop per
+# micro-batch").
+#
+# Paths come from the environment: DIFFU_REPO, DIFFU_INIT (E1b's export) and DIFFU_CACHE; jobs/diffu/run_e2.sh sets
+# them.
+
+seed: 42
+
+# Metrics to the local trackio project "diffu" (~/.cache/huggingface/trackio; no Space): `trackio list runs --project
+# diffu`. The job scripts name each run (--trackio.name).
+trackio:
+  project: diffu
+  name: diffu_s_e2_glyph
+
+wandb:
+  enable: false
+  project: diffu
+  mode: offline
+  name: diffu_s_e2_glyph
+
+dist_env:
+  backend: "nccl"
+  init_method: "env://"
+  timeout_minutes: 30
+
+model:
+  pretrained_model_name_or_path: ${DIFFU_INIT}
+  model_type: "flux3"  # NeMo's FLUX.3 loader and adapter: diffu is FLUX.3's architecture
+  mode: "finetune"
+  cache_dir: null
+  attention_backend: "native"  # torch SDPA; flash-attn isn't built for this aarch64 / sm_121 box
+  torch_dtype: float32
+  compute_dtype: bfloat16
+
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 1e-4
+  weight_decay: 0.0
+  betas: [0.9, 0.999]
+  foreach: false
+  fused: true
+
+performance:
+  check_loss: false
+  grad_clip_foreach: true
+
+lr_scheduler:
+  lr_decay_style: cosine
+  lr_warmup_steps: 200
+  min_lr: 1e-5
+
+fsdp:
+  dp_size: 1
+  tp_size: 1
+  cp_size: 1
+  pp_size: 1
+  activation_checkpointing: true
+  cpu_offload: false
+  defer_fsdp_grad_sync: true
+  enable_compile: false
+  enable_fsdp2_prefetch: false
+
+# Logit-normal timesteps with a constant shift of 3 at 512², the design study's value (E1 and E1b used 6 at ~1 MP,
+# scaled by sqrt(tokens)); diffu-export writes it into the model, so drawing samples at it. No loss
+# weighting and no uniform mix, as in NeMo's pretraining recipe. NeMo's cfg_dropout stays 0: it
+# zeroes the text embeddings, while diffu's null is the empty prompt, which caption_dropout in the dataloader swaps in.
+flow_matching:
+  adapter_type: "flux3"
+  timestep_sampling: "logit_normal"
+  logit_mean: 0.0
+  logit_std: 1.0
+  flow_shift: 3.0
+  mix_uniform_ratio: 0.0
+  sigma_min: 0.0
+  sigma_max: 1.0
+  num_train_timesteps: 1000
+  cfg_dropout_prob: 0.0
+  i2v_prob: 0.0
+  use_loss_weighting: false
+  log_interval: 25
+  summary_log_interval: 10
+
+# One crop per micro-batch (crops differ in size and caption length); 8 per optimizer step.
+step_scheduler:
+  num_epochs: 1000
+  local_batch_size: 1
+  global_batch_size: 8
+  max_steps: 3000
+  ckpt_every_steps: 500
+  log_remote_every_steps: 10
+  save_checkpoint_every_epoch: false
+
+data:
+  dataloader:
+    _target_: diffu_train.nemo.InterleavedImageEditDataloaderConfig  # the glyph map is the one reference image
+    cache_dir: ${DIFFU_CACHE}
+    quantization: 16
+    num_workers: 2
+    base_resolution: [512, 512]
+    dynamic_batch_size: false
+    shuffle: true
+    drop_last: false
+    caption_dropout: 0.1  # that share on the empty prompt (diffu_train.dropout), diffusers' FLUX.3 trainer's value
+
+checkpoint:
+  enabled: true
+  checkpoint_dir: ${DIFFU_REPO}/runs/diffu_s_e2_glyph
+  model_save_format: safetensors
+  save_consolidated: final
+  diffusers_compatible: true  # <step>/model/consolidated/ loads with Flux3Transformer2DModel.from_pretrained
+  restore_from: null

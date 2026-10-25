@@ -34,6 +34,7 @@ def main(
         int | None, typer.Option(min=1, help="cache only the first N crops (an overfit set or a smoke run)")
     ] = None,
     device: Annotated[str, typer.Option(help="where the encoders run")] = "cuda",
+    scale: Annotated[float, typer.Option(min=0.1, max=1.0, help="scale the crops (0.5: the 512-px stage)")] = 1.0,
 ) -> None:
     """Cache a split's crops for diffu: latents and prompt embeddings from diffu's own encoders."""
     records = read_records(crops / "metadata.jsonl")[:limit]
@@ -47,6 +48,7 @@ def main(
         encoders=encoders,
         out=out,
         bucket_id=lambda width, height: calculator.get_bucket_for_image(width, height)["id"],
+        scale=scale,
     )
     (out / "failed.json").write_text(json.dumps(run.failed, indent=1), encoding="utf-8")
     if run.failed:

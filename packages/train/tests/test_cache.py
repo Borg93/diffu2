@@ -20,7 +20,9 @@ from diffu.modular_pipelines.diffu.modular_blocks_diffu import DiffuVaeEncoderSe
 from diffu.modular_pipelines.loading import COMPONENT_DTYPES
 from diffu_page.captions.prompt import LineRecord
 from diffu_page.captions.records import CropRecord
+from diffu_page.glyphs import glyph_map
 from diffu_train.cache import DiffuEncoders, cache_crops, write_metadata
+from diffu_train.cache_glyphs import cache_glyph_pairs, write_pair_metadata
 from diffu_train.dropout import EmptyPrompt
 from diffu_train.empty_prompt import app as empty_prompt_app
 
@@ -81,6 +83,37 @@ def test_cache_holds_each_crop_as_diffus_pipeline_encodes_it_where_nemo_reads_it
             latents = vae(image=image.convert("RGB"), output="image_cond_latents")[0][0]
         assert torch.equal(sample["prompt_embeds"], text(prompt=caption, output="prompt_embeds")[0])
         assert torch.equal(sample["latent"], latents.float())
+
+
+def test_glyph_cache_pairs_each_scaled_crop_with_its_glyph_map_as_diffus_pipeline_encodes_them(
+    tiny_diffu: Path, tmp_path: Path
+) -> None:
+    records = _split(tmp_path / "crops")
+    out = tmp_path / "cache"
+
+    run = cache_glyph_pairs(
+        records, tmp_path / "crops", encoders=DiffuEncoders.load(tiny_diffu, "cpu"), out=out, scale=0.5
+    )
+    write_pair_metadata(run.entries, out, model=tiny_diffu, scale=0.5)
+
+    rows = [
+        row
+        for shard in json.loads((out / "metadata.json").read_text())["shards"]
+        for row in json.loads((out / shard).read_text())
+    ]
+    vae = _pipeline(DiffuVaeEncoderSequentialStep(), tiny_diffu)
+    for k, (row, record) in enumerate(zip(rows, records, strict=True)):
+        sample = torch.load(out / row["cache_file"], weights_only=True)
+        with Image.open(tmp_path / "crops" / f"{k}.jpg") as image:
+            crop = image.convert("RGB").resize((32, 16), Image.Resampling.LANCZOS)
+        glyphs = glyph_map(record.lines, (32, 16))
+        assert torch.equal(sample["target_latent"], vae(image=crop, output="image_cond_latents")[0][0].float())
+        assert torch.equal(sample["context_latents"][0], vae(image=glyphs, output="image_cond_latents")[0][0].float())
+        signature = {
+            "target": list(sample["target_latent"].shape),
+            "contexts": [list(sample["context_latents"][0].shape)],
+        }
+        assert row["compound_bucket_signature"] == signature == sample["metadata"]["compound_bucket_signature"]
 
 
 def test_empty_prompt_writes_into_a_cache_the_empty_prompt_as_diffus_pipeline_encodes_it(

@@ -26,6 +26,7 @@ from diffu.modular_pipelines.diffu import DiffuModularPipeline
 from diffu.modular_pipelines.diffu.encoders import MAX_SEQUENCE_LENGTH, prompt_embeds
 from diffu.modular_pipelines.loading import COMPONENT_DTYPES, require_loaded
 from diffu_page.captions.records import CropRecord
+from diffu_page.crops.grid import scaled
 from diffu_train.dropout import EmptyPrompt
 
 SHARD_SIZE = 1000  # crops per metadata shard, as NeMo's own cache writer shards them
@@ -103,11 +104,16 @@ def encode_prompt(encoders: DiffuEncoders, caption: str) -> torch.Tensor:
 
 
 @torch.no_grad()
-def encode_crop(encoders: DiffuEncoders, image: Image.Image, caption: str) -> tuple[torch.Tensor, torch.Tensor]:
-    """A crop's latents ``(C, H/16, W/16)`` in float32 and its prompt embeddings ``(window, width)``, on the CPU."""
+def encode_image(encoders: DiffuEncoders, image: Image.Image) -> torch.Tensor:
+    """An image's latents ``(C, H/16, W/16)`` in float32 as diffu's pipeline makes them, on the CPU."""
     pixels, _ = encoders.image_processor.preprocess(image.convert("RGB"), resize_mode="fill")
-    latents = encode_latents(encoders.vae, pixels.to(encoders.device, encoders.vae.dtype))
-    return latents[0].float().cpu(), encode_prompt(encoders, caption)
+    return encode_latents(encoders.vae, pixels.to(encoders.device, encoders.vae.dtype))[0].float().cpu()
+
+
+def window(crops_dir: Path, record: CropRecord, *, scale: float = 1.0) -> Image.Image:
+    """A crop's image scaled by ``scale`` (``diffu_page.crops.grid.scaled``, which refuses a size off the grid)."""
+    with Image.open(crops_dir / record.file_name) as image:
+        return scaled(image, scale)
 
 
 def write_empty_prompt(encoders: DiffuEncoders, out: Path) -> None:
@@ -118,12 +124,12 @@ def write_empty_prompt(encoders: DiffuEncoders, out: Path) -> None:
 
 
 def _cache_crop(
-    record: CropRecord, crops_dir: Path, *, encoders: DiffuEncoders, out: Path, bucket_id: BucketId
+    record: CropRecord, crops_dir: Path, *, encoders: DiffuEncoders, out: Path, bucket_id: BucketId, scale: float
 ) -> CacheEntry:
     image_path = (crops_dir / record.file_name).absolute()
-    with Image.open(image_path) as image:
-        latent, embeds = encode_crop(encoders, image, record.caption)
-        width, height = image.size
+    image = window(crops_dir, record, scale=scale)
+    latent, embeds = encode_image(encoders, image), encode_prompt(encoders, record.caption)
+    width, height = image.size
     resolution = f"{width}x{height}"
     cache_file = out / resolution / f"{hashlib.md5(f'{image_path}_{resolution}'.encode()).hexdigest()}.pt"
     entry = CacheEntry(
@@ -154,15 +160,21 @@ def _cache_crop(
 
 
 def cache_crops(
-    records: list[CropRecord], crops_dir: Path, *, encoders: DiffuEncoders, out: Path, bucket_id: BucketId
+    records: list[CropRecord],
+    crops_dir: Path,
+    *,
+    encoders: DiffuEncoders,
+    out: Path,
+    bucket_id: BucketId,
+    scale: float = 1.0,
 ) -> CacheRun:
-    """Every crop of a split (its records, its images in ``crops_dir``) cached into ``out``; a crop that fails is
-    recorded with its error and the rest are still cached."""
+    """Every crop of a split (its records, its images in ``crops_dir``, scaled by ``scale``) cached into ``out``; a
+    crop that fails is recorded with its error and the rest are still cached."""
     entries: list[CacheEntry] = []
     failed: dict[str, str] = {}
     for record in records:
         try:
-            entries.append(_cache_crop(record, crops_dir, encoders=encoders, out=out, bucket_id=bucket_id))
+            entries.append(_cache_crop(record, crops_dir, encoders=encoders, out=out, bucket_id=bucket_id, scale=scale))
         except Exception as error:  # one unreadable crop must not end a cache of thousands
             failed[record.file_name] = f"{type(error).__name__}: {error}"
     return CacheRun(entries=entries, failed=failed)

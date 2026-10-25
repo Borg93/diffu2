@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
+from PIL import Image
+from typer.testing import CliRunner
 
 from diffu_page.captions.prompt import LineRecord
+from diffu_page.captions.records import CropRecord
 from diffu_page.crops.geometry import SLOT_SIDE_MARGIN
+from diffu_page.data.glyph_set import app as glyph_set_app
+from diffu_page.evalset import read_crops
 from diffu_page.glyphs import glyph_map
 
 SIZE = (512, 256)
@@ -53,3 +60,36 @@ def test_glyph_map_leaves_out_a_character_the_font_lacks() -> None:
 def test_glyph_map_refuses_a_size_off_the_latent_grid() -> None:
     with pytest.raises(ValueError, match="multiple of 16"):
         glyph_map([_line("a", (100, 100, 400, 900))], (500, 256))
+
+
+def test_glyph_set_writes_each_scaled_crop_once_drawn_from_its_caption_and_once_from_its_glyph_map(
+    tmp_path: Path,
+) -> None:
+    crops = tmp_path / "crops"
+    crops.mkdir()
+    Image.linear_gradient("L").resize((128, 64)).convert("RGB").save(crops / "a.jpg")
+    line = _line("Wälborne Herr", (100, 100, 400, 900))
+    record = CropRecord(
+        file_name="a.jpg",
+        caption="A page.",
+        collection="GT-A_20260101",
+        page="GT-A_20260101/v/v/page/1.xml",
+        width=128,
+        height=64,
+        greyscale=False,
+        paper="cream",
+        ink="brown",
+        lines=[line],
+    )
+    (crops / "metadata.jsonl").write_text(record.model_dump_json() + "\n", encoding="utf-8")
+    out = tmp_path / "e2"
+
+    result = CliRunner().invoke(glyph_set_app, ["--crops", str(crops), "--out", str(out), "--scale", "0.5"])
+
+    assert result.exit_code == 0, result.output
+    (text,), (glyphs,) = read_crops(out / "text"), read_crops(out / "glyphs")
+    assert (text.reference, text.width, text.height) == (None, 64, 32)
+    assert text.real_image(out / "text", (64, 32)).size == (64, 32)
+    reference = glyphs.reference_image(out / "glyphs")
+    assert reference is not None
+    assert reference.tobytes() == glyph_map([line], (64, 32)).tobytes()

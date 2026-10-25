@@ -15,6 +15,19 @@ LARGEST_BUCKET_PIXELS = max(width * height for width, height in BUCKETS)  # NeMo
 REF_PIXELS = 512 * 1024  # a reference image's size: the hand smaller than in the ~1 MP target, at half its tokens
 
 
+def scaled(image: Image.Image, scale: float) -> Image.Image:
+    """``image`` scaled by ``scale`` (0.5 for diffu's 512-px stage: every bucket side halves onto the grid), in RGB.
+
+    Raises:
+        ValueError: If the scaled size is off the latent grid.
+    """
+    size = (round(image.width * scale), round(image.height * scale))
+    if size[0] % LATENT_GRID or size[1] % LATENT_GRID:
+        raise ValueError(f"{image.size} at scale {scale} is {size}, off the {LATENT_GRID}-px latent grid")
+    rgb = image.convert("RGB")
+    return rgb if size == rgb.size else rgb.resize(size, Image.Resampling.LANCZOS)
+
+
 def as_reference(image: Image.Image) -> Image.Image:
     """``image`` as a reference image is drawn from, in training and generation alike: scaled under ``REF_PIXELS``,
     each side floored to a multiple of ``LATENT_GRID`` as NeMo's cache encoder resizes it (squashed onto the grid,
