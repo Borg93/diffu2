@@ -248,6 +248,21 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
 - [ ] **E2b** (`jobs/diffu/run_e2b.sh`, `configs/diffu/diffu_s_e2b_glyph.yaml`): diffu-S on FLUX.3's text encoder
       from E2's glyph-arm weights (all but the text projection), all 11,329 training crops with glyph maps, 10,000
       steps of 8, drawn at steps 5,000 and 10,000: does more data and training start to form letters on the Spark?
+- [x] **Why a sample image + text does not give the hand** (25-26 Oct, runs/refdiag; the described control's 11 crops
+      and seeds; sets in data_flux3/refdiag; scratchpad refdiag/). Letter-shape gap to the real hand (lower = closer):
+      (A) untrained FLUX.3, another window of the volume as reference 0.42; (B) the target window itself as reference,
+      its text spelled in the caption 0.47: FLUX.3 takes the layout, paper and ink (ink gap 12.8 -> 8.7) and rewrites
+      every letter in its own neat modern cursive; image tokens give the reference ~3.5 % of their attention in the 28
+      joint blocks (a third of the tokens), the same for its own page (attention_probe.py). (C/D) the v3 LoRA,
+      trained with references: 0.40 / 0.24, by eye nearly the same drawing whichever reference: a generic archival
+      hand from training. (F) the window itself, "keep the page exactly as it is", no text spelled: 0.06, a near pixel
+      copy of the page; (G) the same, one word to change: the page copied and the word left unchanged or pasted in
+      a bold print-like hand in the wrong line, never in the clerk's hand. FLUX.3's reference stream preserves what
+      is in the reference or restyles the scene; it does not write new text in the reference's hand. (E) the 1715
+      LoRA plus a sample window (runs/refdiag/E_lora_ref_*, the guidance-2 run's 8 windows and seeds): letter gap
+      0.40 -> 0.27 / 0.34, CER 0.136 -> 0.131 / 0.116, paper gap 5.1 -> 8.1 (it takes the sample's page); by eye
+      the same drawings as the LoRA alone. The hand comes from a LoRA trained on the volume's pages (4 are enough);
+      a sample image adds a page's paper and ink tone at most.
 - [x] **Whole pages at guidance 2, 28 steps** (25 Oct 21:49, runs/fullpage_g2, the 1715 letter book's LoRA): the
       same trade as the windows. Ink colour gap to the real scan 30.8/34.1/19.7/30.5 -> 19.6/20.8/16.6/20.6 on the
       4 pages (paper unchanged, still cleaner than the real); read-back CER 0.062/0.072/0.211/0.068 ->
