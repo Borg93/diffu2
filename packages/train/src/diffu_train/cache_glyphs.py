@@ -2,10 +2,12 @@
 glyph map (``diffu_page.glyphs``) the one reference image, its caption the prompt.
 
 Every tensor is made by diffu's own encoders (``diffu_train.cache``), so training sees what generation will when the
-pipeline is given the glyph map as its reference image. The files are laid out as NeMo's ``ImageEditDataset`` reads
-them, field for field as its own FLUX.3 cache writer lays them out: ``samples/sample_NNNNNNNN.pt``,
-``metadata_shard_NNNN.json`` listing each with its compound bucket signature and token lengths, ``metadata.json``
-naming the shards, written last so it marks a finished cache; beside them ``empty_prompt.pt`` for caption dropout.
+pipeline is given the glyph map as its reference image, or a glyph model its glyph map (its glyph encoder encodes the
+map as the cache does; ``diffu_train.nemo.GlyphConcatAdapter`` trains it on the pair's reference as its glyph map). The
+files are laid out as NeMo's ``ImageEditDataset`` reads them, field for field as its own FLUX.3 cache writer lays them
+out: ``samples/sample_NNNNNNNN.pt``, ``metadata_shard_NNNN.json`` listing each with its compound bucket signature and
+token lengths, ``metadata.json`` naming the shards, written last so it marks a finished cache; beside them
+``empty_prompt.pt`` for caption dropout.
 
     python -m diffu_train.cache_glyphs --crops <split dir> --model <diffu repo> --out <cache dir> [--scale 0.5]
 """

@@ -1,9 +1,10 @@
 """The glyph map: a window's line texts drawn as plain glyphs into their boxes, for diffu to trace (experiment E2).
 
-diffu reads the map as a reference image (FLUX.3's reference stream), so the words it draws are spelled by
-construction and each line is as long as its box. Black DejaVu Sans on white: the map carries the text and its place,
-never a hand. It is drawn at the target's own size, which must lie on the latent grid, because FLUX.3's preprocessing
-center-crops a reference that does not.
+diffu reads the map as a reference image (FLUX.3's reference stream, E2 and E2b) or, a glyph model (``diffu-init
+--glyph``, E2c), beside its latents on channels, each image token with its own cell of the map; either way the words it
+draws are spelled by construction and each line is as long as its box. Black DejaVu Sans on white: the map carries the
+text and its place, never a hand. It is drawn at the target's own size, which must lie on the latent grid, because
+FLUX.3's preprocessing center-crops a reference that does not, and a glyph model's map must lie on the target's grid.
 
 DejaVu Sans covers 165 of the 167 characters in our transcriptions; it lacks ꝕ and a stray Malayalam ഽ. A character
 the font lacks is left out rather than drawn as the font's empty box, which the model would learn to copy.

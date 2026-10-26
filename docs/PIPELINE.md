@@ -39,12 +39,18 @@ PAGE/ALTO page ──► LoadLayout ──► Refill ──► PlanCrops ──�
 5. **Drawing** (`diffu_page.pipeline`): a model directory names its blocks in `modular_model_index.json`, and
    `FAMILIES` maps those to the model's blocks and pipeline class (FLUX.3 Klein: `Flux3AutoBlocks` without its prompt
    upsampler, which would rewrite the quoted lines; diffu: `DiffuAutoBlocks`). Around them:
-   - `crop_blocks`: `CropPromptStep` (plan → prompt, boxes, size), `ReferenceGridStep` (a reference image on the
-     training grid), the model's text encoder, VAE encoder (only with a reference image), denoise and decode. The
-     model's auto blocks choose plain or reference-conditioned denoising from the inputs, so v2 (style by name) and v3
-     (style by example) share it. Both denoise branches carry a line repair (`blocks.repair`), idle without a mask;
-     `crop_blocks` puts it into a copy of the model's denoise blocks, because diffusers shares block instances
-     across every pipeline in a process.
+   - `crop_blocks`: `CropPromptStep` (plan → prompt, boxes, size), `GlyphMapStep` (a glyph model's glyph map of the
+     plan), `ReferenceGridStep` (a reference image on the training grid), the model's text encoder, VAE encoders (only
+     with a reference image or a glyph map), denoise and decode. The model's auto blocks choose plain or
+     reference-conditioned denoising from the inputs, so v2 (style by name) and v3 (style by example) share it. Both
+     denoise branches carry a line repair (`blocks.repair`), idle without a mask; `crop_blocks` puts it into a copy of
+     the model's denoise blocks, because diffusers shares block instances across every pipeline in a process.
+   - diffu's denoise step is FLUX.3's with a glyph model's glyph map in both branches
+     (`modular_pipelines/diffu/denoise.py`, in its own copy): a glyph model (`diffu-init --glyph`, `glyph_channels` in
+     its model index) takes the map's latents beside its own on channels, each image token with its own cell of the
+     map, in every guidance pass, and steps its latents with the first channels of the transformer's prediction (FLUX.3's
+     transformer predicts as many channels as it takes). Every other model draws through it as through FLUX.3's own;
+     `GlyphMapStep` draws the map only for a glyph model.
    - The judge (`diffu_page.judge`: a `Judge`, by default `TrOCRJudge`) reads every line box of the drawn crop, and the
      labels (`blocks.ground_truth.crop_labels`, ALTO or PAGE) tag a line it rejects `unclear`: a read-back CER above
      `max_line_cer`, or any number read otherwise. Drawing, judging and labelling are separate stages
@@ -77,6 +83,11 @@ name and seed crops alike, so a page comes out the same from any of them.
   pairs, with the empty prompt beside them), then trains a LoRA with the configs in `packages/train/configs/flux3/`
   and our interleaved bucket dataloader (`diffu_train.nemo`), which can train a share of the pairs on the empty prompt
   (`caption_dropout`, `diffu_train.dropout`) and scores `val_loss` on held-out pairs every 100 steps.
+- diffu trains from `diffu-init`'s repo in NeMo's finetune mode on caches its own encoders make
+  (`diffu_train.cache_diffu`; `cache_glyphs` with each crop's glyph map), with the configs in
+  `packages/train/configs/diffu/`, through `torchrun -m diffu_train.finetune`: NeMo's diffusion recipe, which trains a
+  glyph model with `diffu_train.nemo.GlyphConcatAdapter` (each pair's glyph map beside its noisy latents on channels,
+  the loss on the latents' channels) in place of NeMo's FLUX.3 adapter.
 - `diffu-evaluate` scores every drawn crop for CER and for how closely its hand follows its real crop's and its
   reference's (`HandFidelity`: each drawing against its own reference and against the other references, which is
   chance); `diffu_page.cli.hands` scores a finished run's saved drawings the same way, without the GPU.
@@ -100,5 +111,6 @@ Checked 2026-10-21 (reference rows 2026-10-23); each would silently cost quality
 | Line geometry | `page_xml.read_page_line` (builder) | the same reader (replay): 60/60 GT pages planned as cut |
 | Reference image | shrunk to 0.5 MP on the 16 px grid (`crops.grid.as_reference`) | `ReferenceGridStep`, the same function: a no-op on such references, a full crop shrunk to the trained size (it was kept at 1 MP before 2026-10-23) |
 | Reference look (described captions) | measured at the reference size (`captions.hand.measure_reference`) | the same function |
+| Glyph map (a glyph model) | `glyphs.glyph_map` of the crop's lines at its size, encoded by `diffu_train.cache.encode_image` | `GlyphMapStep`, the same function on the plan; diffu's glyph encoder encodes it as the cache does (`test_cache`); each token's cell beside its latents, as `GlyphConcatAdapter` puts it |
 | Position ids | image (0, h·0.5, w·0.5, 0), reference l = −1, text (0, 0, 0, i) | the same |
 | No-prompt input | v3d: a tenth of the pairs on the empty prompt as NeMo encodes a caption (`diffu_train.dropout`), bit-identical to diffusers' unconditional input; earlier runs none (`cfg_dropout_prob: 0`; NeMo's own would use zeros) | the empty prompt |

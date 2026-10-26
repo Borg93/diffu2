@@ -82,21 +82,45 @@ class Vae(BaseModel):
 
 
 class DiffuConfig(BaseModel):
-    """A diffu model: its transformer size, its text encoder and its VAE."""
+    """A diffu model: its transformer size, its text encoder, its VAE, and whether it takes the glyph map.
+
+    Attributes:
+        size: The transformer size.
+        text_encoder: The text encoder and the layers it stacks.
+        vae: The image VAE.
+        glyph: A glyph model: it takes the glyph map's latents beside its own on channels, token by token (as FLUX.1's
+            Canny and Depth models take their control image), not as a reference image.
+    """
 
     model_config = {"frozen": True}
 
     size: DiffuSize
     text_encoder: TextEncoder = TextEncoder()
     vae: Vae = Vae()
+    glyph: bool = False
+
+    @property
+    def packed_channels(self) -> int:
+        """The channels of the transformer's latents: each 2x2 patch of the VAE's latents packed on channels, as FLUX.3
+        packs them."""
+        return 4 * self.vae.latent_channels
+
+    @property
+    def glyph_channels(self) -> int:
+        """The glyph map's channels a glyph model takes beside its latents, 0 for any other: the map is encoded as the
+        latents are, so as many."""
+        return self.packed_channels if self.glyph else 0
 
     def transformer_config(self) -> dict[str, object]:
-        """The ``Flux3Transformer2DModel`` config: this size, the widths the VAE and the text encoder give, and FLUX.3's
-        own defaults for the rest (timestep channels, MLP ratio, RoPE theta, norm eps, no flow map)."""
-        packed_channels = 4 * self.vae.latent_channels  # each 2x2 latent patch packed on channels, as FLUX.3 packs
+        """The ``Flux3Transformer2DModel`` config: this size, the widths the VAE, the text encoder and the glyph map
+        give, and FLUX.3's own defaults for the rest (timestep channels, MLP ratio, RoPE theta, norm eps, no flow map).
+
+        A glyph model's image input is wider by the glyph map's channels, and so is its output: FLUX.3's transformer
+        has no ``out_channels`` (the latents are drawn from the output's first channels).
+        """
         return {
-            "in_channels": packed_channels,
-            "cond_in_channels": packed_channels,
+            "in_channels": self.packed_channels + self.glyph_channels,
+            "cond_in_channels": self.packed_channels,
             "num_layers": self.size.mode_layers,
             "num_single_layers": self.size.joint_layers,
             "attention_head_dim": self.size.attention_head_dim,

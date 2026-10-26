@@ -3,16 +3,20 @@
     diffu-init --size S --out runs/diffu/init_s
     diffu-init --size S --out runs/diffu/init_s_vl --weights-from runs/diffu_s_e2_glyph/model
     diffu-init --size S --out runs/diffu/init_s_pages --latent-stats runs/diffu/pages_latent_stats.json
+    diffu-init --size S --glyph --out runs/diffu_s_e2c_qwen_init --weights-from runs/diffu_s_vl_init
 
 With ``--weights-from`` the new model starts from a trained diffu's weights wherever their shapes agree; the rest (the
 text projection, when the text encoder changed) keep their fresh init. With ``--latent-stats`` (our pages' latent mean
 and standard deviation per channel, ``python -m diffu_train.latent_stats``) the repo keeps its own copy of the VAE,
-normalizing latents with those stats instead of Qwen-Image's, which were measured on photos and video.
+normalizing latents with those stats instead of Qwen-Image's, which were measured on photos and video. With
+``--glyph`` the model is a glyph model: it takes the glyph map's latents beside its own on channels, so its image input
+and its output are twice as wide; started from a model without the glyph map, those two take the trained weights and
+zeros for the map's channels (:func:`warm_start`), so the new model draws what the trained one draws until it trains.
 
 Writes ``<out>/transformer/`` (config and weights) and ``<out>/modular_model_index.json``, which names the pipeline
-and its blocks, the text layers, and the text encoder and VAE by pinned Hub revision. NeMo AutoModel's finetune mode
-(no ``peft:`` block) loads the transformer from it on every rank, so every rank starts from the same weights;
-``DiffuModularPipeline.from_pretrained(<out>)`` loads the whole model.
+and its blocks, the text layers, the glyph map's channels, and the text encoder and VAE by pinned Hub revision. NeMo
+AutoModel's finetune mode (no ``peft:`` block) loads the transformer from it on every rank, so every rank starts from
+the same weights; ``DiffuModularPipeline.from_pretrained(<out>)`` loads the whole model.
 """
 
 from __future__ import annotations
@@ -24,7 +28,7 @@ import diffusers
 import torch
 import typer
 from diffusers import AutoencoderKLQwenImage, Flux3Transformer2DModel
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 from rich.console import Console
 from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 
@@ -35,6 +39,22 @@ from diffu.repo import INDEX, ModelIndex, index_entry
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 console = Console()
+
+# The weights a glyph model's glyph map widens, by name, and the axis it widens: the image input's columns and the
+# output's rows. Nothing else changes shape (the reference input keeps the latents' width).
+GLYPH_WIDENED = {"x_embedders.image.weight": 1, "proj_out.weight": 0}
+
+
+class WarmStart(BaseModel):
+    """What a new model took from a trained diffu (:func:`warm_start`).
+
+    Attributes:
+        fresh: The weights that keep their fresh init: the trained model has none of their shape.
+        widened: The trained weights widened with zeros for a glyph model's glyph map (:data:`GLYPH_WIDENED`).
+    """
+
+    fresh: list[str]
+    widened: list[str]
 
 
 def init_transformer(config: DiffuConfig, *, seed: int) -> Flux3Transformer2DModel:
@@ -58,22 +78,50 @@ def init_transformer(config: DiffuConfig, *, seed: int) -> Flux3Transformer2DMod
     return transformer
 
 
-def warm_start(transformer: Flux3Transformer2DModel, source: Path) -> list[str]:
-    """Load into ``transformer`` every weight of the diffu repo at ``source`` with the same name and shape.
+def _glyph_widened(
+    trained: dict[str, torch.Tensor], own: dict[str, torch.Tensor], glyph_channels: int
+) -> dict[str, torch.Tensor]:
+    """The trained weights of :data:`GLYPH_WIDENED` that are ``own``'s but ``glyph_channels`` narrower, widened to
+    ``own``'s shape: the trained values first, zeros for the glyph map's channels. With the map's input columns at
+    zero the glyph model draws what the trained one draws (the input projection has no bias); the map's output rows
+    are never trained."""
+    widened: dict[str, torch.Tensor] = {}
+    for name, axis in GLYPH_WIDENED.items():
+        narrower = list(own[name].shape)
+        narrower[axis] -= glyph_channels
+        weight = trained.get(name)
+        if glyph_channels and weight is not None and list(weight.shape) == narrower:
+            zeros = list(weight.shape)
+            zeros[axis] = glyph_channels
+            widened[name] = torch.cat([weight, weight.new_zeros(zeros)], dim=axis)
+    return widened
+
+
+def warm_start(transformer: Flux3Transformer2DModel, source: Path) -> WarmStart:
+    """Load into ``transformer`` every weight of the diffu repo at ``source`` with the same name and shape; a glyph
+    model started from a model without the glyph map also takes that model's image input and output, widened with
+    zeros for the map's channels (its input channels beyond its reference input's).
 
     Returns:
-        The names of the weights that keep their fresh init, because ``source`` has none of that shape.
+        The weights that keep their fresh init and the weights widened for the glyph map.
     """
     trained = Flux3Transformer2DModel.from_pretrained(source, subfolder="transformer").state_dict()
     own = transformer.state_dict()
-    fresh = [name for name, weight in own.items() if name not in trained or trained[name].shape != weight.shape]
-    transformer.load_state_dict({**own, **{name: trained[name] for name in own if name not in fresh}})
-    return fresh
+    same = {
+        name: trained[name] for name, weight in own.items() if name in trained and trained[name].shape == weight.shape
+    }
+    glyph_channels = transformer.config.in_channels - transformer.config.cond_in_channels
+    widened = _glyph_widened(trained, own, glyph_channels)
+    transformer.load_state_dict({**own, **same, **widened})
+    return WarmStart(
+        fresh=[name for name in own if name not in same and name not in widened],
+        widened=[name for name in own if name in widened],
+    )
 
 
 def model_index(config: DiffuConfig, repo: Path) -> ModelIndex:
     """The ``modular_model_index.json`` of a diffu repo at ``repo``: its pipeline and block classes, its text layers,
-    and where each component loads from (the transformer from the repo itself)."""
+    its glyph map's channels, and where each component loads from (the transformer from the repo itself)."""
     text, vae = config.text_encoder, config.vae
     return ModelIndex.model_validate(
         {
@@ -81,6 +129,7 @@ def model_index(config: DiffuConfig, repo: Path) -> ModelIndex:
             "_class_name": DiffuModularPipeline.__name__,
             "_diffusers_version": diffusers.__version__,
             "text_layers": list(text.layers),
+            "glyph_channels": config.glyph_channels,
             "text_encoder": index_entry(
                 "transformers",
                 Qwen3VLForConditionalGeneration,
@@ -156,18 +205,23 @@ def main(
             exists=True, dir_okay=False, help="our pages' latent stats, for the repo's own VAE to normalize with"
         ),
     ] = None,
+    glyph: Annotated[
+        bool, typer.Option(help="a glyph model: the glyph map's latents beside the image latents on channels")
+    ] = False,
 ) -> None:
     """Write a diffu model repo with freshly initialised weights, or a trained one's where they fit."""
     if (out / INDEX).exists():
         raise typer.BadParameter(f"{out} already holds a model; give a new directory", param_hint="--out")
     if weights_from is not None and not (weights_from / INDEX).exists():
         raise typer.BadParameter(f"{weights_from} holds no diffu model", param_hint="--weights-from")
-    config = DiffuConfig(size=SIZES[size])
+    config = DiffuConfig(size=SIZES[size], glyph=glyph)
     stats = None if latent_stats is None else read_latent_stats(latent_stats, channels=config.vae.latent_channels)
     transformer = init_transformer(config, seed=seed)
     if weights_from is not None:
-        fresh = warm_start(transformer, weights_from)
-        console.print(f"from {weights_from}: all weights but {', '.join(fresh) or 'none'}")
+        started = warm_start(transformer, weights_from)
+        console.print(f"from {weights_from}: all weights but {', '.join(started.fresh) or 'none'}")
+        if started.widened:
+            console.print(f"widened with zeros for the glyph map: {', '.join(started.widened)}")
     if stats is not None:
         config = config.model_copy(update={"vae": write_vae(config.vae, stats, out)})
         console.print(f"its own VAE, normalizing with the stats in {latent_stats}")

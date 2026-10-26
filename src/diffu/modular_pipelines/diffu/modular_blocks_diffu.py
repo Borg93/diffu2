@@ -1,7 +1,9 @@
-"""diffu's blocks: its text encoder, VAE encoder and decoder around FLUX.3's own denoise blocks.
+"""diffu's blocks: its text encoder, VAE encoders and decoder around FLUX.3's own denoise blocks.
 
-The denoise step is diffusers' ``Flux3AutoCoreDenoiseStep`` unchanged: it reads the latent channels from the transformer
-and the latent grid from the pipeline's ``vae_scale_factor``, so it runs diffu's 64-channel Qwen-Image latents and
+The denoise step is a copy of diffusers' ``Flux3AutoCoreDenoiseStep`` with a glyph model's glyph map concatenated to
+its latents on channels (:func:`diffu.modular_pipelines.diffu.denoise.glyph_denoise_step`), which a model without the
+glyph map runs as FLUX.3's own. It reads the latent channels from the pipeline (the transformer's, less a glyph model's
+glyph channels) and the latent grid from its ``vae_scale_factor``, so it runs diffu's 64-channel Qwen-Image latents and
 its Qwen3-VL embeddings (FLUX.3's text encoder) as it runs FLUX.3's.
 """
 
@@ -11,11 +13,11 @@ from typing import override
 
 from diffusers.modular_pipelines import AutoPipelineBlocks, OutputParam, SequentialPipelineBlocks
 from diffusers.modular_pipelines.flux3.encoders import Flux3ProcessImagesInputStep
-from diffusers.modular_pipelines.flux3.modular_blocks_flux3 import Flux3AutoCoreDenoiseStep
 from diffusers.modular_pipelines.modular_pipeline_utils import InsertableDict
 
 from diffu.modular_pipelines.diffu.decoders import DiffuDecodeStep
-from diffu.modular_pipelines.diffu.encoders import DiffuTextEncoderStep, DiffuVaeEncoderStep
+from diffu.modular_pipelines.diffu.denoise import glyph_denoise_step
+from diffu.modular_pipelines.diffu.encoders import DiffuGlyphEncoderStep, DiffuTextEncoderStep, DiffuVaeEncoderStep
 
 
 class DiffuVaeEncoderSequentialStep(SequentialPipelineBlocks):
@@ -53,14 +55,16 @@ AUTO_BLOCKS = InsertableDict(
     [
         ("text_encoder", DiffuTextEncoderStep()),
         ("vae_encoder", DiffuAutoVaeEncoderStep()),
-        ("denoise", Flux3AutoCoreDenoiseStep()),
+        ("glyph_encoder", DiffuGlyphEncoderStep()),
+        ("denoise", glyph_denoise_step()),
         ("decode", DiffuDecodeStep()),
     ]
 )
 
 
 class DiffuAutoBlocks(SequentialPipelineBlocks):
-    """diffu's text-to-image and reference-conditioned generation, FLUX.3's pipeline with diffu's encoders."""
+    """diffu's text-to-image and reference-conditioned generation, FLUX.3's pipeline with diffu's encoders; a glyph
+    model draws from its glyph map (``glyph_image``) in either."""
 
     model_name = "diffu"
     block_classes = AUTO_BLOCKS.values()
@@ -75,7 +79,8 @@ class DiffuAutoBlocks(SequentialPipelineBlocks):
     def description(self) -> str:
         return (
             "Auto blocks that perform text-to-image and image-to-image generation using diffu: FLUX.3's architecture "
-            "with diffu's weights, FLUX.3's text encoder (Qwen3-VL) and the Qwen-Image VAE."
+            "with diffu's weights, FLUX.3's text encoder (Qwen3-VL) and the Qwen-Image VAE. A glyph model draws from "
+            "its glyph map (`glyph_image`), concatenated to its latents on channels."
         )
 
     @property

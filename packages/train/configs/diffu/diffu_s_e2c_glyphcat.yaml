@@ -1,0 +1,129 @@
+# E2c, the glyph map by channel concatenation (scratchpad glyph_concat/plan.md; diffusers' flux-control recipe, which
+# trains FLUX.1 Canny and Depth so): E2b gives diffu the glyph map as a reference image (FLUX.3's reference stream), where
+# it reaches the image tokens only through joint attention; a glyph model takes the map's latents beside its own on
+# channels, each image token with its own cell of the map, in every classifier-free guidance pass. E2b's start
+# (runs/diffu_s_vl_init's weights, the image input's columns and the output's rows widened with zeros for the map:
+# diffu-init --glyph, so step 0 draws what E2b's start draws without its reference), E2b's cache (each pair's one context
+# latents are its glyph map; converted on load to the init repo's latent stats: latents_of), the same 8 crops a step,
+# shift 3 and learning-rate curve (decay over 10,000 steps, as E2b's), stopped at 5,000: its last checkpoint against
+# E2b's step 5,000 (and E2n's). Only how the map enters differs. Every checkpoint is consolidated, so any step can be
+# drawn.
+#
+# Trained through diffu's own entry point, `torchrun -m diffu_train.finetune` (NeMo's recipe with the glyph adapter,
+# diffu_train.nemo.GlyphConcatAdapter, for the glyph model the init repo indexes): NeMo's FLUX.3 adapter would feed the
+# map as the reference stream.
+#
+# One crop per micro-batch (8 per optimizer step): NeMo pads mixed caption lengths with zeros and FLUX.3's adapter
+# passes no text mask, so a batch of more would attend to zeros generation never feeds (TODO, "More than one crop per
+# micro-batch").
+#
+# Paths come from the environment: DIFFU_INIT (runs/diffu_s_e2c_<pages|qwen>_init), DIFFU_CACHE and DIFFU_OUT (the run's
+# checkpoint dir, one per latent stats); jobs/diffu/run_e2c.sh sets them.
+
+seed: 42
+
+# Metrics to the local trackio project "diffu" (~/.cache/huggingface/trackio; no Space): `trackio list runs --project
+# diffu`. The job scripts name each run (--trackio.name).
+trackio:
+  project: diffu
+  name: diffu_s_e2c_glyphcat
+
+wandb:
+  enable: false
+  project: diffu
+  mode: offline
+  name: diffu_s_e2c_glyphcat
+
+dist_env:
+  backend: "nccl"
+  init_method: "env://"
+  timeout_minutes: 30
+
+model:
+  pretrained_model_name_or_path: ${DIFFU_INIT}
+  model_type: "flux3"  # NeMo's FLUX.3 loader and adapter: diffu is FLUX.3's architecture
+  mode: "finetune"
+  cache_dir: null
+  attention_backend: "native"  # torch SDPA; flash-attn isn't built for this aarch64 / sm_121 box
+  torch_dtype: float32
+  compute_dtype: bfloat16
+
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 1e-4
+  weight_decay: 0.0
+  betas: [0.9, 0.999]
+  foreach: false
+  fused: true
+
+performance:
+  check_loss: false
+  grad_clip_foreach: true
+
+lr_scheduler:
+  lr_decay_style: cosine
+  lr_warmup_steps: 200
+  lr_decay_steps: 10000  # E2b's curve: its 10,000 steps, of which E2c runs 5,000
+  min_lr: 1e-5
+
+fsdp:
+  dp_size: 1
+  tp_size: 1
+  cp_size: 1
+  pp_size: 1
+  activation_checkpointing: true
+  cpu_offload: false
+  defer_fsdp_grad_sync: true
+  enable_compile: false
+  enable_fsdp2_prefetch: false
+
+# Logit-normal timesteps with a constant shift of 3 at 512², the design study's value (E1 and E1b used 6 at ~1 MP,
+# scaled by sqrt(tokens)); diffu-export writes it into the model, so drawing samples at it. No loss
+# weighting and no uniform mix, as in NeMo's pretraining recipe. NeMo's cfg_dropout stays 0: it
+# zeroes the text embeddings, while diffu's null is the empty prompt, which caption_dropout in the dataloader swaps in.
+flow_matching:
+  adapter_type: "flux3"  # extended for the glyph model by diffu_train.finetune (GlyphConcatAdapter)
+  timestep_sampling: "logit_normal"
+  logit_mean: 0.0
+  logit_std: 1.0
+  flow_shift: 3.0
+  mix_uniform_ratio: 0.0
+  sigma_min: 0.0
+  sigma_max: 1.0
+  num_train_timesteps: 1000
+  cfg_dropout_prob: 0.0
+  i2v_prob: 0.0
+  use_loss_weighting: false
+  log_interval: 25
+  summary_log_interval: 10
+
+# One crop per micro-batch (crops differ in size and caption length); 8 per optimizer step.
+step_scheduler:
+  num_epochs: 1000
+  local_batch_size: 1
+  global_batch_size: 8
+  max_steps: 5000
+  ckpt_every_steps: 1000
+  log_remote_every_steps: 10
+  save_checkpoint_every_epoch: false
+
+data:
+  dataloader:
+    _target_: diffu_train.nemo.InterleavedImageEditDataloaderConfig  # the glyph map is the one context latents
+    cache_dir: ${DIFFU_CACHE}
+    quantization: 16
+    num_workers: 2
+    base_resolution: [512, 512]
+    dynamic_batch_size: false
+    shuffle: true
+    drop_last: false
+    caption_dropout: 0.1  # that share on the empty prompt (diffu_train.dropout), diffusers' FLUX.3 trainer's value
+    latents_of: ${DIFFU_INIT}  # the cache's target and glyph-map latents normalized as this repo's VAE normalizes them
+
+checkpoint:
+  enabled: true
+  checkpoint_dir: ${DIFFU_OUT}
+  model_save_format: safetensors
+  save_consolidated: every  # every checkpoint, not only the last, gets a consolidated export diffu-export draws
+  diffusers_compatible: true  # <step>/model/consolidated/ loads with Flux3Transformer2DModel.from_pretrained
+  restore_from: null

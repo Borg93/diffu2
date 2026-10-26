@@ -1,6 +1,7 @@
 """diffu's training cache on CPU with the tiny diffu repo: each crop written where NeMo's TextToImageDataset reads it,
-holding exactly the latents and prompt embeddings diffu's own pipeline steps make at generation, and the empty prompt
-caption dropout trains on; its latents' stats measured, and its latents handed to a repo with other stats."""
+holding exactly the latents and prompt embeddings diffu's own pipeline steps make at generation (a glyph map as the
+reference encoder and a glyph model's glyph encoder make it), and the empty prompt caption dropout trains on; its
+latents' stats measured, and its latents handed to a repo with other stats."""
 
 from __future__ import annotations
 
@@ -19,7 +20,7 @@ from diffu.configs import DiffuConfig
 from diffu.init import read_latent_stats, write_model_repo, write_vae
 from diffu.latents import LatentStats, vae_stats
 from diffu.modular_pipelines.diffu import DiffuModularPipeline
-from diffu.modular_pipelines.diffu.encoders import DiffuTextEncoderStep
+from diffu.modular_pipelines.diffu.encoders import DiffuGlyphEncoderStep, DiffuTextEncoderStep
 from diffu.modular_pipelines.diffu.modular_blocks_diffu import DiffuVaeEncoderSequentialStep
 from diffu.modular_pipelines.loading import COMPONENT_DTYPES
 from diffu_page.captions.prompt import LineRecord
@@ -120,6 +121,7 @@ def test_glyph_cache_pairs_each_scaled_crop_with_its_glyph_map_as_diffus_pipelin
         for row in json.loads((out / shard).read_text())
     ]
     vae = _pipeline(DiffuVaeEncoderSequentialStep(), tiny_diffu)
+    glyph_encoder = _pipeline(DiffuGlyphEncoderStep(), tiny_diffu)  # a glyph model's (E2c); the reference's above (E2b)
     for k, (row, record) in enumerate(zip(rows, records, strict=True)):
         sample = torch.load(out / row["cache_file"], weights_only=True)
         with Image.open(tmp_path / "crops" / f"{k}.jpg") as image:
@@ -127,6 +129,8 @@ def test_glyph_cache_pairs_each_scaled_crop_with_its_glyph_map_as_diffus_pipelin
         glyphs = glyph_map(record.lines, (32, 16))
         assert torch.equal(sample["target_latent"], vae(image=crop, output="image_cond_latents")[0][0].float())
         assert torch.equal(sample["context_latents"][0], vae(image=glyphs, output="image_cond_latents")[0][0].float())
+        glyph_latents = glyph_encoder(glyph_image=glyphs, output="glyph_latents")[0].float()
+        assert torch.equal(sample["context_latents"][0], glyph_latents)
         signature = {
             "target": list(sample["target_latent"].shape),
             "contexts": [list(sample["context_latents"][0].shape)],

@@ -337,6 +337,24 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
       point), EMA weights for drawing, and later 5 % glyph dropout for a glyph guidance scale. Watch: under our pages'
       stats the glyph maps' latents have channel means up to +-2.35 and std 0.67-2.0 (RMS ~1.8x the pages', 405 crops),
       alike at training and drawing; give them their own stats if E2n's rows drift from their lines.
+- [ ] **E2c** (built 26 Oct; runs after E2n, on whichever normalization wins: `jobs/diffu/run_e2c.sh pages|qwen`,
+      `configs/diffu/diffu_s_e2c_glyphcat.yaml`; scratchpad glyph_concat/plan.md): the glyph map by channel
+      concatenation, as diffusers' flux-control recipe trains FLUX.1 Canny and Depth. E2b's map reaches the image tokens
+      only through joint attention (a reference stream at l = -1); a glyph model (`diffu-init --glyph`, `glyph_channels`
+      in its model index) takes the map's latents beside its own on channels, each image token with its own cell of the
+      map, in every guidance pass. FLUX.3's transformer has no `out_channels`, so its input and output are both twice as
+      wide and the latents are stepped with the prediction's first channels. E2b's start, the image input's columns and
+      the output's rows widened with zeros (`warm_start`: step 0 draws exactly what E2b's start draws without its
+      reference, pinned by a test), E2b's cache (the pair's reference is the map), E2b's settings and learning-rate
+      curve, 5,000 steps, every checkpoint consolidated. NeMo's adapter table is closed, so training runs through
+      `torchrun -m diffu_train.finetune`: NeMo's recipe with `GlyphConcatAdapter` for a glyph model (a test pins its
+      loss to the unwidened model's text-to-image loss at step 0). Drawing renders the map from each crop's plan
+      (`GlyphMapStep` in `crop_blocks`; FLUX.3 and every other diffu repo draw as before). The job smoke-tests (caption
+      dropout, the glyph adapter and the latents' normalization in the log; the smoke checkpoint exported and drawn,
+      which checks the 128-wide transformer config NeMo consolidates), trains, and draws the last checkpoint on the
+      held-out windows (guidance 4 and 1) and the held-in crops (4), from `data_flux3/e2_*_eval/text`. Set it beside
+      E2b's and E2n's step 5,000: only how the map enters differs. The joint sequence is ~1,000 tokens shorter (no
+      reference tokens); the reference stream sits idle.
 - [ ] **diffu upgrade plan** (26 Oct; a read-only study of FLUX.3 Klein and Qwen-Image 2.0/2.1: arXiv 2605.10730,
       2605.13565, 2508.02324, the diffusers code of both; Qwen-Image 2.1 is under the Qwen Research License, its VAE
       not usable; Qwen-VAE-2.0's release and licence unverified). Two tracks stay: diffu and the FLUX.3 LoRA path.

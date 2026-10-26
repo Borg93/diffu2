@@ -1,6 +1,6 @@
 """Fixtures shared by every workspace member's tests: PAGE pages to plan and draw, a crop and its training record,
 diffusers' tiny FLUX.3 test model (with a VAE that downsamples as FLUX.3's does), and a tiny diffu model repo (a tiny
-Qwen3-VL (tiny FLUX.3's), a tiny Qwen-Image VAE and a tiny transformer, all random weights)."""
+Qwen3-VL (tiny FLUX.3's), a tiny Qwen-Image VAE and a tiny transformer, all random weights) and its glyph model."""
 
 from __future__ import annotations
 
@@ -308,6 +308,20 @@ def tiny_diffu(tiny_diffu_config: DiffuConfig, tiny_diffu_dir: Path) -> Path:
     transformer = Flux3Transformer2DModel.from_config(tiny_diffu_config.transformer_config())
     write_model_repo(transformer, tiny_diffu_config, tiny_diffu_dir)
     return tiny_diffu_dir
+
+
+@pytest.fixture(scope="session")
+def tiny_diffu_glyph(
+    tiny_diffu_config: DiffuConfig, tiny_diffu: Path, tmp_path_factory: pytest.TempPathFactory
+) -> Path:
+    """The tiny diffu as a glyph model (``diffu-init --glyph``), with the tiny diffu's VAE: its 16 glyph channels
+    beside its 16 latent channels, its transformer's weights random (the glyph map's among them), so the map changes
+    what it draws."""
+    repo = tmp_path_factory.mktemp("diffu_glyph")
+    config = tiny_diffu_config.model_copy(update={"glyph": True})
+    torch.manual_seed(1)
+    write_model_repo(Flux3Transformer2DModel.from_config(config.transformer_config()), config, repo)
+    return repo
 
 
 class NemoLoraWriter(Protocol):

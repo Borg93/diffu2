@@ -6,9 +6,10 @@ chosen by its directory alone. Two sets of blocks are built:
 
 - :class:`PagePlanBlocks` (no model): ``LoadLayoutStep`` -> ``RefillStep`` -> ``PlanCropsStep``. A template page, a
   text, a style and optionally a reference crop in; the crops to draw out, captioned for the reference if there is one.
-- :func:`crop_blocks`: ``CropPromptStep`` -> ``ReferenceGridStep`` -> the model's text encoder, VAE encoder, denoise
-  and decode. A crop plan in; its image out. The model's auto blocks pick text-to-image or reference-conditioned
-  denoising from the inputs (``image``); a line repair sits in both (:mod:`diffu_page.blocks.repair`).
+- :func:`crop_blocks`: ``CropPromptStep`` -> ``GlyphMapStep`` -> ``ReferenceGridStep`` -> the model's text encoder,
+  VAE encoders, denoise and decode. A crop plan in; its image out. The model's auto blocks pick text-to-image or
+  reference-conditioned denoising from the inputs (``image``); a line repair sits in both
+  (:mod:`diffu_page.blocks.repair`). A glyph model (diffu's ``glyph_channels``) draws from its plan's glyph map.
 
 A page is planned with :class:`PagePlanBlocks`; each of its crops is drawn on its own with the crop pipeline, judged
 line by line (:mod:`diffu_page.judge`) and labelled (:func:`diffu_page.blocks.ground_truth.crop_labels`). Draw, judge
@@ -36,6 +37,7 @@ from diffu.repo import ModelIndex
 from diffu_page.blocks import (
     CropPromptStep,
     DrawnCrop,
+    GlyphMapStep,
     LoadLayoutStep,
     PlanCropsStep,
     ReferenceGridStep,
@@ -105,8 +107,10 @@ class CropBlocks(SequentialPipelineBlocks):
 
 
 def crop_blocks(family: ModelFamily) -> CropBlocks:
-    """Our crop steps before ``family``'s own blocks (the crop prompt and the reference grid), and a line repair in each
-    of its denoise branches (:mod:`diffu_page.blocks.repair`), idle unless a repair mask is given.
+    """Our crop steps before ``family``'s own blocks (the crop prompt, a glyph model's glyph map and the reference
+    grid), and a line repair in each of its denoise branches (:mod:`diffu_page.blocks.repair`), idle unless a repair
+    mask is given. The glyph map is drawn for a glyph model only (``glyph_channels`` in its model index), so every
+    other model, FLUX.3's among them, draws as without it.
 
     Raises:
         TypeError: If a denoise branch of ``family`` has no scheduler step (``after_denoiser``) in its denoise loop.
@@ -126,6 +130,7 @@ def crop_blocks(family: ModelFamily) -> CropBlocks:
     return CropBlocks.from_blocks_dict(
         {
             "crop_prompt": CropPromptStep(),
+            "glyph_map": GlyphMapStep(),
             "reference_grid": ReferenceGridStep(),
             **model,
         }

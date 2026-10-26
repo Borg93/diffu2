@@ -1,9 +1,10 @@
-"""diffu's encoder blocks: the prompt through FLUX.3's text encoder (Qwen3-VL), reference images through the
-Qwen-Image VAE.
+"""diffu's encoder blocks: the prompt through FLUX.3's text encoder (Qwen3-VL), reference images and a glyph model's
+glyph map through the Qwen-Image VAE.
 
 Their contracts are FLUX.3's (``Flux3TextEncoderStep``, ``Flux3VaeEncoderStep``), so FLUX.3's own denoise blocks run on
 their outputs unchanged. The prompt embeddings are FLUX.3's own for the same layers; diffu's step adds the model's own
-layers as a config, so training caches and drawing stack the layers the model was trained on.
+layers as a config, so training caches and drawing stack the layers the model was trained on. The glyph map goes to
+diffu's own denoise step (:mod:`diffu.modular_pipelines.diffu.denoise`), encoded as the training cache encodes it.
 """
 
 from __future__ import annotations
@@ -16,7 +17,9 @@ from typing import TYPE_CHECKING, override
 import torch
 from diffusers import AutoencoderKLQwenImage
 from diffusers.modular_pipelines import ComponentSpec, InputParam, ModularPipelineBlocks, OutputParam, PipelineState
+from diffusers.modular_pipelines.flux3.image_processor import Flux3ImageProcessor
 from diffusers.modular_pipelines.modular_pipeline_utils import ConfigSpec
+from PIL import Image
 from transformers import AutoProcessor, ProcessorMixin, Qwen3VLForConditionalGeneration
 
 from diffu.configs import FLUX3_TEXT_LAYERS
@@ -236,5 +239,69 @@ class DiffuVaeEncoderStep(ModularPipelineBlocks):
         block_state.image_cond_latents = [
             encode_latents(vae, image.to(device=device, dtype=vae.dtype)) for image in block_state.condition_images
         ]
+        self.set_block_state(state, block_state)
+        return components, state
+
+
+class DiffuGlyphEncoderStep(ModularPipelineBlocks):
+    """A glyph model's glyph map as diffu latents, encoded as the training cache encodes it
+    (``diffu_train.cache.encode_image``): FLUX.3's preprocessing of one image kept whole (a no-op for a map on the
+    latent grid whose sides are 64 px or more; it pads a shorter side to 64), then :func:`diffu.latents.encode_latents`.
+    Nothing without a glyph map."""
+
+    model_name = "diffu"
+
+    @property
+    @override
+    def description(self) -> str:
+        return (
+            "VAE encoder step that encodes a glyph model's glyph map, drawn at the size of the image to draw, into "
+            "normalized packed latents with the Qwen-Image VAE, as the training cache does. Does nothing without one."
+        )
+
+    @property
+    @override
+    def expected_components(self) -> list[ComponentSpec]:
+        return [
+            ComponentSpec("vae", AutoencoderKLQwenImage),
+            ComponentSpec("image_processor", Flux3ImageProcessor, default_creation_method="from_config"),
+        ]
+
+    @property
+    @override
+    def inputs(self) -> list[InputParam]:
+        return [
+            InputParam(
+                "glyph_image",
+                type_hint=Image.Image,
+                description="A glyph model's glyph map (PIL): the text of the image to draw in its line boxes, at its "
+                "size (diffu_page.glyphs)",
+            )
+        ]
+
+    @property
+    @override
+    def intermediate_outputs(self) -> list[OutputParam]:
+        return [
+            OutputParam(
+                "glyph_latents",
+                type_hint=torch.Tensor,
+                description="Normalized packed latents of the glyph map, (1, 4 * z_dim, height // 16, width // 16); "
+                "None without one",
+            )
+        ]
+
+    @torch.no_grad()
+    def __call__(
+        self, components: DiffuModularPipeline, state: PipelineState
+    ) -> tuple[DiffuModularPipeline, PipelineState]:
+        block_state = self.get_block_state(state)
+        block_state.glyph_latents = None
+        if block_state.glyph_image is not None:
+            vae = components.vae
+            pixels, _ = components.image_processor.preprocess(
+                block_state.glyph_image.convert("RGB"), resize_mode="fill"
+            )
+            block_state.glyph_latents = encode_latents(vae, pixels.to(components._execution_device, vae.dtype))
         self.set_block_state(state, block_state)
         return components, state

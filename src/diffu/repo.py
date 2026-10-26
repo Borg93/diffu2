@@ -1,6 +1,6 @@
 """A Modular Diffusers model repo's ``modular_model_index.json``: the blocks it names and where each component loads
-from. diffu-init writes it, diffu-export rewrites it for a trained checkpoint, and the page pipeline reads which
-blocks (FLUX.3's or diffu's) a repo is drawn with."""
+from. diffu-init writes it, diffu-export rewrites it for a trained checkpoint, the page pipeline reads which blocks
+(FLUX.3's or diffu's) a repo is drawn with, and diffu's training whether it is a glyph model."""
 
 from __future__ import annotations
 
@@ -36,12 +36,14 @@ class ComponentSource(BaseModel):
 
 
 class ModelIndex(BaseModel):
-    """A model index: the blocks class it names, and its other entries (the pipeline class, component entries, diffu's
-    text layers) kept as they are."""
+    """A model index: the blocks class it names, the glyph map's channels a glyph model takes beside its latents (0
+    for any other, and in an index that names none), and its other entries (the pipeline class, component entries,
+    diffu's text layers) kept as they are."""
 
     model_config = ConfigDict(extra="allow", frozen=True, populate_by_name=True)
 
     blocks_class_name: str = Field(alias="_blocks_class_name")
+    glyph_channels: int = 0
 
     @classmethod
     def read(cls, repo: Path) -> Self:
