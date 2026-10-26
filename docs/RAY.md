@@ -6,8 +6,10 @@ are checked against Ray Data's source: `python/ray/data/{dataset,context}.py`, `
 `_internal/remote_fn.py`, `_internal/execution/operators/actor_pool_map_operator.py`, `datasource/{datasink,
 file_datasink}.py`, `_internal/datasource/webdataset_{datasink,datasource}.py`, `checkpoint/`,
 `_internal/planner/planner.py` and `_internal/planner/checkpoint/plan_write_op.py`.
-All of it is at ray master `ed1d83ac` (26 Oct 2026). Nothing here is tested on a cluster yet; the Ray work starts
-after the tests on the Spark (TODO, "Inference at scale").
+All of it is at ray master `ed1d83ac` (26 Oct 2026). Our sink is Lance: the Lance parts come from lance-ray's docs
+and sources (`datasink.py`, `io.py`, `fragment.py`, `datasource.py`; 0.5.0 at `b4c1a2e`) and every page of Lance's
+guide (`docs/src/guide` at `51cf89d`). Nothing here is tested on a cluster yet; the Ray work starts after the tests
+on the Spark (TODO, "Inference at scale").
 
 ## Who does what
 
@@ -17,8 +19,8 @@ after the tests on the Spark (TODO, "Inference at scale").
 | A worker process that crashes (segfault, kernel OOM kill, node loss) | restarts the actor and retries its batch | nothing |
 | An exception raised inside a stage | fails the block (all its rows); the run stops unless `max_errored_blocks` allows it | catch it per row and return the row with an error field |
 | A GPU that can't be trusted any more (CUDA illegal access, a hung context) | replaces the actor only if its process dies | exit the process; Ray restarts the actor and retries the batch |
-| Resuming a stopped run | job-level checkpointing (`CheckpointConfig`), only on a plan from a file read to a write | one row per page from read to sink, with a unique, stable id |
-| Writing outputs | runs the sink's write tasks on the workers, retrying I/O errors (`retried_io_errors`) | a sink that names files by page id, so a rewrite replaces them |
+| Resuming a stopped run | job-level checkpointing (`CheckpointConfig`), but not safely with a Lance sink (below) | skip the page ids the Lance table already holds; a unique, stable id per page |
+| Writing outputs | runs the sink's write tasks; lance-ray's sink writes fragments in them and commits once on the driver | one row per page in a Lance table, keyed by the page id |
 | Validating a row | nothing (schemas are inferred) | pydantic at the stage boundary; judges for the image |
 
 ## Fault tolerance, as the source sets it
@@ -55,7 +57,7 @@ after the tests on the Spark (TODO, "Inference at scale").
   a crop's noise seed is fixed by its page id, so a retried row draws the same page.
 - **The head node** holds the GCS; its loss ends the cluster unless the GCS is backed by HA Redis (KubeRay) or the
   alpha embedded RocksDB. Workers that can't reach it for `gcs_rpc_server_reconnect_timeout_s` (60 s) exit.
-  Checkpointed runs restart from the last committed rows instead.
+  A rerun resumes from the pages already committed to the Lance table.
 
 ## Resuming: what checkpointing needs
 
@@ -76,6 +78,12 @@ after the tests on the Spark (TODO, "Inference at scale").
   pending checkpoint before the data file, committed after it; on restart, a crashed run's pending checkpoints and
   their data files are deleted. A custom `Datasink` is checkpointed after its write, so a retry may write the same
   rows again: its writes must be idempotent.
+- **Not with Lance.** The Lance sinks (lance-ray's and Ray's own) are plain `Datasink`s: each write task writes
+  uncommitted fragment files, and the driver commits them all as one transaction (`on_write_complete`) after the
+  last task. Ray writes a non-file sink's checkpoint in each write task right after its write, before that commit.
+  If the run dies before the commit, the checkpoint lists pages that never reached the table, and a rerun skips
+  them. Read in both sources (26 Oct); to reproduce on a local Ray when the Ray work starts. Our runs resume from
+  the table instead (Lance section).
 
 ## Rows, batches and serialization
 
@@ -117,17 +125,11 @@ after the tests on the Spark (TODO, "Inference at scale").
 
 ## Inputs, outputs, packaging, monitoring
 
-- Page jobs as JSON Lines or Parquet read with `read_json` / `read_parquet` (a file read, so the run can resume), on
-  object storage or a shared filesystem mounted at the same path on every node. `local://` pins a read or write to the
-  driver's node: for small tests only.
-- Outputs through a sink, not files written inside a stage. The built-in `RowBasedFileDatasink` writes one file per
-  row named by write task and row index, so it can't name a page's image, ALTO and PAGE files by its id. What fits:
-  `write_webdataset` (alpha), which writes tar shards with one sample per row, a member per column named
-  `{__key__}.{column}`: with `__key__` = page id and columns `png` (the uint8 array; its encoder makes the PNG),
-  `alto.xml`, `page.xml` and `json`, a page is `{id}.png`, `{id}.alto.xml`, `{id}.page.xml` and `{id}.json`. It is a
-  file sink, so it gets the two-phase commit, and WebDataset shards are a common format for VLM training. Otherwise
-  `write_parquet` with one row per page (the same fields as columns), or our own `Datasink` writing loose files named
-  by id (idempotent by name, checkpointed after the write). Drop large intermediate columns before the sink.
+- Page jobs as JSON Lines (`read_json`) or a Lance table (`lance_ray.read_lance`), on object storage or a shared
+  filesystem mounted at the same path on every node. `local://` pins a read or write to the driver's node: for small
+  tests only.
+- Outputs through a sink, not files written inside a stage: a Lance table written with lance-ray (Lance section).
+  Drop large intermediate columns before the sink.
 - The object store takes 30% of node memory in `/dev/shm` (a container needs a large `/dev/shm`) and spills to local
   disk once it is 80% full: point `--object-spilling-directory` at a fast disk with room, and watch
   `ray memory --stats-only`.
@@ -140,6 +142,49 @@ after the tests on the Spark (TODO, "Inference at scale").
 - Watch `ray-data.log` (per-operator progress every 5 s), `Dataset.stats()` and the dashboard's metrics
   (`num_tasks_failed`, `num_restarting_actors`, GPU usage, rows out). A stage can add its own counters with
   `ray.util.metrics.Counter` (rows with an error, unclear lines) for a live label error rate.
+
+## Lance: the page table
+
+- **Writing.** `lance_ray.write_lance(ds, uri, mode="create" | "append" | "overwrite")` uses `LanceDatasink`: each
+  write task writes fragment files (retrying `LanceError(IO)` up to 10 times), and the driver commits all of them as
+  one new version at the end. Nothing is visible before that commit; files of failed attempts stay until
+  `cleanup_old_versions` removes unreferenced files (after 7 days by default).
+- **Set `min_rows_per_file`.** Its default, 1,048,576 rows, is also the minimum number of rows Ray hands each write
+  task, and the sink holds all of a task's blocks in memory for retries. For pages of about 1 MB, set it to a few
+  hundred.
+- **Resume from the table.** A run commits once, so size runs so that losing one is acceptable. Before a run, read
+  the committed `id` column (a BTREE index on `id` keeps that cheap), drop those jobs and write with
+  `mode="append"`; `merge_insert("id").when_not_matched_insert_all()` inserts only rows whose id is new, so a rerun
+  can't duplicate a page. lance-ray's `stream=True` commits after every batch instead, but every byte passes through
+  the driver, and its `resume_rows` skips rows by position, which Ray Data keeps stable only with `preserve_order`.
+- **Later passes add columns** instead of rewriting pages: `lance_ray.add_columns` / `add_columns_from` run a function
+  over the table on Ray (a VLM judge's verdicts, embeddings for QC) and commit the new columns without copying the
+  images.
+- **Upkeep.** Many appends leave many small fragments: `lance_ray.compact_files`. Tag released versions
+  (`ds.tags.create`); tagged versions survive `cleanup_old_versions`.
+- **Storage.** S3-compatible stores need `region` and `endpoint` in `storage_options`; concurrent writers need a store
+  that enforces conditional `PutObject` (`If-None-Match: *`) or a shared commit lock.
+
+The page schema, written with file format `data_storage_version="2.2"` (Blob v2 needs 2.2 or later; 2.3 is unstable):
+
+| Column | Arrow type | Why |
+|---|---|---|
+| `id` | `utf8` | the page id: the resume and `merge_insert` key; BTREE index |
+| `image` | Blob v2 (`blob_field` / `blob_array`), the encoded page | a whole page is about 0.9 MB as JPEG and several MB as PNG; a blob column keeps it out of compaction rewrites, and `read_blobs` reads it for training |
+| `alto_xml`, `page_xml` | `large_utf8` | the labels; no dots in column names (filters can't address them) |
+| `text` | `large_utf8` | what was written; an INVERTED (full-text) index if we want to search it |
+| `width`, `height` | `int32` | |
+| `seed` | `int64` | redraws the page |
+| `template`, `style`, `model`, `lora` | `utf8` | provenance |
+| `lines` | `list<struct<read: utf8, cer: float32, numbers_differ: bool>>` | the judge's verdict per line (`LineVerdict`) |
+| `unclear_lines` | `int32` | |
+| `error` | `utf8`, nullable | a row that failed, with why |
+
+Blob v2 places a value by size: up to 64 KiB inline in the data file, 64 KiB to 4 MiB in shared `.blob` sidecar files,
+larger in its own `.blob` file (thresholds per column). Plain `binary` suits small values read whole (thumbnails, crops
+of a few tens of KB). lance-ray's reader turns blob columns back into bytes (through `take_blobs`), so a Ray reader
+gets `large_binary`. `pa.json_()` columns (stored as JSONB) can be filtered with `json_get_*` if the provenance
+grows into nested metadata.
 
 ## What we don't need, and why
 
@@ -157,6 +202,8 @@ after the tests on the Spark (TODO, "Inference at scale").
   errors (row error field) from device faults (exit the process).
 - A page stays one row through every stage. `PageJob.id` is optional today; a Ray run requires it, unique and stable,
   checked when the jobs are read.
+- The runner writes Parquet (`diffu_runner/run.py`, `write_parquet`); our sink is Lance: `lance_ray.write_lance` with
+  the page schema above (TODO).
 - Choose per run: `max_errored_blocks` (a small backstop), `actor_task_retry_on_errors` (transient errors only),
-  `max_consecutive_actor_init_deaths` (a few), `checkpoint_config` (on), `memory=` and `num_cpus` per stage
-  (measured), the spill directory and `/dev/shm` size.
+  `max_consecutive_actor_init_deaths` (a few), `memory=` and `num_cpus` per stage (measured), `min_rows_per_file`,
+  the spill directory and `/dev/shm` size. `checkpoint_config` stays off with a Lance sink.
