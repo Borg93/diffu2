@@ -42,6 +42,12 @@ FuseLoras = Annotated[
 CompileBlocks = Annotated[
     bool, typer.Option(help="compile the transformer's repeated blocks at load (the first crop pays); fuse LoRAs first")
 ]
+RepairPasses = Annotated[
+    int,
+    typer.Option(
+        "--repair", min=0, help="times a crop's lines the read-back rejects are drawn again in place (0: none)"
+    ),
+]
 
 
 class Lora(BaseModel):
@@ -100,9 +106,11 @@ def settings_from_options(
     fuse_loras: bool,
     compile_blocks: bool,
     label_format: LabelFormat = DEFAULTS.label_format,
+    repair_passes: int = DEFAULTS.repair_passes,
 ) -> DrawSettings:
     """The draw options a command was given, by their parameters' names, as ``DrawSettings``. Each is required, so a
-    command that leaves one out fails the type check; the label format matters only to a command that writes labels."""
+    command that leaves one out fails the type check; the label format and the repair passes matter only to a command
+    that writes labels and keeps its crops."""
     return DrawSettings(
         steps=steps,
         guidance_scale=guidance,
@@ -116,6 +124,7 @@ def settings_from_options(
         sampling_shift=sampling_shift,
         fuse_loras=fuse_loras,
         compile_blocks=compile_blocks,
+        repair_passes=repair_passes,
     )
 
 

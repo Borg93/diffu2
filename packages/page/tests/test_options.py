@@ -48,7 +48,7 @@ def test_generate_sets_each_draw_setting_from_its_option(
     args += ["--reference", str(tmp_path / "ref.png"), "--reference-guidance", "1.5"]  # guidance needs a reference
     args += ["--steps", "3", "--guidance", "2.5", "--guidance-stop", "0.5", "--text-layer", "1", "--text-layer", "2"]
     args += ["--device", "cpu", "--max-line-cer", "0.1", "--format", "page", "--lora-scale", "0.75"]
-    args += ["--sampling-shift", "3", "--fuse-loras", "--compile-blocks"]
+    args += ["--sampling-shift", "3", "--fuse-loras", "--compile-blocks", "--repair", "2"]
 
     CliRunner().invoke(generate_app, args)  # the page plans to no crop, so no model loads
 
@@ -66,4 +66,5 @@ def test_generate_sets_each_draw_setting_from_its_option(
         sampling_shift=3.0,
         fuse_loras=True,
         compile_blocks=True,
+        repair_passes=2,
     )

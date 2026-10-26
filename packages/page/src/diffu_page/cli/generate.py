@@ -61,6 +61,7 @@ from diffu_page.cli.options import (
     MaxLineCer,
     Model,
     ReferenceGuidanceScale,
+    RepairPasses,
     SamplingShift,
     Steps,
     TextLayers,
@@ -73,7 +74,15 @@ from diffu_page.judge import Judge, TrOCRJudge
 from diffu_page.layout import load_xml_layout, running_text
 from diffu_page.local_run import run_each
 from diffu_page.output import JPEG_QUALITY, console
-from diffu_page.pipeline import DEVICE_ERRORS, DrawSettings, crop_blocks, draw_crop, load_pipeline
+from diffu_page.pipeline import (
+    DEVICE_ERRORS,
+    DrawSettings,
+    crop_blocks,
+    draw_crop,
+    load_pipeline,
+    repair_lines,
+    repair_seed,
+)
 from diffu_page.plan import Reference
 from diffu_page.settings import settings
 from diffu_page.styles import StylePreset, read_style_presets
@@ -101,13 +110,15 @@ type LoraJob = tuple[dict[str, Path], CropJob]  # a crop job and the LoRAs that 
 
 
 class CropSummary(BaseModel):
-    """A drawn crop as ``summary.json`` lists it: its name, its template and how well its lines read back."""
+    """A drawn crop as ``summary.json`` lists it: its name, its template, how well its lines read back, and how many
+    of them its repair passes took from unclear to clear (net)."""
 
     name: str
     template: str
     lines: int
     unclear_lines: int
     cer: float
+    repaired: int = 0
 
 
 class PageGroup(BaseModel):
@@ -131,7 +142,7 @@ class Summary(BaseModel):
     failed: dict[str, str]
 
 
-def _save(crop: DrawnCrop, template: Path, out: Path) -> CropSummary:
+def _save(crop: DrawnCrop, template: Path, out: Path, *, repaired: int) -> CropSummary:
     crop.image.save(out / f"{crop.name}.jpg", quality=JPEG_QUALITY)
     (out / f"{crop.name}.xml").write_text(crop.labels_xml, encoding="utf-8")
     return CropSummary(
@@ -140,6 +151,7 @@ def _save(crop: DrawnCrop, template: Path, out: Path) -> CropSummary:
         lines=len(crop.plan.lines),
         unclear_lines=crop.unclear_lines,
         cer=fmean(crop.line_cers),
+        repaired=repaired,
     )
 
 
@@ -148,8 +160,13 @@ def _draw(
 ) -> CropSummary:
     reference = job.reference_image()
     crop = draw_crop(pipe, job.plan, name=job.name, seed=job.seed, reference=reference, settings=settings, judge=judge)
-    result = _save(crop, job.template, out)
-    console.print(f"{crop.name}: CER {result.cer:.3f}, {crop.unclear_lines} unclear lines")
+    drawn_unclear = crop.unclear_lines
+    for repair_pass in range(1, settings.repair_passes + 1):
+        crop = repair_lines(
+            pipe, crop, seed=repair_seed(job.seed, repair_pass), reference=reference, settings=settings, judge=judge
+        )
+    result = _save(crop, job.template, out, repaired=drawn_unclear - crop.unclear_lines)
+    console.print(f"{crop.name}: CER {result.cer:.3f}, {crop.unclear_lines} unclear lines ({result.repaired} repaired)")
     return result
 
 
@@ -381,6 +398,7 @@ def generate(
     sampling_shift: SamplingShift = DEFAULTS.sampling_shift,
     fuse_loras: FuseLoras = DEFAULTS.fuse_loras,
     compile_blocks: CompileBlocks = DEFAULTS.compile_blocks,
+    repair: RepairPasses = DEFAULTS.repair_passes,
     whole_page: Annotated[
         bool, typer.Option("--whole-page/--windows", help="draw each page whole instead of as training-scale windows")
     ] = False,
@@ -405,6 +423,7 @@ def generate(
         fuse_loras=fuse_loras,
         compile_blocks=compile_blocks,
         label_format=label_format,
+        repair_passes=repair,
     )
     presets = style_presets(styles)
     loras = lora_dirs(lora)

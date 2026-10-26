@@ -56,6 +56,7 @@ from diffu_page.plan import CropPlan
 # Errors after which the device cannot be trusted: a run stops there instead of failing every later crop, and is not
 # retried into the same out-of-memory (which once froze the DGX Spark's unified memory)
 DEVICE_ERRORS = (torch.OutOfMemoryError, torch.AcceleratorError)
+REPAIR_SEED_STRIDE = 7919  # between a crop's seed and each repair pass's, so no pass redraws from the crop's own noise
 
 
 class ModelFamily(BaseModel):
@@ -178,6 +179,8 @@ class DrawSettings(BaseModel):
             matmuls per step, and the transformer can be compiled; the LoRAs can't be switched or rescaled after.
         compile_blocks: Compile the transformer's repeated blocks (torch.compile, diffusers' regional compilation) at
             load; the first crop pays for the compilation. A run with LoRAs must fuse them first.
+        repair_passes: How many times a drawn crop's rejected lines are drawn again in place (:func:`repair_lines`),
+            each pass from its own noise (:func:`repair_seed`); 0 keeps every crop as drawn.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -194,6 +197,7 @@ class DrawSettings(BaseModel):
     lora_scale: float = Field(default=1.0, ge=0.0)
     fuse_loras: bool = False
     compile_blocks: bool = False
+    repair_passes: int = Field(default=0, ge=0)
 
     @property
     def guides_reference(self) -> bool:
@@ -279,6 +283,11 @@ def draw_crop(
     return DrawnCrop(
         name=name, plan=plan, image=image, verdicts=verdicts, labels_xml=labels_xml, unclear_lines=unclear_lines
     )
+
+
+def repair_seed(seed: int, repair_pass: int) -> int:
+    """The noise seed of a crop's repair pass ``repair_pass`` (1, 2, ...), given the seed that drew the crop."""
+    return seed + repair_pass * REPAIR_SEED_STRIDE
 
 
 def repair_lines(

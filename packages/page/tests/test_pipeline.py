@@ -355,6 +355,37 @@ def test_draw_pages_stops_when_the_device_fails_and_loads_no_later_group(
     )
 
 
+class FirstReadMisses:
+    """Misreads every line the first time it reads, then reads every line right: a drawing's lines are all rejected,
+    their redraw's all passed."""
+
+    def __init__(self) -> None:
+        self.reads = 0
+
+    def __call__(self, image: Image.Image, lines: Sequence[LineRecord]) -> list[LineVerdict]:
+        self.reads += 1
+        return [LineVerdict.of("" if self.reads == 1 else line.text, line.text) for line in lines]
+
+
+def test_draw_pages_draws_the_rejected_lines_again_and_counts_them_repaired(
+    crop_pipe: ModularPipeline,
+    wide_and_narrow_body_page: Path,
+    tmp_path: Path,
+    page_style: PageStyle,
+    page_text: str,
+) -> None:
+    (job,), _ = plan_jobs(enumerate([PageJob(template=wide_and_narrow_body_page, text=page_text, style=page_style)]))
+    settings = TINY_SETTINGS.model_copy(update={"repair_passes": 1})
+
+    crops, failed = draw_pages(
+        lambda loras: crop_pipe, [({}, job)], settings=settings, out=tmp_path, prof=None, judge=FirstReadMisses()
+    )
+
+    lines = len(job.plan.lines)
+    assert failed == {}
+    assert [(crop.unclear_lines, crop.repaired) for crop in crops] == [(0, lines)]
+
+
 @pytest.mark.parametrize(
     ("option", "refusal"),
     [

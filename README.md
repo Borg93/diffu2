@@ -81,7 +81,10 @@ turn (`summary.json` lists each group's LoRAs and pages):
 
 `--fuse-loras` fuses the LoRAs into the transformer's weights at load: faster for a run that keeps one LoRA (the
 studio keeps its adapters, to switch them per drawer). `--compile-blocks` then compiles the transformer's repeated
-blocks (the first crop pays for the compilation).
+blocks (the first crop pays for the compilation). `--repair N` draws the lines the read-back rejects again in place, up
+to N times, each pass from its own noise and kept only where it reads back; everything else in the crop stays as drawn
+(on four whole 1715 pages one pass fixed 14 of 45 rejected lines and spoiled none; a pass costs about one drawing).
+`summary.json` gives each crop's lines repaired.
 
 In Python, a page planned into crop jobs on CPU, then each crop drawn by the crop pipeline (a Modular Diffusers
 pipeline), as diffu-generate and diffu-runner do it:
