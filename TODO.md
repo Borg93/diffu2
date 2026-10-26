@@ -243,6 +243,10 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
       (text), the glyph arm higher on 21 of 24. Neither writes letters: read-back CER (glyph / text) 1.01 / 0.99 at
       guidance 4, 1.01 / 0.96 at guidance 1 (results.json; the real windows 0.11). The glyph map is the layout control to keep; letter shapes need far more than
       2,000 crops and 3,000 steps of a 618M model from scratch, i.e. pretraining (HPC decision).
+      Found 26 Oct: E1, E1b and E2 trained on the first 2,000 training crops (`--limit 2000`), which are 10 of the 58
+      collections, so 20 of the 24 held-out windows came from volumes they never saw. Not the reason for the missing
+      letters: on the 4 held-out windows from trained volumes E2 wrote none either (glyph arm, guidance 4: CER 1.005
+      against 1.006 on the unseen 20).
 - [x] **FLUX.3's text encoder** (the user, 25 Oct: "use similar architecture as flux ofc ... the same component"):
       diffu now embeds prompts with Qwen3-VL-4B-Instruct (Apache-2.0, from Qwen's repo, byte-identical to FLUX.3
       Klein Base's text_encoder/) and FLUX.3's 8 layers 4, 8, ... 32, its chat template and 80-token windows;
@@ -253,6 +257,9 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
 - [ ] **E2b** (running since 26 Oct 09:12 after the reference diagnosis; `jobs/diffu/run_e2b.sh`, `configs/diffu/diffu_s_e2b_glyph.yaml`): diffu-S on FLUX.3's text encoder
       from E2's glyph-arm weights (all but the text projection), all 11,329 training crops with glyph maps, 10,000
       steps of 8, drawn at steps 5,000 and 10,000: does more data and training start to form letters on the Spark?
+      Queued after it (scratchpad queue_heldin.sh, runs/heldin): E2 and E2b drawn on 24 crops both trained on
+      (`data_flux3/e2_train_eval`: 2-3 from each of the 10 collections of E2's 2,000, seen 12 and ~7 times). Letters
+      there but not on the held-out windows: the data is too little. None even there: how the text reaches the model.
 - [ ] **diffu upgrade plan** (26 Oct; a read-only study of FLUX.3 Klein and Qwen-Image 2.0/2.1: arXiv 2605.10730,
       2605.13565, 2508.02324, the diffusers code of both; Qwen-Image 2.1 is under the Qwen Research License, its VAE
       not usable; Qwen-VAE-2.0's release and licence unverified). Two tracks stay: diffu and the FLUX.3 LoRA path.
