@@ -1,6 +1,6 @@
 """diffu's training cache on CPU with the tiny diffu repo: each crop written where NeMo's TextToImageDataset reads it,
 holding exactly the latents and prompt embeddings diffu's own pipeline steps make at generation, and the empty prompt
-caption dropout trains on."""
+caption dropout trains on; its latents' stats measured, and its latents handed to a repo with other stats."""
 
 from __future__ import annotations
 
@@ -10,9 +10,14 @@ from pathlib import Path
 
 import pytest
 import torch
+from diffusers import Flux3Transformer2DModel
 from diffusers.modular_pipelines import SequentialPipelineBlocks
 from PIL import Image
+from typer.testing import CliRunner
 
+from diffu.configs import DiffuConfig
+from diffu.init import read_latent_stats, write_model_repo, write_vae
+from diffu.latents import LatentStats, vae_stats
 from diffu.modular_pipelines.diffu import DiffuModularPipeline
 from diffu.modular_pipelines.diffu.encoders import DiffuTextEncoderStep
 from diffu.modular_pipelines.diffu.modular_blocks_diffu import DiffuVaeEncoderSequentialStep
@@ -20,10 +25,13 @@ from diffu.modular_pipelines.loading import COMPONENT_DTYPES
 from diffu_page.captions.prompt import LineRecord
 from diffu_page.captions.records import CropRecord
 from diffu_page.glyphs import glyph_map
-from diffu_train.cache import DiffuEncoders, cache_crops, write_metadata
+from diffu_train.cache import DiffuEncoders, cache_crops, cached_files, write_metadata
 from diffu_train.cache_glyphs import cache_glyph_pairs, write_pair_metadata
+from diffu_train.latent_stats import RenormalizedLatents
+from diffu_train.latent_stats import app as latent_stats_app
 
 CAPTIONS = ["Ett protokoll i brun bläck.", "En dombok på gult papper, två rader."]
+PAGES = LatentStats(latents_mean=(0.1, -0.2, 0.3, 0.05), latents_std=(0.5, 0.25, 2.0, 0.75))  # the tiny VAE's 4
 
 
 def _split(directory: Path) -> list[CropRecord]:
@@ -48,6 +56,19 @@ def _split(directory: Path) -> list[CropRecord]:
             )
         )
     return records
+
+
+def _repo_with_stats(tiny_diffu: Path, config: DiffuConfig, stats: LatentStats, out: Path) -> Path:
+    """The tiny diffu with its own VAE normalizing with ``stats``, written as diffu-init --latent-stats writes it."""
+    transformer = Flux3Transformer2DModel.from_pretrained(tiny_diffu, subfolder="transformer")
+    write_model_repo(transformer, config.model_copy(update={"vae": write_vae(config.vae, stats, out)}), out)
+    return out
+
+
+def _glyph_cache(records: list[CropRecord], crops: Path, model: Path, out: Path) -> Path:
+    run = cache_glyph_pairs(records, crops, encoders=DiffuEncoders.load(model, "cpu"), out=out, scale=0.5)
+    write_pair_metadata(run.entries, out, model=model, scale=0.5)
+    return out
 
 
 def _pipeline(blocks: SequentialPipelineBlocks, model: Path) -> DiffuModularPipeline:
@@ -142,3 +163,56 @@ def test_write_metadata_refuses_to_mark_an_empty_cache_finished(tiny_diffu: Path
         write_metadata([], tmp_path, model=tiny_diffu)
 
     assert not (tmp_path / "metadata.json").exists()
+
+
+def test_a_cache_renormalized_for_a_repo_holds_what_that_repo_caches(
+    tiny_diffu: Path, tiny_diffu_config: DiffuConfig, tmp_path: Path
+) -> None:
+    records = _split(tmp_path / "crops")
+    pages = _repo_with_stats(tiny_diffu, tiny_diffu_config, PAGES, tmp_path / "pages")
+    cached = [
+        torch.load(path, weights_only=True)
+        for path in cached_files(_glyph_cache(records, tmp_path / "crops", tiny_diffu, tmp_path / "cache"))
+    ]
+    expected = [
+        torch.load(path, weights_only=True)
+        for path in cached_files(_glyph_cache(records, tmp_path / "crops", pages, tmp_path / "pages_cache"))
+    ]
+
+    renormalized = RenormalizedLatents(cached, cached=vae_stats(tiny_diffu), wanted=vae_stats(pages))
+
+    for k, sample in enumerate(expected):
+        torch.testing.assert_close(renormalized[k]["target_latent"], sample["target_latent"])
+        torch.testing.assert_close(renormalized[k]["context_latents"][0], sample["context_latents"][0])
+
+
+def test_latent_stats_of_a_cache_are_the_mean_and_std_of_its_crops_raw_latents(
+    tiny_diffu: Path, tiny_diffu_config: DiffuConfig, tmp_path: Path
+) -> None:
+    records = _split(tmp_path / "crops")
+    unit = LatentStats(latents_mean=(0.0,) * 4, latents_std=(1.0,) * 4)  # a VAE that caches its raw latents
+    raw = _repo_with_stats(tiny_diffu, tiny_diffu_config, unit, tmp_path / "raw")
+    raw_latents = torch.cat(
+        [
+            torch.load(path, weights_only=True)["target_latent"]
+            .double()
+            .reshape(4, -1)  # VAE channel c: packed 4c-4c+3
+            for path in cached_files(_glyph_cache(records, tmp_path / "crops", raw, tmp_path / "raw_cache"))
+        ],
+        dim=1,
+    )
+    cache = _glyph_cache(records, tmp_path / "crops", tiny_diffu, tmp_path / "cache")
+
+    result = CliRunner().invoke(latent_stats_app, ["--cache", str(cache), "--out", str(tmp_path / "stats.json")])
+
+    assert result.exit_code == 0, result.output
+    stats = read_latent_stats(tmp_path / "stats.json", channels=4)
+    torch.testing.assert_close(
+        torch.tensor(stats.latents_mean, dtype=torch.float64), raw_latents.mean(dim=1), rtol=1e-5, atol=1e-6
+    )
+    torch.testing.assert_close(
+        torch.tensor(stats.latents_std, dtype=torch.float64),
+        raw_latents.std(dim=1, correction=0),
+        rtol=1e-5,
+        atol=1e-6,
+    )

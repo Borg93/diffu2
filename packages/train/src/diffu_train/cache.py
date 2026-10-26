@@ -15,7 +15,7 @@ import hashlib
 import json
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Self
+from typing import Any, Self
 
 import torch
 import typer
@@ -236,3 +236,38 @@ def write_metadata(entries: list[CacheEntry], out: Path, *, model: Path) -> None
         "shards": shards,
     }
     (out / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+
+
+def _finished_metadata(cache: Path) -> dict[str, Any]:
+    path = cache / "metadata.json"
+    if not path.is_file():
+        raise ValueError(f"{cache} is not a finished cache: no metadata.json")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def cache_model(cache: Path) -> Path:
+    """The diffu repo whose encoders made the finished cache at ``cache``: its ``metadata.json``'s ``model_name``, at
+    its top (``write_metadata``) or in its ``preprocessing_config`` (``diffu_train.cache_glyphs``).
+
+    Raises:
+        ValueError: If the cache is not finished, or names no model.
+    """
+    metadata = _finished_metadata(cache)
+    name = metadata.get("model_name") or metadata.get("preprocessing_config", {}).get("model_name")
+    if not name:
+        raise ValueError(f"{cache / 'metadata.json'} names no model")
+    return Path(name)
+
+
+def cached_files(cache: Path) -> list[Path]:
+    """Every cached item's file in the finished cache at ``cache``, in its shards' order.
+
+    Raises:
+        ValueError: If the cache is not finished.
+    """
+    rows = (
+        row
+        for shard in _finished_metadata(cache)["shards"]
+        for row in json.loads((cache / shard).read_text(encoding="utf-8"))
+    )
+    return [cache / row["cache_file"] for row in rows]

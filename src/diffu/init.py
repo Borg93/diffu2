@@ -2,9 +2,12 @@
 
     diffu-init --size S --out runs/diffu/init_s
     diffu-init --size S --out runs/diffu/init_s_vl --weights-from runs/diffu_s_e2_glyph/model
+    diffu-init --size S --out runs/diffu/init_s_pages --latent-stats runs/diffu/pages_latent_stats.json
 
 With ``--weights-from`` the new model starts from a trained diffu's weights wherever their shapes agree; the rest (the
-text projection, when the text encoder changed) keep their fresh init.
+text projection, when the text encoder changed) keep their fresh init. With ``--latent-stats`` (our pages' latent mean
+and standard deviation per channel, ``python -m diffu_train.latent_stats``) the repo keeps its own copy of the VAE,
+normalizing latents with those stats instead of Qwen-Image's, which were measured on photos and video.
 
 Writes ``<out>/transformer/`` (config and weights) and ``<out>/modular_model_index.json``, which names the pipeline
 and its blocks, the text layers, and the text encoder and VAE by pinned Hub revision. NeMo AutoModel's finetune mode
@@ -21,10 +24,12 @@ import diffusers
 import torch
 import typer
 from diffusers import AutoencoderKLQwenImage, Flux3Transformer2DModel
+from pydantic import ValidationError
 from rich.console import Console
 from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 
-from diffu.configs import SIZES, DiffuConfig, SizeName
+from diffu.configs import SIZES, DiffuConfig, SizeName, Vae
+from diffu.latents import LatentStats
 from diffu.modular_pipelines.diffu import DiffuAutoBlocks, DiffuModularPipeline
 from diffu.repo import INDEX, ModelIndex, index_entry
 
@@ -100,6 +105,37 @@ def model_index(config: DiffuConfig, repo: Path) -> ModelIndex:
     )
 
 
+def write_vae(vae: Vae, stats: LatentStats, out: Path) -> Vae:
+    """``vae``'s weights saved as the repo at ``out``'s own VAE, which normalizes latents with ``stats``.
+
+    Returns:
+        The repo's own VAE, to name in its model index.
+    """
+    model = AutoencoderKLQwenImage.from_pretrained(
+        vae.repo, revision=vae.revision, subfolder=vae.subfolder, **stats.model_dump(mode="json")
+    )
+    model.save_pretrained(out / "vae")
+    return vae.model_copy(update={"repo": str(out.resolve()), "revision": None, "subfolder": "vae"})
+
+
+def read_latent_stats(path: Path, *, channels: int) -> LatentStats:
+    """The latent stats in ``path``, checked to have one mean and standard deviation per VAE channel.
+
+    Raises:
+        typer.BadParameter: If the file holds no latent stats, or stats of another channel count.
+    """
+    try:
+        stats = LatentStats.model_validate_json(path.read_text(encoding="utf-8"))
+    except ValidationError as error:
+        raise typer.BadParameter(f"{path} holds no latent stats: {error}", param_hint="--latent-stats") from error
+    if len(stats.latents_mean) != channels:
+        raise typer.BadParameter(
+            f"{path} holds stats of {len(stats.latents_mean)} channels; the VAE has {channels}",
+            param_hint="--latent-stats",
+        )
+    return stats
+
+
 def write_model_repo(transformer: Flux3Transformer2DModel, config: DiffuConfig, out: Path) -> None:
     """Save ``transformer`` and the model index into ``out``, making it a diffu model repo."""
     transformer.save_pretrained(out / "transformer")
@@ -114,6 +150,12 @@ def main(
     weights_from: Annotated[
         Path | None, typer.Option(help="a trained diffu repo to start from wherever the shapes agree")
     ] = None,
+    latent_stats: Annotated[
+        Path | None,
+        typer.Option(
+            exists=True, dir_okay=False, help="our pages' latent stats, for the repo's own VAE to normalize with"
+        ),
+    ] = None,
 ) -> None:
     """Write a diffu model repo with freshly initialised weights, or a trained one's where they fit."""
     if (out / INDEX).exists():
@@ -121,10 +163,14 @@ def main(
     if weights_from is not None and not (weights_from / INDEX).exists():
         raise typer.BadParameter(f"{weights_from} holds no diffu model", param_hint="--weights-from")
     config = DiffuConfig(size=SIZES[size])
+    stats = None if latent_stats is None else read_latent_stats(latent_stats, channels=config.vae.latent_channels)
     transformer = init_transformer(config, seed=seed)
     if weights_from is not None:
         fresh = warm_start(transformer, weights_from)
         console.print(f"from {weights_from}: all weights but {', '.join(fresh) or 'none'}")
+    if stats is not None:
+        config = config.model_copy(update={"vae": write_vae(config.vae, stats, out)})
+        console.print(f"its own VAE, normalizing with the stats in {latent_stats}")
     write_model_repo(transformer, config, out)
     parameters = sum(parameter.numel() for parameter in transformer.parameters())
     console.print(f"diffu-{size}: {parameters / 1e6:.1f}M parameters -> {out}")

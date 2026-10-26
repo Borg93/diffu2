@@ -25,6 +25,16 @@ def index_entry(library: str, cls: type, *, repo: str, revision: str | None, sub
     return [library, cls.__name__, spec]
 
 
+class ComponentSource(BaseModel):
+    """Where a model index loads a component from: a Hub repo at a pinned revision, or a local directory."""
+
+    model_config = ConfigDict(frozen=True, populate_by_name=True)
+
+    repo: str = Field(alias="pretrained_model_name_or_path")
+    revision: str | None
+    subfolder: str
+
+
 class ModelIndex(BaseModel):
     """A model index: the blocks class it names, and its other entries (the pipeline class, component entries, diffu's
     text layers) kept as they are."""
@@ -47,6 +57,17 @@ class ModelIndex(BaseModel):
             return cls.model_validate_json(path.read_text(encoding="utf-8"))
         except ValidationError as error:
             raise ValueError(f"{path} names no _blocks_class_name: {error.error_count()} errors") from error
+
+    def source(self, component: str) -> ComponentSource:
+        """Where ``component`` loads from, as :func:`index_entry` wrote it.
+
+        Raises:
+            ValueError: If the index names no such component.
+        """
+        entry = (self.model_extra or {}).get(component)
+        if not isinstance(entry, list) or len(entry) != 3:
+            raise ValueError(f"the model index names no {component}")
+        return ComponentSource.model_validate(entry[2])
 
     def with_components(self, components: dict[str, list[object]]) -> ModelIndex:
         """This index with ``components`` (index entries by component name) loading from where they name."""

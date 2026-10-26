@@ -20,7 +20,7 @@ from diffu.configs import DiffuConfig
 from diffu.export import app as export_app
 from diffu.export import export
 from diffu.init import app, init_transformer, warm_start, write_model_repo
-from diffu.latents import patchify, unpatchify
+from diffu.latents import LatentStats, patchify, unpatchify
 from diffu.modular_pipelines.diffu import DiffuModularPipeline
 from diffu.modular_pipelines.diffu.encoders import prompt_embeds
 from diffu.repo import INDEX
@@ -122,6 +122,16 @@ def test_warm_start_keeps_a_trained_models_weights_but_the_new_text_projection(
 
 def test_diffu_init_refuses_weights_from_a_directory_that_holds_no_model(tmp_path: Path) -> None:
     result = CliRunner().invoke(app, ["--out", str(tmp_path / "new"), "--weights-from", str(tmp_path)])
+
+    assert result.exit_code == 2
+    assert not (tmp_path / "new").exists()
+
+
+def test_diffu_init_refuses_latent_stats_of_another_vae_before_it_writes(tmp_path: Path) -> None:
+    stats = tmp_path / "stats.json"
+    stats.write_text(LatentStats(latents_mean=(0.0,) * 4, latents_std=(1.0,) * 4).model_dump_json())  # the VAE has 16
+
+    result = CliRunner().invoke(app, ["--out", str(tmp_path / "new"), "--latent-stats", str(stats)])
 
     assert result.exit_code == 2
     assert not (tmp_path / "new").exists()
