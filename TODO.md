@@ -30,6 +30,21 @@ What is known to be wrong or unfinished. Remove an item when it is done; add the
   - [ ] A style as one name: a preset holding the hand's LoRA, the archive and years, the look and a reference, so a
         job names its style instead of repeating it (the LoRA is per run today, so a run is one hand).
 
+## A third path: MOSS-Image (the user, 26 Oct)
+
+- [ ] **MOSS-Image** (github.com/OpenMOSS/MOSS-Image, its docs site `website/index.html`), fine-tuned with
+      KohakuMossTrainer (github.com/KohakuBlueleaf/KohakuMossTrainer and its `docs/`): can it be a third path beside
+      diffu and the FLUX.3 LoRAs? Its prompt-enhancer skill is installed (user scope, every file read first). Its Layout
+      prompt is a summary caption plus one item per element, a text item carrying its exact text and a pixel box, which
+      a PAGE/ALTO page gives line by line. Two read-only studies are running (scratchpad moss_image/report.md and
+      trainer_report.md):
+      - the model: architecture, the licence of code and weights (can its outputs train VLMs?), text rendering (dense,
+        small, cursive, Swedish), layout control, reference images;
+      - running it on the GB10: diffusers-native or custom code (`trust_remote_code` stays off), memory, aarch64 and
+        sm_121;
+      - the trainer: LoRA or full fine-tune, data format, aarch64 builds of its dependencies, memory on the GB10.
+      Then a first test against the FLUX.3 hand LoRAs on the same held-out windows.
+
 ## Repo structure
 
 Done 2026-10-21.
