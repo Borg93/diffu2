@@ -11,7 +11,6 @@ cached it writes no ``metadata.json``, the file a finished cache is known by.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Annotated
 
@@ -19,8 +18,8 @@ import typer
 from nemo_automodel.components.datasets.diffusion.multi_tier_bucketing import MultiTierBucketCalculator
 
 from diffu_page.captions.records import read_records
-from diffu_page.output import console, err_console
-from diffu_train.cache import DiffuEncoders, cache_crops, write_empty_prompt, write_metadata
+from diffu_page.output import console
+from diffu_train.cache import DiffuEncoders, cache_crops, finish_run, write_empty_prompt, write_metadata
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 
@@ -50,15 +49,9 @@ def main(
         bucket_id=lambda width, height: calculator.get_bucket_for_image(width, height)["id"],
         scale=scale,
     )
-    (out / "failed.json").write_text(json.dumps(run.failed, indent=1), encoding="utf-8")
-    if run.failed:
-        err_console.print(f"{len(run.failed)} of {len(records)} crops failed: see {out / 'failed.json'}")
-    if not run.entries:  # no metadata.json: it marks a finished cache
-        raise typer.Exit(code=1)
+    finish_run(run.entries, run.failed, total=len(records), out=out)
     write_metadata(run.entries, out, model=model)
     console.print(f"cached {len(run.entries)} of {len(records)} crops -> {out}")
-    if run.failed:
-        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":

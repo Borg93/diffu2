@@ -53,6 +53,19 @@ def test_plan_whole_page_draws_every_line_of_the_page_at_the_pixels_asked_for(bo
     assert [plan.lines[i].text for i in plan.reading_order][-2:] == ["note 0", "note 1"]
 
 
+def test_plan_whole_page_keeps_every_ruled_line_of_the_page(table_page: Path) -> None:
+    layout = load_xml_layout(table_page)
+
+    plan = plan_whole_page(layout, STYLE, pixels=1_000_000)
+
+    assert len(plan.rules) == len(layout.rules) == 5
+
+
+def test_plan_whole_page_refuses_a_page_with_no_line_of_text() -> None:
+    with pytest.raises(ValueError, match="no line of text"):
+        plan_whole_page(Layout(width=1000, height=1000), STYLE, pixels=1_000_000)
+
+
 def test_plan_keeps_every_row_of_a_table_whole_in_its_windows(table_page: Path) -> None:
     layout = load_xml_layout(table_page)
     cells_per_row = Counter(line.cell.row for line in layout.lines if line.cell is not None)

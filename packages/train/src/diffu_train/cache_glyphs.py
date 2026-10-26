@@ -22,8 +22,17 @@ from pydantic import BaseModel
 
 from diffu_page.captions.records import CropRecord, read_records
 from diffu_page.glyphs import glyph_map
-from diffu_page.output import console, err_console
-from diffu_train.cache import SHARD_SIZE, DiffuEncoders, encode_image, encode_prompt, window, write_empty_prompt
+from diffu_page.local_run import run_each
+from diffu_page.output import console
+from diffu_train.cache import (
+    DiffuEncoders,
+    encode_image,
+    encode_prompt,
+    finish_run,
+    window,
+    write_empty_prompt,
+    write_shards,
+)
 
 SAMPLES = "samples"
 
@@ -107,12 +116,13 @@ def cache_glyph_pairs(
     recorded with its error and the rest are still cached."""
     (out / SAMPLES).mkdir(parents=True, exist_ok=True)
     entries: list[PairEntry] = []
-    failed: dict[str, str] = {}
-    for record in records:
-        try:
-            entries.append(_cache_pair(len(entries), record, crops_dir, encoders=encoders, out=out, scale=scale))
-        except Exception as error:  # one unreadable crop must not end a cache of thousands
-            failed[record.file_name] = f"{type(error).__name__}: {error}"
+
+    def cache_pair(record: CropRecord) -> PairEntry:
+        entry = _cache_pair(len(entries), record, crops_dir, encoders=encoders, out=out, scale=scale)
+        entries.append(entry)  # the next pair's sample number counts only the pairs cached so far
+        return entry
+
+    _, failed = run_each(records, cache_pair, key=lambda record: record.file_name)
     return PairRun(entries=entries, failed=failed)
 
 
@@ -123,14 +133,7 @@ def write_pair_metadata(entries: list[PairEntry], out: Path, *, model: Path, sca
     Raises:
         ValueError: If ``entries`` is empty: a cache that holds nothing is not finished.
     """
-    if not entries:
-        raise ValueError(f"nothing was cached into {out}: no metadata.json marks it finished")
-    shards: list[str] = []
-    for start in range(0, len(entries), SHARD_SIZE):
-        name = f"metadata_shard_{start // SHARD_SIZE:04d}.json"
-        rows = [entry.model_dump(mode="json") for entry in entries[start : start + SHARD_SIZE]]
-        (out / name).write_text(json.dumps(rows, indent=1), encoding="utf-8")
-        shards.append(name)
+    shards = write_shards(entries, out)
     metadata = {
         "preprocessing_config": {"processor": "diffu_train.cache_glyphs", "model_name": str(model), "scale": scale},
         "row_limit": len(entries),
@@ -154,11 +157,7 @@ def main(
     encoders = DiffuEncoders.load(model, device)
     write_empty_prompt(encoders, out)  # first: seconds, where the crops take hours
     run = cache_glyph_pairs(records, crops, encoders=encoders, out=out, scale=scale)
-    (out / "failed.json").write_text(json.dumps(run.failed, indent=1), encoding="utf-8")
-    if run.failed:
-        err_console.print(f"{len(run.failed)} of {len(records)} crops failed: see {out / 'failed.json'}")
-    if not run.entries:  # no metadata.json: it marks a finished cache
-        raise typer.Exit(code=1)
+    finish_run(run.entries, run.failed, total=len(records), out=out)
     write_pair_metadata(run.entries, out, model=model, scale=scale)
     console.print(f"{len(run.entries)} pairs -> {out}")
 

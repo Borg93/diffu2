@@ -19,10 +19,11 @@ from typer.testing import CliRunner
 from diffu.configs import DiffuConfig
 from diffu.export import app as export_app
 from diffu.export import export
-from diffu.init import INDEX, app, init_transformer, warm_start, write_model_repo
+from diffu.init import app, init_transformer, warm_start, write_model_repo
 from diffu.latents import patchify, unpatchify
 from diffu.modular_pipelines.diffu import DiffuModularPipeline
 from diffu.modular_pipelines.diffu.encoders import prompt_embeds
+from diffu.repo import INDEX
 
 
 @pytest.fixture(scope="module")
@@ -114,7 +115,16 @@ def test_warm_start_keeps_a_trained_models_weights_but_the_new_text_projection(
     trained = Flux3Transformer2DModel.from_pretrained(tiny_diffu, subfolder="transformer").state_dict()
     assert fresh == ["context_embedder.weight"]
     assert torch.equal(transformer.context_embedder.weight, fresh_projection)
-    assert all(torch.equal(weight, trained[name]) for name, weight in transformer.state_dict().items() if name not in fresh)
+    assert all(
+        torch.equal(weight, trained[name]) for name, weight in transformer.state_dict().items() if name not in fresh
+    )
+
+
+def test_diffu_init_refuses_weights_from_a_directory_that_holds_no_model(tmp_path: Path) -> None:
+    result = CliRunner().invoke(app, ["--out", str(tmp_path / "new"), "--weights-from", str(tmp_path)])
+
+    assert result.exit_code == 2
+    assert not (tmp_path / "new").exists()
 
 
 def _nemo_checkpoint(path: Path, transformer: Flux3Transformer2DModel | None, *, flow_shift: float) -> Path:

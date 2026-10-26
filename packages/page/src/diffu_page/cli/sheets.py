@@ -19,7 +19,7 @@ from PIL import Image, ImageDraw
 from pydantic import BaseModel
 
 from diffu_page.evalset import generated_path, read_jsonl
-from diffu_page.output import JPEG_QUALITY, console, load_rgb
+from diffu_page.output import JPEG_QUALITY, console, load_rgb, side_by_side
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 
@@ -58,15 +58,8 @@ def label_of(prompt: Prompt, sample: Sample) -> str:
 
 def labelled_row(label: str, panels: list[Image.Image]) -> Image.Image:
     """The panels side by side at ``PANEL_HEIGHT``, under one line of label."""
-    scaled = [p.resize((round(p.width * PANEL_HEIGHT / p.height), PANEL_HEIGHT)) for p in panels]
-    row = Image.new(
-        "RGB", (sum(p.width for p in scaled) + GAP * (len(scaled) - 1), LABEL_HEIGHT + PANEL_HEIGHT), "white"
-    )
+    row = side_by_side(panels, height=PANEL_HEIGHT, gap=GAP, top=LABEL_HEIGHT)
     ImageDraw.Draw(row).text((4, 4), label, fill="black")
-    x = 0
-    for panel in scaled:
-        row.paste(panel, (x, LABEL_HEIGHT))
-        x += panel.width + GAP
     return row
 
 
@@ -87,7 +80,7 @@ def sheets(
 ) -> None:
     """Lay out one contact sheet per template of a steering run."""
     prompts = read_jsonl(steer / "metadata.jsonl", Prompt)
-    results = Results.model_validate_json((run / "results.json").read_text())
+    results = Results.model_validate_json((run / "results.json").read_text(encoding="utf-8"))
     by_template: dict[int, list[Image.Image]] = defaultdict(list)
     for sample in results.samples:
         prompt = prompts[sample.index]

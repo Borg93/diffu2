@@ -14,7 +14,6 @@ and its blocks, the text layers, and the text encoder and VAE by pinned Hub revi
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Annotated
 
@@ -27,11 +26,10 @@ from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 
 from diffu.configs import SIZES, DiffuConfig, SizeName
 from diffu.modular_pipelines.diffu import DiffuAutoBlocks, DiffuModularPipeline
+from diffu.repo import INDEX, ModelIndex, index_entry
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 console = Console()
-
-INDEX = "modular_model_index.json"
 
 
 def init_transformer(config: DiffuConfig, *, seed: int) -> Flux3Transformer2DModel:
@@ -68,51 +66,44 @@ def warm_start(transformer: Flux3Transformer2DModel, source: Path) -> list[str]:
     return fresh
 
 
-def index_entry(library: str, cls: type, *, repo: str, revision: str | None, subfolder: str) -> list[object]:
-    """One component of a modular_model_index.json: its library, its class and where it loads from."""
-    spec = {
-        "pretrained_model_name_or_path": repo,
-        "revision": revision,
-        "subfolder": subfolder,
-        "type_hint": [library, cls.__name__],
-        "variant": None,
-    }
-    return [library, cls.__name__, spec]
-
-
-def model_index(config: DiffuConfig, repo: Path) -> dict[str, object]:
+def model_index(config: DiffuConfig, repo: Path) -> ModelIndex:
     """The ``modular_model_index.json`` of a diffu repo at ``repo``: its pipeline and block classes, its text layers,
     and where each component loads from (the transformer from the repo itself)."""
     text, vae = config.text_encoder, config.vae
-    return {
-        "_blocks_class_name": DiffuAutoBlocks.__name__,
-        "_class_name": DiffuModularPipeline.__name__,
-        "_diffusers_version": diffusers.__version__,
-        "text_layers": list(text.layers),
-        "text_encoder": index_entry(
-            "transformers",
-            Qwen3VLForConditionalGeneration,
-            repo=text.repo,
-            revision=text.revision,
-            subfolder=text.encoder_subfolder,
-        ),
-        "tokenizer": index_entry(
-            "transformers", AutoProcessor, repo=text.repo, revision=text.revision, subfolder=text.processor_subfolder
-        ),
-        "transformer": index_entry(
-            "diffusers", Flux3Transformer2DModel, repo=str(repo), revision=None, subfolder="transformer"
-        ),
-        "vae": index_entry(
-            "diffusers", AutoencoderKLQwenImage, repo=vae.repo, revision=vae.revision, subfolder=vae.subfolder
-        ),
-    }
+    return ModelIndex.model_validate(
+        {
+            "_blocks_class_name": DiffuAutoBlocks.__name__,
+            "_class_name": DiffuModularPipeline.__name__,
+            "_diffusers_version": diffusers.__version__,
+            "text_layers": list(text.layers),
+            "text_encoder": index_entry(
+                "transformers",
+                Qwen3VLForConditionalGeneration,
+                repo=text.repo,
+                revision=text.revision,
+                subfolder=text.encoder_subfolder,
+            ),
+            "tokenizer": index_entry(
+                "transformers",
+                AutoProcessor,
+                repo=text.repo,
+                revision=text.revision,
+                subfolder=text.processor_subfolder,
+            ),
+            "transformer": index_entry(
+                "diffusers", Flux3Transformer2DModel, repo=str(repo), revision=None, subfolder="transformer"
+            ),
+            "vae": index_entry(
+                "diffusers", AutoencoderKLQwenImage, repo=vae.repo, revision=vae.revision, subfolder=vae.subfolder
+            ),
+        }
+    )
 
 
 def write_model_repo(transformer: Flux3Transformer2DModel, config: DiffuConfig, out: Path) -> None:
     """Save ``transformer`` and the model index into ``out``, making it a diffu model repo."""
     transformer.save_pretrained(out / "transformer")
-    index = json.dumps(model_index(config, out.resolve()), indent=2)
-    (out / INDEX).write_text(f"{index}\n", encoding="utf-8")
+    model_index(config, out.resolve()).write(out)
 
 
 @app.command()

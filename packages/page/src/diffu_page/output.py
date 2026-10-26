@@ -21,6 +21,18 @@ def jpeg_bytes(image: Image.Image) -> bytes:
     return buffer.getvalue()
 
 
+def side_by_side(panels: list[Image.Image], *, height: int, gap: int, top: int = 0) -> Image.Image:
+    """The panels scaled to ``height`` and pasted left to right ``gap`` px apart on white, ``top`` px down (room for a
+    label above them)."""
+    scaled = [panel.convert("RGB").resize((round(panel.width * height / panel.height), height)) for panel in panels]
+    sheet = Image.new("RGB", (sum(p.width for p in scaled) + gap * (len(scaled) - 1), top + height), "white")
+    x = 0
+    for panel in scaled:
+        sheet.paste(panel, (x, top))
+        x += panel.width + gap
+    return sheet
+
+
 def load_rgb(path: Path) -> Image.Image:
     """The image at ``path``, read whole and as RGB (the file is closed when it returns)."""
     with Image.open(path) as image:

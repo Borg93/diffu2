@@ -26,7 +26,7 @@ from diffu_page.blocks import DrawnCrop, crop_identity
 from diffu_page.captions.prompt import PageStyle
 from diffu_page.crops.geometry import pixel_box
 from diffu_page.layout import load_xml_layout, running_text
-from diffu_page.output import JPEG_QUALITY, jpeg_bytes, plain_file_name
+from diffu_page.output import JPEG_QUALITY, jpeg_bytes, plain_file_name, side_by_side
 from diffu_page.pipeline import DrawSettings, PagePlanBlocks, crop_blocks, draw_crop, load_pipeline
 from diffu_page.plan import CropPlan
 from diffu_studio.graph import draw_fn
@@ -108,19 +108,12 @@ def crop_sheet(crops: list[DrawnCrop]) -> Image.Image:
     """The crops side by side at :data:`SHEET_HEIGHT`, each with its line boxes outlined."""
     panels: list[Image.Image] = []
     for crop in crops:
-        panel = crop.image.convert("RGB").resize(
-            (round(crop.image.width * SHEET_HEIGHT / crop.image.height), SHEET_HEIGHT)
-        )
+        panel = crop.image.convert("RGB")
         draw = ImageDraw.Draw(panel)
         for line in crop.plan.lines:
             draw.rectangle(pixel_box(line.bbox, panel.size), outline=(220, 40, 40))
         panels.append(panel)
-    sheet = Image.new("RGB", (sum(p.width for p in panels) + SHEET_GAP * (len(panels) - 1), SHEET_HEIGHT), "white")
-    x = 0
-    for panel in panels:
-        sheet.paste(panel, (x, 0))
-        x += panel.width + SHEET_GAP
-    return sheet
+    return side_by_side(panels, height=SHEET_HEIGHT, gap=SHEET_GAP)
 
 
 class DrawNode:
@@ -187,9 +180,8 @@ class DrawNode:
         return media(sheet), media(archive)
 
 
-def load_draw_nodes(drawers: list[Drawer], *, settings: DrawSettings, out: Path) -> dict[str, DrawNode]:
-    """A draw node per drawer, by its bound function's name (:func:`diffu_studio.graph.draw_fn`); each model is loaded
-    once, with every LoRA its drawers use.
+def model_loras(drawers: list[Drawer], *, settings: DrawSettings) -> dict[Path, dict[str, Path]]:
+    """Each model the drawers draw with and every LoRA its drawers use, checked before any model loads.
 
     Raises:
         ValueError: If two drawers share a name (it names their node), two drawers name the same adapter of one model
@@ -209,6 +201,13 @@ def load_draw_nodes(drawers: list[Drawer], *, settings: DrawSettings, out: Path)
     switched = [model for model in loras_of if len({frozenset(d.loras) for d in drawers if d.model == model}) > 1]
     if settings.fuse_loras and switched:
         raise ValueError(f"the drawers of {switched} switch LoRAs per drawer, which fused LoRAs cannot: draw unfused")
+    return loras_of
+
+
+def load_draw_nodes(drawers: list[Drawer], *, settings: DrawSettings, out: Path) -> dict[str, DrawNode]:
+    """A draw node per drawer, by its bound function's name (:func:`diffu_studio.graph.draw_fn`); each model is loaded
+    once, with every LoRA its drawers use (:func:`model_loras`, which checks them first)."""
+    loras_of = model_loras(drawers, settings=settings)
     pipes = {
         model: load_pipeline(model, crop_blocks, loras=loras, settings=settings) for model, loras in loras_of.items()
     }

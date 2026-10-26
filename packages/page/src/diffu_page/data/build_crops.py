@@ -37,6 +37,7 @@ from diffu_page.captions.records import CropRecord, crop_record
 from diffu_page.crops.geometry import CropSettings, Region, crops_for_page, regions_of
 from diffu_page.layout import load_xml_layout
 from diffu_page.layout.page_xml import local_name
+from diffu_page.local_run import describe
 from diffu_page.output import console, err_console, load_rgb
 
 TILE_QUALITY = 95  # the training tiles: what the LoRAs learn from, a step above the drawn crops
@@ -74,7 +75,7 @@ def sample_pages(collection_dir: Path, count: int, rng: random.Random) -> tuple[
         try:
             page = _load_page(collection_dir, xml_path)
         except Exception as error:  # one unreadable page (a truncated XML) must not end the build; it is reported
-            failed[str(xml_path.relative_to(collection_dir.parent))] = f"{type(error).__name__}: {error}"
+            failed[str(xml_path.relative_to(collection_dir.parent))] = describe(error)
             continue
         if page is not None:
             pages.append(page)
@@ -179,7 +180,7 @@ def build(
                     try:
                         records = write_crops(page, out / split, settings)
                     except Exception as error:  # one unreadable page must not end the build; it is reported
-                        failed[str(page.path)] = f"{type(error).__name__}: {error}"
+                        failed[str(page.path)] = describe(error)
                         continue
                     metadata[split].writelines(f"{record.model_dump_json()}\n" for record in records)
                     totals.update(pages=1, crops=len(records), lines=sum(len(record.lines) for record in records))

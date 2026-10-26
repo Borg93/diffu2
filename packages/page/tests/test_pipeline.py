@@ -28,6 +28,7 @@ from diffu_page.cli.generate import Summary, draw_pages, plan_jobs
 from diffu_page.cli.generate import app as generate_app
 from diffu_page.crops.grid import as_reference
 from diffu_page.jobs import PageJob
+from diffu_page.local_run import NOT_RUN
 from diffu_page.lora import ADAPTER_CONFIG, ADAPTER_WEIGHTS, nemo_lora_state_dict
 from diffu_page.pipeline import DrawSettings, crop_blocks, draw_crop, load_pipeline, model_family
 from diffu_page.plan import CropPlan, Reference
@@ -161,7 +162,7 @@ def test_draw_pages_stops_when_the_device_fails_and_records_the_crops_left_undra
         [],
         {
             "000_two_columns_0": "OutOfMemoryError: CUDA out of memory",
-            "000_two_columns_1": "not drawn: the device failed on an earlier crop",
+            "000_two_columns_1": NOT_RUN,
         },
     )
 

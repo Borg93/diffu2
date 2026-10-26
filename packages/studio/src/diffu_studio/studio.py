@@ -36,7 +36,7 @@ from diffu_page.output import console
 from diffu_page.pipeline import DrawSettings
 from diffu_page.settings import settings
 from diffu_studio.graph import PLAN, studio_graph
-from diffu_studio.nodes import Drawer, load_draw_nodes, plan_node
+from diffu_studio.nodes import Drawer, load_draw_nodes, model_loras, plan_node
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 
@@ -102,9 +102,10 @@ def main(
     drawers = with_loras(drawer or [Drawer(name="flux3", model=required_model(settings.flux3_model))], lora or [])
     draw_settings = DrawSettings(guidance_scale=guidance, text_layers=text_layers(text_layer), device=device)
     try:
-        studio = build_studio(drawers, settings=draw_settings, out=out)
+        model_loras(drawers, settings=draw_settings)
     except ValueError as error:  # the drawers or settings, refused before a model loads
         raise typer.BadParameter(str(error)) from error
+    studio = build_studio(drawers, settings=draw_settings, out=out)
     console.print(f"diffu studio: {', '.join(d.name for d in drawers)} on port {port}, writing to {out}")
     studio.launch(server_port=port, allowed_paths=[str(out)])
 

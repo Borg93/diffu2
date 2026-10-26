@@ -58,7 +58,8 @@ from diffu_page.cli.options import (
 from diffu_page.jobs import CropJob, PageJob, crop_jobs
 from diffu_page.judge import Judge, TrOCRJudge
 from diffu_page.layout import load_xml_layout, running_text
-from diffu_page.output import JPEG_QUALITY, console, err_console
+from diffu_page.local_run import run_each
+from diffu_page.output import JPEG_QUALITY, console
 from diffu_page.pipeline import DEVICE_ERRORS, DrawSettings, crop_blocks, draw_crop, load_pipeline
 from diffu_page.plan import Reference
 from diffu_page.settings import settings
@@ -112,15 +113,12 @@ def _draw(pipe: ModularPipeline, job: CropJob, *, settings: DrawSettings, out: P
 
 def plan_jobs(pages: list[PageJob]) -> tuple[list[CropJob], dict[str, str]]:
     """Every page's crop jobs, and the error of each page that cannot be planned, by page name (CPU)."""
-    jobs: list[CropJob] = []
-    failed: dict[str, str] = {}
-    for index, page in enumerate(pages):
-        try:
-            jobs.extend(crop_jobs(page, index))
-        except Exception as error:  # one page must not end a long run; the summary records it
-            failed[page.name_at(index)] = f"{type(error).__name__}: {error}"
-            err_console.print(f"{page.name_at(index)} failed: {failed[page.name_at(index)]}")
-    return jobs, failed
+    planned, failed = run_each(
+        list(enumerate(pages)),
+        lambda indexed: crop_jobs(indexed[1], indexed[0]),
+        key=lambda indexed: indexed[1].name_at(indexed[0]),
+    )
+    return [job for jobs in planned for job in jobs], failed
 
 
 def draw_pages(
@@ -133,24 +131,16 @@ def draw_pages(
     judge: Judge | None = None,
 ) -> tuple[list[CropResult], dict[str, str]]:
     """Every planned crop drawn by the crop pipeline, judged by ``judge`` (the default TrOCR judge if none) and saved;
-    a crop that cannot be drawn is recorded by name with
-    its error and the rest still run, unless the device failed: then every crop after it is recorded as not drawn."""
-    results: list[CropResult] = []
-    failed: dict[str, str] = {}
-    for k, job in enumerate(jobs):
-        try:
-            results.append(_draw(pipe, job, settings=settings, out=out, judge=judge))
-        except DEVICE_ERRORS as error:
-            failed[job.name] = f"{type(error).__name__}: {error}"
-            failed |= {later.name: "not drawn: the device failed on an earlier crop" for later in jobs[k + 1 :]}
-            err_console.print(f"{job.name} failed on the device, the run stops: {failed[job.name]}")
-            break
-        except Exception as error:  # one crop must not cost the page's other crops; the summary records it
-            failed[job.name] = f"{type(error).__name__}: {error}"
-            err_console.print(f"{job.name} failed: {failed[job.name]}")
+    a crop that cannot be drawn is recorded by name with its error and the rest still run, unless the device failed:
+    then every crop after it is recorded as not run (:func:`diffu_page.local_run.run_each`)."""
+
+    def draw(job: CropJob) -> CropResult:
+        result = _draw(pipe, job, settings=settings, out=out, judge=judge)
         if prof is not None:
             prof.step()
-    return results, failed
+        return result
+
+    return run_each(jobs, draw, key=lambda job: job.name, stop_on=DEVICE_ERRORS)
 
 
 def _trace_handler(out: Path) -> Callable[[profile], None]:

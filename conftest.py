@@ -1,6 +1,6 @@
 """Fixtures shared by every workspace member's tests: PAGE pages to plan and draw, a crop and its training record,
 diffusers' tiny FLUX.3 test model (with a VAE that downsamples as FLUX.3's does), and a tiny diffu model repo (a tiny
-Qwen3.5, a tiny Qwen-Image VAE and a tiny transformer, all random weights)."""
+Qwen3-VL (tiny FLUX.3's), a tiny Qwen-Image VAE and a tiny transformer, all random weights)."""
 
 from __future__ import annotations
 

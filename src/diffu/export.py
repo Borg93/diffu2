@@ -12,32 +12,44 @@ and, last, ``<out>/modular_model_index.json``: the init repo's, with the transfo
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Annotated
 
 import typer
 import yaml
 from diffusers import FlowMatchEulerDiscreteScheduler, Flux3Transformer2DModel
+from pydantic import BaseModel, ValidationError
 from rich.console import Console
 
-from diffu.init import INDEX, index_entry
+from diffu.repo import INDEX, ModelIndex, index_entry
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 console = Console()
+
+
+class FlowMatching(BaseModel):
+    """The flow-matching section of a NeMo run's config: the timestep shift it trained at."""
+
+    flow_shift: float
+
+
+class RunConfig(BaseModel):
+    """The part of a NeMo run's ``config.yaml`` an export needs; the rest is kept out."""
+
+    flow_matching: FlowMatching
 
 
 def trained_shift(checkpoint: Path) -> float:
     """The timestep shift ``checkpoint`` trained at: its ``config.yaml``'s ``flow_matching.flow_shift``.
 
     Raises:
-        ValueError: If the config names none: NeMo would have trained at its own default.
+        ValueError: If the config names none (NeMo would have trained at its own default) or is not a mapping.
     """
-    config = yaml.safe_load((checkpoint / "config.yaml").read_text(encoding="utf-8"))
-    shift = config.get("flow_matching", {}).get("flow_shift")
-    if shift is None:
-        raise ValueError(f"{checkpoint}/config.yaml names no flow_matching.flow_shift")
-    return float(shift)
+    path = checkpoint / "config.yaml"
+    try:
+        return RunConfig.model_validate(yaml.safe_load(path.read_text(encoding="utf-8"))).flow_matching.flow_shift
+    except ValidationError as error:
+        raise ValueError(f"{path} names no flow_matching.flow_shift") from error
 
 
 def export(checkpoint: Path, init: Path, out: Path) -> float:
@@ -63,18 +75,20 @@ def export(checkpoint: Path, init: Path, out: Path) -> float:
     if not (transformer / "config.json").is_file():
         raise ValueError(f"{checkpoint} has no consolidated export: export the run's last checkpoint")
     shift = trained_shift(checkpoint)
-    index = json.loads((init / INDEX).read_text(encoding="utf-8"))
+    index = ModelIndex.read(init)
     out.mkdir(parents=True, exist_ok=True)
     (out / "transformer").symlink_to(transformer.resolve(), target_is_directory=True)
     FlowMatchEulerDiscreteScheduler(shift=shift).save_pretrained(out / "scheduler")
     repo = str(out.resolve())
-    index["transformer"] = index_entry(
-        "diffusers", Flux3Transformer2DModel, repo=repo, revision=None, subfolder="transformer"
-    )
-    index["scheduler"] = index_entry(
-        "diffusers", FlowMatchEulerDiscreteScheduler, repo=repo, revision=None, subfolder="scheduler"
-    )
-    (out / INDEX).write_text(f"{json.dumps(index, indent=2)}\n", encoding="utf-8")
+    trained = {
+        "transformer": index_entry(
+            "diffusers", Flux3Transformer2DModel, repo=repo, revision=None, subfolder="transformer"
+        ),
+        "scheduler": index_entry(
+            "diffusers", FlowMatchEulerDiscreteScheduler, repo=repo, revision=None, subfolder="scheduler"
+        ),
+    }
+    index.with_components(trained).write(out)
     return shift
 
 

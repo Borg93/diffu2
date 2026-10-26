@@ -12,7 +12,6 @@ import pytest
 import torch
 from diffusers.modular_pipelines import SequentialPipelineBlocks
 from PIL import Image
-from typer.testing import CliRunner
 
 from diffu.modular_pipelines.diffu import DiffuModularPipeline
 from diffu.modular_pipelines.diffu.encoders import DiffuTextEncoderStep
@@ -23,8 +22,6 @@ from diffu_page.captions.records import CropRecord
 from diffu_page.glyphs import glyph_map
 from diffu_train.cache import DiffuEncoders, cache_crops, write_metadata
 from diffu_train.cache_glyphs import cache_glyph_pairs, write_pair_metadata
-from diffu_train.dropout import EmptyPrompt
-from diffu_train.empty_prompt import app as empty_prompt_app
 
 CAPTIONS = ["Ett protokoll i brun bläck.", "En dombok på gult papper, två rader."]
 
@@ -114,31 +111,6 @@ def test_glyph_cache_pairs_each_scaled_crop_with_its_glyph_map_as_diffus_pipelin
             "contexts": [list(sample["context_latents"][0].shape)],
         }
         assert row["compound_bucket_signature"] == signature == sample["metadata"]["compound_bucket_signature"]
-
-
-def test_empty_prompt_writes_into_a_cache_the_empty_prompt_as_diffus_pipeline_encodes_it(
-    tiny_diffu: Path, tmp_path: Path
-) -> None:
-    (tmp_path / "metadata.json").write_text("{}", encoding="utf-8")
-
-    result = CliRunner().invoke(
-        empty_prompt_app, ["--model", str(tiny_diffu), "--cache", str(tmp_path), "--device", "cpu"]
-    )
-
-    assert result.exit_code == 0, result.output
-    text = _pipeline(SequentialPipelineBlocks.from_blocks_dict({"text_encoder": DiffuTextEncoderStep()}), tiny_diffu)
-    empty = EmptyPrompt.load(tmp_path)
-    assert torch.equal(empty.embeddings, text(prompt="", output="prompt_embeds")[0])
-    assert torch.equal(empty.mask, torch.ones(empty.embeddings.shape[0], dtype=torch.long))
-
-
-def test_empty_prompt_refuses_a_directory_that_holds_no_cache(tiny_diffu: Path, tmp_path: Path) -> None:
-    result = CliRunner().invoke(
-        empty_prompt_app, ["--model", str(tiny_diffu), "--cache", str(tmp_path), "--device", "cpu"]
-    )
-
-    assert result.exit_code == 2
-    assert list(tmp_path.iterdir()) == []
 
 
 def test_cache_records_a_crop_it_cannot_read_and_caches_the_rest(tiny_diffu: Path, tmp_path: Path) -> None:

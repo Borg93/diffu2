@@ -13,13 +13,17 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any, Self
+from typing import Self
 
 import torch
+import typer
+from diffusers import AutoencoderKLQwenImage
+from diffusers.modular_pipelines.flux3.image_processor import Flux3ImageProcessor
 from PIL import Image
 from pydantic import BaseModel, ConfigDict
+from transformers import ProcessorMixin, Qwen3VLForConditionalGeneration
 
 from diffu.latents import encode_latents
 from diffu.modular_pipelines.diffu import DiffuModularPipeline
@@ -27,6 +31,8 @@ from diffu.modular_pipelines.diffu.encoders import MAX_SEQUENCE_LENGTH, prompt_e
 from diffu.modular_pipelines.loading import COMPONENT_DTYPES, require_loaded
 from diffu_page.captions.records import CropRecord
 from diffu_page.crops.grid import scaled
+from diffu_page.local_run import run_each
+from diffu_page.output import err_console
 from diffu_train.dropout import EmptyPrompt
 
 SHARD_SIZE = 1000  # crops per metadata shard, as NeMo's own cache writer shards them
@@ -61,10 +67,10 @@ class DiffuEncoders(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    text_encoder: Any
-    tokenizer: Any
-    vae: Any
-    image_processor: Any
+    text_encoder: Qwen3VLForConditionalGeneration
+    tokenizer: ProcessorMixin  # FLUX.3's name for the text encoder's processor
+    vae: AutoencoderKLQwenImage
+    image_processor: Flux3ImageProcessor
     layers: tuple[int, ...]
     device: str
 
@@ -170,19 +176,17 @@ def cache_crops(
 ) -> CacheRun:
     """Every crop of a split (its records, its images in ``crops_dir``, scaled by ``scale``) cached into ``out``; a
     crop that fails is recorded with its error and the rest are still cached."""
-    entries: list[CacheEntry] = []
-    failed: dict[str, str] = {}
-    for record in records:
-        try:
-            entries.append(_cache_crop(record, crops_dir, encoders=encoders, out=out, bucket_id=bucket_id, scale=scale))
-        except Exception as error:  # one unreadable crop must not end a cache of thousands
-            failed[record.file_name] = f"{type(error).__name__}: {error}"
+    entries, failed = run_each(
+        records,
+        lambda record: _cache_crop(record, crops_dir, encoders=encoders, out=out, bucket_id=bucket_id, scale=scale),
+        key=lambda record: record.file_name,
+    )
     return CacheRun(entries=entries, failed=failed)
 
 
-def write_metadata(entries: list[CacheEntry], out: Path, *, model: Path) -> None:
-    """``out``'s metadata shards and ``metadata.json``, as NeMo's ``TextToImageDataset`` loads them. ``metadata.json``
-    is written last, so it marks a finished cache.
+def write_shards(entries: Sequence[BaseModel], out: Path) -> list[str]:
+    """``entries`` as ``out``'s metadata shards of :data:`SHARD_SIZE` rows each, as NeMo's datasets read them: their
+    names.
 
     Raises:
         ValueError: If ``entries`` is empty: a cache that holds nothing is not finished.
@@ -193,8 +197,35 @@ def write_metadata(entries: list[CacheEntry], out: Path, *, model: Path) -> None
     for start in range(0, len(entries), SHARD_SIZE):
         name = f"metadata_shard_{start // SHARD_SIZE:04d}.json"
         rows = [entry.model_dump(mode="json") for entry in entries[start : start + SHARD_SIZE]]
-        (out / name).write_text(json.dumps(rows, indent=2), encoding="utf-8")
+        (out / name).write_text(json.dumps(rows, indent=1), encoding="utf-8")
         shards.append(name)
+    return shards
+
+
+def finish_run(entries: Sequence[BaseModel], failed: dict[str, str], *, total: int, out: Path) -> None:
+    """A cache run's record: ``failed.json`` in ``out``, a count of the failures on stderr; a run that cached
+    nothing ends the command with exit code 1. A run with some failures goes on: a cache of thousands is not lost to
+    one unreadable crop.
+
+    Raises:
+        typer.Exit: If nothing was cached.
+    """
+    (out / "failed.json").write_text(json.dumps(failed, indent=1), encoding="utf-8")
+    if failed:
+        err_console.print(f"{len(failed)} of {total} crops failed: see {out / 'failed.json'}")
+    if not entries:
+        err_console.print(f"nothing was cached into {out}")
+        raise typer.Exit(code=1)
+
+
+def write_metadata(entries: list[CacheEntry], out: Path, *, model: Path) -> None:
+    """``out``'s metadata shards and ``metadata.json``, as NeMo's ``TextToImageDataset`` loads them. ``metadata.json``
+    is written last, so it marks a finished cache.
+
+    Raises:
+        ValueError: If ``entries`` is empty: a cache that holds nothing is not finished.
+    """
+    shards = write_shards(entries, out)
     metadata = {
         "processor": "diffu",
         "model_name": str(model),

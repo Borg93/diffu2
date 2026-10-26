@@ -110,7 +110,7 @@ def _region_lines(
     return sorted(lines, key=lambda line: line.baseline_y)
 
 
-def _cell_ref(table: ET.Element, table_key: str, cell: ET.Element) -> CellRef | None:
+def _cell_ref(table_key: str, cell: ET.Element) -> CellRef | None:
     """Where a table's child sits: a Transkribus ``TableCell``'s ``@row``/``@col``, a PAGE 2019 ``TextRegion``'s
     ``TableCellRole``; None for any other child.
 
@@ -139,7 +139,7 @@ def _table_lines(table: ET.Element, table_key: str) -> list[TextLine]:
     return [
         line
         for k, cell in enumerate(table)
-        if (ref := _cell_ref(table, table_key, cell)) is not None
+        if (ref := _cell_ref(table_key, cell)) is not None
         for line in _region_lines(cell, LineKind.TABLE, _key(cell, "cell", k), production=production, cell=ref)
     ]
 

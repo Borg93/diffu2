@@ -2,9 +2,8 @@
 Qwen-Image VAE.
 
 Their contracts are FLUX.3's (``Flux3TextEncoderStep``, ``Flux3VaeEncoderStep``), so FLUX.3's own denoise blocks run on
-their outputs unchanged. The prompt embeddings are FLUX.3's own for the same layers (pinned by
-``test_prompt_embeds_are_flux3s``); diffu's step adds the model's own layers as a config, so training caches and drawing
-stack the layers the model was trained on.
+their outputs unchanged. The prompt embeddings are FLUX.3's own for the same layers; diffu's step adds the model's own
+layers as a config, so training caches and drawing stack the layers the model was trained on.
 """
 
 from __future__ import annotations
@@ -48,7 +47,9 @@ def prompt_embeds(
     As FLUX.3 embeds a prompt: through the chat template, right-padded to a multiple of :data:`TEXT_WINDOW` tokens (at
     most ``max_sequence_length``), the hidden states at ``layers`` stacked on channels.
     """
-    text = processor.apply_chat_template([{"role": "user", "content": prompt}], tokenize=False, add_generation_prompt=True)
+    text = processor.apply_chat_template(
+        [{"role": "user", "content": prompt}], tokenize=False, add_generation_prompt=True
+    )
     tokenizer = processor.tokenizer
     real_length = len(tokenizer(text, truncation=True, max_length=max_sequence_length)["input_ids"])
     window = min(math.ceil(real_length / TEXT_WINDOW) * TEXT_WINDOW, max_sequence_length)
@@ -73,9 +74,9 @@ def prompt_embeds(
 def _check_prompts(prompt: object, negative_prompt: object) -> None:
     """One prompt per call: the window is sized per prompt and the transformer attends to its padding."""
     if not isinstance(prompt, str):
-        raise ValueError(f"`prompt` must be a str (one prompt per call), got {type(prompt).__name__}")
+        raise TypeError(f"`prompt` must be a str (one prompt per call), got {type(prompt).__name__}")
     if negative_prompt is not None and not isinstance(negative_prompt, str):
-        raise ValueError(f"`negative_prompt` must be a str or None, got {type(negative_prompt).__name__}")
+        raise TypeError(f"`negative_prompt` must be a str or None, got {type(negative_prompt).__name__}")
 
 
 def _encodes_negative(components: DiffuModularPipeline, negative_prompt: str | None) -> bool:

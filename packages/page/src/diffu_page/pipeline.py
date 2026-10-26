@@ -17,7 +17,6 @@ and labels are separate stages, so each can run as its own worker; :func:`draw_c
 
 from __future__ import annotations
 
-import json
 import math
 from collections.abc import Callable
 from pathlib import Path
@@ -31,6 +30,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from diffu.modular_pipelines.diffu import DiffuAutoBlocks, DiffuModularPipeline
 from diffu.modular_pipelines.loading import COMPONENT_DTYPES, require_loaded
+from diffu.repo import ModelIndex
 from diffu_page.blocks import (
     CropPromptStep,
     DrawnCrop,
@@ -74,10 +74,7 @@ def model_family(model: Path) -> ModelFamily:
     Raises:
         ValueError: If no family has those blocks.
     """
-    index = json.loads((model / "modular_model_index.json").read_text(encoding="utf-8"))
-    blocks = index.get("_blocks_class_name")
-    if blocks is None:
-        raise ValueError(f"{model}/modular_model_index.json names no _blocks_class_name")
+    blocks = ModelIndex.read(model).blocks_class_name
     if blocks not in FAMILIES:
         raise ValueError(f"{model} names the blocks {blocks!r}; the known model families are {sorted(FAMILIES)}")
     return FAMILIES[blocks]

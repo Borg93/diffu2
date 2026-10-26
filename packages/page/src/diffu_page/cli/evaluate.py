@@ -46,7 +46,8 @@ from diffu_page.crops.geometry import pixel_box
 from diffu_page.evalset import EvalCrop, generated_path, read_crops
 from diffu_page.fidelity import HandFidelity, Hands, crop_hands, hand_fidelity
 from diffu_page.judge import Judge, TrOCRJudge
-from diffu_page.output import JPEG_QUALITY, console, err_console
+from diffu_page.local_run import run_each
+from diffu_page.output import JPEG_QUALITY, console, err_console, side_by_side
 from diffu_page.pipeline import DEVICE_ERRORS, DrawSettings, crop_blocks, draw_crop, load_pipeline
 from diffu_page.settings import settings
 
@@ -104,15 +105,8 @@ def contact_sheet(panels: list[Image.Image], lines: list[LineRecord]) -> Image.I
     """The panels side by side at the last one's height ([reference,] real, generated), with the line boxes drawn
     on the generated crop."""
     generated = panels[-1]
-    scaled = [
-        panel.resize((round(panel.width * generated.height / panel.height), generated.height)) for panel in panels
-    ]
-    sheet = Image.new("RGB", (sum(p.width for p in scaled) + SHEET_GAP * (len(scaled) - 1), generated.height), "white")
-    offset = 0
-    for panel in scaled:
-        sheet.paste(panel, (offset, 0))
-        offset += panel.width + SHEET_GAP
-    offset -= generated.width + SHEET_GAP
+    sheet = side_by_side(panels, height=generated.height, gap=SHEET_GAP)
+    offset = sheet.width - generated.width
     draw = ImageDraw.Draw(sheet)
     for line in lines:
         x0, y0, x1, y1 = pixel_box(line.bbox, generated.size)
@@ -166,27 +160,18 @@ def evaluate_crops(
 ) -> tuple[list[CropResult], dict[int, str]]:
     """Every crop evaluated (:func:`evaluate_crop`, seeded by its own seed or ``seed`` + its index); a crop that fails
     is recorded by its index with its error and the rest still run, unless the device failed: then every crop after
-    it is recorded as not drawn."""
-    samples: list[CropResult] = []
-    failed: dict[int, str] = {}
-    for k, crop in enumerate(eval_crops):
+    it is recorded as not run (:func:`diffu_page.local_run.run_each`)."""
+
+    def evaluate_one(indexed: tuple[int, EvalCrop]) -> CropResult:
+        k, crop = indexed
         crop_seed = crop.seed if crop.seed is not None else seed + k
-        try:
-            sample = evaluate_crop(
-                pipe, crop, index=k, seed=crop_seed, crops_dir=crops, out=out, settings=settings, judge=judge
-            )
-        except DEVICE_ERRORS as error:
-            failed[k] = f"{type(error).__name__}: {error}"
-            failed |= dict.fromkeys(range(k + 1, len(eval_crops)), "not drawn: the device failed on an earlier crop")
-            err_console.print(f"{k:3d} {crop.file_name} failed on the device, the evaluation stops: {failed[k]}")
-            break
-        except Exception as error:  # one crop must not end a long evaluation; results.json records it
-            failed[k] = f"{type(error).__name__}: {error}"
-            err_console.print(f"{k:3d} {crop.file_name} failed: {failed[k]}")
-            continue
-        samples.append(sample)
+        sample = evaluate_crop(
+            pipe, crop, index=k, seed=crop_seed, crops_dir=crops, out=out, settings=settings, judge=judge
+        )
         console.print(f"{k:3d} {crop.file_name}: gen CER {sample.gen_cer:.3f}, real CER {sample.real_cer:.3f}")
-    return samples, failed
+        return sample
+
+    return run_each(list(enumerate(eval_crops)), evaluate_one, key=lambda indexed: indexed[0], stop_on=DEVICE_ERRORS)
 
 
 @app.command()
@@ -253,7 +238,7 @@ def evaluate(
         settings=draw_settings,
     )
     (out / "results.json").write_text(
-        Results(summary=summary, samples=samples, failed=failed).model_dump_json(indent=1)
+        Results(summary=summary, samples=samples, failed=failed).model_dump_json(indent=1), encoding="utf-8"
     )
     print(summary.model_dump_json())  # machine output, one line: rich would wrap it at the terminal's width
     if failed:
