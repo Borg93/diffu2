@@ -10,7 +10,7 @@ import typer
 from pydantic import BaseModel
 
 from diffu_page.labels import LabelFormat
-from diffu_page.lora import ADAPTER_CONFIG, ADAPTER_WEIGHTS
+from diffu_page.lora import lora_model_dir
 from diffu_page.pipeline import DrawSettings
 
 DEFAULTS = DrawSettings()  # every draw option's default comes from here
@@ -70,9 +70,10 @@ def parse_lora(value: str) -> Lora:
         typer.BadParameter: If ``value`` is not ``name=<dir>``, or the dir lacks a LoRA checkpoint's files.
     """
     name, path = named_path(value, "name=<lora model dir>")
-    missing = [file for file in (ADAPTER_CONFIG, ADAPTER_WEIGHTS) if not (path / file).is_file()]
-    if missing:
-        raise typer.BadParameter(f"{path} is not a NeMo LoRA model dir: it has no {' or '.join(missing)}")
+    try:
+        lora_model_dir(path)
+    except ValueError as error:
+        raise typer.BadParameter(str(error)) from error
     return Lora(name=name, path=path)
 
 

@@ -35,6 +35,18 @@ class AdapterConfig(BaseModel):
             raise ValueError(f"{lora_dir}/{ADAPTER_CONFIG} is no LoRA config with r and lora_alpha: {error}") from error
 
 
+def lora_model_dir(path: Path) -> Path:
+    """``path``, checked to be a NeMo LoRA checkpoint's ``model/`` dir: it holds the adapter's config and weights.
+
+    Raises:
+        ValueError: If it lacks either file.
+    """
+    missing = [file for file in (ADAPTER_CONFIG, ADAPTER_WEIGHTS) if not (path / file).is_file()]
+    if missing:
+        raise ValueError(f"{path} is not a NeMo LoRA model dir: it has no {' or '.join(missing)}")
+    return path
+
+
 def nemo_lora_state_dict(lora_dir: Path) -> dict[str, torch.Tensor]:
     """A NeMo AutoModel LoRA checkpoint (PEFT keys under ``base_model.model.``) as a diffusers LoRA state dict.
 

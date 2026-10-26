@@ -1,5 +1,6 @@
-"""Output for the workspace's CLIs: one console for results, one on stderr for errors, the check that a name which
-output files are named after cannot point anywhere else, and how images are read and written."""
+"""Output for the workspace's CLIs: one console for results, one on stderr for errors, how a validation error reads in
+a message, the check that a name which output files are named after cannot point anywhere else, and how images are read
+and written."""
 
 from __future__ import annotations
 
@@ -7,11 +8,18 @@ import io
 from pathlib import Path
 
 from PIL import Image
+from pydantic import ValidationError
 from rich.console import Console
 
 console = Console()
 err_console = Console(stderr=True, style="bold red")
 JPEG_QUALITY = 92  # drawn crops, sheets and references (training tiles: build_crops' TILE_QUALITY)
+
+
+def validation_problems(error: ValidationError, whole: str) -> str:
+    """What ``error`` found wrong, for a message: each problem as ``<field path>: <what>`` (``whole`` when it is the
+    input itself), joined by ``; ``."""
+    return "; ".join(f"{'.'.join(map(str, problem['loc'])) or whole}: {problem['msg']}" for problem in error.errors())
 
 
 def jpeg_bytes(image: Image.Image) -> bytes:

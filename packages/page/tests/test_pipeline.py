@@ -2,13 +2,14 @@
 
 The tiny model draws noise, so every line reads back badly: what is checked is the wiring (a plan in, an image of the
 plan's size with one label per line out; a reference image drawn from as it was resized for training, and guided
-toward when asked; diffu-generate drawing each planned crop on its own, so one that fails costs no other) and that a
-NeMo LoRA loads at its trained strength.
+toward when asked; diffu-generate drawing each planned crop on its own, so one that fails costs no other, and each
+hand's pages with its own pipeline) and that a NeMo LoRA loads at its trained strength.
 """
 
 from __future__ import annotations
 
 import json
+import weakref
 import xml.etree.ElementTree as ET
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -25,15 +26,17 @@ from diffu_page.blocks import CropPromptStep, DrawnCrop, ReferenceGridStep
 from diffu_page.captions.look import Ink, Paper, ScanLook
 from diffu_page.captions.prompt import LineRecord, PageStyle
 from diffu_page.captions.provenance import Provenance
-from diffu_page.cli.generate import Summary, draw_pages, plan_jobs
+from diffu_page.cli.generate import PageGroup, Summary, draw_pages, plan_jobs
 from diffu_page.cli.generate import app as generate_app
 from diffu_page.crops.grid import as_reference
-from diffu_page.jobs import PageJob
+from diffu_page.jobs import PageJob, crop_jobs
 from diffu_page.judge import LineVerdict
 from diffu_page.local_run import NOT_RUN
 from diffu_page.lora import ADAPTER_CONFIG, ADAPTER_WEIGHTS, nemo_lora_state_dict
+from diffu_page.output import jpeg_bytes
 from diffu_page.pipeline import (
     FAMILIES,
+    BlocksFor,
     CropBlocks,
     DrawSettings,
     ModelFamily,
@@ -49,11 +52,29 @@ if TYPE_CHECKING:
     from conftest import NemoLoraWriter
 
 TINY_SETTINGS = DrawSettings(steps=2, guidance_scale=4.0, text_layers=(1,), device="cpu")
+TINY_OPTIONS = ["--steps", "2", "--text-layer", "1", "--device", "cpu"]  # TINY_SETTINGS as diffu-generate's options
+FLAG_PAGES = ["--templates", "page.xml", "--text-from", "text.txt"]  # a page from the flags, in a test's working dir
 LORA_MODULE = "single_transformer_blocks.0.attn.to_q"
 FLAG_STYLE = PageStyle(  # diffu-generate --title "the archive" with every other style flag left at its default
     provenance=Provenance(title="the archive", years=""),
     look=ScanLook(greyscale=False, paper=Paper.CREAM, ink=Ink.DARK_BROWN),
 )
+PRESET_STYLE = PageStyle(  # the style of every test preset: the 1715 letter book's, as its hand evaluations name it
+    provenance=Provenance(title="the records of Överståthållarämbetet", years=""),
+    look=ScanLook(greyscale=False, paper=Paper.YELLOWED, ink=Ink.BROWN),
+)
+
+
+def _write_presets(path: Path, **presets: dict[str, object]) -> Path:
+    """A presets file at ``path`` of each preset given, in PRESET_STYLE with the fields given (its lora, reference)."""
+    style = PRESET_STYLE.model_dump(mode="json")
+    path.write_text(json.dumps({name: {**style, **fields} for name, fields in presets.items()}), encoding="utf-8")
+    return path
+
+
+def _zero_lora(write_nemo_lora: NemoLoraWriter) -> Path:
+    """A NeMo LoRA that changes nothing: for a run that plans no crop, and so loads none."""
+    return write_nemo_lora(LORA_MODULE, torch.zeros(2, 8), torch.zeros(8, 2), alpha=2)
 
 
 @pytest.fixture(scope="module")
@@ -246,17 +267,28 @@ def test_draw_pages_records_a_crop_it_cannot_draw_by_name_and_saves_the_other_cr
     pages = [
         PageJob(template=two_column_page, text=page_text, style=page_style, reference=unreadable),
         PageJob(template=wide_and_narrow_body_page, text=page_text, style=page_style),
+        PageJob(template=wide_and_narrow_body_page, text=page_text, style=page_style),
     ]
+    unloadable = {"hand": tmp_path / "hand"}  # the last page's group, drawn first, whose pipeline fails to load
 
-    jobs, unplanned = plan_jobs(pages)
+    def load(loras: dict[str, Path]) -> ModularPipeline:
+        if loras == unloadable:
+            raise ValueError(f"{loras['hand']} is not a NeMo LoRA model dir")
+        return crop_pipe
 
-    crops, failed = draw_pages(crop_pipe, jobs, settings=TINY_SETTINGS, out=tmp_path, prof=None)
+    jobs, unplanned = plan_jobs(enumerate(pages))
+    *drawable, last = jobs
+
+    crops, failed = draw_pages(
+        load, [(unloadable, last), *(({}, job) for job in drawable)], settings=TINY_SETTINGS, out=tmp_path, prof=None
+    )
 
     assert unplanned == {}
     assert [crop.name for crop in crops] == ["001_wide_and_narrow_0"]
     assert {name: error.split(":")[0] for name, error in failed.items()} == {
         "000_two_columns_0": "FileNotFoundError",
         "000_two_columns_1": "FileNotFoundError",
+        "002_wide_and_narrow_0": "ValueError",
     }
     assert sorted(path.name for path in tmp_path.glob("0*")) == [
         "001_wide_and_narrow_0.jpg",
@@ -264,7 +296,7 @@ def test_draw_pages_records_a_crop_it_cannot_draw_by_name_and_saves_the_other_cr
     ]
 
 
-def test_draw_pages_stops_when_the_device_fails_and_records_the_crops_left_undrawn(
+def test_draw_pages_stops_when_the_device_fails_and_loads_no_later_group(
     crop_pipe: ModularPipeline,
     two_column_page: Path,
     tmp_path: Path,
@@ -272,21 +304,28 @@ def test_draw_pages_stops_when_the_device_fails_and_records_the_crops_left_undra
     page_style: PageStyle,
     page_text: str,
 ) -> None:
-    jobs, _ = plan_jobs([PageJob(template=two_column_page, text=page_text, style=page_style)])
+    jobs, _ = plan_jobs(enumerate([PageJob(template=two_column_page, text=page_text, style=page_style)]))
+    loaded: list[dict[str, Path]] = []
+
+    def load(loras: dict[str, Path]) -> ModularPipeline:
+        loaded.append(loras)
+        return crop_pipe
 
     def out_of_memory(*args: object, **kwargs: object) -> None:
         raise torch.OutOfMemoryError("CUDA out of memory")
 
     monkeypatch.setattr(crop_pipe.transformer, "forward", out_of_memory)
+    later = {"hand": tmp_path / "hand"}  # the second crop's group
 
-    crops, failed = draw_pages(crop_pipe, jobs, settings=TINY_SETTINGS, out=tmp_path, prof=None)
+    crops, failed = draw_pages(load, [({}, jobs[0]), (later, jobs[1])], settings=TINY_SETTINGS, out=tmp_path, prof=None)
 
-    assert (crops, failed) == (
+    assert (crops, failed, loaded) == (
         [],
         {
             "000_two_columns_0": "OutOfMemoryError: CUDA out of memory",
             "000_two_columns_1": NOT_RUN,
         },
+        [{}],
     )
 
 
@@ -334,35 +373,170 @@ def test_generate_records_a_page_that_plans_to_no_crop_without_loading_the_model
     }
 
 
-def test_generate_draws_each_page_of_a_job_file_with_its_own_text_style_and_name(
-    one_line_page: Path, tmp_path: Path, page_style: PageStyle, page_text: str
+def test_generate_takes_each_page_of_a_job_file_with_its_own_text_name_and_style_spelled_out_or_named(
+    one_line_page: Path, tmp_path: Path, page_style: PageStyle, page_text: str, write_nemo_lora: NemoLoraWriter
 ) -> None:
+    run_lora, hand = _zero_lora(write_nemo_lora), _zero_lora(write_nemo_lora)
+    styles = _write_presets(tmp_path / "styles.json", a={"lora": hand.name, "reference": {"image": "ref.jpg"}})
     pages = [
         PageJob(template=one_line_page, text=page_text, style=page_style, id="vol7_p12"),
         PageJob(template=one_line_page, text="den 4 maj", style=FLAG_STYLE, seed=3),
     ]
+    named = [
+        {"template": str(one_line_page), "text": "den 5 maj", "style": "a"},
+        {"template": str(one_line_page), "text": "den 6 maj", "style": "a", "reference": {"image": "/scans/own.jpg"}},
+    ]
     job_file = tmp_path / "run.jsonl"
-    job_file.write_text("".join(page.model_dump_json() + "\n" for page in pages), encoding="utf-8")
-    args = ["--jobs", str(job_file), "--model", str(tmp_path / "no_model"), "--out", str(tmp_path / "out")]
+    job_file.write_text(
+        "".join(page.model_dump_json() + "\n" for page in pages) + "".join(json.dumps(line) + "\n" for line in named),
+        encoding="utf-8",
+    )
+    args = ["--jobs", str(job_file), "--styles", str(styles), "--lora", f"v2={run_lora}"]
+    args += ["--model", str(tmp_path / "no_model"), "--out", str(tmp_path / "out")]
 
     result = CliRunner().invoke(generate_app, args)
 
+    assert result.exit_code == 1  # no page plans to a crop, so no model loads
     summary = Summary.model_validate_json((tmp_path / "out" / "summary.json").read_text())
-    assert result.exit_code == 1  # neither page plans to a crop, so no model loads
-    assert summary.pages == pages
+    presets_reference, own = Reference(image=tmp_path / "ref.jpg"), Reference(image=Path("/scans/own.jpg"))
+    assert summary.pages == [
+        *pages,
+        PageJob(template=one_line_page, text="den 5 maj", style=PRESET_STYLE, reference=presets_reference),
+        PageJob(template=one_line_page, text="den 6 maj", style=PRESET_STYLE, reference=own),
+    ]
+    assert summary.groups == [
+        PageGroup(loras={"v2": run_lora}, pages=[0, 1]),
+        PageGroup(loras={"hand": hand}, pages=[2, 3]),
+    ]
     no_crops = f"ValueError: {one_line_page} plans to no crops: no window of it holds enough whole lines"
-    assert summary.failed == {"vol7_p12": no_crops, "001_one_line": no_crops}
+    assert summary.failed == dict.fromkeys(["vol7_p12", "001_one_line", "002_one_line", "003_one_line"], no_crops)
+
+
+def test_generate_draws_the_templates_in_the_style_preset_style_names_by_its_hand(
+    one_line_page: Path, tmp_path: Path, write_nemo_lora: NemoLoraWriter
+) -> None:
+    hand = _zero_lora(write_nemo_lora)
+    styles = _write_presets(tmp_path / "styles.json", a={"lora": str(hand), "reference": {"image": "ref.jpg"}})
+    text_file = tmp_path / "text.txt"
+    text_file.write_text("den 4 maj", encoding="utf-8")
+    args = ["--templates", str(one_line_page), "--text-from", str(text_file), "--styles", str(styles), "--style", "a"]
+    args += ["--reference", str(tmp_path / "own.jpg"), "--model", str(tmp_path / "no_model"), "--out", str(tmp_path)]
+
+    result = CliRunner().invoke(generate_app, args)
+
+    assert result.exit_code == 1  # the page plans to no crop, so no model loads
+    summary = Summary.model_validate_json((tmp_path / "summary.json").read_text())
+    own = Reference(image=tmp_path / "own.jpg")  # --reference, in place of the preset's
+    assert summary.pages == [PageJob(template=one_line_page, text="den 4 maj", style=PRESET_STYLE, reference=own)]
+    assert summary.groups == [PageGroup(loras={"hand": hand}, pages=[0])]
+
+
+def test_generate_draws_each_hands_pages_with_its_own_pipeline_and_keeps_their_names_and_seeds(
+    tiny_flux3: Path,
+    crop_pipe: ModularPipeline,
+    one_line_page: Path,
+    tmp_path: Path,
+    write_nemo_lora: NemoLoraWriter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    linear = crop_pipe.transformer.get_submodule(LORA_MODULE)
+    torch.manual_seed(0)
+    hands = [
+        write_nemo_lora(LORA_MODULE, torch.randn(2, linear.in_features), torch.randn(linear.out_features, 2), alpha=4)
+        for _ in range(2)
+    ]
+    styles = _write_presets(tmp_path / "styles.json", a={"lora": str(hands[0])}, b={"lora": str(hands[1])})
+    page = PageJob(template=one_line_page, text="den 4 maj", style=PRESET_STYLE, page_pixels=256 * 256)
+    named = [{**page.model_dump(mode="json"), "style": name} for name in ("a", "b", "a")]  # pages 0 and 2 in hand a
+    job_file = tmp_path / "run.jsonl"
+    job_file.write_text("".join(json.dumps(line) + "\n" for line in named), encoding="utf-8")
+    loads: list[tuple[dict[str, Path], int]] = []  # each load's LoRAs, and how many pipelines before it still live
+    pipes: list[weakref.ref[ModularPipeline]] = []
+
+    def load_and_count(
+        model: Path, blocks: BlocksFor, *, loras: dict[str, Path], settings: DrawSettings
+    ) -> ModularPipeline:
+        loads.append((loras, sum(pipe() is not None for pipe in pipes)))
+        pipe = load_pipeline(model, blocks, loras=loras, settings=settings)
+        pipes.append(weakref.ref(pipe))
+        return pipe
+
+    monkeypatch.setattr("diffu_page.cli.generate.load_pipeline", load_and_count)
+    monkeypatch.setattr("diffu_page.cli.generate.TrOCRJudge", lambda device: ScriptedJudge())  # reads are not tested
+    args = ["--jobs", str(job_file), "--styles", str(styles), "--model", str(tiny_flux3)]
+    args += ["--out", str(tmp_path / "out"), *TINY_OPTIONS]
+
+    result = CliRunner().invoke(generate_app, args)
+
+    assert result.exit_code == 0
+    summary = Summary.model_validate_json((tmp_path / "out" / "summary.json").read_text())
+    assert loads == [({"hand": hands[0]}, 0), ({"hand": hands[1]}, 0)]  # a load per hand, the one before released
+    assert summary.groups == [
+        PageGroup(loras={"hand": hands[0]}, pages=[0, 2]),
+        PageGroup(loras={"hand": hands[1]}, pages=[1]),
+    ]
+    jobs = [(hands[0], crop_jobs(page, 0)[0]), (hands[0], crop_jobs(page, 2)[0]), (hands[1], crop_jobs(page, 1)[0])]
+    assert [crop.name for crop in summary.crops] == [job.name for _, job in jobs]  # named as pages 0, 2 and 1
+    by_hand = {
+        hand: load_pipeline(tiny_flux3, crop_blocks, loras={"hand": hand}, settings=TINY_SETTINGS) for hand in hands
+    }
+    expected = [  # each page drawn by its hand, from its seed as that page of the run
+        draw_crop(
+            by_hand[hand],
+            job.plan,
+            name=job.name,
+            seed=job.seed,
+            reference=None,
+            settings=TINY_SETTINGS,
+            judge=ScriptedJudge(),
+        )
+        for hand, job in jobs
+    ]
+    drawn = [(tmp_path / "out" / f"{job.name}.jpg").read_bytes() for _, job in jobs]
+    assert drawn == [jpeg_bytes(crop.image) for crop in expected]
+
+
+@pytest.mark.parametrize(
+    ("options", "refusal"),
+    [
+        pytest.param(["--jobs", "run.jsonl"], "run.jsonl:1: no style preset is named 'b' (the presets: a)", id="job"),
+        pytest.param([*FLAG_PAGES, "--style", "b"], "no style preset is named 'b' (the presets: a)", id="flags"),
+        pytest.param(
+            [*FLAG_PAGES, "--style", "a", "--ink", "black"], "--ink: the style preset gives its own", id="look"
+        ),
+        pytest.param(
+            [*FLAG_PAGES, "--style", "a", "--lora", "v2=lora_0"],
+            "every page names a style preset, which gives the LoRAs it is drawn with",
+            id="lora",
+        ),
+    ],
+)
+def test_generate_refuses_a_named_style_it_has_no_preset_of_or_given_twice_before_it_loads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, write_nemo_lora: NemoLoraWriter, options: list[str], refusal: str
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_presets(tmp_path / "styles.json", a={"lora": _zero_lora(write_nemo_lora).name})  # lora_0
+    job = {"template": "page.xml", "text": "den 4 maj", "style": "b"}
+    (tmp_path / "run.jsonl").write_text(json.dumps(job) + "\n", encoding="utf-8")
+    (tmp_path / "text.txt").write_text("den 4 maj", encoding="utf-8")
+    args = ["--styles", "styles.json", "--model", str(tmp_path / "no_model"), "--out", "out", *options]
+
+    result = CliRunner().invoke(generate_app, args)
+
+    message = " ".join(result.output.replace("│", " ").split())  # rich wraps the error panel at 80 columns
+    assert result.exit_code == 2  # a usage error, raised before the (missing) model would have been read
+    assert refusal in message
 
 
 @pytest.mark.parametrize(
     ("options", "refusal"),
     [
         pytest.param(
-            ["--jobs", "run.jsonl", "--title", "an archive"],
-            "--title: the job file gives each page its own",
+            ["--jobs", "run.jsonl", "--title", "an archive", "--style", "a"],
+            "--title, --style: the job file gives each page its own",
             id="jobs-and-flags",
         ),
-        pytest.param([], "give --jobs, or --templates, --text-from and --title", id="no-pages"),
+        pytest.param([], "give --jobs, or --templates, --text-from and --title or --style", id="no-pages"),
     ],
 )
 def test_generate_refuses_a_run_whose_pages_are_not_given_once_before_it_loads(

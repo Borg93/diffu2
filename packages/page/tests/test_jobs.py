@@ -63,4 +63,4 @@ def test_read_page_jobs_names_the_line_of_a_job_file_that_is_not_a_page_job(
     )
 
     with pytest.raises(ValueError, match=r"run\.jsonl:3 is not a page job: style: Field required$"):
-        read_page_jobs(job_file)
+        read_page_jobs(job_file, presets={}, loras={})

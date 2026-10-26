@@ -27,8 +27,12 @@ What is known to be wrong or unfinished. Remove an item when it is done; add the
   - [x] The interface (26 Oct): `diffu-generate` takes a template, text (a page's running text or a plain text file)
         and a style, whole or as windows; `--jobs run.jsonl` gives every page its own template, text, style, seed,
         reference and size (one `PageJob` per line, the run file diffu-runner reads); `summary.json` records the pages.
-  - [ ] A style as one name: a preset holding the hand's LoRA, the archive and years, the look and a reference, so a
-        job names its style instead of repeating it (the LoRA is per run today, so a run is one hand).
+  - [x] A style as one name (26 Oct, the commit "A style as one name: a preset holds a page's archive and years, ..."):
+        `diffu_page.styles.StylePreset` holds the archive and years, the look, the hand's LoRA and a reference, so a
+        job names its style instead of repeating it; the repo's `styles.json` holds our four hands (overstat, pahlman,
+        kopparberg, landskap) in the archive, years and look their evaluations drew them in (each volume's commonest
+        look). `diffu-generate --style NAME --styles FILE`, or a job line's `"style": NAME`; one run draws several
+        hands, a pipeline per set of LoRAs in turn, each released before the next loads (`summary.json`: `groups`).
 
 ## A third path: MOSS-Image (the user, 26 Oct)
 

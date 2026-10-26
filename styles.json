@@ -1,0 +1,22 @@
+{
+  "overstat": {
+    "provenance": {"title": "the records of Överståthållarämbetet", "years": ""},
+    "look": {"greyscale": false, "paper": "yellowed", "ink": "brown"},
+    "lora": "runs/flux3_hand_overstat_lora/epoch_8_step_699/model"
+  },
+  "pahlman": {
+    "provenance": {"title": "Carl Fredrik Påhlman's travel journals", "years": "1825–1826"},
+    "look": {"greyscale": false, "paper": "off-white", "ink": "dark brown"},
+    "lora": "runs/flux3_hand_pahlman_lora/epoch_4_step_699/model"
+  },
+  "kopparberg": {
+    "provenance": {"title": "the Bergskollegium records of Stora Kopparbergs bergslag", "years": ""},
+    "look": {"greyscale": true, "paper": "grey", "ink": "black"},
+    "lora": "runs/flux3_hand_kopparberg_lora/epoch_6_step_699/model"
+  },
+  "landskap": {
+    "provenance": {"title": "the landskapshandlingar provincial accounts", "years": ""},
+    "look": {"greyscale": true, "paper": "grey", "ink": "black"},
+    "lora": "runs/flux3_hand_landskap_lora/epoch_6_step_699/model"
+  }
+}

@@ -10,25 +10,33 @@ plain text file as it stands (a blank line ends a paragraph). With ``--reference
 for the v3 LoRAs) every crop is drawn from it and captioned as the LoRA was trained (``--reference-caption``:
 ``described`` measures the crop's hand, so it needs the crop's ``metadata.jsonl`` from ``diffu_page.data.build_crops``
 beside it). ``--jobs`` gives each page its own template, text, style, seed, reference and size instead: one
-:class:`diffu_page.jobs.PageJob` per line, the run file diffu-runner reads. Writes ``<out>/<page>_<k>.jpg`` + ``.xml``
-per crop and ``<out>/summary.json``; a page that cannot be planned and a crop that cannot be drawn are recorded there
-by name and the run goes on. ``--profile <dir>`` also records a torch profiler trace (Perfetto) of crops 2-3 after a
-warm-up crop. One GPU job, through jobs/spark_guard.sh:
+:class:`diffu_page.jobs.PageJob` per line, the run file diffu-runner reads. A style can be named instead of spelled out:
+``--style`` (or a job line's ``style``) names a preset of ``--styles`` (:mod:`diffu_page.styles`: the archive and years,
+the look, the hand's LoRA and a reference), and its page is drawn by the preset's hand alone; a style spelled out is
+drawn with ``--lora``. A run can so draw several hands: its pages are drawn group by group, one group per set of LoRAs,
+each group's pipeline loaded once and released before the next loads. Writes ``<out>/<page>_<k>.jpg`` + ``.xml`` per
+crop and ``<out>/summary.json``; a page that cannot be planned and a crop that cannot be drawn are recorded there by name
+and the run goes on. ``--profile <dir>`` also records a torch profiler trace (Perfetto) of crops 2-3 after a warm-up
+crop. One GPU job, through jobs/spark_guard.sh:
 
     jobs/spark_guard.sh --need-gb 45 --name pages -- diffu-generate \\
         --templates <page.xml> --templates <page.xml> --text-from <page.xml> --lora v2=<ckpt>/model --out <dir> \\
         --title "the court records of Jämtlands domsaga" --paper cream --ink "dark brown"
-    jobs/spark_guard.sh --need-gb 45 --name pages -- diffu-generate --jobs run.jsonl --lora v2=<ckpt>/model --out <dir>
+    jobs/spark_guard.sh --need-gb 45 --name pages -- diffu-generate \\
+        --templates <page.xml> --text-from <text.txt> --styles styles.json --style pahlman --out <dir>
+    jobs/spark_guard.sh --need-gb 45 --name pages -- diffu-generate --jobs run.jsonl --styles styles.json --out <dir>
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import gc
+from collections.abc import Callable, Iterable, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 from statistics import fmean
 from typing import Annotated
 
+import torch
 import typer
 from click.core import ParameterSource
 from diffusers.modular_pipelines import ModularPipeline
@@ -60,7 +68,7 @@ from diffu_page.cli.options import (
     required_model,
     settings_from_options,
 )
-from diffu_page.jobs import CropJob, PageJob, crop_jobs, read_page_jobs
+from diffu_page.jobs import CropJob, PageJob, PageRequest, ResolvedPage, crop_jobs, read_page_jobs
 from diffu_page.judge import Judge, TrOCRJudge
 from diffu_page.layout import load_xml_layout, running_text
 from diffu_page.local_run import run_each
@@ -68,6 +76,7 @@ from diffu_page.output import JPEG_QUALITY, console
 from diffu_page.pipeline import DEVICE_ERRORS, DrawSettings, crop_blocks, draw_crop, load_pipeline
 from diffu_page.plan import Reference
 from diffu_page.settings import settings
+from diffu_page.styles import StylePreset, read_style_presets
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 
@@ -75,6 +84,7 @@ PAGE_OPTIONS = (  # what a job file gives each page instead
     "templates",
     "text_from",
     "title",
+    "style",
     "years",
     "greyscale",
     "paper",
@@ -85,6 +95,9 @@ PAGE_OPTIONS = (  # what a job file gives each page instead
     "whole_page",
     "page_megapixels",
 )
+STYLE_OPTIONS = ("title", "years", "greyscale", "paper", "ink")  # what a style preset gives instead (--style)
+
+type LoraJob = tuple[dict[str, Path], CropJob]  # a crop job and the LoRAs that draw it, by adapter name
 
 
 class CropSummary(BaseModel):
@@ -97,13 +110,21 @@ class CropSummary(BaseModel):
     cer: float
 
 
+class PageGroup(BaseModel):
+    """Pages a run draws with one crop pipeline: the LoRAs it loads (NeMo ``model/`` dirs by adapter name) and the
+    pages, by their place in the run (in ``Summary.pages``)."""
+
+    loras: dict[str, Path]
+    pages: list[int]
+
+
 class Summary(BaseModel):
-    """A run: what drew it (the model, its LoRAs and the draw settings), the pages it was asked for (each with its
-    template, text, style, seed and reference), every drawn crop, and every page or crop that failed, by name, with
-    its error."""
+    """A run: what drew it (the model, the LoRAs of each group of its pages and the draw settings), the pages it was
+    asked for (each with its template, text, style, seed and reference, a named style resolved), every drawn crop, and
+    every page or crop that failed, by name, with its error."""
 
     model: str
-    loras: dict[str, str]
+    groups: list[PageGroup]
     settings: DrawSettings
     pages: list[PageJob]
     crops: list[CropSummary]
@@ -132,10 +153,19 @@ def _draw(
     return result
 
 
-def plan_jobs(pages: list[PageJob]) -> tuple[list[CropJob], dict[str, str]]:
-    """Every page's crop jobs, and the error of each page that cannot be planned, by page name (CPU)."""
+def page_groups(pages: list[ResolvedPage]) -> list[PageGroup]:
+    """The run's pages grouped by the LoRAs that draw them, in the order each set of LoRAs first appears."""
+    groups: dict[frozenset[tuple[str, Path]], PageGroup] = {}
+    for index, page in enumerate(pages):
+        groups.setdefault(frozenset(page.loras.items()), PageGroup(loras=page.loras, pages=[])).pages.append(index)
+    return list(groups.values())
+
+
+def plan_jobs(pages: Iterable[tuple[int, PageJob]]) -> tuple[list[CropJob], dict[str, str]]:
+    """The crop jobs of each page, given with its place in the run (which names and seeds its crops), and the error of
+    each page that cannot be planned, by page name (CPU)."""
     planned, failed = run_each(
-        list(enumerate(pages)),
+        list(pages),
         lambda indexed: crop_jobs(indexed[1], indexed[0]),
         key=lambda indexed: indexed[1].name_at(indexed[0]),
     )
@@ -143,25 +173,44 @@ def plan_jobs(pages: list[PageJob]) -> tuple[list[CropJob], dict[str, str]]:
 
 
 def draw_pages(
-    pipe: ModularPipeline,
-    jobs: list[CropJob],
+    load: Callable[[dict[str, Path]], ModularPipeline],
+    jobs: list[LoraJob],
     *,
     settings: DrawSettings,
     out: Path,
     prof: profile | None,
     judge: Judge | None = None,
 ) -> tuple[list[CropSummary], dict[str, str]]:
-    """Every planned crop drawn by the crop pipeline, judged by ``judge`` (the default TrOCR judge if none) and saved;
-    a crop that cannot be drawn is recorded by name with its error and the rest still run, unless the device failed:
-    then every crop after it is recorded as not run (:func:`diffu_page.local_run.run_each`)."""
+    """Every planned crop drawn, in the order given, by the crop pipeline ``load`` gives for its LoRAs, judged by
+    ``judge`` (the default TrOCR judge if none) and saved. One pipeline is held at a time: loaded for the first crop
+    and again for each crop whose LoRAs differ from the crop's before, the previous one released first, so give the
+    crops grouped by their LoRAs. A crop that cannot be drawn, or whose pipeline cannot be loaded, is recorded by name
+    with its error and the rest still run, unless the device failed: then every crop after it is recorded as not run
+    (:func:`diffu_page.local_run.run_each`)."""
+    pipe: ModularPipeline | None = None
+    pipe_loras: dict[str, Path] = {}
 
-    def draw(job: CropJob) -> CropSummary:
+    def draw(item: LoraJob) -> CropSummary:
+        nonlocal pipe, pipe_loras
+        loras, job = item
+        if pipe is None or loras != pipe_loras:
+            pipe = None  # released before the next one loads: two pipelines never share the device
+            _release_device_memory(settings.device)
+            pipe, pipe_loras = load(loras), loras
         result = _draw(pipe, job, settings=settings, out=out, judge=judge)
         if prof is not None:
             prof.step()
         return result
 
-    return run_each(jobs, draw, key=lambda job: job.name, stop_on=DEVICE_ERRORS)
+    return run_each(jobs, draw, key=lambda item: item[1].name, stop_on=DEVICE_ERRORS)
+
+
+def _release_device_memory(device: str) -> None:
+    """The memory of the models dropped so far given back: collected now rather than at Python's next collection, and
+    CUDA's cached blocks returned on a CUDA device."""
+    gc.collect()
+    if torch.device(device).type == "cuda":
+        torch.cuda.empty_cache()
 
 
 def _trace_handler(out: Path) -> Callable[[profile], None]:
@@ -204,20 +253,68 @@ def page_text(path: Path) -> str:
     return path.read_text(encoding="utf-8").strip()
 
 
-def job_file_pages(ctx: typer.Context, jobs: Path) -> list[PageJob]:
-    """The pages of the job file ``jobs``, refusing every page option the command line gives with it: the job file
-    gives each page its own."""
-    given = [name for name in PAGE_OPTIONS if ctx.get_parameter_source(name) is not ParameterSource.DEFAULT]
+def refuse_given(ctx: typer.Context, names: Sequence[str], *, instead: str, param_hint: str) -> None:
+    """Refuse each option of ``names`` (by parameter name) the command line gives; ``instead`` says what gives it.
+
+    Raises:
+        typer.BadParameter: If any of them is given, naming them.
+    """
+    given = [name for name in names if ctx.get_parameter_source(name) is not ParameterSource.DEFAULT]
     if given:
         options = ", ".join("--" + name.replace("_", "-") for name in given)
-        raise typer.BadParameter(f"{options}: the job file gives each page its own", param_hint="--jobs")
+        raise typer.BadParameter(f"{options}: {instead}", param_hint=param_hint)
+
+
+def style_presets(styles: Path | None) -> dict[str, StylePreset]:
+    """The style presets of ``--styles``; none without it."""
+    if styles is None:
+        return {}
     try:
-        pages = read_page_jobs(jobs)
+        return read_style_presets(styles)
+    except ValueError as error:
+        raise typer.BadParameter(str(error), param_hint="--styles") from error
+
+
+def flag_style(
+    ctx: typer.Context, *, style: str | None, title: str | None, years: str, greyscale: bool, paper: Paper, ink: Ink
+) -> PageStyle | str | None:
+    """The style the options ask for: a style preset's name (``--style``, refusing the options a preset gives), else
+    the style ``--title`` and the look options spell out; None if they name neither."""
+    if style is not None:
+        refuse_given(ctx, STYLE_OPTIONS, instead="the style preset gives its own", param_hint="--style")
+        return style
+    if title is None:
+        return None
+    return PageStyle(
+        provenance=Provenance(title=title, years=years), look=ScanLook(greyscale=greyscale, paper=paper, ink=ink)
+    )
+
+
+def job_file_pages(
+    ctx: typer.Context, jobs: Path, *, presets: dict[str, StylePreset], loras: dict[str, Path]
+) -> list[ResolvedPage]:
+    """The pages of the job file ``jobs``, resolved with the style ``presets`` and the run's ``loras``, refusing every
+    page option the command line gives with it: the job file gives each page its own."""
+    refuse_given(ctx, PAGE_OPTIONS, instead="the job file gives each page its own", param_hint="--jobs")
+    try:
+        pages = read_page_jobs(jobs, presets=presets, loras=loras)
     except ValueError as error:
         raise typer.BadParameter(str(error), param_hint="--jobs") from error
     if not pages:
         raise typer.BadParameter(f"{jobs} holds no page jobs", param_hint="--jobs")
     return pages
+
+
+def plan_groups(pages: list[ResolvedPage], groups: list[PageGroup]) -> tuple[list[LoraJob], dict[str, str]]:
+    """Each group's pages planned into crop jobs with the group's LoRAs, group after group, and the error of each page
+    that cannot be planned, by page name (CPU)."""
+    jobs: list[LoraJob] = []
+    failed: dict[str, str] = {}
+    for group in groups:
+        planned, unplanned = plan_jobs((index, pages[index].page) for index in group.pages)
+        jobs += [(group.loras, job) for job in planned]
+        failed |= unplanned
+    return jobs, failed
 
 
 @app.command()
@@ -230,7 +327,17 @@ def generate(
             "--jobs",
             exists=True,
             dir_okay=False,
-            help="the pages to draw, one diffu_page.jobs.PageJob per line (diffu-run's run file)",
+            help="the pages to draw, one diffu_page.jobs.PageJob per line (diffu-run's run file); a line's style may "
+            "name a preset of --styles",
+        ),
+    ] = None,
+    styles: Annotated[
+        Path | None,
+        typer.Option(
+            exists=True,
+            dir_okay=False,
+            help="the style presets --style and a job file's named styles come from: a JSON object of "
+            "diffu_page.styles.StylePreset by name, such as the repo's styles.json",
         ),
     ] = None,
     templates: Annotated[
@@ -241,6 +348,13 @@ def generate(
         typer.Option(help="a PAGE/ALTO page (.xml) or a plain text file whose text to write (repeat it)"),
     ] = None,
     title: Annotated[str | None, typer.Option(help="the archive, as the captions name it")] = None,
+    style: Annotated[
+        str | None,
+        typer.Option(
+            help="a preset of --styles to draw every page in, its hand and reference with it, instead of --title and "
+            "the look options (--reference still gives the pages their own)"
+        ),
+    ] = None,
     model: Model = settings.flux3_model,
     lora: Loras = None,
     years: str = "",
@@ -275,9 +389,9 @@ def generate(
     ] = 2.5,
     profile_dir: Annotated[Path | None, typer.Option("--profile", help="write a trace of crops 2-3 here")] = None,
 ) -> None:
-    """Draw every crop of the templates (or each template whole), refilled with the text, in the given style; or every
-    page of a job file, each in its own."""
-    model = required_model(model)
+    """Draw every crop of the templates (or each template whole), refilled with the text, in the given or named style;
+    or every page of a job file, each in its own."""
+    model_dir = required_model(model)
     draw_settings = settings_from_options(
         steps=steps,
         guidance=guidance,
@@ -292,40 +406,58 @@ def generate(
         compile_blocks=compile_blocks,
         label_format=label_format,
     )
+    presets = style_presets(styles)
+    loras = lora_dirs(lora)
     if job_file is not None:
-        pages = job_file_pages(ctx, job_file)
-    elif not templates or not text_from or title is None:
-        raise typer.BadParameter("give --jobs, or --templates, --text-from and --title", param_hint="the pages")
+        pages = job_file_pages(ctx, job_file, presets=presets, loras=loras)
     else:
+        page_style = flag_style(ctx, style=style, title=title, years=years, greyscale=greyscale, paper=paper, ink=ink)
+        if not templates or not text_from or page_style is None:
+            raise typer.BadParameter(
+                "give --jobs, or --templates, --text-from and --title or --style", param_hint="the pages"
+            )
         if reference is None and reference_caption is not ReferenceCaption.PLAIN:
             raise typer.BadParameter("there is no --reference to describe", param_hint="--reference-caption")
-        style = PageStyle(
-            provenance=Provenance(title=title, years=years), look=ScanLook(greyscale=greyscale, paper=paper, ink=ink)
-        )
         text = " ".join(page_text(path) for path in text_from)
         drawn_from = page_reference(reference, reference_caption)
         page_pixels = round(page_megapixels * 1_000_000) if whole_page else None
-        pages = [
-            PageJob(template=template, text=text, style=style, seed=seed, reference=drawn_from, page_pixels=page_pixels)
+        requests = [
+            PageRequest(
+                template=template, text=text, style=page_style, seed=seed, reference=drawn_from, page_pixels=page_pixels
+            )
             for template in templates
         ]
-    if draw_settings.guides_reference and all(page.reference is None for page in pages):
+        try:
+            pages = [request.resolve(presets, loras) for request in requests]
+        except ValueError as error:
+            raise typer.BadParameter(str(error), param_hint="--style") from error
+    if loras and all(page.loras != loras for page in pages):
+        raise typer.BadParameter(
+            "every page names a style preset, which gives the LoRAs it is drawn with", param_hint="--lora"
+        )
+    if draw_settings.guides_reference and all(page.page.reference is None for page in pages):
         raise typer.BadParameter("there is no --reference to guide toward", param_hint="--reference-guidance")
-    loras = lora_dirs(lora)
-    jobs, failed = plan_jobs(pages)  # before the model loads: a run whose pages plan to nothing loads none
+    groups = page_groups(pages)
+    jobs, failed = plan_groups(pages, groups)  # before any model loads: a run whose pages plan to nothing loads none
     crops: list[CropSummary] = []
     out.mkdir(parents=True, exist_ok=True)
     if jobs:
-        pipe = load_pipeline(model, crop_blocks, loras=loras, settings=draw_settings)
         judge = TrOCRJudge(device=device)
         with _profiler(profile_dir) as prof:
-            crops, draw_failed = draw_pages(pipe, jobs, settings=draw_settings, out=out, prof=prof, judge=judge)
+            crops, draw_failed = draw_pages(
+                lambda group_loras: load_pipeline(model_dir, crop_blocks, loras=group_loras, settings=draw_settings),
+                jobs,
+                settings=draw_settings,
+                out=out,
+                prof=prof,
+                judge=judge,
+            )
         failed |= draw_failed
     summary = Summary(
-        model=str(model),
-        loras={name: str(path) for name, path in loras.items()},
+        model=str(model_dir),
+        groups=groups,
         settings=draw_settings,
-        pages=pages,
+        pages=[page.page for page in pages],
         crops=crops,
         failed=failed,
     )

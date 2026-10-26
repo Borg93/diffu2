@@ -61,6 +61,24 @@ per line (the run file diffu-runner reads), and pass `--jobs run.jsonl` instead 
 {"template": "page_a.xml", "text": "Anno 1720 den 5 maj ...", "style": {"provenance": {"title": "the court records of Jämtlands domsaga", "years": "1720"}, "look": {"greyscale": false, "paper": "cream", "ink": "dark brown"}}, "page_pixels": 2500000, "id": "jamt_1720_p1"}
 ```
 
+A style can also be named. `styles.json` holds a preset per hand LoRA (`diffu_page.styles.StylePreset`: the archive
+and years, the look, the hand's LoRA and an optional reference, paths relative to the file); `--style` draws the
+templates in one, in place of `--title` and the look options, by its hand alone:
+
+```bash
+cd ~/Desktop/repos/Automodel && ~/Desktop/repos/diffu2/jobs/spark_guard.sh --need-gb 45 --name pages -- \
+    .venv-managed/bin/diffu-generate --templates page_a.xml --text-from text.txt \
+    --styles ~/Desktop/repos/diffu2/styles.json --style pahlman --out runs/pages
+```
+
+With `--styles`, a job line's `style` may be a preset's name, so one run draws several hands, one pipeline per hand in
+turn (`summary.json` lists each group's LoRAs and pages):
+
+```json
+{"template": "page_a.xml", "text": "Anno 1825 den 3 junii ...", "style": "pahlman", "id": "pahlman_p1"}
+{"template": "page_b.xml", "text": "Anno 1743 den 12 martii ...", "style": "kopparberg", "id": "kopparberg_p1"}
+```
+
 `--fuse-loras` fuses the LoRAs into the transformer's weights at load: faster for a run that keeps one LoRA (the
 studio keeps its adapters, to switch them per drawer). `--compile-blocks` then compiles the transformer's repeated
 blocks (the first crop pays for the compilation).
