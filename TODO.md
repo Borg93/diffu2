@@ -46,23 +46,34 @@ What is known to be wrong or unfinished. Remove an item when it is done; add the
       - Layout: JSON in the prompt (summary, then items with exact text and centred pixel boxes, `yxyx`); our
         windows take 566-1,089 tokens, our 44-47-line pages 1,489-2,480, under the 4,096 cap (longer prompts are
         cut silently: count before drawing).
-      - Runs in our venv without remote code: the official pipeline file (BSD-3 code in it) vendored verbatim, its
-        classes built from local snapshots; plain SDPA, safetensors only. Weights in the HF cache: Base @ 85975793,
-        SFT's transformer @ f972bd4b.
+      - Runs in our venv on our own implementation (scratchpad moss_test: moss_model's DiT, moss_draw's encoder,
+        sampler and decode, written from the published design with the official demo as the reference): the released
+        Base DiT loads into it by name with nothing missing or unexpected (5.08 B parameters, bf16); plain SDPA,
+        safetensors only, no remote code. Weights in the HF cache: Base @ 85975793, SFT's transformer @ f972bd4b.
       - KohakuMossTrainer (Apache-2.0 plus a "Kohaku" naming term for distributed derivatives; our LoRAs and images
         exempt): LoRA / every LyCORIS kind / full fine-tune; reads our jsonl manifests as they are; single node only
         (8x A100 = two 4-GPU jobs; full fine-tune there with FSDP2 + AdamW, Muon rejected); on the GB10 pin the
         memory profile (`auto` picks streaming): `speed` for LoRAs, `ckpt-resident-optfused` + AdamW for a full
         fine-tune (~65 GiB). Installed in its own venv (~/Desktop/repos/kohakumoss at da5dd97, kohakuvault 0.9.0, no
         GPU extras); its source checked for remote code, unsafe loads and network calls (none in training paths).
-- [ ] **MOSS tests on the Spark, queued after E2n** (the FLUX.3 hand tests mirrored; scratchpad moss_test/):
-      (1) parity: two official examples redrawn with their own seeds beside the published images (our newer
-      diffusers / transformers); (2) untrained Base and SFT on the 8 held-out 1715 windows the FLUX.3 LoRAs were
-      scored on, Layout prompts (Base also a plain caption), scored like diffu-evaluate (read-back, hands); (3) the
-      1715 hand LoRA with KohakuMossTrainer on the same 160 windows, the FLUX.3 recipe (r32, AdamW 1e-4 constant,
-      700 steps of 2, MOSS Layout captions of the same facts), drawn at steps 350 and 700; (4) whole held-out pages,
-      untrained and LoRA; (5) a short full fine-tune (`ckpt-resident-optfused`, AdamW) to measure it. Judged by eye
-      beside the real scans first.
+- [ ] **MOSS validated like FLUX.3, queued after E2n** (the user, 26 Oct: layout control, LoRA, fine-tune and
+      sample images for the style and the hand; scratchpad moss_test/ and queue_moss.sh), every drawing scored as
+      diffu-evaluate scores (read-back, hand measures; writer ID after) and looked at beside the real scans first:
+      0. Our implementation against the official demo: two published examples redrawn with their own seeds (every
+         drawing stage needs PSNR >= 18 dB); the trainer's caches against our encodings (text, latents, a decode
+         round trip; training needs it); each merged export loaded by name and changed only where the LoRA trains.
+      1. Layout control untrained: the 8 held-out 1715 windows the FLUX.3 LoRAs were scored on (Base Layout, Base
+         plain caption, SFT Layout); our three templates (letter, ledger, list form; print, handwriting, rules) as the
+         FLUX.3 test drew them; whole held-out pages per line and per region at 2 MP, per line at 2.5 MP.
+      2. Sample images: MOSS has no image input, but its text encoder is the whole Qwen3.5-9B VLM, so the sample goes
+         into the encoder's prompt (Qwen3.5-9B's own image processor; the DiT reads every token or only the text's):
+         12 style pairs without the sample, with it (both ways); the 1715 LoRA with the volume's sample; the
+         templates with it. Trained conditioning on samples comes after, if this shows any pull.
+      3. LoRAs (KohakuMossTrainer, the FLUX.3 hand recipe, MOSS Layout captions of the same facts): the 1715 book
+         (160 windows, 700 steps; drawn at 350 and 700), its 4-page LoRA (23 windows, 350 steps), Pahlman's (292
+         windows, 700 steps); each beside the FLUX.3 LoRA of the same windows and steps.
+      4. A short full fine-tune of the 1715 book (350 steps, `ckpt-resident-optfused`, AdamW), drawn at 175 and 350
+         beside the LoRA.
 
 ## Repo structure
 
