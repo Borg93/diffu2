@@ -298,6 +298,13 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
       text padding then batch >= 32, shift 2-4, REPA-style alignment; (6) style for writer transfer: per-volume
       style tokens, then a hand encoder trained on samples of different text with a swap test (writer-ID picks the
       sample's writer, copy rate <= 5 %); (7) diffu-M only on HPC after letters appear; distil only from diffu.
+      (1) done 26 Oct (scratchpad vae_ceiling/: vae_ceiling.py, out/windows.json and a sheet per window): the 24
+      held-out windows read back at CER 0.103 at full size and 0.103 through the VAE (+0.000, 95 % CI -0.002 to
+      +0.002); at half size, where diffu trains, 0.112 and 0.119 through the VAE (+0.007, CI 0.000 to 0.013, worse in
+      18 of 24). Looked at beside each other, every letter survives in all four versions, even in the window that
+      changed most (Härnösands domkapitel, 0.085 -> 0.120). diffu's letter ceiling at its training size is about 0.12;
+      the VAE is not what keeps it at 1.0. Since then the order is: our pages' latent stats (E2n), the glyph map by
+      channel (E2c), the shift; (2)-(4) if letters still lag.
 - [ ] **Pages per volume LoRA: more is better** (26 Oct). Measured: 4 pages carry the hand (writer-ID 82-97 % on 4
       volumes); more pages bring the letters' size and proportions closer (1715 book, letter gap 0.82 with 4 pages,
       0.51 with 36) and cover rarer letterforms and abbreviations. Default from now on: every transcribed page of the
