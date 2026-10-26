@@ -198,17 +198,17 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
       per-channel mean/std, 2×2 patchify in FLUX.3's channel order, 64 channels). Reconstruction gate on 23 of the 24
       held-out crops (CPU, 2026-10-21): read-back CER 0.107 real vs 0.106 reconstructed (gate |Δ| ≤ 0.01; per crop
       −0.014 to +0.011).
-  - [ ] Measure the latent mean/std on our pages; if they differ from Qwen-Image's config, write them into the repo's
-        `vae/config.json` (`diffu.latents` reads only that). Measured 26 Oct on all 11,329 crops of E2b's cache
-        (scratchpad latent_stats/raw_stats.py, pages_e2b.json): they differ a lot. Under Qwen-Image's stats our latents
-        have per-channel std 0.185-0.417 (mean 0.28: 8.3 % of unit variance) and means up to +-0.93: Qwen's stats are
-        those of natural video, our pages are flat paper with thin strokes. Flow matching adds unit noise, so every
-        diffu run so far trained at about 1/12 the signal-to-noise ratio its schedule assumes: with logit-normal
-        timesteps at shift 3, 0.9 % of training samples fall where the page's signal exceeds the noise (sigma < 0.22),
-        against 13.6 % for unit-variance latents. The steps that decide letter shapes are the ones it barely trains
-        on and samples in about 4 of 50 steps; layout and paper, decided at high noise, are what E1-E2 learned. Next:
-        a diffu repo with our pages' stats (raw per-channel mean/std in pages_e2b.json) and the cache converted to
-        them on load, so no re-caching.
+  - [x] Measure the latent mean/std on our pages; if they differ from Qwen-Image's config, write them into the repo's
+        `vae/config.json` (26 Oct, 0adc09b). Over all 11,329 crops of E2b's cache, under Qwen-Image's stats (byte for
+        byte the Wan 2.1 video VAE's defaults) our latents have per-channel std 0.185-0.417 (mean 0.28: 8.3 % of unit
+        variance) and means up to +-0.93. Data of std s noised at shift a has the signal-to-noise ratio of unit-variance
+        data at shift a/s: every diffu run so far trained as if at shift ~10.7 (7.2-16.2 per channel), not 3. About 1 %
+        of training samples fall where the page's signal exceeds the noise (13.6 % at unit variance), and drawing spends
+        about 4 of 50 steps there: layout and paper, decided at high noise, are what E1-E2 learned; letter shapes are
+        decided where they barely trained. diffusers' rule for a VAE's scaling (unit variance on the training data,
+        autoencoder_kl.py's `scaling_factor`) applies to a model trained from scratch. Built: `python -m
+        diffu_train.latent_stats` measures them, `diffu-init --latent-stats` gives a repo its own VAE copy normalizing
+        with them, `latents_of` in the image-edit dataloader converts a cache on load. In test: E2n.
 - [ ] **References**: FLUX.3's reference stream replaces the old pooled DINO style vector (which gave generic style).
       A glyph map (each line's text rendered into its box, along the PAGE baseline) at l = −1 spells by construction
       and fixes line length; a style reference (another region of the same volume) at l = −2. Both already pass
@@ -269,6 +269,20 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
       Queued after it (scratchpad queue_heldin.sh, runs/heldin): E2 and E2b drawn on 24 crops both trained on
       (`data_flux3/e2_train_eval`: 2-3 from each of the 10 collections of E2's 2,000, seen 12 and ~7 times). Letters
       there but not on the held-out windows: the data is too little. None even there: how the text reaches the model.
+      Its job exports the step-4999 checkpoint, but NeMo's `save_consolidated: final` consolidates only the last one,
+      so diffu-export would refuse it and `set -e` would end the job before its final draws: scratchpad
+      consolidate_step4999.sh consolidates it in place once NeMo's LATEST passes it (tested on step 999). A job that
+      draws an earlier checkpoint must consolidate it first (NeMo's tools/offline_hf_consolidation.py).
+- [ ] **E2n** (queued 26 Oct after E2b, line repair and the held-in draws: scratchpad queue_e2n.sh;
+      `jobs/diffu/run_e2n.sh`, `configs/diffu/diffu_s_e2n_glyph.yaml`): E2b with our pages' latent stats. The same start,
+      cache (converted on load), settings and learning-rate curve, 5,000 steps, set beside E2b's step 5,000 on the
+      held-out windows (guidance 4 and 1) and the held-in crops: only the normalization differs. Then, on whichever
+      normalization wins (scratchpad diffusers_training_study/report.md, from diffusers' docs and training examples):
+      the shift at 512² (3 against ~1.75, or logit std 1.5; NeMo's mix_uniform_ratio 0.1), the glyph map by channel
+      concatenation (E2c, scratchpad glyph_concat/plan.md, which matches diffusers' flux-control recipe point for
+      point), EMA weights for drawing, and later 5 % glyph dropout for a glyph guidance scale. Watch: under our pages'
+      stats the glyph maps' latents have channel means up to +-2.35 and std 0.67-2.0 (RMS ~1.8x the pages', 405 crops),
+      alike at training and drawing; give them their own stats if E2n's rows drift from their lines.
 - [ ] **diffu upgrade plan** (26 Oct; a read-only study of FLUX.3 Klein and Qwen-Image 2.0/2.1: arXiv 2605.10730,
       2605.13565, 2508.02324, the diffusers code of both; Qwen-Image 2.1 is under the Qwen Research License, its VAE
       not usable; Qwen-VAE-2.0's release and licence unverified). Two tracks stay: diffu and the FLUX.3 LoRA path.
