@@ -427,13 +427,17 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
       tingslag, RA carl fredrik pahlmans resejournaler) name "RA … 20260220\uf028". Fixed on `modular-structure`
       (+ test). v3's captions name no archive (unaffected); a v2 retrain would learn the right names.
 
-- [ ] **Line repair** (built 26 Oct, CPU-tested on the tiny model): `pipeline.repair_lines` draws the lines the judge
+- [x] **Line repair works** (built 26 Oct; tested 26 Oct 23:41-23:49, runs/repair_wholepage, scratchpad
+      repair/run_repair.py; looked at in scratchpad repair_look/): `pipeline.repair_lines` draws the lines the judge
       rejects again in place, from new noise, with the latents outside their boxes held on the drawn crop's at every
-      step (`blocks.repair`); a redrawn line is kept only if the judge passes it, and the labels follow the judge on
-      the result. Queued for tonight after E2b: the 4 held-out 1715 pages drawn whole at guidance 2, 28 steps, before
-      and after (runs/repair_wholepage, scratchpad repair/run_repair.py): how many rejected lines it fixes, and by eye
-      whether the redrawn lines sit in the page (ink, stroke, baseline). Then: `--repair` in diffu-generate, and a
-      repair stage for Ray (a row with rejected lines in, the repaired row out).
+      step (`blocks.repair`); a redrawn line is kept only if the judge passes it. On the 4 held-out 1715 pages drawn
+      whole with the LoRA (guidance 2, 28 steps), one pass fixed 14 of the 45 rejected lines (3 -> 2, 7 -> 2,
+      21 -> 19 on the index page of 29-px lines, 14 -> 8) and made none worse. By eye: only the rejected lines change
+      (1-2 % of each page's pixels), the redrawn lines keep the clerk's hand, ink weight, baseline and paper with no
+      seam ("T͟cu Hr" -> "Till Hr", a garbled line end -> "tienst"); short lines ("menar.", "Ster-") stay unclear.
+      A pass costs about one page's drawing (~115 s at 2.5 MP).
+- [ ] `--repair N` in diffu-generate (N passes, the judge's verdicts in summary.json); then the repair stage for Ray
+      (a row with rejected lines in, the repaired row out), with the Ray items.
 - [x] Reading order across columns: labels follow the source blocks in page order, top to bottom in each
       (`CropPlan.reading_order`).
 - [x] Line polygons: checked against the GT, not a defect (GT bands are 1.6x the line pitch; our slots 1.0x;
