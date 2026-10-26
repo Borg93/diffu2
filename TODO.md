@@ -273,6 +273,14 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
       0.51 with 36) and cover rarer letterforms and abbreviations. Default from now on: every transcribed page of the
       volume (about 20-40 in our GT). Next test: a LoRA on 200-1,000 of the volume's pages with machine (HTR)
       transcriptions against the 36 checked pages, same held-out windows: does more data beat transcription noise?
+      Found (26 Oct, research agent; plan and URL patterns in scratchpad htr_plan/report.md): the "1715" GT is 128
+      spreads of three yearly volumes of SSA's Överståthållarämbetets äldre kansli, B1A Registratur 1713, 1714 and
+      1715 (Transkribus docs 343206, 1901510, 2149519; 451 + 424 + 457 spreads), so the "1715" LoRA learned the
+      chancery's clerks of 1713-15. SSA publishes all three volumes on Transkribus Read&Search without login (scans
+      and PAGE XML through its API), and its ~1,204 non-GT spreads already carry PyLaia HTR (2024). Our own HTR would
+      be Riksarkivet's yolo26s region and line models (CC-BY-4.0, ultralytics AGPL) and TrOCR swe-2 through htrflow
+      (git main for Python 3.13). Waits on the user: permission to train on SSA's images and text, spreads or
+      pages, which HTR arm (SSA's PyLaia, ours, or both as a filter).
 - [x] **Why a sample image + text does not give the hand** (25-26 Oct, runs/refdiag; the described control's 11 crops
       and seeds; sets in data_flux3/refdiag; scratchpad refdiag/). Letter-shape gap to the real hand (lower = closer):
       (A) untrained FLUX.3, another window of the volume as reference 0.42; (B) the target window itself as reference,
