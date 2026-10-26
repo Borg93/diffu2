@@ -199,7 +199,16 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
       held-out crops (CPU, 2026-10-21): read-back CER 0.107 real vs 0.106 reconstructed (gate |Δ| ≤ 0.01; per crop
       −0.014 to +0.011).
   - [ ] Measure the latent mean/std on our pages; if they differ from Qwen-Image's config, write them into the repo's
-        `vae/config.json` (`diffu.latents` reads only that).
+        `vae/config.json` (`diffu.latents` reads only that). Measured 26 Oct on all 11,329 crops of E2b's cache
+        (scratchpad latent_stats/raw_stats.py, pages_e2b.json): they differ a lot. Under Qwen-Image's stats our latents
+        have per-channel std 0.185-0.417 (mean 0.28: 8.3 % of unit variance) and means up to +-0.93: Qwen's stats are
+        those of natural video, our pages are flat paper with thin strokes. Flow matching adds unit noise, so every
+        diffu run so far trained at about 1/12 the signal-to-noise ratio its schedule assumes: with logit-normal
+        timesteps at shift 3, 0.9 % of training samples fall where the page's signal exceeds the noise (sigma < 0.22),
+        against 13.6 % for unit-variance latents. The steps that decide letter shapes are the ones it barely trains
+        on and samples in about 4 of 50 steps; layout and paper, decided at high noise, are what E1-E2 learned. Next:
+        a diffu repo with our pages' stats (raw per-channel mean/std in pages_e2b.json) and the cache converted to
+        them on load, so no re-caching.
 - [ ] **References**: FLUX.3's reference stream replaces the old pooled DINO style vector (which gave generic style).
       A glyph map (each line's text rendered into its box, along the PAGE baseline) at l = −1 spells by construction
       and fixes line length; a style reference (another region of the same volume) at l = −2. Both already pass
