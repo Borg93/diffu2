@@ -12,7 +12,7 @@ import hashlib
 from pathlib import Path
 
 from PIL import Image
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from diffu_page.blocks import crop_identity
 from diffu_page.captions.prompt import PageStyle
@@ -28,7 +28,8 @@ class PageJob(BaseModel):
     style and the noise seed.
 
     ``reference`` is a crop whose hand, ink and paper to draw in (style by example) instead of the style's archive;
-    the crops are then captioned as its LoRA was trained. ``id``, a plain file name such as a content hash, names and
+    the crops are then captioned as its LoRA was trained. ``page_pixels`` plans the page whole, as one crop of about
+    that many pixels, instead of as training-scale windows. ``id``, a plain file name such as a content hash, names and
     seeds the page's crops in place of the page's place in the run, so adding or removing pages moves no other page.
     """
 
@@ -37,6 +38,7 @@ class PageJob(BaseModel):
     style: PageStyle
     seed: int = 0
     reference: Reference | None = None
+    page_pixels: int | None = Field(default=None, gt=0)
     id: str | None = None
 
     @field_validator("id")
@@ -78,7 +80,12 @@ def crop_jobs(page: PageJob, index: int) -> list[CropJob]:
     """
     planner = PagePlanBlocks().init_pipeline()
     plans = planner(
-        template=page.template, text=page.text, style=page.style, reference=page.reference, output="crop_plans"
+        template=page.template,
+        text=page.text,
+        style=page.style,
+        reference=page.reference,
+        page_pixels=page.page_pixels,
+        output="crop_plans",
     )
     if not plans:
         raise ValueError(f"{page.template} plans to no crops: no window of it holds enough whole lines")

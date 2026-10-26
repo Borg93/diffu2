@@ -1,7 +1,9 @@
-"""Generate synthetic archive crops with ALTO/PAGE ground truth: any page template, any text, a chosen style.
+"""Generate synthetic archive crops or whole pages with ALTO/PAGE ground truth: any page template, any text, a chosen
+style.
 
-Each template (a real PAGE/ALTO page) is planned on CPU (:func:`diffu_page.jobs.crop_jobs`): its running text is
-replaced by the new text and it is cut into training-scale crops. Each crop is then drawn on its own by the crop
+Each template (a real PAGE/ALTO page, or one written for the purpose) is planned on CPU
+(:func:`diffu_page.jobs.crop_jobs`): its running text is replaced by the new text and it is cut into training-scale
+crops, or with ``--whole-page`` kept whole as one crop of ``--page-megapixels``. Each crop is then drawn on its own by the crop
 pipeline (FLUX.3 + LoRAs, or diffu), read back line by line, and labelled with badly read lines tagged ``unclear``,
 as diffu-runner's GPU actors draw it. With ``--reference`` (a crop to draw in the hand of, for the v3 LoRAs) every
 crop is drawn from it and captioned as the LoRA was trained (``--reference-caption``: ``described`` measures the
@@ -206,9 +208,15 @@ def generate(
     sampling_shift: SamplingShift = DEFAULTS.sampling_shift,
     fuse_loras: FuseLoras = DEFAULTS.fuse_loras,
     compile_blocks: CompileBlocks = DEFAULTS.compile_blocks,
+    whole_page: Annotated[
+        bool, typer.Option("--whole-page/--windows", help="draw each page whole instead of as training-scale windows")
+    ] = False,
+    page_megapixels: Annotated[
+        float, typer.Option(min=0.25, max=4.0, help="a whole page's size (FLUX.3 draws up to about 4 MP)")
+    ] = 2.5,
     profile_dir: Annotated[Path | None, typer.Option("--profile", help="write a trace of crops 2-3 here")] = None,
 ) -> None:
-    """Draw every crop of the templates, refilled with the text, in the given style."""
+    """Draw every crop of the templates (or each template whole), refilled with the text, in the given style."""
     model = required_model(model)
     draw_settings = DrawSettings(
         steps=steps,
@@ -233,8 +241,10 @@ def generate(
     )
     text = " ".join(running_text(load_xml_layout(path)) for path in text_from)
     drawn_from = page_reference(reference, reference_caption)
+    page_pixels = round(page_megapixels * 1_000_000) if whole_page else None
     pages = [
-        PageJob(template=template, text=text, style=style, seed=seed, reference=drawn_from) for template in templates
+        PageJob(template=template, text=text, style=style, seed=seed, reference=drawn_from, page_pixels=page_pixels)
+        for template in templates
     ]
     loras = lora_dirs(lora)
     jobs, failed = plan_jobs(pages)  # before the model loads: a run whose pages plan to nothing loads none

@@ -10,7 +10,7 @@ from diffusers.modular_pipelines import InputParam, ModularPipeline, ModularPipe
 
 from diffu_page.captions.prompt import PageStyle
 from diffu_page.layout import Layout, load_xml_layout, refill
-from diffu_page.plan import Reference, plan_page
+from diffu_page.plan import Reference, plan_page, plan_whole_page
 
 
 class LoadLayoutStep(ModularPipelineBlocks):
@@ -75,7 +75,10 @@ class PlanCropsStep(ModularPipelineBlocks):
     @property
     @override
     def description(self) -> str:
-        return "Plans the layout as training-scale crops (diffu_page.plan): size, caption, line boxes, reading order."
+        return (
+            "Plans the layout as training-scale crops, or whole at a pixel budget (diffu_page.plan): size, caption, "
+            "line boxes, reading order."
+        )
 
     @property
     @override
@@ -89,6 +92,11 @@ class PlanCropsStep(ModularPipelineBlocks):
                 description="A crop to draw the page in the hand of: the captions then take the form its LoRA was "
                 "trained on (diffu_page.plan.Reference).",
             ),
+            InputParam(
+                "page_pixels",
+                type_hint=int,
+                description="Plan the page whole, as one crop of about this many pixels, instead of as windows.",
+            ),
         ]
 
     @property
@@ -98,6 +106,12 @@ class PlanCropsStep(ModularPipelineBlocks):
 
     def __call__(self, components: ModularPipeline, state: PipelineState) -> tuple[ModularPipeline, PipelineState]:
         block_state = self.get_block_state(state)
-        block_state.crop_plans = plan_page(block_state.layout, block_state.style, reference=block_state.reference)
+        layout, style, reference = block_state.layout, block_state.style, block_state.reference
+        if block_state.page_pixels is None:
+            block_state.crop_plans = plan_page(layout, style, reference=reference)
+        else:
+            block_state.crop_plans = [
+                plan_whole_page(layout, style, pixels=block_state.page_pixels, reference=reference)
+            ]
         self.set_block_state(state, block_state)
         return components, state

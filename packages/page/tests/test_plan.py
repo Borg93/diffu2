@@ -20,7 +20,7 @@ from diffu_page.captions.restyle import ReferenceCaption
 from diffu_page.crops.geometry import CropSettings, crops_for_page, regions_of
 from diffu_page.data.style_pairs import Pair, Scan, captions, describe
 from diffu_page.layout import Layout, TextLine, load_xml_layout
-from diffu_page.plan import CropPlan, Reference, plan_page
+from diffu_page.plan import CropPlan, Reference, plan_page, plan_whole_page
 
 STYLE = PageStyle(
     provenance=Provenance(title="the archive", years="1700"),
@@ -41,6 +41,16 @@ def test_plan_reads_the_body_block_before_its_margin_notes(body_and_notes_page: 
 def _rows(plan: CropPlan) -> dict[str, str]:
     """A plan's layout rows, id -> desc."""
     return {row["id"]: row["desc"] for row in json.loads(plan.caption[plan.caption.index(" [{") + 1 :])}
+
+
+def test_plan_whole_page_draws_every_line_of_the_page_at_the_pixels_asked_for(body_and_notes_page: Path) -> None:
+    layout = load_xml_layout(body_and_notes_page)
+
+    plan = plan_whole_page(layout, STYLE, pixels=1_000_000)
+
+    assert (plan.width, plan.height) == (1024, 976)  # 2000 x 1900 px at 0.513, each side on the 16-px grid
+    assert sorted(line.text for line in plan.lines) == sorted(line.text for line in layout.lines)
+    assert [plan.lines[i].text for i in plan.reading_order][-2:] == ["note 0", "note 1"]
 
 
 def test_plan_keeps_every_row_of_a_table_whole_in_its_windows(table_page: Path) -> None:

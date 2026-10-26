@@ -6,11 +6,13 @@ sizes) and the same caption grammar as the training crops. A table is planned as
 rows across it, and the page's ruled lines are kept in the windows they cross.
 The style is a ``PageStyle`` (the archive and its years; the scan, paper and ink), as in every v2 caption. A page
 drawn from a :class:`Reference` (style by example) is captioned as the reference pairs were (v3 on): its style's
-words give way to the reference, in the caption form the LoRA in use was trained on. CPU only.
+words give way to the reference, in the caption form the LoRA in use was trained on. A page can also be planned whole
+(:func:`plan_whole_page`): one crop of every line at a pixel budget, captioned as a window is. CPU only.
 """
 
 from __future__ import annotations
 
+import statistics
 from pathlib import Path
 from typing import Self
 
@@ -20,7 +22,8 @@ from diffu_page.captions.hand import ReferenceLook, measure_reference
 from diffu_page.captions.prompt import Caption, LineRecord, PageStyle, caption_for, caption_order
 from diffu_page.captions.records import read_records
 from diffu_page.captions.restyle import CaptionParts, ReferenceCaption, reference_caption
-from diffu_page.crops.geometry import Crop, CropSettings, LayoutBox, crops_for_page, regions_of
+from diffu_page.crops.geometry import Crop, CropSettings, LayoutBox, crops_for_page, line_spacing, regions_of
+from diffu_page.crops.grid import LATENT_GRID
 from diffu_page.layout import Layout
 
 
@@ -128,6 +131,39 @@ def plan_page(layout: Layout, style: PageStyle, *, reference: Reference | None =
         CropSettings(),
         rules=[(rule.x0, rule.y0, rule.x1, rule.y1) for rule in layout.rules],
     )
+    return _plans(crops, layout, style, reference)
+
+
+def plan_whole_page(layout: Layout, style: PageStyle, *, pixels: int, reference: Reference | None = None) -> CropPlan:
+    """The page as one crop of about ``pixels`` pixels, each side on the latent grid: every text line and ruled line
+    of it, captioned in ``style`` (or from a ``reference``) as a window is. The models draw a whole page this way
+    (runs/fullpage: a two-page opening at 2.5 MP with a window-trained LoRA).
+
+    Raises:
+        ValueError: If the page has no line of text to draw.
+    """
+    regions = regions_of(layout)
+    lines = [line for region in regions for line in region.lines]
+    if not lines:
+        raise ValueError("the page has no line of text to draw")
+    scale = (pixels / (layout.width * layout.height)) ** 0.5
+    width, height = (
+        max(LATENT_GRID, round(side * scale / LATENT_GRID) * LATENT_GRID) for side in (layout.width, layout.height)
+    )
+    pitch = line_spacing(regions) or statistics.median(line.box[3] - line.box[1] for line in lines)
+    crop = Crop(
+        rect=(0, 0, layout.width, layout.height),
+        size=(width, height),
+        pitch=pitch,
+        lines=lines,
+        fragments=[],
+        rules=[(rule.x0, rule.y0, rule.x1, rule.y1) for rule in layout.rules],
+    )
+    return _plans([crop], layout, style, reference)[0]
+
+
+def _plans(crops: list[Crop], layout: Layout, style: PageStyle, reference: Reference | None) -> list[CropPlan]:
+    """``crops`` of ``layout`` planned: captioned in ``style`` or from ``reference``, read in the page's block order."""
     block_rank = {source: rank for rank, source in enumerate(dict.fromkeys(line.source for line in layout.lines))}
     written = [caption_for(crop, style) for crop in crops]
     texts = (
