@@ -32,18 +32,37 @@ What is known to be wrong or unfinished. Remove an item when it is done; add the
 
 ## A third path: MOSS-Image (the user, 26 Oct)
 
-- [ ] **MOSS-Image** (github.com/OpenMOSS/MOSS-Image, its docs site `website/index.html`), fine-tuned with
-      KohakuMossTrainer (github.com/KohakuBlueleaf/KohakuMossTrainer and its `docs/`): can it be a third path beside
-      diffu and the FLUX.3 LoRAs? Its prompt-enhancer skill is installed (user scope, every file read first). Its Layout
-      prompt is a summary caption plus one item per element, a text item carrying its exact text and a pixel box, which
-      a PAGE/ALTO page gives line by line. Two read-only studies are running (scratchpad moss_image/report.md and
-      trainer_report.md):
-      - the model: architecture, the licence of code and weights (can its outputs train VLMs?), text rendering (dense,
-        small, cursive, Swedish), layout control, reference images;
-      - running it on the GB10: diffusers-native or custom code (`trust_remote_code` stays off), memory, aarch64 and
-        sm_121;
-      - the trainer: LoRA or full fine-tune, data format, aarch64 builds of its dependencies, memory on the GB10.
-      Then a first test against the FLUX.3 hand LoRAs on the same held-out windows.
+- [x] **MOSS-Image studied** (26 Oct; scratchpad moss_image/report.md and trainer_report.md; every KohakuMossTrainer
+      doc, 43 files, and the Space's pipeline, app and aoti read in full): a 5B single-stream DiT (42 blocks, width
+      3072) trained from scratch, frozen Qwen3.5-9B text encoder, frozen FLUX.2 VAE (small decoder); text to image
+      only, no reference-image input, no editing.
+      - Licence: code and weights Apache-2.0; the Qwen3.5-9B encoder Apache-2.0; the VAE is Black Forest Labs'
+        FLUX.2 small decoder under plain Apache-2.0 (no FLUX non-commercial terms). Nothing limits training VLMs on
+        its outputs. Open for the user: is a BFL-made VAE under Apache-2.0 acceptable (the "no FLUX.2" rule is about
+        bases)?
+      - Text: claims the best open long-text rendering (LLTB 96.3, printed English / Chinese); every handwriting
+        example is neat print; no cursive, historical hand, Swedish letters or long s anywhere. The hand must come
+        from a LoRA or fine-tune per volume, as on the FLUX.3 path (no reference stream at all).
+      - Layout: JSON in the prompt (summary, then items with exact text and centred pixel boxes, `yxyx`); our
+        windows take 566-1,089 tokens, our 44-47-line pages 1,489-2,480, under the 4,096 cap (longer prompts are
+        cut silently: count before drawing).
+      - Runs in our venv without remote code: the official pipeline file (BSD-3 code in it) vendored verbatim, its
+        classes built from local snapshots; plain SDPA, safetensors only. Weights in the HF cache: Base @ 85975793,
+        SFT's transformer @ f972bd4b.
+      - KohakuMossTrainer (Apache-2.0 plus a "Kohaku" naming term for distributed derivatives; our LoRAs and images
+        exempt): LoRA / every LyCORIS kind / full fine-tune; reads our jsonl manifests as they are; single node only
+        (8x A100 = two 4-GPU jobs; full fine-tune there with FSDP2 + AdamW, Muon rejected); on the GB10 pin the
+        memory profile (`auto` picks streaming): `speed` for LoRAs, `ckpt-resident-optfused` + AdamW for a full
+        fine-tune (~65 GiB). Installed in its own venv (~/Desktop/repos/kohakumoss at da5dd97, kohakuvault 0.9.0, no
+        GPU extras); its source checked for remote code, unsafe loads and network calls (none in training paths).
+- [ ] **MOSS tests on the Spark, queued after E2n** (the FLUX.3 hand tests mirrored; scratchpad moss_test/):
+      (1) parity: two official examples redrawn with their own seeds beside the published images (our newer
+      diffusers / transformers); (2) untrained Base and SFT on the 8 held-out 1715 windows the FLUX.3 LoRAs were
+      scored on, Layout prompts (Base also a plain caption), scored like diffu-evaluate (read-back, hands); (3) the
+      1715 hand LoRA with KohakuMossTrainer on the same 160 windows, the FLUX.3 recipe (r32, AdamW 1e-4 constant,
+      700 steps of 2, MOSS Layout captions of the same facts), drawn at steps 350 and 700; (4) whole held-out pages,
+      untrained and LoRA; (5) a short full fine-tune (`ckpt-resident-optfused`, AdamW) to measure it. Judged by eye
+      beside the real scans first.
 
 ## Repo structure
 
