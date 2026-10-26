@@ -770,6 +770,15 @@ local Ray, profiled before and after; no cluster runs until the tests are done:
       only `RaySystemError` from a stage and fails the block on any other exception; a process that dies is
       restarted (`max_restarts=-1`) and its batch retried (`max_task_retries=-1`). Details and sources: docs/RAY.md
       (26 Oct, read in full: Ray's data and core docs, and the Ray Data sources where the API pages are stubs).
+- [ ] One row per page from read to sink. Ray Data resumes a run (`CheckpointConfig`) only on a plan from a file read
+      to a write, by the ids of the rows it wrote, and the ids must be unique across rows (26 Oct, its planner and
+      checkpoint sources; docs/RAY.md). The runner's plan is a `flat_map` from a page to its crops: the written crops
+      share the page id, and a page stopped after some of its crops counts as done and is skipped. Whole pages are one
+      row already; window mode keeps a page's crops inside its row. A Ray run requires `PageJob.id` (optional today).
+- [ ] The sink: `write_webdataset` (alpha) with `__key__` = page id and columns `png`, `alto.xml`, `page.xml`, `json`
+      writes each page as `{id}.png`, `{id}.alto.xml`, `{id}.page.xml`, `{id}.json` inside tar shards, with Ray's
+      two-phase commit (a file sink). Alternatives: `write_parquet`, or our own `Datasink` for loose files named by id
+      (Ray's `RowBasedFileDatasink` names files by write task and row). Decide with the VLM training's format.
 
 Lessons from NVIDIA NeMo Curator (github.com/NVIDIA-NeMo/Curator, Apache-2.0, read 24 Oct: stages/base.py,
 resources.py, tasks/tasks.py, pipeline/pipeline.py, backends/base.py, backends/ray_data/{adapter,executor}.py and its
@@ -792,9 +801,12 @@ an executor (Ray Data, a Ray actor pool, Xenna, a Slurm array) decides how it ru
 - [ ] Resumability for million-page runs: per-source completion counters (Curator: one LMDB file per writer, the union
       read at start, so a rerun skips every source any earlier writer finished); for us at least: deterministic output
       names per page plus a completed-pages manifest, so a restarted run skips finished pages instead of appending.
+      Ray Data's `CheckpointConfig` already does this (26 Oct): it records the ids of written rows and skips them on a
+      rerun. Use it, not a manifest or counters of our own (one row per page, above).
 - [ ] Atomic writes (temp file, fsync, rename) for every manifest and dataset file, and sinks that name their files
       from the task id (a rerun overwrites the same file, never adds a second): fixes the audit's half-written builds
-      and the runner's Parquet appended into an earlier run.
+      and the runner's Parquet appended into an earlier run. On Ray, the built-in file sinks commit in two phases
+      under checkpointing; atomic writes stay ours for the local manifests and dataset builds.
 - [ ] Composite stages: a user-facing "draw pages" stage that decomposes into plan (CPU fan-out), draw (GPU), labels
       and write (CPU) at planning time, with per-sub-stage overrides (Curator's `with_()`).
 - [ ] Declared inputs and outputs per stage, checked when the pipeline is built, not mid-run.
