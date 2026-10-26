@@ -705,6 +705,9 @@ Data checks (23 Oct evening, the user's question: any leakage or anything weird?
 
 ## Inference at scale
 
+How Ray Data runs, retries and fails our stages, and what that asks of our code: docs/RAY.md.
+
+
 - [x] Ray Data entrypoint (diffu-runner): layout / refill / plan as a CPU `flat_map` (`PagePlanBlocks`), one crop
       per block, the crop pipeline as a stateful GPU actor (`map_batches`, concurrency = actors), TrOCR read-back
       co-located, Parquet sink.
@@ -762,8 +765,11 @@ local Ray, profiled before and after; no cluster runs until the tests are done:
 - [ ] Our own parallelism: `style_pairs` runs a `ProcessPoolExecutor`: build the pairs as a Ray Data map over pages.
 - [x] `page_blocks` looped over a page's crops inside one pipeline call: removed (24 Oct, the user's call); generate
       draws crop jobs one by one, so one failed crop costs no other.
-- [ ] `DrawActor` catches every exception as a failed crop, CUDA faults included: let CUDA errors (OOM, illegal
-      access) raise so Ray restarts the actor; keep per-crop rows for content errors only.
+- [ ] `DrawActor` catches every exception as a failed crop, CUDA faults included: keep per-crop error rows for
+      content errors only, and on a device fault exit the actor's process. Raising is not enough: Ray Data retries
+      only `RaySystemError` from a stage and fails the block on any other exception; a process that dies is
+      restarted (`max_restarts=-1`) and its batch retried (`max_task_retries=-1`). Details and sources: docs/RAY.md
+      (26 Oct, read in full: Ray's data and core docs, and the Ray Data sources where the API pages are stubs).
 
 Lessons from NVIDIA NeMo Curator (github.com/NVIDIA-NeMo/Curator, Apache-2.0, read 24 Oct: stages/base.py,
 resources.py, tasks/tasks.py, pipeline/pipeline.py, backends/base.py, backends/ray_data/{adapter,executor}.py and its

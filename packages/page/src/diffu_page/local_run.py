@@ -2,8 +2,9 @@
 item that fails is recorded by key with its error and the rest still run, unless it failed in a way that makes every
 later item fail too (a device that can no longer be trusted).
 
-Not for a cluster: there Ray Data iterates the rows, a stage turns a failing row into a row with its error, and a
-device error ends the worker so Ray restarts it. Nothing here schedules, retries or queues."""
+Not for a cluster: there Ray Data iterates the rows and retries crashed workers, a stage turns a failing row into a row
+with its error, and a stage exits its worker on a device fault so Ray restarts it and retries the batch (docs/RAY.md).
+Nothing here schedules, retries or queues."""
 
 from __future__ import annotations
 
