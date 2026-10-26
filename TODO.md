@@ -263,6 +263,11 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
       text padding then batch >= 32, shift 2-4, REPA-style alignment; (6) style for writer transfer: per-volume
       style tokens, then a hand encoder trained on samples of different text with a swap test (writer-ID picks the
       sample's writer, copy rate <= 5 %); (7) diffu-M only on HPC after letters appear; distil only from diffu.
+- [ ] **Pages per volume LoRA: more is better** (26 Oct). Measured: 4 pages carry the hand (writer-ID 82-97 % on 4
+      volumes); more pages bring the letters' size and proportions closer (1715 book, letter gap 0.82 with 4 pages,
+      0.51 with 36) and cover rarer letterforms and abbreviations. Default from now on: every transcribed page of the
+      volume (about 20-40 in our GT). Next test: a LoRA on 200-1,000 of the volume's pages with machine (HTR)
+      transcriptions against the 36 checked pages, same held-out windows: does more data beat transcription noise?
 - [x] **Why a sample image + text does not give the hand** (25-26 Oct, runs/refdiag; the described control's 11 crops
       and seeds; sets in data_flux3/refdiag; scratchpad refdiag/). Letter-shape gap to the real hand (lower = closer):
       (A) untrained FLUX.3, another window of the volume as reference 0.42; (B) the target window itself as reference,
