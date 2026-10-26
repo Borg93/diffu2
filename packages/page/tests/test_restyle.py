@@ -4,9 +4,8 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -14,7 +13,6 @@ from diffu_page.captions.hand import HandLook, ReferenceLook
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.prompt import PageStyle, caption_for
 from diffu_page.captions.provenance import Provenance
-from diffu_page.captions.records import CropRecord
 from diffu_page.captions.restyle import (
     CaptionParts,
     described_edit_caption,
@@ -24,6 +22,9 @@ from diffu_page.captions.restyle import (
 )
 from diffu_page.crops.geometry import Crop, CropSettings, crops_for_page, regions_of
 from diffu_page.layout import load_xml_layout, refill
+
+if TYPE_CHECKING:
+    from conftest import RecordMaker
 
 CITED_LINES = (  # how the paragraph cites body_and_notes_crop's lines, after their ink
     ", including two marginal note lines; the main text runs from top to bottom: <Sv_Text_1> <Sv_Text_2> <Sv_Text_3> "
@@ -38,7 +39,7 @@ def _paragraph_and_rows(caption: str) -> tuple[str, list[dict[str, Any]]]:
 
 
 def test_restyle_writes_the_caption_the_crop_gets_in_the_target_style(
-    body_and_notes_crop: Crop, make_record: Callable[..., CropRecord]
+    body_and_notes_crop: Crop, make_record: RecordMaker
 ) -> None:
     record = make_record(body_and_notes_crop)
     target = PageStyle(
@@ -52,7 +53,7 @@ def test_restyle_writes_the_caption_the_crop_gets_in_the_target_style(
 
 
 def test_restyle_quotes_a_line_with_a_dollar_sign_as_written(
-    body_and_notes_page: Path, make_record: Callable[..., CropRecord]
+    body_and_notes_page: Path, make_record: RecordMaker
 ) -> None:
     layout = refill(load_xml_layout(body_and_notes_page), "kostade $ 12 och $$ 3 " * 40)
     record = make_record(crops_for_page(regions_of(layout), (layout.width, layout.height), CropSettings())[0])
@@ -78,7 +79,7 @@ def certificate_crop(certificate_page: Path) -> Crop:
 
 
 def test_restyle_writes_the_caption_a_form_crop_gets_in_the_target_style(
-    certificate_crop: Crop, make_record: Callable[..., CropRecord]
+    certificate_crop: Crop, make_record: RecordMaker
 ) -> None:
     record = make_record(certificate_crop)
     target = PageStyle(
@@ -92,7 +93,7 @@ def test_restyle_writes_the_caption_a_form_crop_gets_in_the_target_style(
 
 
 def test_edit_caption_takes_only_the_paper_from_the_reference_and_names_no_style(
-    body_and_notes_crop: Crop, make_record: Callable[..., CropRecord]
+    body_and_notes_crop: Crop, make_record: RecordMaker
 ) -> None:
     record = make_record(body_and_notes_crop)
 
@@ -125,7 +126,7 @@ def test_edit_caption_takes_only_the_paper_from_the_reference_and_names_no_style
 
 
 def test_named_edit_caption_names_the_archive_and_look_beside_the_reference(
-    body_and_notes_crop: Crop, make_record: Callable[..., CropRecord]
+    body_and_notes_crop: Crop, make_record: RecordMaker
 ) -> None:
     record = make_record(body_and_notes_crop)
 
@@ -147,7 +148,7 @@ def test_named_edit_caption_names_the_archive_and_look_beside_the_reference(
 
 
 def test_described_edit_caption_describes_the_reference_in_place_of_the_crop_style(
-    body_and_notes_crop: Crop, make_record: Callable[..., CropRecord]
+    body_and_notes_crop: Crop, make_record: RecordMaker
 ) -> None:
     record = make_record(body_and_notes_crop)
     reference = ReferenceLook(
@@ -186,7 +187,7 @@ def test_described_edit_caption_describes_the_reference_in_place_of_the_crop_sty
     ],
 )
 def test_described_edit_caption_refuses_a_reference_whose_hand_was_not_measured(
-    body_and_notes_crop: Crop, make_record: Callable[..., CropRecord], hand: HandLook
+    body_and_notes_crop: Crop, make_record: RecordMaker, hand: HandLook
 ) -> None:
     record = make_record(body_and_notes_crop)
     reference = ReferenceLook(scan=ScanLook(greyscale=True, paper="light grey", ink="black"), hand=hand)
@@ -196,7 +197,7 @@ def test_described_edit_caption_refuses_a_reference_whose_hand_was_not_measured(
 
 
 def test_caption_parts_refuse_a_record_built_before_records_kept_their_template(
-    body_and_notes_crop: Crop, make_record: Callable[..., CropRecord]
+    body_and_notes_crop: Crop, make_record: RecordMaker
 ) -> None:
     old = make_record(body_and_notes_crop).model_copy(update={"template": None})
 

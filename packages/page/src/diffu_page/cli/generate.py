@@ -58,7 +58,7 @@ from diffu_page.cli.options import (
     TextLayers,
     lora_dirs,
     required_model,
-    text_layers,
+    settings_from_options,
 )
 from diffu_page.jobs import CropJob, PageJob, crop_jobs, read_page_jobs
 from diffu_page.judge import Judge, TrOCRJudge
@@ -87,8 +87,8 @@ PAGE_OPTIONS = (  # what a job file gives each page instead
 )
 
 
-class CropResult(BaseModel):
-    """A drawn crop: its name, its template and how well its lines read back."""
+class CropSummary(BaseModel):
+    """A drawn crop as ``summary.json`` lists it: its name, its template and how well its lines read back."""
 
     name: str
     template: str
@@ -106,14 +106,14 @@ class Summary(BaseModel):
     loras: dict[str, str]
     settings: DrawSettings
     pages: list[PageJob]
-    crops: list[CropResult]
+    crops: list[CropSummary]
     failed: dict[str, str]
 
 
-def _save(crop: DrawnCrop, template: Path, out: Path) -> CropResult:
+def _save(crop: DrawnCrop, template: Path, out: Path) -> CropSummary:
     crop.image.save(out / f"{crop.name}.jpg", quality=JPEG_QUALITY)
     (out / f"{crop.name}.xml").write_text(crop.labels_xml, encoding="utf-8")
-    return CropResult(
+    return CropSummary(
         name=crop.name,
         template=str(template),
         lines=len(crop.plan.lines),
@@ -122,7 +122,9 @@ def _save(crop: DrawnCrop, template: Path, out: Path) -> CropResult:
     )
 
 
-def _draw(pipe: ModularPipeline, job: CropJob, *, settings: DrawSettings, out: Path, judge: Judge | None) -> CropResult:
+def _draw(
+    pipe: ModularPipeline, job: CropJob, *, settings: DrawSettings, out: Path, judge: Judge | None
+) -> CropSummary:
     reference = job.reference_image()
     crop = draw_crop(pipe, job.plan, name=job.name, seed=job.seed, reference=reference, settings=settings, judge=judge)
     result = _save(crop, job.template, out)
@@ -148,12 +150,12 @@ def draw_pages(
     out: Path,
     prof: profile | None,
     judge: Judge | None = None,
-) -> tuple[list[CropResult], dict[str, str]]:
+) -> tuple[list[CropSummary], dict[str, str]]:
     """Every planned crop drawn by the crop pipeline, judged by ``judge`` (the default TrOCR judge if none) and saved;
     a crop that cannot be drawn is recorded by name with its error and the rest still run, unless the device failed:
     then every crop after it is recorded as not run (:func:`diffu_page.local_run.run_each`)."""
 
-    def draw(job: CropJob) -> CropResult:
+    def draw(job: CropJob) -> CropSummary:
         result = _draw(pipe, job, settings=settings, out=out, judge=judge)
         if prof is not None:
             prof.step()
@@ -276,19 +278,19 @@ def generate(
     """Draw every crop of the templates (or each template whole), refilled with the text, in the given style; or every
     page of a job file, each in its own."""
     model = required_model(model)
-    draw_settings = DrawSettings(
+    draw_settings = settings_from_options(
         steps=steps,
-        guidance_scale=guidance,
-        reference_guidance_scale=reference_guidance,
+        guidance=guidance,
+        reference_guidance=reference_guidance,
         guidance_stop=guidance_stop,
-        label_format=label_format,
-        max_line_cer=max_line_cer,
-        text_layers=text_layers(text_layer),
+        text_layer=text_layer,
         device=device,
+        max_line_cer=max_line_cer,
         lora_scale=lora_scale,
         sampling_shift=sampling_shift,
         fuse_loras=fuse_loras,
         compile_blocks=compile_blocks,
+        label_format=label_format,
     )
     if job_file is not None:
         pages = job_file_pages(ctx, job_file)
@@ -311,7 +313,7 @@ def generate(
         raise typer.BadParameter("there is no --reference to guide toward", param_hint="--reference-guidance")
     loras = lora_dirs(lora)
     jobs, failed = plan_jobs(pages)  # before the model loads: a run whose pages plan to nothing loads none
-    crops: list[CropResult] = []
+    crops: list[CropSummary] = []
     out.mkdir(parents=True, exist_ok=True)
     if jobs:
         pipe = load_pipeline(model, crop_blocks, loras=loras, settings=draw_settings)

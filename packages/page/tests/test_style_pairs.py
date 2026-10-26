@@ -6,13 +6,13 @@ from __future__ import annotations
 import random
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from PIL import Image
 from typer.testing import CliRunner
 
 from diffu_page.captions.prompt import LineRecord
-from diffu_page.captions.records import CropRecord
 from diffu_page.captions.restyle import CaptionParts, edit_caption
 from diffu_page.crops.geometry import Crop
 from diffu_page.data.style_pairs import (
@@ -29,8 +29,11 @@ from diffu_page.data.style_pairs import (
     training_pairs,
 )
 
+if TYPE_CHECKING:
+    from conftest import RecordMaker
 
-def _scans(make_record: Callable[..., CropRecord], crop: Crop, directory: Path) -> list[Scan]:
+
+def _scans(make_record: RecordMaker, crop: Crop, directory: Path) -> list[Scan]:
     """Six crops on three pages of one volume, as build_crops writes them."""
     directory.mkdir()
     scans: list[Scan] = []
@@ -46,7 +49,7 @@ def _edit_caption(pair: Pair) -> str:
 
 
 def test_training_pairs_name_each_pairs_target_and_reference(
-    body_and_notes_crop: Crop, make_record: Callable[..., CropRecord], tmp_path: Path
+    body_and_notes_crop: Crop, make_record: RecordMaker, tmp_path: Path
 ) -> None:
     scans = _scans(make_record, body_and_notes_crop, tmp_path / "crops")
     pairs = pick_pairs(scans, by_volume(scans), rng=random.Random(0), pick=pick_reference)
@@ -64,7 +67,7 @@ def test_training_pairs_name_each_pairs_target_and_reference(
 
 
 @pytest.fixture
-def make_scan(body_and_notes_crop: Crop, make_record: Callable[..., CropRecord]) -> Callable[[int, list[str]], Scan]:
+def make_scan(body_and_notes_crop: Crop, make_record: RecordMaker) -> Callable[[int, list[str]], Scan]:
     """Makes a crop of scan ``page`` of one volume holding lines with ``texts``: ``make_scan(page, texts)``."""
 
     def make(page: int, texts: list[str]) -> Scan:
@@ -109,7 +112,7 @@ def test_same_hand_reference_falls_back_to_a_facing_page_crop_sharing_no_line(
 
 
 def test_a_training_sets_spread_keeps_only_the_files_its_pairs_name(
-    body_and_notes_crop: Crop, make_record: Callable[..., CropRecord], tmp_path: Path
+    body_and_notes_crop: Crop, make_record: RecordMaker, tmp_path: Path
 ) -> None:
     scans = _scans(make_record, body_and_notes_crop, tmp_path / "crops")
     built = training_pairs(
@@ -125,7 +128,7 @@ def test_a_training_sets_spread_keeps_only_the_files_its_pairs_name(
 
 
 def test_by_example_rows_name_their_reference_and_template(
-    body_and_notes_crop: Crop, make_record: Callable[..., CropRecord], tmp_path: Path
+    body_and_notes_crop: Crop, make_record: RecordMaker, tmp_path: Path
 ) -> None:
     scans = _scans(make_record, body_and_notes_crop, tmp_path / "crops")
     picked = [

@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from PIL import Image
@@ -15,12 +15,14 @@ from pydantic import ValidationError
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.prompt import LineRecord, PageStyle
 from diffu_page.captions.provenance import Provenance
-from diffu_page.captions.records import CropRecord
 from diffu_page.captions.restyle import ReferenceCaption
 from diffu_page.crops.geometry import CropSettings, crops_for_page, regions_of
 from diffu_page.data.style_pairs import Pair, Scan, captions, describe
 from diffu_page.layout import Layout, TextLine, load_xml_layout
 from diffu_page.plan import CropPlan, Reference, plan_page, plan_whole_page
+
+if TYPE_CHECKING:
+    from conftest import RecordMaker
 
 STYLE = PageStyle(
     provenance=Provenance(title="the archive", years="1700"),
@@ -195,7 +197,7 @@ def test_plan_names_a_reference_whose_hand_cannot_be_described(body_and_notes_pa
 
 
 def test_plan_captions_a_page_drawn_from_a_reference_as_its_training_pairs_were_captioned(
-    body_and_notes_page: Path, make_record: Callable[..., CropRecord], tmp_path: Path
+    body_and_notes_page: Path, make_record: RecordMaker, tmp_path: Path
 ) -> None:
     layout = load_xml_layout(body_and_notes_page)
     image = tmp_path / "reference.png"

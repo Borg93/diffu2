@@ -1,5 +1,5 @@
 """Option types the generation CLIs share: the draw options, each declared once with its default from
-``DrawSettings``, and the LoRA and model options."""
+``DrawSettings`` and mapped back onto its field by :func:`settings_from_options`, and the LoRA and model options."""
 
 from __future__ import annotations
 
@@ -83,6 +83,39 @@ Loras = Annotated[list[Lora] | None, typer.Option(parser=parse_lora, help="name=
 def text_layers(layers: list[int] | None) -> tuple[int, ...] | None:
     """The ``--text-layer`` options as ``DrawSettings`` takes them: None (the model's own layers) when none is given."""
     return tuple(layers) if layers else None
+
+
+def settings_from_options(
+    *,
+    steps: int,
+    guidance: float,
+    reference_guidance: float,
+    guidance_stop: float,
+    text_layer: list[int] | None,
+    device: str,
+    max_line_cer: float,
+    lora_scale: float,
+    sampling_shift: float | None,
+    fuse_loras: bool,
+    compile_blocks: bool,
+    label_format: LabelFormat = DEFAULTS.label_format,
+) -> DrawSettings:
+    """The draw options a command was given, by their parameters' names, as ``DrawSettings``. Each is required, so a
+    command that leaves one out fails the type check; the label format matters only to a command that writes labels."""
+    return DrawSettings(
+        steps=steps,
+        guidance_scale=guidance,
+        reference_guidance_scale=reference_guidance,
+        guidance_stop=guidance_stop,
+        label_format=label_format,
+        max_line_cer=max_line_cer,
+        text_layers=text_layers(text_layer),
+        device=device,
+        lora_scale=lora_scale,
+        sampling_shift=sampling_shift,
+        fuse_loras=fuse_loras,
+        compile_blocks=compile_blocks,
+    )
 
 
 def lora_dirs(loras: list[Lora] | None) -> dict[str, Path]:

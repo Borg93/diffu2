@@ -3,7 +3,7 @@ whose words differ most from it, all drawn from its own reference image."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -14,6 +14,9 @@ from diffu_page.captions.restyle import CaptionParts, described_edit_caption, ed
 from diffu_page.crops.geometry import Crop
 from diffu_page.data.probe_set import probe_rows
 from diffu_page.evalset import ReferencedCrop
+
+if TYPE_CHECKING:
+    from conftest import RecordMaker
 
 SLANTED = ReferenceLook(
     scan=ScanLook(greyscale=False, paper="cream", ink="brown"),
@@ -27,7 +30,7 @@ UPRIGHT = ReferenceLook(
 
 
 @pytest.fixture
-def records(body_and_notes_crop: Crop, make_record: Callable[..., CropRecord]) -> dict[str, CropRecord]:
+def records(body_and_notes_crop: Crop, make_record: RecordMaker) -> dict[str, CropRecord]:
     """Three crops of one page, as build_crops records them."""
     return {name: make_record(body_and_notes_crop, name) for name in ("a.jpg", "b.jpg", "c.jpg")}
 

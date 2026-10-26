@@ -8,6 +8,7 @@ import json
 import shutil
 from collections.abc import Callable
 from pathlib import Path
+from typing import Protocol
 
 import pytest
 import torch
@@ -193,7 +194,11 @@ ARJEPLOGS = "GT-RA_arjeplogs_tingslag_20260220"
 ARJEPLOGS_PAGES = Path(ARJEPLOGS, "Arjeplogs tingslag (1690-1700)", "Arjeplogs tingslag (1690-1700)", "page")
 YELLOWED = ScanLook(greyscale=False, paper="yellowed", ink="dark brown")
 
-type RecordMaker = Callable[..., CropRecord]
+
+class RecordMaker(Protocol):
+    """``make_record``: ``crop``'s record as ``build_crops`` writes it, as the image ``file_name`` cut from ``page``."""
+
+    def __call__(self, crop: Crop, file_name: str = ..., page: str = ...) -> CropRecord: ...
 
 
 @pytest.fixture

@@ -40,7 +40,7 @@ from diffu_page.cli.options import (
     TextLayers,
     lora_dirs,
     required_model,
-    text_layers,
+    settings_from_options,
 )
 from diffu_page.crops.geometry import pixel_box
 from diffu_page.evalset import EvalCrop, generated_path, read_crops
@@ -66,8 +66,9 @@ class LineResult(BaseModel):
     real_cer: float
 
 
-class CropResult(BaseModel):
-    """One evaluated crop, by its index in the eval set."""
+class CropEvaluation(BaseModel):
+    """One crop's evaluation as ``results.json`` lists it, by its index in the eval set: the drawn and the real crop
+    read back, line by line, and their hands."""
 
     index: int
     file: str
@@ -97,7 +98,7 @@ class Results(BaseModel):
     """``results.json``: the summary, every drawn crop, and every crop that failed (index -> error)."""
 
     summary: Summary
-    samples: list[CropResult]
+    samples: list[CropEvaluation]
     failed: dict[int, str]
 
 
@@ -124,7 +125,7 @@ def evaluate_crop(
     out: Path,
     settings: DrawSettings,
     judge: Judge,
-) -> CropResult:
+) -> CropEvaluation:
     """Draw one held-out crop with the crop pipeline, read it and its real counterpart back, and save its contact
     sheet."""
     plan = crop.plan()
@@ -137,7 +138,7 @@ def evaluate_crop(
     panels = [reference, real, drawn.image] if reference else [real, drawn.image]
     contact_sheet(panels, crop.lines).save(out / f"{index:03d}_{Path(crop.file_name).stem}.jpg", quality=JPEG_QUALITY)
     lines = zip(crop.lines, drawn.line_reads, drawn.line_cers, real_reads, real_cers, strict=True)
-    return CropResult(
+    return CropEvaluation(
         index=index,
         file=crop.file_name,
         variant=crop.variant,
@@ -157,12 +158,12 @@ def evaluate_crops(
     seed: int,
     settings: DrawSettings,
     judge: Judge,
-) -> tuple[list[CropResult], dict[int, str]]:
+) -> tuple[list[CropEvaluation], dict[int, str]]:
     """Every crop evaluated (:func:`evaluate_crop`, seeded by its own seed or ``seed`` + its index); a crop that fails
     is recorded by its index with its error and the rest still run, unless the device failed: then every crop after
     it is recorded as not run (:func:`diffu_page.local_run.run_each`)."""
 
-    def evaluate_one(indexed: tuple[int, EvalCrop]) -> CropResult:
+    def evaluate_one(indexed: tuple[int, EvalCrop]) -> CropEvaluation:
         k, crop = indexed
         crop_seed = crop.seed if crop.seed is not None else seed + k
         sample = evaluate_crop(
@@ -199,14 +200,14 @@ def evaluate(
     """Draw held-out crops from their stored captions and compare their read-back with the real crops'."""
     model = required_model(model)
     eval_crops = read_crops(crops, n)
-    draw_settings = DrawSettings(
+    draw_settings = settings_from_options(
         steps=steps,
-        guidance_scale=guidance,
-        reference_guidance_scale=reference_guidance,
+        guidance=guidance,
+        reference_guidance=reference_guidance,
         guidance_stop=guidance_stop,
-        max_line_cer=max_line_cer,
-        text_layers=text_layers(text_layer),
+        text_layer=text_layer,
         device=device,
+        max_line_cer=max_line_cer,
         lora_scale=lora_scale,
         sampling_shift=sampling_shift,
         fuse_loras=fuse_loras,
