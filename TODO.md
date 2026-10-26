@@ -245,9 +245,24 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
       stays Qwen-Image's: FLUX.3's autoencoder has no licence of its own, so it is under the FLUX Kommunity licence.
       Only the transformer's text projection changes shape (`context_embedder`, 10,240 -> 20,480 inputs);
       `diffu-init --weights-from` starts a new model from a trained one wherever the shapes agree.
-- [ ] **E2b** (`jobs/diffu/run_e2b.sh`, `configs/diffu/diffu_s_e2b_glyph.yaml`): diffu-S on FLUX.3's text encoder
+- [ ] **E2b** (running since 26 Oct 09:12 after the reference diagnosis; `jobs/diffu/run_e2b.sh`, `configs/diffu/diffu_s_e2b_glyph.yaml`): diffu-S on FLUX.3's text encoder
       from E2's glyph-arm weights (all but the text projection), all 11,329 training crops with glyph maps, 10,000
       steps of 8, drawn at steps 5,000 and 10,000: does more data and training start to form letters on the Spark?
+- [ ] **diffu upgrade plan** (26 Oct; a read-only study of FLUX.3 Klein and Qwen-Image 2.0/2.1: arXiv 2605.10730,
+      2605.13565, 2508.02324, the diffusers code of both; Qwen-Image 2.1 is under the Qwen Research License, its VAE
+      not usable; Qwen-VAE-2.0's release and licence unverified). Two tracks stay: diffu and the FLUX.3 LoRA path.
+      Why no letters, ranked: ~64k samples seen in total (Qwen: hundreds of millions); real cursive as the only text
+      (Qwen starts on rendered text); ~13 px a character at the 512 stage (median 26.9 px at 1 MP over 4.73M
+      characters) through the Qwen-Image VAE, the weakest f8 VAE on 10 px document text (OCR NED 0.907, VAE-2.0
+      Table 3); no character-level signal (Qwen3-VL: 2.1-2.6 characters a token; the glyph map is print). Next on the
+      Spark, in order: (1) the VAE's letter ceiling at scale 0.5 and 1 on the 24 held-out windows (CPU); (2) line
+      strips at full size (~139k lines; short text windows, larger micro-batches); (3) rendered-text pretraining
+      (period Swedish in OFL cursive/Kurrent/Fraktur fonts at 10-40 px on paper from our scans; real line images
+      pasted into new layouts with exact boxes); (4) characters to the model: text tokens given their line box's
+      h, w RoPE positions (`txt_ids`, no new weights), or a small byte-level encoder (ByT5); (5) recipe: EMA, masked
+      text padding then batch >= 32, shift 2-4, REPA-style alignment; (6) style for writer transfer: per-volume
+      style tokens, then a hand encoder trained on samples of different text with a swap test (writer-ID picks the
+      sample's writer, copy rate <= 5 %); (7) diffu-M only on HPC after letters appear; distil only from diffu.
 - [x] **Why a sample image + text does not give the hand** (25-26 Oct, runs/refdiag; the described control's 11 crops
       and seeds; sets in data_flux3/refdiag; scratchpad refdiag/). Letter-shape gap to the real hand (lower = closer):
       (A) untrained FLUX.3, another window of the volume as reference 0.42; (B) the target window itself as reference,
