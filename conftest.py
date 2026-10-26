@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import json
 import shutil
-from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
 
@@ -19,6 +18,8 @@ from safetensors.torch import save_file
 from diffu.configs import DiffuConfig, DiffuSize, TextEncoder, Vae
 from diffu.init import write_model_repo
 from diffu_page.captions.look import ScanLook
+from diffu_page.captions.prompt import PageStyle
+from diffu_page.captions.provenance import Provenance
 from diffu_page.captions.records import CropRecord, crop_record
 from diffu_page.crops.geometry import Crop, CropSettings, crops_for_page, regions_of
 from diffu_page.layout import load_xml_layout
@@ -190,6 +191,21 @@ def body_and_notes_crop(body_and_notes_page: Path) -> Crop:
     return crops_for_page(regions_of(layout), (layout.width, layout.height), CropSettings())[0]
 
 
+@pytest.fixture
+def page_style() -> PageStyle:
+    """A page job's style: an archive of 1700, scanned in colour on cream paper with brown ink."""
+    return PageStyle(
+        provenance=Provenance(title="the archive", years="1700"),
+        look=ScanLook(greyscale=False, paper="cream", ink="brown"),
+    )
+
+
+@pytest.fixture
+def page_text() -> str:
+    """A page job's running text: some 400 characters of a court record, refilled into a template's lines."""
+    return "Anno sextonhundra och tjugo den femte dagen i maj kom for ratten bonden Olof Jonsson ifran Rodon " * 4
+
+
 ARJEPLOGS = "GT-RA_arjeplogs_tingslag_20260220"
 ARJEPLOGS_PAGES = Path(ARJEPLOGS, "Arjeplogs tingslag (1690-1700)", "Arjeplogs tingslag (1690-1700)", "page")
 YELLOWED = ScanLook(greyscale=False, paper="yellowed", ink="dark brown")
@@ -294,7 +310,10 @@ def tiny_diffu(tiny_diffu_config: DiffuConfig, tiny_diffu_dir: Path) -> Path:
     return tiny_diffu_dir
 
 
-type NemoLoraWriter = Callable[..., Path]
+class NemoLoraWriter(Protocol):
+    """``write_nemo_lora``: a NeMo LoRA of one ``module``, down weights ``a`` and up weights ``b``, its ``model/`` dir."""
+
+    def __call__(self, module: str, a: torch.Tensor, b: torch.Tensor, *, alpha: int) -> Path: ...
 
 
 @pytest.fixture

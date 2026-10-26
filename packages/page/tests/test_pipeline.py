@@ -12,6 +12,7 @@ import json
 import xml.etree.ElementTree as ET
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 import torch
@@ -44,12 +45,11 @@ from diffu_page.pipeline import (
 )
 from diffu_page.plan import CropPlan, Reference
 
+if TYPE_CHECKING:
+    from conftest import NemoLoraWriter
+
 TINY_SETTINGS = DrawSettings(steps=2, guidance_scale=4.0, text_layers=(1,), device="cpu")
 LORA_MODULE = "single_transformer_blocks.0.attn.to_q"
-STYLE = PageStyle(
-    provenance=Provenance(title="the archive", years="1700"), look=ScanLook(greyscale=False, paper="cream", ink="brown")
-)
-TEXT = "Anno sextonhundra och tjugo den femte dagen i maj kom for ratten bonden Olof Jonsson ifran Rodon " * 4
 FLAG_STYLE = PageStyle(  # diffu-generate --title "the archive" with every other style flag left at its default
     provenance=Provenance(title="the archive", years=""),
     look=ScanLook(greyscale=False, paper=Paper.CREAM, ink=Ink.DARK_BROWN),
@@ -235,12 +235,17 @@ def test_repair_lines_keeps_the_crop_when_the_judge_rejects_the_redrawn_line_too
 
 
 def test_draw_pages_records_a_crop_it_cannot_draw_by_name_and_saves_the_other_crops(
-    crop_pipe: ModularPipeline, two_column_page: Path, wide_and_narrow_body_page: Path, tmp_path: Path
+    crop_pipe: ModularPipeline,
+    two_column_page: Path,
+    wide_and_narrow_body_page: Path,
+    tmp_path: Path,
+    page_style: PageStyle,
+    page_text: str,
 ) -> None:
     unreadable = Reference(image=tmp_path / "missing.png")  # planned without it; each of its crops fails to read it
     pages = [
-        PageJob(template=two_column_page, text=TEXT, style=STYLE, reference=unreadable),
-        PageJob(template=wide_and_narrow_body_page, text=TEXT, style=STYLE),
+        PageJob(template=two_column_page, text=page_text, style=page_style, reference=unreadable),
+        PageJob(template=wide_and_narrow_body_page, text=page_text, style=page_style),
     ]
 
     jobs, unplanned = plan_jobs(pages)
@@ -260,9 +265,14 @@ def test_draw_pages_records_a_crop_it_cannot_draw_by_name_and_saves_the_other_cr
 
 
 def test_draw_pages_stops_when_the_device_fails_and_records_the_crops_left_undrawn(
-    crop_pipe: ModularPipeline, two_column_page: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    crop_pipe: ModularPipeline,
+    two_column_page: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    page_style: PageStyle,
+    page_text: str,
 ) -> None:
-    jobs, _ = plan_jobs([PageJob(template=two_column_page, text=TEXT, style=STYLE)])
+    jobs, _ = plan_jobs([PageJob(template=two_column_page, text=page_text, style=page_style)])
 
     def out_of_memory(*args: object, **kwargs: object) -> None:
         raise torch.OutOfMemoryError("CUDA out of memory")
@@ -325,10 +335,10 @@ def test_generate_records_a_page_that_plans_to_no_crop_without_loading_the_model
 
 
 def test_generate_draws_each_page_of_a_job_file_with_its_own_text_style_and_name(
-    one_line_page: Path, tmp_path: Path
+    one_line_page: Path, tmp_path: Path, page_style: PageStyle, page_text: str
 ) -> None:
     pages = [
-        PageJob(template=one_line_page, text=TEXT, style=STYLE, id="vol7_p12"),
+        PageJob(template=one_line_page, text=page_text, style=page_style, id="vol7_p12"),
         PageJob(template=one_line_page, text="den 4 maj", style=FLAG_STYLE, seed=3),
     ]
     job_file = tmp_path / "run.jsonl"
@@ -415,7 +425,7 @@ def test_load_pipeline_compiles_exactly_the_transformers_repeated_blocks(tiny_fl
 
 
 def test_load_pipeline_refuses_to_compile_the_blocks_around_unfused_loras(
-    tiny_flux3: Path, crop_pipe: ModularPipeline, write_nemo_lora: Callable[..., Path]
+    tiny_flux3: Path, crop_pipe: ModularPipeline, write_nemo_lora: NemoLoraWriter
 ) -> None:
     linear = crop_pipe.transformer.get_submodule(LORA_MODULE)
     lora_dir = write_nemo_lora(
@@ -461,7 +471,7 @@ def test_draw_crop_guides_each_crop_only_until_guidance_stop(tiny_flux3: Path) -
 @pytest.mark.parametrize("fuse", [pytest.param(False, id="adapter"), pytest.param(True, id="fused")])
 @pytest.mark.parametrize("strength", [pytest.param(1.0, id="trained"), pytest.param(0.5, id="half")])
 def test_nemo_lora_loads_at_its_trained_strength_times_the_lora_scale(
-    tiny_flux3: Path, crop_pipe: ModularPipeline, write_nemo_lora: Callable[..., Path], fuse: bool, strength: float
+    tiny_flux3: Path, crop_pipe: ModularPipeline, write_nemo_lora: NemoLoraWriter, fuse: bool, strength: float
 ) -> None:
     torch.manual_seed(0)
     linear = crop_pipe.transformer.get_submodule(LORA_MODULE)
@@ -499,7 +509,7 @@ def _unprefixed(lora_dir: Path) -> None:
     ],
 )
 def test_nemo_lora_refuses_a_checkpoint_it_would_load_at_the_wrong_strength_or_place(
-    write_nemo_lora: Callable[..., Path], spoil: Callable[[Path], None], error: str
+    write_nemo_lora: NemoLoraWriter, spoil: Callable[[Path], None], error: str
 ) -> None:
     lora_dir = write_nemo_lora(LORA_MODULE, torch.randn(2, 8), torch.randn(8, 2), alpha=4)
     spoil(lora_dir)
