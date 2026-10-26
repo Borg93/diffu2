@@ -12,7 +12,7 @@ import hashlib
 from pathlib import Path
 
 from PIL import Image
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from diffu_page.blocks import crop_identity
 from diffu_page.captions.prompt import PageStyle
@@ -55,6 +55,24 @@ class PageJob(BaseModel):
         if self.id is None:
             return self.seed + SEED_STRIDE * index
         return self.seed + SEED_STRIDE * int.from_bytes(hashlib.sha256(self.id.encode()).digest()[:4], "big")
+
+
+def read_page_jobs(path: Path) -> list[PageJob]:
+    """The pages of a job file: one :class:`PageJob` per line (JSON Lines, blank lines skipped).
+
+    Raises:
+        ValueError: If a line is not a page job, naming the file, the line and what is wrong with it.
+    """
+    pages: list[PageJob] = []
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            pages.append(PageJob.model_validate_json(line))
+        except ValidationError as error:
+            problems = "; ".join(f"{'.'.join(map(str, e['loc'])) or 'line'}: {e['msg']}" for e in error.errors())
+            raise ValueError(f"{path}:{number} is not a page job: {problems}") from error
+    return pages
 
 
 class CropJob(BaseModel):

@@ -21,7 +21,7 @@ from safetensors.torch import load_file, save_file
 from typer.testing import CliRunner
 
 from diffu_page.blocks import DrawnCrop
-from diffu_page.captions.look import ScanLook
+from diffu_page.captions.look import Ink, Paper, ScanLook
 from diffu_page.captions.prompt import LineRecord, PageStyle
 from diffu_page.captions.provenance import Provenance
 from diffu_page.cli.generate import Summary, draw_pages, plan_jobs
@@ -39,6 +39,10 @@ STYLE = PageStyle(
     provenance=Provenance(title="the archive", years="1700"), look=ScanLook(greyscale=False, paper="cream", ink="brown")
 )
 TEXT = "Anno sextonhundra och tjugo den femte dagen i maj kom for ratten bonden Olof Jonsson ifran Rodon " * 4
+FLAG_STYLE = PageStyle(  # diffu-generate --title "the archive" with every other style flag left at its default
+    provenance=Provenance(title="the archive", years=""),
+    look=ScanLook(greyscale=False, paper=Paper.CREAM, ink=Ink.DARK_BROWN),
+)
 
 
 @pytest.fixture(scope="module")
@@ -198,15 +202,74 @@ def test_generate_records_a_page_that_plans_to_no_crop_without_loading_the_model
 
     summary = Summary.model_validate_json((tmp_path / "summary.json").read_text())
     assert result.exit_code == 1
-    assert (summary.model, summary.seed, summary.settings, summary.crops) == (
+    assert (summary.model, summary.settings, summary.crops) == (
         str(no_model),
-        0,
         DrawSettings(steps=2, text_layers=(1,), device="cpu"),
         [],
     )
+    assert [(page.template, page.style, page.seed) for page in summary.pages] == [
+        (one_line_page, FLAG_STYLE, 0)  # the style the flags name, with their defaults
+    ]
     assert summary.failed == {
         "000_one_line": f"ValueError: {one_line_page} plans to no crops: no window of it holds enough whole lines"
     }
+
+
+def test_generate_draws_each_page_of_a_job_file_with_its_own_text_style_and_name(
+    one_line_page: Path, tmp_path: Path
+) -> None:
+    pages = [
+        PageJob(template=one_line_page, text=TEXT, style=STYLE, id="vol7_p12"),
+        PageJob(template=one_line_page, text="den 4 maj", style=FLAG_STYLE, seed=3),
+    ]
+    job_file = tmp_path / "run.jsonl"
+    job_file.write_text("".join(page.model_dump_json() + "\n" for page in pages), encoding="utf-8")
+    args = ["--jobs", str(job_file), "--model", str(tmp_path / "no_model"), "--out", str(tmp_path / "out")]
+
+    result = CliRunner().invoke(generate_app, args)
+
+    summary = Summary.model_validate_json((tmp_path / "out" / "summary.json").read_text())
+    assert result.exit_code == 1  # neither page plans to a crop, so no model loads
+    assert summary.pages == pages
+    no_crops = f"ValueError: {one_line_page} plans to no crops: no window of it holds enough whole lines"
+    assert summary.failed == {"vol7_p12": no_crops, "001_one_line": no_crops}
+
+
+@pytest.mark.parametrize(
+    ("options", "refusal"),
+    [
+        pytest.param(
+            ["--jobs", "run.jsonl", "--title", "an archive"],
+            "--title: the job file gives each page its own",
+            id="jobs-and-flags",
+        ),
+        pytest.param([], "give --jobs, or --templates, --text-from and --title", id="no-pages"),
+    ],
+)
+def test_generate_refuses_a_run_whose_pages_are_not_given_once_before_it_loads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, options: list[str], refusal: str
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "run.jsonl").write_text("", encoding="utf-8")
+    args = ["--model", str(tmp_path / "no_model"), "--out", str(tmp_path / "out"), *options]
+
+    result = CliRunner().invoke(generate_app, args)
+
+    message = " ".join(result.output.replace("│", " ").split())  # rich wraps the error panel at 80 columns
+    assert result.exit_code == 2
+    assert refusal in message
+
+
+def test_generate_writes_the_text_of_a_plain_text_file_as_it_stands(one_line_page: Path, tmp_path: Path) -> None:
+    text_file = tmp_path / "text.txt"
+    text_file.write_text("Anno 1720 den 5 maj\n\nNästa stycke\n", encoding="utf-8")
+    args = ["--templates", str(one_line_page), "--text-from", str(text_file), "--title", "the archive"]
+    args += ["--model", str(tmp_path / "no_model"), "--out", str(tmp_path / "out")]
+
+    CliRunner().invoke(generate_app, args)
+
+    summary = Summary.model_validate_json((tmp_path / "out" / "summary.json").read_text())
+    assert [page.text for page in summary.pages] == ["Anno 1720 den 5 maj\n\nNästa stycke"]
 
 
 @pytest.mark.parametrize(

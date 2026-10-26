@@ -24,6 +24,11 @@ What is known to be wrong or unfinished. Remove an item when it is done; add the
   - [ ] Text: sources of other historical Swedish text; an LLM text generator in period style.
   - [ ] Style that transfers: the hand from the reference (v3d, then diffu), measured by `HandFidelity`.
   - [ ] Throughput: diffu with fewer steps, batched, FP8 on Blackwell; profile on the cluster.
+  - [x] The interface (26 Oct): `diffu-generate` takes a template, text (a page's running text or a plain text file)
+        and a style, whole or as windows; `--jobs run.jsonl` gives every page its own template, text, style, seed,
+        reference and size (one `PageJob` per line, the run file diffu-runner reads); `summary.json` records the pages.
+  - [ ] A style as one name: a preset holding the hand's LoRA, the archive and years, the look and a reference, so a
+        job names its style instead of repeating it (the LoRA is per run today, so a run is one hand).
 
 ## Repo structure
 

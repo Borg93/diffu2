@@ -11,7 +11,7 @@ import pytest
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.prompt import PageStyle
 from diffu_page.captions.provenance import Provenance
-from diffu_page.jobs import PageJob, crop_jobs
+from diffu_page.jobs import PageJob, crop_jobs, read_page_jobs
 from diffu_page.layout import load_xml_layout, refill
 from diffu_page.plan import Reference, plan_page
 
@@ -54,3 +54,16 @@ def test_crop_jobs_name_and_seed_a_page_with_an_id_alike_wherever_it_stands_in_a
 
     assert [(job.name, job.seed) for job in late] == [(job.name, job.seed) for job in early]
     assert [job.name for job in early] == [f"vol7_p12_{k}" for k in range(len(early))]
+
+
+def test_read_page_jobs_names_the_line_of_a_job_file_that_is_not_a_page_job(
+    body_and_notes_page: Path, tmp_path: Path
+) -> None:
+    job_file = tmp_path / "run.jsonl"
+    page = PageJob(template=body_and_notes_page, text=TEXT, style=STYLE)
+    job_file.write_text(
+        page.model_dump_json() + "\n\n" + '{"template": "page.xml", "text": "den 4 maj"}\n', encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError, match=r"run\.jsonl:3 is not a page job: style: Field required$"):
+        read_page_jobs(job_file)

@@ -5,16 +5,20 @@ Each template (a real PAGE/ALTO page, or one written for the purpose) is planned
 (:func:`diffu_page.jobs.crop_jobs`): its running text is replaced by the new text and it is cut into training-scale
 crops, or with ``--whole-page`` kept whole as one crop of ``--page-megapixels``. Each crop is then drawn on its own by the crop
 pipeline (FLUX.3 + LoRAs, or diffu), read back line by line, and labelled with badly read lines tagged ``unclear``,
-as diffu-runner's GPU actors draw it. With ``--reference`` (a crop to draw in the hand of, for the v3 LoRAs) every
-crop is drawn from it and captioned as the LoRA was trained (``--reference-caption``: ``described`` measures the
-crop's hand, so it needs the crop's ``metadata.jsonl`` from ``diffu_page.data.build_crops`` beside it). Writes
-``<out>/<page>_<k>.jpg`` + ``.xml`` per crop and ``<out>/summary.json``; a page that cannot be planned and a crop
-that cannot be drawn are recorded there by name and the run goes on. ``--profile <dir>`` also records a torch
-profiler trace (Perfetto) of crops 2-3 after a warm-up crop. One GPU job, through jobs/spark_guard.sh:
+as diffu-runner's GPU actors draw it. The text comes from ``--text-from``: a PAGE/ALTO page's running text, or a
+plain text file as it stands (a blank line ends a paragraph). With ``--reference`` (a crop to draw in the hand of,
+for the v3 LoRAs) every crop is drawn from it and captioned as the LoRA was trained (``--reference-caption``:
+``described`` measures the crop's hand, so it needs the crop's ``metadata.jsonl`` from ``diffu_page.data.build_crops``
+beside it). ``--jobs`` gives each page its own template, text, style, seed, reference and size instead: one
+:class:`diffu_page.jobs.PageJob` per line, the run file diffu-runner reads. Writes ``<out>/<page>_<k>.jpg`` + ``.xml``
+per crop and ``<out>/summary.json``; a page that cannot be planned and a crop that cannot be drawn are recorded there
+by name and the run goes on. ``--profile <dir>`` also records a torch profiler trace (Perfetto) of crops 2-3 after a
+warm-up crop. One GPU job, through jobs/spark_guard.sh:
 
     jobs/spark_guard.sh --need-gb 45 --name pages -- diffu-generate \\
         --templates <page.xml> --templates <page.xml> --text-from <page.xml> --lora v2=<ckpt>/model --out <dir> \\
         --title "the court records of Jämtlands domsaga" --paper cream --ink "dark brown"
+    jobs/spark_guard.sh --need-gb 45 --name pages -- diffu-generate --jobs run.jsonl --lora v2=<ckpt>/model --out <dir>
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ from statistics import fmean
 from typing import Annotated
 
 import typer
+from click.core import ParameterSource
 from diffusers.modular_pipelines import ModularPipeline
 from pydantic import BaseModel
 from torch.profiler import ProfilerActivity, profile, schedule
@@ -55,7 +60,7 @@ from diffu_page.cli.options import (
     required_model,
     text_layers,
 )
-from diffu_page.jobs import CropJob, PageJob, crop_jobs
+from diffu_page.jobs import CropJob, PageJob, crop_jobs, read_page_jobs
 from diffu_page.judge import Judge, TrOCRJudge
 from diffu_page.layout import load_xml_layout, running_text
 from diffu_page.local_run import run_each
@@ -65,6 +70,21 @@ from diffu_page.plan import Reference
 from diffu_page.settings import settings
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
+
+PAGE_OPTIONS = (  # what a job file gives each page instead
+    "templates",
+    "text_from",
+    "title",
+    "years",
+    "greyscale",
+    "paper",
+    "ink",
+    "reference",
+    "reference_caption",
+    "seed",
+    "whole_page",
+    "page_megapixels",
+)
 
 
 class CropResult(BaseModel):
@@ -78,15 +98,14 @@ class CropResult(BaseModel):
 
 
 class Summary(BaseModel):
-    """A run: what drew it (the model, its LoRAs, the seed, the draw settings, the style and the reference), every
-    drawn crop, and every page or crop that failed, by name, with its error."""
+    """A run: what drew it (the model, its LoRAs and the draw settings), the pages it was asked for (each with its
+    template, text, style, seed and reference), every drawn crop, and every page or crop that failed, by name, with
+    its error."""
 
     model: str
     loras: dict[str, str]
-    seed: int
     settings: DrawSettings
-    style: PageStyle
-    reference: Reference | None
+    pages: list[PageJob]
     crops: list[CropResult]
     failed: dict[str, str]
 
@@ -175,12 +194,51 @@ def page_reference(image: Path | None, caption: ReferenceCaption) -> Reference |
     return Reference.of_crop(image, caption) if caption is ReferenceCaption.DESCRIBED else Reference(image=image)
 
 
+def page_text(path: Path) -> str:
+    """The text to write from ``path``: a PAGE/ALTO page's running text, or a text file's text as it stands (a blank
+    line ends a paragraph)."""
+    if path.suffix.lower() == ".xml":
+        return running_text(load_xml_layout(path))
+    return path.read_text(encoding="utf-8").strip()
+
+
+def job_file_pages(ctx: typer.Context, jobs: Path) -> list[PageJob]:
+    """The pages of the job file ``jobs``, refusing every page option the command line gives with it: the job file
+    gives each page its own."""
+    given = [name for name in PAGE_OPTIONS if ctx.get_parameter_source(name) is not ParameterSource.DEFAULT]
+    if given:
+        options = ", ".join("--" + name.replace("_", "-") for name in given)
+        raise typer.BadParameter(f"{options}: the job file gives each page its own", param_hint="--jobs")
+    try:
+        pages = read_page_jobs(jobs)
+    except ValueError as error:
+        raise typer.BadParameter(str(error), param_hint="--jobs") from error
+    if not pages:
+        raise typer.BadParameter(f"{jobs} holds no page jobs", param_hint="--jobs")
+    return pages
+
+
 @app.command()
 def generate(
-    templates: Annotated[list[Path], typer.Option(help="a PAGE/ALTO page whose layout to use (repeat it)")],
-    text_from: Annotated[list[Path], typer.Option(help="a PAGE/ALTO page whose text to write (repeat it)")],
+    ctx: typer.Context,
     out: Annotated[Path, typer.Option(help="where the crops, labels and summary.json go")],
-    title: Annotated[str, typer.Option(help="the archive, as the captions name it")],
+    job_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--jobs",
+            exists=True,
+            dir_okay=False,
+            help="the pages to draw, one diffu_page.jobs.PageJob per line (diffu-run's run file)",
+        ),
+    ] = None,
+    templates: Annotated[
+        list[Path] | None, typer.Option(help="a PAGE/ALTO page whose layout to use (repeat it)")
+    ] = None,
+    text_from: Annotated[
+        list[Path] | None,
+        typer.Option(help="a PAGE/ALTO page (.xml) or a plain text file whose text to write (repeat it)"),
+    ] = None,
+    title: Annotated[str | None, typer.Option(help="the archive, as the captions name it")] = None,
     model: Model = settings.flux3_model,
     lora: Loras = None,
     years: str = "",
@@ -215,7 +273,8 @@ def generate(
     ] = 2.5,
     profile_dir: Annotated[Path | None, typer.Option("--profile", help="write a trace of crops 2-3 here")] = None,
 ) -> None:
-    """Draw every crop of the templates (or each template whole), refilled with the text, in the given style."""
+    """Draw every crop of the templates (or each template whole), refilled with the text, in the given style; or every
+    page of a job file, each in its own."""
     model = required_model(model)
     draw_settings = DrawSettings(
         steps=steps,
@@ -231,20 +290,25 @@ def generate(
         fuse_loras=fuse_loras,
         compile_blocks=compile_blocks,
     )
-    if reference is None and draw_settings.guides_reference:
+    if job_file is not None:
+        pages = job_file_pages(ctx, job_file)
+    elif not templates or not text_from or title is None:
+        raise typer.BadParameter("give --jobs, or --templates, --text-from and --title", param_hint="the pages")
+    else:
+        if reference is None and reference_caption is not ReferenceCaption.PLAIN:
+            raise typer.BadParameter("there is no --reference to describe", param_hint="--reference-caption")
+        style = PageStyle(
+            provenance=Provenance(title=title, years=years), look=ScanLook(greyscale=greyscale, paper=paper, ink=ink)
+        )
+        text = " ".join(page_text(path) for path in text_from)
+        drawn_from = page_reference(reference, reference_caption)
+        page_pixels = round(page_megapixels * 1_000_000) if whole_page else None
+        pages = [
+            PageJob(template=template, text=text, style=style, seed=seed, reference=drawn_from, page_pixels=page_pixels)
+            for template in templates
+        ]
+    if draw_settings.guides_reference and all(page.reference is None for page in pages):
         raise typer.BadParameter("there is no --reference to guide toward", param_hint="--reference-guidance")
-    if reference is None and reference_caption is not ReferenceCaption.PLAIN:
-        raise typer.BadParameter("there is no --reference to describe", param_hint="--reference-caption")
-    style = PageStyle(
-        provenance=Provenance(title=title, years=years), look=ScanLook(greyscale=greyscale, paper=paper, ink=ink)
-    )
-    text = " ".join(running_text(load_xml_layout(path)) for path in text_from)
-    drawn_from = page_reference(reference, reference_caption)
-    page_pixels = round(page_megapixels * 1_000_000) if whole_page else None
-    pages = [
-        PageJob(template=template, text=text, style=style, seed=seed, reference=drawn_from, page_pixels=page_pixels)
-        for template in templates
-    ]
     loras = lora_dirs(lora)
     jobs, failed = plan_jobs(pages)  # before the model loads: a run whose pages plan to nothing loads none
     crops: list[CropResult] = []
@@ -258,10 +322,8 @@ def generate(
     summary = Summary(
         model=str(model),
         loras={name: str(path) for name, path in loras.items()},
-        seed=seed,
         settings=draw_settings,
-        style=style,
-        reference=drawn_from,
+        pages=pages,
         crops=crops,
         failed=failed,
     )
