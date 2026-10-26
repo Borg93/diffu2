@@ -8,10 +8,11 @@ consistent. The module layout is in the [README](../README.md); open work is in 
 Every step is a Modular Diffusers block; `diffu_page.pipeline` assembles our blocks around a model's own.
 
 ```
-PAGE/ALTO page ──► LoadLayout ──► Refill ──► PlanCrops ──► per crop: CropPrompt ──► model's blocks ──► LineReadback ──► LabelExport
- (any real page)   (lines,        (any       (training-   (caption,    (text encoder,     (HTR reads       (PAGE/ALTO,
-                   regions,       text)      scale        boxes,       VAE encoder,       every line)      unclear lines
-                   blocks)                   windows)     size)        denoise, decode)                    tagged)
+PAGE/ALTO page ──► LoadLayout ──► Refill ──► PlanCrops ──► per crop: CropPrompt ──► model's blocks ──► judge ──► repair ──► labels
+ (any real page)   (lines,        (any       (training-   (caption,    (text encoder,     (reads      (rejected    (PAGE/ALTO,
+                   regions,       text)      scale        boxes,       VAE encoder,       every       lines drawn  unclear lines
+                   blocks)                   windows,     size)        denoise, decode)   line)       again)       tagged)
+                                             or whole)
 ```
 
 1. **Layout** (`LoadLayoutStep`, `diffu_page.layout`): a real PAGE or ALTO page read as its lines
@@ -39,10 +40,20 @@ PAGE/ALTO page ──► LoadLayout ──► Refill ──► PlanCrops ──�
    `FAMILIES` maps those to the model's blocks and pipeline class (FLUX.3 Klein: `Flux3AutoBlocks` without its prompt
    upsampler, which would rewrite the quoted lines; diffu: `DiffuAutoBlocks`). Around them:
    - `crop_blocks`: `CropPromptStep` (plan → prompt, boxes, size), `ReferenceGridStep` (a reference image on the
-     training grid), the model's text encoder, VAE encoder (only with a reference image), denoise and decode, then
-     `LineReadbackStep` (TrOCR reads every line box) and `LabelExportStep` (ALTO or PAGE labels; a line that reads back
-     badly is tagged `unclear`). The model's auto blocks choose plain or reference-conditioned denoising from the
-     inputs, so v2 (style by name) and v3 (style by example) share it.
+     training grid), the model's text encoder, VAE encoder (only with a reference image), denoise and decode. The
+     model's auto blocks choose plain or reference-conditioned denoising from the inputs, so v2 (style by name) and v3
+     (style by example) share it. Both denoise branches carry a line repair (`blocks.repair`), idle without a mask;
+     `crop_blocks` puts it into a copy of the model's denoise blocks, because diffusers shares block instances
+     across every pipeline in a process.
+   - The judge (`diffu_page.judge`: a `Judge`, by default `TrOCRJudge`) reads every line box of the drawn crop, and the
+     labels (`blocks.ground_truth.crop_labels`, ALTO or PAGE) tag a line it rejects `unclear`: a read-back CER above
+     `max_line_cer`, or any number read otherwise. Drawing, judging and labelling are separate stages
+     (`pipeline.draw_crop` runs the three in one process).
+   - `pipeline.repair_lines` draws a crop's rejected lines again in place: the crop is drawn from new noise while
+     after every step the latents outside the lines' boxes are set back to the drawn crop's own at that noise level
+     (`(1 - sigma) * drawn + sigma * noise`), so the lines are redrawn in the context of the page and every other
+     pixel stays where it was. A redrawn line replaces the old one only if the judge passes it; the labels then
+     follow the judge's verdicts on the result.
    - `PagePlanBlocks`: the plan steps alone, no model. `jobs.crop_jobs` turns a page's plans into crop jobs, crop k
      named `<page>_<k>` and drawn from noise seed `seed + k`, each with the page's reference image if it has one (so a
      reference only ever reaches the crops beside the captions planned for it).

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import xml.etree.ElementTree as ET
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import pytest
@@ -20,7 +20,7 @@ from PIL import Image
 from safetensors.torch import load_file, save_file
 from typer.testing import CliRunner
 
-from diffu_page.blocks import DrawnCrop
+from diffu_page.blocks import CropPromptStep, DrawnCrop, ReferenceGridStep
 from diffu_page.captions.look import Ink, Paper, ScanLook
 from diffu_page.captions.prompt import LineRecord, PageStyle
 from diffu_page.captions.provenance import Provenance
@@ -28,9 +28,20 @@ from diffu_page.cli.generate import Summary, draw_pages, plan_jobs
 from diffu_page.cli.generate import app as generate_app
 from diffu_page.crops.grid import as_reference
 from diffu_page.jobs import PageJob
+from diffu_page.judge import LineVerdict
 from diffu_page.local_run import NOT_RUN
 from diffu_page.lora import ADAPTER_CONFIG, ADAPTER_WEIGHTS, nemo_lora_state_dict
-from diffu_page.pipeline import DrawSettings, crop_blocks, draw_crop, load_pipeline, model_family
+from diffu_page.pipeline import (
+    FAMILIES,
+    CropBlocks,
+    DrawSettings,
+    ModelFamily,
+    crop_blocks,
+    draw_crop,
+    load_pipeline,
+    model_family,
+    repair_lines,
+)
 from diffu_page.plan import CropPlan, Reference
 
 TINY_SETTINGS = DrawSettings(steps=2, guidance_scale=4.0, text_layers=(1,), device="cpu")
@@ -123,6 +134,104 @@ def test_crop_pipeline_draws_from_a_reference_as_resized_for_training(crop_pipe:
     crop = _draw(crop_pipe, reference)
 
     assert crop.image.tobytes() == as_trained.image.tobytes()
+
+
+def test_crop_blocks_leave_the_model_familys_own_blocks_as_they_are() -> None:
+    family = FAMILIES["Flux3AutoBlocks"]
+
+    crop_blocks(family)
+
+    own = family.blocks().sub_blocks["denoise"]
+    assert [list(branch.sub_blocks) for branch in own.sub_blocks.values()] == [
+        ["input", "cond_input", "prepare_latents", "prepare_image_cond_latents", "set_timesteps"]
+        + ["prepare_rope_inputs", "denoise", "after_denoise"],
+        ["input", "prepare_latents", "set_timesteps", "prepare_rope_inputs", "denoise", "after_denoise"],
+    ]
+
+
+def _model_blocks_only(family: ModelFamily) -> CropBlocks:
+    """Our crop steps before the model's own blocks, as they stand: no line repair."""
+    model = family.blocks().sub_blocks
+    for name in family.unused:
+        model.pop(name)
+    return CropBlocks.from_blocks_dict(
+        {"crop_prompt": CropPromptStep(), "reference_grid": ReferenceGridStep(), **model}
+    )
+
+
+def test_crop_pipeline_draws_as_the_models_own_blocks_without_a_repair_mask(
+    crop_pipe: ModularPipeline, tiny_flux3: Path
+) -> None:
+    own = load_pipeline(tiny_flux3, _model_blocks_only, loras={}, settings=TINY_SETTINGS)
+
+    crop = _draw(crop_pipe)
+
+    assert crop.image.tobytes() == _draw(own).image.tobytes()
+
+
+def _latents(pipe: ModularPipeline, seed: int, **repair: torch.Tensor) -> torch.Tensor:
+    pipe.guider.set_state(step=0, num_inference_steps=TINY_SETTINGS.steps, timestep=None)
+    return pipe(
+        crop_plan=_plan(),
+        generator=torch.Generator().manual_seed(seed),
+        **TINY_SETTINGS.pipeline_inputs(),
+        **repair,
+        output="latents",
+    )
+
+
+def test_repair_ends_the_latents_outside_the_mask_on_the_drawn_crops_and_draws_inside_again(
+    crop_pipe: ModularPipeline,
+) -> None:
+    drawn = _latents(crop_pipe, seed=0)
+    mask = torch.zeros(1, 1, *drawn.shape[-2:])
+    mask[..., :2] = 1.0  # the crop's left half, two of its four latent columns
+
+    redrawn = _latents(crop_pipe, seed=1, repair_latents=drawn, repair_mask=mask)
+
+    assert torch.equal(redrawn[..., 2:], drawn[..., 2:])
+    assert not torch.equal(redrawn[..., :2], drawn[..., :2])
+
+
+class ScriptedJudge:
+    """Reads every line's text right, except the lines whose text it is told to misread: those it reads as nothing."""
+
+    def __init__(self, misread: frozenset[str] = frozenset()) -> None:
+        self.misread = misread
+
+    def __call__(self, image: Image.Image, lines: Sequence[LineRecord]) -> list[LineVerdict]:
+        return [LineVerdict.of("" if line.text in self.misread else line.text, line.text) for line in lines]
+
+
+def _misdrawn(pipe: ModularPipeline) -> DrawnCrop:
+    """The plan drawn with its marginal note "den 4 maj" (rows 500-1000, columns 0-400) rejected."""
+    judge = ScriptedJudge(frozenset({"den 4 maj"}))
+    return draw_crop(pipe, _plan(), name="000", seed=0, reference=None, settings=TINY_SETTINGS, judge=judge)
+
+
+def test_repair_lines_puts_back_the_cells_of_a_redrawn_line_the_judge_passes_and_keeps_every_other_pixel(
+    crop_pipe: ModularPipeline,
+) -> None:
+    crop = _misdrawn(crop_pipe)
+    cells = (0, 16, 32, 32)  # the 16-px latent cells the note's box (0, 16, 25.6, 32) touches on the 64 x 32 crop
+    past_the_box = (26, 16, 32, 32)  # where those cells reach past the box: the redraw meets the crop at cell edges
+
+    repaired = repair_lines(crop_pipe, crop, seed=1, reference=None, settings=TINY_SETTINGS, judge=ScriptedJudge())
+
+    outside = repaired.image.copy()
+    outside.paste(crop.image.crop(cells), cells[:2])
+    assert outside.tobytes() == crop.image.tobytes()
+    assert repaired.image.crop(past_the_box).tobytes() != crop.image.crop(past_the_box).tobytes()
+    assert (crop.unclear_lines, repaired.unclear_lines) == (1, 0)
+
+
+def test_repair_lines_keeps_the_crop_when_the_judge_rejects_the_redrawn_line_too(crop_pipe: ModularPipeline) -> None:
+    crop = _misdrawn(crop_pipe)
+    judge = ScriptedJudge(frozenset({"den 4 maj"}))
+
+    repaired = repair_lines(crop_pipe, crop, seed=1, reference=None, settings=TINY_SETTINGS, judge=judge)
+
+    assert repaired is crop
 
 
 def test_draw_pages_records_a_crop_it_cannot_draw_by_name_and_saves_the_other_crops(

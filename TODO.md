@@ -332,6 +332,13 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
       tingslag, RA carl fredrik pahlmans resejournaler) name "RA … 20260220\uf028". Fixed on `modular-structure`
       (+ test). v3's captions name no archive (unaffected); a v2 retrain would learn the right names.
 
+- [ ] **Line repair** (built 26 Oct, CPU-tested on the tiny model): `pipeline.repair_lines` draws the lines the judge
+      rejects again in place, from new noise, with the latents outside their boxes held on the drawn crop's at every
+      step (`blocks.repair`); a redrawn line is kept only if the judge passes it, and the labels follow the judge on
+      the result. Queued for tonight after E2b: the 4 held-out 1715 pages drawn whole at guidance 2, 28 steps, before
+      and after (runs/repair_wholepage, scratchpad repair/run_repair.py): how many rejected lines it fixes, and by eye
+      whether the redrawn lines sit in the page (ink, stroke, baseline). Then: `--repair` in diffu-generate, and a
+      repair stage for Ray (a row with rejected lines in, the repaired row out).
 - [x] Reading order across columns: labels follow the source blocks in page order, top to bottom in each
       (`CropPlan.reading_order`).
 - [x] Line polygons: checked against the GT, not a defect (GT bands are 1.6x the line pitch; our slots 1.0x;
