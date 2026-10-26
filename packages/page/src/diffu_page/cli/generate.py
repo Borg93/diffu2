@@ -56,6 +56,7 @@ from diffu_page.cli.options import (
     text_layers,
 )
 from diffu_page.jobs import CropJob, PageJob, crop_jobs
+from diffu_page.judge import Judge, TrOCRJudge
 from diffu_page.layout import load_xml_layout, running_text
 from diffu_page.output import JPEG_QUALITY, console, err_console
 from diffu_page.pipeline import DEVICE_ERRORS, DrawSettings, crop_blocks, draw_crop, load_pipeline
@@ -101,8 +102,9 @@ def _save(crop: DrawnCrop, template: Path, out: Path) -> CropResult:
     )
 
 
-def _draw(pipe: ModularPipeline, job: CropJob, *, settings: DrawSettings, out: Path) -> CropResult:
-    crop = draw_crop(pipe, job.plan, name=job.name, seed=job.seed, reference=job.reference_image(), settings=settings)
+def _draw(pipe: ModularPipeline, job: CropJob, *, settings: DrawSettings, out: Path, judge: Judge | None) -> CropResult:
+    reference = job.reference_image()
+    crop = draw_crop(pipe, job.plan, name=job.name, seed=job.seed, reference=reference, settings=settings, judge=judge)
     result = _save(crop, job.template, out)
     console.print(f"{crop.name}: CER {result.cer:.3f}, {crop.unclear_lines} unclear lines")
     return result
@@ -122,15 +124,22 @@ def plan_jobs(pages: list[PageJob]) -> tuple[list[CropJob], dict[str, str]]:
 
 
 def draw_pages(
-    pipe: ModularPipeline, jobs: list[CropJob], *, settings: DrawSettings, out: Path, prof: profile | None
+    pipe: ModularPipeline,
+    jobs: list[CropJob],
+    *,
+    settings: DrawSettings,
+    out: Path,
+    prof: profile | None,
+    judge: Judge | None = None,
 ) -> tuple[list[CropResult], dict[str, str]]:
-    """Every planned crop drawn by the crop pipeline and saved; a crop that cannot be drawn is recorded by name with
+    """Every planned crop drawn by the crop pipeline, judged by ``judge`` (the default TrOCR judge if none) and saved;
+    a crop that cannot be drawn is recorded by name with
     its error and the rest still run, unless the device failed: then every crop after it is recorded as not drawn."""
     results: list[CropResult] = []
     failed: dict[str, str] = {}
     for k, job in enumerate(jobs):
         try:
-            results.append(_draw(pipe, job, settings=settings, out=out))
+            results.append(_draw(pipe, job, settings=settings, out=out, judge=judge))
         except DEVICE_ERRORS as error:
             failed[job.name] = f"{type(error).__name__}: {error}"
             failed |= {later.name: "not drawn: the device failed on an earlier crop" for later in jobs[k + 1 :]}
@@ -252,8 +261,9 @@ def generate(
     out.mkdir(parents=True, exist_ok=True)
     if jobs:
         pipe = load_pipeline(model, crop_blocks, loras=loras, settings=draw_settings)
+        judge = TrOCRJudge(device=device)
         with _profiler(profile_dir) as prof:
-            crops, draw_failed = draw_pages(pipe, jobs, settings=draw_settings, out=out, prof=prof)
+            crops, draw_failed = draw_pages(pipe, jobs, settings=draw_settings, out=out, prof=prof, judge=judge)
         failed |= draw_failed
     summary = Summary(
         model=str(model),

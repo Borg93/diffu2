@@ -16,6 +16,7 @@ from diffu_page.blocks.ground_truth import line_labels, rule_rects
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.prompt import LineRecord, PageStyle
 from diffu_page.captions.provenance import Provenance
+from diffu_page.judge import LineVerdict
 from diffu_page.labels import LineLabel, PageLabels, export, to_alto, to_page_xml
 from diffu_page.layout import CellRef, Production, load_xml_layout
 from diffu_page.plan import CropPlan, plan_page
@@ -101,7 +102,7 @@ def _local(element: ET.Element) -> str:
     return element.tag.rsplit("}", 1)[-1]
 
 
-def test_line_labels_put_each_line_on_its_baseline_in_reading_order_tagging_lines_over_the_cer_limit() -> None:
+def test_line_labels_put_each_line_on_its_baseline_in_reading_order_tagging_lines_the_judge_failed() -> None:
     plan = CropPlan(
         rect=(0, 0, 1000, 200),
         width=1000,
@@ -117,7 +118,13 @@ def test_line_labels_put_each_line_on_its_baseline_in_reading_order_tagging_line
         reading_order=[2, 0, 1],
     )
 
-    labels = line_labels(plan, [0.25, 0.26, 0.0], max_line_cer=0.25)
+    verdicts = [
+        LineVerdict(read="Anno 1715", cer=0.25, numbers_differ=False),  # at the limit: kept
+        LineVerdict(read="den 4 maj", cer=0.26, numbers_differ=False),  # over it
+        LineVerdict(read="Stockholm 2", cer=0.1, numbers_differ=True),  # a close read with a number not there
+    ]
+
+    labels = line_labels(plan, verdicts, max_line_cer=0.25)
 
     assert labels == [
         LineLabel(
@@ -139,6 +146,7 @@ def test_line_labels_put_each_line_on_its_baseline_in_reading_order_tagging_line
             baseline=[(0, 121), (90, 121)],
             region="marginalia",
             order=0,
+            tag="unclear",
         ),
     ]
 
@@ -218,7 +226,9 @@ def test_page_xml_of_a_planned_table_crop_reads_back_as_the_same_table(table_pag
     labels = PageLabels(
         width=plan.width,
         height=plan.height,
-        lines=line_labels(plan, [0.0] * len(plan.lines), 1.0),
+        lines=line_labels(
+            plan, [LineVerdict(read=line.text, cer=0.0, numbers_differ=False) for line in plan.lines], 1.0
+        ),
         rules=rule_rects(plan),
     )
     exported = tmp_path / "labels.xml"
@@ -279,7 +289,13 @@ def test_page_xml_of_a_planned_crop_keeps_each_body_block_its_own_region(wide_an
         provenance=Provenance(title="the archive", years=""), look=ScanLook(greyscale=False, paper="cream", ink="brown")
     )
     plan = plan_page(load_xml_layout(wide_and_narrow_body_page), style)[0]
-    labels = PageLabels(width=plan.width, height=plan.height, lines=line_labels(plan, [0.0] * len(plan.lines), 1.0))
+    labels = PageLabels(
+        width=plan.width,
+        height=plan.height,
+        lines=line_labels(
+            plan, [LineVerdict(read=line.text, cer=0.0, numbers_differ=False) for line in plan.lines], 1.0
+        ),
+    )
 
     root = ET.fromstring(to_page_xml(labels))
 

@@ -7,11 +7,12 @@ chosen by its directory alone. Two sets of blocks are built:
 - :class:`PagePlanBlocks` (no model): ``LoadLayoutStep`` -> ``RefillStep`` -> ``PlanCropsStep``. A template page, a
   text, a style and optionally a reference crop in; the crops to draw out, captioned for the reference if there is one.
 - :func:`crop_blocks`: ``CropPromptStep`` -> ``ReferenceGridStep`` -> the model's text encoder, VAE encoder, denoise
-  and decode -> ``LineReadbackStep`` -> ``LabelExportStep``. A crop plan in; its image, per-line read-back and labels
-  out. The model's auto blocks pick text-to-image or reference-conditioned denoising from the inputs (``image``).
+  and decode. A crop plan in; its image out. The model's auto blocks pick text-to-image or reference-conditioned
+  denoising from the inputs (``image``).
 
-A page is planned with :class:`PagePlanBlocks`, and each of its crops is drawn on its own with the crop pipeline
-(:func:`draw_crop`).
+A page is planned with :class:`PagePlanBlocks`; each of its crops is drawn on its own with the crop pipeline, judged
+line by line (:mod:`diffu_page.judge`) and labelled (:func:`diffu_page.blocks.ground_truth.crop_labels`). Draw, judge
+and labels are separate stages, so each can run as its own worker; :func:`draw_crop` runs the three in one process.
 """
 
 from __future__ import annotations
@@ -31,22 +32,19 @@ from pydantic import BaseModel, ConfigDict, Field
 from diffu.modular_pipelines.diffu import DiffuAutoBlocks, DiffuModularPipeline
 from diffu.modular_pipelines.loading import COMPONENT_DTYPES, require_loaded
 from diffu_page.blocks import (
-    CROP_OUTPUTS,
-    MAX_LINE_CER,
     CropPromptStep,
     DrawnCrop,
-    LabelExportStep,
-    LineReadbackStep,
     LoadLayoutStep,
     PlanCropsStep,
     ReferenceGridStep,
     RefillStep,
 )
+from diffu_page.blocks.ground_truth import crop_labels
 from diffu_page.guidance import ReferenceGuidance
+from diffu_page.judge import MAX_LINE_CER, Judge, default_judge
 from diffu_page.labels import LabelFormat
 from diffu_page.lora import nemo_lora_state_dict
 from diffu_page.plan import CropPlan
-from diffu_page.readback import materialize_position_tables
 
 # Errors after which the device cannot be trusted: a run stops there instead of failing every later crop, and is not
 # retried into the same out-of-memory (which once froze the DGX Spark's unified memory)
@@ -86,7 +84,7 @@ def model_family(model: Path) -> ModelFamily:
 
 
 class CropBlocks(SequentialPipelineBlocks):
-    """A crop plan in; the drawn crop, every line of it read back, and its labels out (built by :func:`crop_blocks`)."""
+    """A crop plan in; the drawn crop out (built by :func:`crop_blocks`)."""
 
     _workflow_map = {
         "text2image": {"crop_plan": True},
@@ -96,26 +94,16 @@ class CropBlocks(SequentialPipelineBlocks):
     @property
     @override
     def description(self) -> str:
-        return (
-            "Draws a planned crop with a model's own blocks (reference-conditioned when an `image` is given), reads "
-            "every line back with TrOCR and writes the crop's ALTO/PAGE labels."
-        )
+        return "Draws a planned crop with a model's own blocks (reference-conditioned when an `image` is given)."
 
     @property
     @override
     def outputs(self) -> list[OutputParam]:
-        return [
-            OutputParam.template("images"),
-            OutputParam("line_reads", type_hint=list, description="What the recognizer read in each line box."),
-            OutputParam("line_cers", type_hint=list, description="Per-line CER against the line's text."),
-            OutputParam("labels_xml", type_hint=str, description="The crop's labels."),
-            OutputParam("unclear_lines", type_hint=int, description="Lines over max_line_cer."),
-        ]
+        return [OutputParam.template("images")]
 
 
 def crop_blocks(family: ModelFamily) -> CropBlocks:
-    """Our crop steps around ``family``'s own blocks: the crop prompt and the reference grid before them, the read-back
-    and the labels after."""
+    """Our crop steps before ``family``'s own blocks: the crop prompt and the reference grid."""
     model = family.blocks().sub_blocks
     for name in family.unused:
         model.pop(name)
@@ -124,8 +112,6 @@ def crop_blocks(family: ModelFamily) -> CropBlocks:
             "crop_prompt": CropPromptStep(),
             "reference_grid": ReferenceGridStep(),
             **model,
-            "line_readback": LineReadbackStep(),
-            "label_export": LabelExportStep(),
         }
     )
 
@@ -194,14 +180,10 @@ class DrawSettings(BaseModel):
         return not math.isclose(self.reference_guidance_scale, 1.0)
 
     def pipeline_inputs(self) -> dict[str, object]:
-        """The settings a pipeline takes per call, by input name (the guidance scale and device are set at load)."""
+        """The settings a pipeline takes per call, by input name (the guidance scale and device are set at load; the
+        label format and the unclear limit apply after the judge)."""
         layers = {} if self.text_layers is None else {"text_encoder_out_layers": self.text_layers}
-        return {
-            "num_inference_steps": self.steps,
-            "label_format": self.label_format,
-            "max_line_cer": self.max_line_cer,
-            **layers,
-        }
+        return {"num_inference_steps": self.steps, **layers}
 
 
 type BlocksFor = Callable[[ModelFamily], SequentialPipelineBlocks]
@@ -239,7 +221,6 @@ def load_pipeline(model: Path, blocks: BlocksFor, *, loras: dict[str, Path], set
             scheduler=FlowMatchEulerDiscreteScheduler.from_config(pipe.scheduler.config, shift=settings.sampling_shift)
         )
     pipe.to(settings.device)
-    materialize_position_tables(pipe.htr_model)
     for name, state_dict in adapters.items():
         pipe.load_lora_weights(state_dict, adapter_name=name)
     if loras:
@@ -260,9 +241,11 @@ def draw_crop(
     seed: int,
     reference: Image.Image | None,
     settings: DrawSettings,
+    judge: Judge | None = None,
 ) -> DrawnCrop:
     """One crop drawn by a crop pipeline (:func:`crop_blocks`) from noise seed ``seed``, conditioned on ``reference``
-    when there is one.
+    when there is one, every line judged by ``judge`` (the default TrOCR judge on ``settings.device`` if none), and
+    labelled with the lines the judge could not confirm tagged ``unclear``.
 
     Raises:
         ValueError: If ``settings`` guide toward a reference and there is none, before anything is drawn.
@@ -273,12 +256,17 @@ def draw_crop(
     # The text encoder step encodes the negative caption only if the guider guides at its current step, which until the
     # denoise loop starts is the previous crop's last: past guidance_stop, this crop would lose its negative caption.
     pipe.guider.set_state(step=0, num_inference_steps=settings.steps, timestep=None)
-    outputs = pipe(
+    image = pipe(
         crop_plan=plan,
         generator=torch.Generator().manual_seed(seed),
-        image_name=f"{name}.jpg",
         **settings.pipeline_inputs(),
         **reference_input,
-        output=CROP_OUTPUTS,
+        output="images",
+    )[0]
+    verdicts = (judge or default_judge(settings.device))(image, plan.lines)
+    labels_xml, unclear_lines = crop_labels(
+        plan, verdicts, max_line_cer=settings.max_line_cer, label_format=settings.label_format, image_name=f"{name}.jpg"
     )
-    return DrawnCrop.from_outputs(name, plan, outputs)
+    return DrawnCrop(
+        name=name, plan=plan, image=image, verdicts=verdicts, labels_xml=labels_xml, unclear_lines=unclear_lines
+    )

@@ -45,9 +45,9 @@ from diffu_page.cli.options import (
 from diffu_page.crops.geometry import pixel_box
 from diffu_page.evalset import EvalCrop, generated_path, read_crops
 from diffu_page.fidelity import HandFidelity, Hands, crop_hands, hand_fidelity
+from diffu_page.judge import Judge, TrOCRJudge
 from diffu_page.output import JPEG_QUALITY, console, err_console
 from diffu_page.pipeline import DEVICE_ERRORS, DrawSettings, crop_blocks, draw_crop, load_pipeline
-from diffu_page.readback import read_lines
 from diffu_page.settings import settings
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
@@ -129,15 +129,17 @@ def evaluate_crop(
     crops_dir: Path,
     out: Path,
     settings: DrawSettings,
+    judge: Judge,
 ) -> CropResult:
     """Draw one held-out crop with the crop pipeline, read it and its real counterpart back, and save its contact
     sheet."""
     plan = crop.plan()
     reference = crop.reference_image(crops_dir)
-    drawn = draw_crop(pipe, plan, name=f"{index:03d}", seed=seed, reference=reference, settings=settings)
+    drawn = draw_crop(pipe, plan, name=f"{index:03d}", seed=seed, reference=reference, settings=settings, judge=judge)
     drawn.image.save(generated_path(out, index))
     real = crop.real_image(crops_dir, drawn.image.size)
-    real_reads, real_cers = read_lines(real, plan.lines, model=pipe.htr_model, processor=pipe.htr_processor)
+    real_verdicts = judge(real, plan.lines)
+    real_reads, real_cers = [v.read for v in real_verdicts], [v.cer for v in real_verdicts]
     panels = [reference, real, drawn.image] if reference else [real, drawn.image]
     contact_sheet(panels, crop.lines).save(out / f"{index:03d}_{Path(crop.file_name).stem}.jpg", quality=JPEG_QUALITY)
     lines = zip(crop.lines, drawn.line_reads, drawn.line_cers, real_reads, real_cers, strict=True)
@@ -153,7 +155,14 @@ def evaluate_crop(
 
 
 def evaluate_crops(
-    pipe: ModularPipeline, eval_crops: list[EvalCrop], *, crops: Path, out: Path, seed: int, settings: DrawSettings
+    pipe: ModularPipeline,
+    eval_crops: list[EvalCrop],
+    *,
+    crops: Path,
+    out: Path,
+    seed: int,
+    settings: DrawSettings,
+    judge: Judge,
 ) -> tuple[list[CropResult], dict[int, str]]:
     """Every crop evaluated (:func:`evaluate_crop`, seeded by its own seed or ``seed`` + its index); a crop that fails
     is recorded by its index with its error and the rest still run, unless the device failed: then every crop after
@@ -163,7 +172,9 @@ def evaluate_crops(
     for k, crop in enumerate(eval_crops):
         crop_seed = crop.seed if crop.seed is not None else seed + k
         try:
-            sample = evaluate_crop(pipe, crop, index=k, seed=crop_seed, crops_dir=crops, out=out, settings=settings)
+            sample = evaluate_crop(
+                pipe, crop, index=k, seed=crop_seed, crops_dir=crops, out=out, settings=settings, judge=judge
+            )
         except DEVICE_ERRORS as error:
             failed[k] = f"{type(error).__name__}: {error}"
             failed |= dict.fromkeys(range(k + 1, len(eval_crops)), "not drawn: the device failed on an earlier crop")
@@ -223,7 +234,10 @@ def evaluate(
     (out / "generated").mkdir(parents=True, exist_ok=True)
     loras = lora_dirs(lora)
     pipe = load_pipeline(model, crop_blocks, loras=loras, settings=draw_settings)
-    samples, failed = evaluate_crops(pipe, eval_crops, crops=crops, out=out, seed=seed, settings=draw_settings)
+    judge = TrOCRJudge(device=device)
+    samples, failed = evaluate_crops(
+        pipe, eval_crops, crops=crops, out=out, seed=seed, settings=draw_settings, judge=judge
+    )
     if not samples:
         err_console.print("no crop could be evaluated")
         raise typer.Exit(code=1)

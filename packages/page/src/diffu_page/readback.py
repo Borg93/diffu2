@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import torch
 from PIL import Image
 from transformers import TrOCRProcessor, VisionEncoderDecoderModel
@@ -25,6 +27,12 @@ def levenshtein(a: str, b: str) -> int:
 def cer(pred: str, ref: str) -> float:
     """The character error rate of ``pred`` against ``ref``: their edit distance per reference character."""
     return levenshtein(pred, ref) / max(len(ref), 1)
+
+
+def numbers_differ(pred: str, ref: str) -> bool:
+    """Whether ``pred`` reads other numbers than ``ref`` holds (each run of digits, in order): one wrong digit in a
+    date, an amount or a page number makes a label wrong however small the line's CER."""
+    return re.findall(r"\d+", pred) != re.findall(r"\d+", ref)
 
 
 def materialize_position_tables(model: VisionEncoderDecoderModel) -> None:

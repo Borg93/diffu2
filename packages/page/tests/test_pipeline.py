@@ -78,12 +78,15 @@ def test_crop_pipeline_draws_a_plan_with_one_unclear_label_per_line(crop_pipe: M
     assert _alto_lines(crop.labels_xml) == ["den 4 maj", "Göteborgs poliskammare"]  # in the plan's reading order
 
 
-def test_crop_pipeline_tags_a_line_unclear_only_above_the_settings_max_line_cer(crop_pipe: ModularPipeline) -> None:
+def test_crop_pipeline_tags_a_line_unclear_above_the_settings_max_line_cer_or_when_its_number_misreads(
+    crop_pipe: ModularPipeline,
+) -> None:
     lenient = TINY_SETTINGS.model_copy(update={"max_line_cer": 10.0})  # noise reads back at a CER near 1
 
     crop = draw_crop(crop_pipe, _plan(), name="000", seed=0, reference=None, settings=lenient)
 
-    assert crop.unclear_lines == 0
+    assert [verdict.passes(10.0) for verdict in crop.verdicts] == [True, False]  # noise reads no "4" in "den 4 maj"
+    assert crop.unclear_lines == 1
 
 
 def test_crop_pipeline_draws_a_plan_with_the_model_a_diffu_repo_names(tiny_diffu: Path) -> None:
