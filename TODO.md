@@ -308,9 +308,14 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
       stays Qwen-Image's: FLUX.3's autoencoder has no licence of its own, so it is under the FLUX Kommunity licence.
       Only the transformer's text projection changes shape (`context_embedder`, 10,240 -> 20,480 inputs);
       `diffu-init --weights-from` starts a new model from a trained one wherever the shapes agree.
-- [ ] **E2b** (running since 26 Oct 09:12 after the reference diagnosis; `jobs/diffu/run_e2b.sh`, `configs/diffu/diffu_s_e2b_glyph.yaml`): diffu-S on FLUX.3's text encoder
+- [x] **E2b** (26 Oct 09:12 - 23:32; `jobs/diffu/run_e2b.sh`, `configs/diffu/diffu_s_e2b_glyph.yaml`): diffu-S on FLUX.3's text encoder
       from E2's glyph-arm weights (all but the text projection), all 11,329 training crops with glyph maps, 10,000
       steps of 8, drawn at steps 5,000 and 10,000: does more data and training start to form letters on the Spark?
+      Not yet. By eye (scratchpad e2b_compare/held_out, the 24 held-out windows beside E2): denser, darker, more
+      confident cursive-like strokes than E2 on every line, in the boxes, with the page's structure (indents, a
+      flourish where "September" heads the 1715 window, marks where the margin numbers stand, brown ink on cream);
+      no letter is legible anywhere. Read-back CER (information only): real 0.112, E2 1.006, E2b step 5,000 0.942,
+      final 0.932 (guidance 4) and 0.941 (guidance 1). E2n (our pages' latent stats) is the next test of why.
       Queued after it (scratchpad queue_heldin.sh, runs/heldin): E2 and E2b drawn on 24 crops both trained on
       (`data_flux3/e2_train_eval`: 2-3 from each of the 10 collections of E2's 2,000, seen 12 and ~7 times). Letters
       there but not on the held-out windows: the data is too little. None even there: how the text reaches the model.
