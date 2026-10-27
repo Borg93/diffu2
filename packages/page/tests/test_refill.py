@@ -1,5 +1,5 @@
 """Tests for refill: a real page's line geometry written through with new text at the page's own writing density,
-its other regions (page number, marginalia) left as they were."""
+its other regions (page number, marginalia) left as they were, and a form's print kept among its handwriting."""
 
 from __future__ import annotations
 
@@ -7,7 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from diffu_page.layout import Layout, TextLine, load_xml_layout, refill, running_text
+from diffu_page.captions.prompt import PageStyle
+from diffu_page.jobs import PageJob, crop_jobs
+from diffu_page.layout import Layout, Production, TextLine, load_xml_layout, refill, running_text
 
 _BODY_TEXTS = [  # 40 characters on each 680 px line: every refilled line gets a 40-character budget
     "den fjarde maj artonhundra attiotva fors",
@@ -44,12 +46,45 @@ def _body_texts(layout: Layout) -> list[str]:
     return [line.text for line in layout.lines if line.kind == "body"]
 
 
-def test_refill_flows_the_text_through_the_lines_at_the_pages_density_dropping_the_rest(page: Layout):
+@pytest.mark.parametrize(
+    "production",
+    [pytest.param(None, id="handwritten"), pytest.param(Production.PRINTED, id="printed-book")],
+)
+def test_refill_flows_the_text_through_the_lines_at_the_pages_density_dropping_the_rest(
+    page: Layout, production: Production | None
+):
+    lines = [line.model_copy(update={"production": production}) if line.kind == "body" else line for line in page.lines]
     paragraph = "Anno sextonhundra och tjugo den femte dagen i maj kom for ratten bonden Olof Jonsson ifran Rodon"
-    assert _body_texts(refill(page, paragraph)) == [
+    assert _body_texts(refill(page.model_copy(update={"lines": lines}), paragraph)) == [
         "Anno sextonhundra och tjugo den femte",
         "dagen i maj kom for ratten bonden Olof",
         "Jonsson ifran Rodon",
+    ]
+
+
+def test_refill_writes_a_forms_handwriting_at_its_own_density_and_keeps_its_print(
+    certificate_page: Path, page_style: PageStyle, page_text: str
+):
+    # each printed label is a region of its own beside its handwritten field: the fields, 600 px wide and holding
+    # 14-25 characters, write 16 to a line; the labels, "Att", "född", "i", "flyttar till", "Nattvard", are the form
+    page = PageJob(template=certificate_page, text=page_text, style=page_style, page_pixels=250_000)
+
+    (job,) = crop_jobs(page, 0)
+
+    lines = [job.plan.lines[k] for k in job.plan.reading_order]
+    printed, handwritten = Production.PRINTED, Production.HANDWRITTEN
+    assert [(line.text, line.production) for line in lines] == [
+        ("Flyttningsbetyg", printed),
+        ("Att", printed),
+        ("Anno", handwritten),
+        ("född", printed),
+        ("sextonhundra och", handwritten),
+        ("i", printed),
+        ("tjugo den femte", handwritten),
+        ("flyttar till", printed),
+        ("dagen i maj kom", handwritten),
+        ("Nattvard", printed),
+        ("for ratten", handwritten),
     ]
 
 

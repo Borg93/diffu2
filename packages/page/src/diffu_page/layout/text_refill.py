@@ -6,7 +6,9 @@ page's writing density (characters per pixel of line width, the median over its 
 width. A blank line in the text ends a paragraph on a short line and the next starts on a fresh one; a word that
 overruns a line is split with ``¬``, as the Swedish GT transcriptions mark a break, when both halves keep at least
 ``MIN_SPLIT`` characters. Lines beyond the end of the text are dropped. Other regions (page numbers, marginalia,
-headings, catchwords) keep their own text.
+headings, catchwords) keep their own text. On a page whose running text is handwritten, its printed lines are a form's
+print and keep theirs too: only the handwritten lines are rewritten, and they alone measure the density. A page whose
+running text is all printed, a printed book's, has its print rewritten.
 """
 
 from __future__ import annotations
@@ -14,7 +16,7 @@ from __future__ import annotations
 import re
 import statistics
 from collections import deque
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 
 from diffu_page.layout.model import Layout, LineKind, TextLine
 
@@ -80,26 +82,37 @@ def running_text(layout: Layout) -> str:
     return lines.replace(f"{SPLIT_MARK} ", "")
 
 
+def _rewritten(layout: Layout) -> Callable[[TextLine], bool]:
+    """Which of a layout's lines refill rewrites: its running-text lines (kind ``body``), and of a page whose running
+    text is handwritten only the handwritten ones, the print among them being a form's (a line its template says
+    nothing of counts as handwritten); of a page whose running text is all printed, every one."""
+    if all(line.printed for line in layout.lines if line.kind is LineKind.BODY):
+        return lambda line: line.kind is LineKind.BODY
+    return lambda line: line.kind is LineKind.BODY and not line.printed
+
+
 def refill(layout: Layout, text: str) -> Layout:
     """Rewrite a layout's running-text lines with new text, in reading order.
 
     Args:
-        layout: The page; its running-text lines (kind ``body``) set the line widths and the writing
-            density, its other lines keep their text.
+        layout: The page; the lines it rewrites (its running-text lines, kind ``body``, and of a page whose running
+            text is handwritten only the handwritten ones) set the line widths and the writing density, its other
+            lines keep their text.
         text: The new text; a blank line ends a paragraph, and the next starts on a fresh line.
 
     Returns:
-        The layout with each running-text line holding the next part of ``text``, and without the
-        running-text lines left over when the text runs out.
+        The layout with each line it rewrites holding the next part of ``text``, and without the lines left over
+        when the text runs out.
 
     Raises:
-        ValueError: If no running-text line holds ``DENSITY_MIN_CHARS`` characters to measure the density by.
+        ValueError: If no line it rewrites holds ``DENSITY_MIN_CHARS`` characters to measure the density by.
     """
-    density = _writing_density([line for line in layout.lines if line.kind is LineKind.BODY])
+    rewritten = _rewritten(layout)
+    density = _writing_density([line for line in layout.lines if rewritten(line)])
     stream = _TextStream(PARAGRAPH_BREAK.split(text))
     lines: list[TextLine] = []
     for line in layout.lines:
-        if line.kind is not LineKind.BODY:
+        if not rewritten(line):
             lines.append(line)
             continue
         written = stream.line(max(1, round(density * line.width)))

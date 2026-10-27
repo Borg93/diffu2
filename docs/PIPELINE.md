@@ -35,7 +35,8 @@ PAGE/ALTO page ──► LoadLayout ──► MarkFromScan ──► OpeningPage
    ground truth, handwritten ones from the HTR ground truth, validated on held-out collections.
 2. **Refill** (`RefillStep`, `layout.refill`): the running-text lines get new text at the page's own writing density;
    a blank line in the text ends a paragraph and the next starts on a fresh line; margin notes, headings and page
-   numbers keep theirs.
+   numbers keep theirs. On a page whose running text is handwritten, a form's printed lines keep theirs too, and the
+   density is the handwriting's; a page whose running text is all printed, a printed book's, has its print rewritten.
 3. **Crops** (`PlanCropsStep`, `diffu_page.crops`, `diffu_page.plan`): the page is cut into the windows the models
    were trained on: whole lines, about 1 megapixel at a 64 px line pitch, NeMo bucket sizes, margin notes joined to
    the column beside them. Each window is a `CropPlan`: its size, its caption and its lines with boxes (0–1000, y
