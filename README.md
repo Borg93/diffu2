@@ -20,7 +20,7 @@ model's own (FLUX.3 Klein from diffusers, diffu, or MOSS-Image), chosen by the m
 | --- | --- | --- | --- |
 | `src/diffu`, `tests/` | diffu | The model, laid out like a diffusers model (`modular_pipelines/diffu/`): FLUX.3's transformer with our own weights, FLUX.3's text encoder (Qwen3-VL-4B-Instruct) and the Qwen-Image VAE; `diffu-init` writes a new model repo, `diffu-export` a trained checkpoint's (sampled at the shift it trained at) | torch, diffusers |
 | `packages/moss` | diffu-moss | MOSS-Image as the third model family: our DiT (`transformer.py`; the released weights load into it by name; reference images as FLUX.3 Klein takes them), its blocks (`modular_pipelines/moss/`: `MossAutoBlocks`, `MossModularPipeline`), a crop's caption compiled as MOSS's Layout prompt (`layout_prompt.py`); `diffu-moss-init` writes a MOSS model repo; our reference training (`train/`: `diffu-moss-cache-pairs`, `diffu-moss-train-ref`, `diffu-moss-export-ref`) | torch, diffusers, transformers, peft |
-| `packages/page` | diffu-page | Archive pages as data (`layout/`, `crops/`, `captions/`, plans, labels, the training-data builders in `data/`), our blocks (`blocks/`), the page and crop pipelines (`pipeline.py`) and their CLIs: `diffu-generate`, `diffu-evaluate`, `diffu-sheets` | torch, diffusers, transformers |
+| `packages/page` | diffu-page | Archive pages as data (`layout/`, `crops/`, `captions/`, plans, labels, the training-data builders in `data/`), a template marked from its scan (`marking/`: printed lines and ruled lines), our blocks (`blocks/`), the page and crop pipelines (`pipeline.py`) and their CLIs: `diffu-generate`, `diffu-evaluate`, `diffu-sheets` | torch, diffusers, transformers, OpenCV |
 | `packages/train` | diffu-train | NeMo AutoModel glue: the training configs (`configs/flux3/`, `configs/diffu/`), dataloader configs, the v3 pair cache and diffu's training cache | NeMo AutoModel (its environment only) |
 | `packages/runner` | diffu-runner | Generation at scale on a Ray cluster: pages planned on CPU workers, crops drawn by GPU actors each holding a crop pipeline | ray |
 | `packages/studio` | diffu-studio | The pipeline as a `gr.Workflow` canvas: a plan node feeding one draw node per drawer (a model and its LoRAs), so models draw the same page side by side; app view and REST endpoint included | gradio |
@@ -31,8 +31,8 @@ Package names keep the `diffu-` prefix (imports `diffu_page`, ...) so they stay 
 jobs/           GPU job scripts (flux3/, diffu/), spark_guard.sh (one GPU job at a time on the DGX Spark, 128 GB unified
                 memory), setup_nemo_env.sh (installs the members into NeMo's environment)
 docs/           PIPELINE.md
-conftest.py     test fixtures shared by the members (pages, diffusers' tiny FLUX.3 test model, a tiny diffu repo, a tiny
-                MOSS-Image repo)
+conftest.py     test fixtures shared by the members (pages, a form beside its scan and a stand-in print/hand classifier,
+                diffusers' tiny FLUX.3 test model, a tiny diffu repo, a tiny MOSS-Image repo)
 ```
 
 ## Environments
@@ -58,9 +58,26 @@ cd ~/Desktop/repos/Automodel && ~/Desktop/repos/diffu2/jobs/spark_guard.sh --nee
 `--text-from` also takes a plain text file, written as it stands (a blank line ends a paragraph). `--whole-page`
 draws each template whole (`--page-megapixels`, 2.5 by default) instead of as training-scale windows. A template that
 is a two-page opening, as most GT scans are, is drawn as its single pages, never as a spread (`summary.json` lists
-them; a job line can ask for one, `"side": "left"` or `"right"`). To give every page its own template, text, style,
-seed, reference and size, write them to a job file, one `diffu_page.jobs.PageJob` per line (the run file diffu-runner
-reads), and pass `--jobs run.jsonl` instead of the page options:
+them; a job line can ask for one, `"side": "left"` or `"right"`). `--mark-from-scan` marks each template from the
+scan beside it before planning (off by default): a GT PAGE file mostly says neither which lines are printed
+(`@production`) nor where the ruled lines run (`SeparatorRegion`), so a printed form filled in by hand would be drawn
+as handwriting without its grid. Each line the file says nothing of is read as printed or handwritten by a small CNN
+(`--print-hand-model`, by default `runs/print_hand/print_hand.pt`; less than 90 % sure stays handwritten), and the
+page's ruled lines are found on the scan if the file has none; `summary.json` names the classifier. It is trained on
+CPU from the OCR and HTR ground truths and validated on collections it never saw (`report.json`; on 25,086 lines of 77
+collections, 27 Oct: 89.8 % of the printed lines read as printed, 0.17 % of the handwritten ones):
+
+```bash
+OMP_NUM_THREADS=4 nice -n 10 uv run python -m diffu_page.data.print_hand_set \
+    --printed ~/Desktop/data/GT-Lejonet-OCR-202606 --handwritten ~/Desktop/data/GT-Lejonet_HTR_202602 \
+    --out runs/print_hand/lines.npz
+OMP_NUM_THREADS=4 nice -n 10 uv run python -m diffu_page.marking.train --lines runs/print_hand/lines.npz \
+    --out runs/print_hand
+```
+
+To give every page its own template, text, style, seed, reference and size, write them to a job file, one
+`diffu_page.jobs.PageJob` per line (the run file diffu-runner reads), and pass `--jobs run.jsonl` instead of the page
+options:
 
 ```json
 {"template": "page_a.xml", "text": "Anno 1720 den 5 maj ...", "style": {"provenance": {"title": "the court records of Jämtlands domsaga", "years": "1720"}, "look": {"greyscale": false, "paper": "cream", "ink": "dark brown"}}, "page_pixels": 2500000, "id": "jamt_1720_p1"}

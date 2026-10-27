@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 from diffu_page.blocks import crop_identity
 from diffu_page.captions.prompt import PageStyle
 from diffu_page.layout import PageSide, load_xml_layout, scan_pages
+from diffu_page.marking import PrintHandClassifier
 from diffu_page.output import load_rgb, plain_file_name, validation_problems
 from diffu_page.pipeline import PagePlanBlocks
 from diffu_page.plan import CropPlan, Reference
@@ -168,8 +169,9 @@ class CropJob(BaseModel):
         return None if self.reference is None else load_rgb(self.reference)
 
 
-def crop_jobs(page: PageJob, index: int) -> list[CropJob]:
-    """Page ``index`` of a run, planned into its crops by :class:`PagePlanBlocks`, each named and seeded by
+def crop_jobs(page: PageJob, index: int, *, print_hand: PrintHandClassifier | None = None) -> list[CropJob]:
+    """Page ``index`` of a run, planned into its crops by :class:`PagePlanBlocks`, its template first marked from its
+    scan with ``print_hand`` if one is given (:func:`diffu_page.marking.marked`), each crop named and seeded by
     ``crop_identity``.
 
     Raises:
@@ -178,6 +180,7 @@ def crop_jobs(page: PageJob, index: int) -> list[CropJob]:
     planner = PagePlanBlocks().init_pipeline()
     plans = planner(
         template=page.template,
+        print_hand=print_hand,
         side=page.side,
         text=page.text,
         style=page.style,

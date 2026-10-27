@@ -6,7 +6,9 @@ outlines, baselines, region roles and Transkribus reading order. An element with
 page, so it stays a region of its own. A PAGE table is read in either form a template comes in: Transkribus' ``TableCell``
 (``@row``, ``@col``) or PAGE 2019's nested ``TextRegion`` with a ``TableCellRole``. A line's ``@production`` (else its
 region's, its cell's or its table's) says whether it is printed; ``SeparatorRegion``s are the page's ruled lines. ALTO
-lines come from their ``HPOS``/``VPOS``/``WIDTH``/``HEIGHT`` box and ``String``s; ALTO has no tables or production.
+lines come from their ``HPOS``/``VPOS``/``WIDTH``/``HEIGHT`` box and ``String``s; ALTO has no tables or production. A
+line whose file does not say how it was made has none (``production`` None): it can be read off the scan
+(:func:`diffu_page.marking.marked`).
 """
 
 from __future__ import annotations
@@ -54,8 +56,8 @@ def _page_size(root: ET.Element) -> tuple[int, int]:
     return int(float(width)), int(float(height))
 
 
-def _production(element: ET.Element, inherited: Production) -> Production:
-    """An element's own PAGE ``@production``, else ``inherited`` (its region's, cell's or table's).
+def _production(element: ET.Element, inherited: Production | None) -> Production | None:
+    """An element's own PAGE ``@production``, else ``inherited`` (its region's, cell's or table's, if any).
 
     Raises:
         ValueError: If the value is not one PAGE defines.
@@ -71,7 +73,9 @@ def _production(element: ET.Element, inherited: Production) -> Production:
     return _PRODUCTION[value]
 
 
-def _text_line(line: PageLine, kind: LineKind, block: str, *, production: Production, cell: CellRef | None) -> TextLine:
+def _text_line(
+    line: PageLine, kind: LineKind, block: str, *, production: Production | None, cell: CellRef | None
+) -> TextLine:
     xs = [x for x, _ in line.polygon]
     ys = [y for _, y in line.polygon]
     return TextLine(
@@ -96,7 +100,7 @@ def _region_lines(
     kind: LineKind,
     block: str,
     *,
-    production: Production = Production.HANDWRITTEN,
+    production: Production | None = None,
     cell: CellRef | None = None,
 ) -> list[TextLine]:
     """The lines of a PAGE region (direct ``TextLine`` children), top to bottom; ``production`` is what the region's
@@ -135,7 +139,7 @@ def _cell_ref(table_key: str, cell: ET.Element) -> CellRef | None:
 
 def _table_lines(table: ET.Element, table_key: str) -> list[TextLine]:
     """A table's lines, cell by cell in file order, each cell's top to bottom."""
-    production = _production(table, Production.HANDWRITTEN)
+    production = _production(table, None)
     return [
         line
         for k, cell in enumerate(table)

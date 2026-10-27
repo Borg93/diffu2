@@ -36,6 +36,7 @@ from diffu_page.judge import LineVerdict
 from diffu_page.layout import PageSide
 from diffu_page.local_run import NOT_RUN
 from diffu_page.lora import ADAPTER_CONFIG, ADAPTER_WEIGHTS, nemo_lora_state_dict
+from diffu_page.marking import PrintHandClassifier
 from diffu_page.output import jpeg_bytes
 from diffu_page.pipeline import (
     FAMILIES,
@@ -52,7 +53,7 @@ from diffu_page.pipeline import (
 from diffu_page.plan import CropPlan, Reference
 
 if TYPE_CHECKING:
-    from conftest import NemoLoraWriter
+    from conftest import NemoLoraWriter, ScannedFormMaker
 
 TINY_SETTINGS = DrawSettings(steps=2, guidance_scale=4.0, text_layers=(1,), device="cpu")
 TINY_OPTIONS = ["--steps", "2", "--text-layer", "1", "--device", "cpu"]  # TINY_SETTINGS as diffu-generate's options
@@ -604,6 +605,81 @@ def test_generate_draws_an_opening_whole_as_its_two_pages_each_labelled_in_its_o
         ("000_opening_left_0", (512, 480), [(34, 408)] * 4 + [(416, 468)]),  # four lines, then the inner margin's note
         ("001_opening_right_0", (512, 496), [(46, 477)] * 3),
     ]
+
+
+def _productions_and_rules(labels: Path) -> tuple[list[tuple[str, str]], int]:
+    """A PAGE label file's lines that are not running text (their text and production), and its ruled lines' count."""
+    root = ET.parse(labels).getroot()
+    lines = [
+        (
+            next(e for e in line.iter() if e.tag.endswith("}Unicode")).text or "",
+            line.get("production", ""),
+        )
+        for region in root.iter()
+        if region.tag.endswith("}TextRegion") and region.get("type") == "heading"
+        for line in region
+        if line.tag.endswith("}TextLine")
+    ]
+    return lines, sum(1 for e in root.iter() if e.tag.endswith("}SeparatorRegion"))
+
+
+def test_generate_marks_each_template_from_the_scan_beside_it_when_asked(
+    tiny_flux3: Path,
+    make_scanned_form: ScannedFormMaker,
+    ink_meter: PrintHandClassifier,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    page_text: str,
+) -> None:
+    form = make_scanned_form()
+    alone = tmp_path / "alone.xml"  # the same form, with no scan beside it
+    alone.write_text(form.read_text(encoding="utf-8"), encoding="utf-8")
+    weights = tmp_path / "print_hand.pt"
+    weights.touch()
+    monkeypatch.setattr(
+        PrintHandClassifier, "load", classmethod(lambda cls, path: ink_meter if path == weights else None)
+    )
+    monkeypatch.setattr("diffu_page.cli.generate.TrOCRJudge", lambda device: ScriptedJudge())  # reads are not tested
+    text_file = tmp_path / "text.txt"
+    text_file.write_text(page_text, encoding="utf-8")
+    args = [
+        "--templates",
+        str(form),
+        "--templates",
+        str(alone),
+        "--text-from",
+        str(text_file),
+        "--title",
+        "the archive",
+    ]
+    args += ["--whole-page", "--page-megapixels", "0.25", "--format", "page", "--mark-from-scan"]
+    args += ["--print-hand-model", str(weights), "--model", str(tiny_flux3), "--out", str(tmp_path / "out")]
+
+    result = CliRunner().invoke(generate_app, [*args, *TINY_OPTIONS])
+
+    assert result.exit_code == 1  # the form with no scan beside it cannot be marked; the run goes on
+    summary = Summary.model_validate_json((tmp_path / "out" / "summary.json").read_text())
+    assert summary.marked_with == weights
+    assert summary.failed == {
+        "001_alone": f"FileNotFoundError: {alone} has no scan beside it to be marked from (its imageFilename, one "
+        "folder up)"
+    }
+    assert [crop.name for crop in summary.crops] == ["000_form_0"]
+    assert _productions_and_rules(tmp_path / "out" / "000_form_0.xml") == ([("Mantalslängd 1765", "printed")], 4)
+
+
+def test_generate_refuses_to_mark_templates_without_a_print_hand_classifier_before_it_loads(
+    one_line_page: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)  # short paths: rich wraps the error panel at 80 columns, inside a long one
+    args = ["--templates", str(one_line_page), "--text-from", str(one_line_page), "--title", "the archive"]
+    args += ["--mark-from-scan", "--print-hand-model", "none.pt", "--model", "no_model", "--out", "out"]
+
+    result = CliRunner().invoke(generate_app, args)
+
+    message = " ".join(result.output.replace("│", " ").split())
+    assert result.exit_code == 2  # a usage error, raised before the (missing) model would have been read
+    assert "no print/hand classifier at none.pt" in message
 
 
 @pytest.mark.parametrize(

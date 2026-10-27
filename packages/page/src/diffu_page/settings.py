@@ -18,6 +18,8 @@ class Settings(BaseSettings):
             ``DIFFU_HTR_MODEL``.
         htr_revision: Its pinned Hub revision, so every CER and unclear tag is read by the same weights; env
             ``DIFFU_HTR_REVISION``, empty for a local copy.
+        print_hand_model: The print/hand classifier ``diffu-generate --mark-from-scan`` reads a template's lines with
+            (``python -m diffu_page.marking.train``'s ``print_hand.pt``), env ``DIFFU_PRINT_HAND_MODEL``.
     """
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -25,6 +27,7 @@ class Settings(BaseSettings):
     flux3_model: Path | None = Field(default=None, alias="FLUX3_MODEL")
     htr_model: str = Field(default="Riksarkivet/trocr-base-handwritten-hist-swe-2", alias="DIFFU_HTR_MODEL")
     htr_revision: str | None = Field(default="aa79fcb1850bf3155ebc442570d6c6bfc0ac8100", alias="DIFFU_HTR_REVISION")
+    print_hand_model: Path = Field(default=Path("runs/print_hand/print_hand.pt"), alias="DIFFU_PRINT_HAND_MODEL")
 
 
 settings = Settings()

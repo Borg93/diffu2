@@ -3,7 +3,10 @@ style.
 
 Each template (a real PAGE/ALTO page, or one written for the purpose) is planned on CPU
 (:func:`diffu_page.jobs.crop_jobs`): its running text is replaced by the new text and it is cut into training-scale
-crops, or with ``--whole-page`` kept whole as one crop of ``--page-megapixels``. A two-page opening (most scans) is
+crops, or with ``--whole-page`` kept whole as one crop of ``--page-megapixels``. With ``--mark-from-scan`` a
+ground-truth template is first marked from the scan beside it (:func:`diffu_page.marking.marked`): the lines its PAGE
+file does not say are printed or handwritten read off the scan by ``--print-hand-model``, and its ruled lines found
+there if it has none, so its form's print is drawn as print and its grid as rules. A two-page opening (most scans) is
 planned as its single pages, never as a spread (:func:`diffu_page.jobs.single_pages`), and ``summary.json`` lists them.
 Each crop is then drawn on its own by the crop pipeline (FLUX.3 + LoRAs, or diffu), read back line by line, and labelled
 with badly read lines tagged ``unclear``, as diffu-runner's GPU actors draw it. The text comes from ``--text-from``: a
@@ -74,6 +77,7 @@ from diffu_page.jobs import CropJob, PageJob, PageRequest, ResolvedPage, crop_jo
 from diffu_page.judge import Judge, TrOCRJudge
 from diffu_page.layout import load_xml_layout, running_text
 from diffu_page.local_run import run_each
+from diffu_page.marking import PrintHandClassifier
 from diffu_page.output import JPEG_QUALITY, console
 from diffu_page.pipeline import (
     DEVICE_ERRORS,
@@ -131,13 +135,15 @@ class PageGroup(BaseModel):
 
 
 class Summary(BaseModel):
-    """A run: what drew it (the model, the LoRAs of each group of its pages and the draw settings), the pages it was
-    asked for (each with its template, text, style, seed and reference, a named style resolved), every drawn crop, and
-    every page or crop that failed, by name, with its error."""
+    """A run: what drew it (the model, the LoRAs of each group of its pages and the draw settings), the print/hand
+    classifier its templates were marked from their scans with (None: they were not), the pages it was asked for (each
+    with its template, text, style, seed and reference, a named style resolved), every drawn crop, and every page or
+    crop that failed, by name, with its error."""
 
     model: str
     groups: list[PageGroup]
     settings: DrawSettings
+    marked_with: Path | None = None
     pages: list[PageJob]
     crops: list[CropSummary]
     failed: dict[str, str]
@@ -179,12 +185,15 @@ def page_groups(pages: list[ResolvedPage]) -> list[PageGroup]:
     return list(groups.values())
 
 
-def plan_jobs(pages: Iterable[tuple[int, PageJob]]) -> tuple[list[CropJob], dict[str, str]]:
-    """The crop jobs of each page, given with its place in the run (which names and seeds its crops), and the error of
-    each page that cannot be planned, by page name (CPU)."""
+def plan_jobs(
+    pages: Iterable[tuple[int, PageJob]], *, print_hand: PrintHandClassifier | None = None
+) -> tuple[list[CropJob], dict[str, str]]:
+    """The crop jobs of each page, given with its place in the run (which names and seeds its crops), its template
+    marked from its scan with ``print_hand`` if one is given, and the error of each page that cannot be planned, by page
+    name (CPU)."""
     planned, failed = run_each(
         list(pages),
-        lambda indexed: crop_jobs(indexed[1], indexed[0]),
+        lambda indexed: crop_jobs(indexed[1], indexed[0], print_hand=print_hand),
         key=lambda indexed: indexed[1].name_at(indexed[0]),
     )
     return [job for jobs in planned for job in jobs], failed
@@ -255,6 +264,20 @@ def _profiler(out: Path | None) -> AbstractContextManager[profile | None]:
     )
 
 
+def print_hand_classifier(weights: Path) -> PrintHandClassifier:
+    """The print/hand classifier saved at ``weights``.
+
+    Raises:
+        typer.BadParameter: If no file is there.
+    """
+    if not weights.is_file():
+        raise typer.BadParameter(
+            f"no print/hand classifier at {weights}: train one with python -m diffu_page.marking.train",
+            param_hint="--print-hand-model",
+        )
+    return PrintHandClassifier.load(weights)
+
+
 def page_reference(image: Path | None, caption: ReferenceCaption) -> Reference | None:
     """The reference to draw every page from: for a described caption, a crop with its line boxes
     (``Reference.of_crop``)."""
@@ -323,13 +346,16 @@ def job_file_pages(
     return pages
 
 
-def plan_groups(pages: list[ResolvedPage], groups: list[PageGroup]) -> tuple[list[LoraJob], dict[str, str]]:
-    """Each group's pages planned into crop jobs with the group's LoRAs, group after group, and the error of each page
-    that cannot be planned, by page name (CPU)."""
+def plan_groups(
+    pages: list[ResolvedPage], groups: list[PageGroup], *, print_hand: PrintHandClassifier | None = None
+) -> tuple[list[LoraJob], dict[str, str]]:
+    """Each group's pages planned into crop jobs with the group's LoRAs, group after group (each template marked from
+    its scan with ``print_hand`` if one is given), and the error of each page that cannot be planned, by page name
+    (CPU)."""
     jobs: list[LoraJob] = []
     failed: dict[str, str] = {}
     for group in groups:
-        planned, unplanned = plan_jobs((index, pages[index].page) for index in group.pages)
+        planned, unplanned = plan_jobs(((index, pages[index].page) for index in group.pages), print_hand=print_hand)
         jobs += [(group.loras, job) for job in planned]
         failed |= unplanned
     return jobs, failed
@@ -406,6 +432,17 @@ def generate(
     page_megapixels: Annotated[
         float, typer.Option(min=0.25, max=4.0, help="a whole page's size (FLUX.3 draws up to about 4 MP)")
     ] = 2.5,
+    mark_from_scan: Annotated[
+        bool,
+        typer.Option(
+            "--mark-from-scan",
+            help="mark each template from the scan beside it before planning: the lines its PAGE file does not say "
+            "are printed or handwritten read off the scan, and its ruled lines found there if it has none",
+        ),
+    ] = False,
+    print_hand_model: Annotated[
+        Path, typer.Option(help="the print/hand classifier --mark-from-scan reads lines with")
+    ] = settings.print_hand_model,
     profile_dir: Annotated[Path | None, typer.Option("--profile", help="write a trace of crops 2-3 here")] = None,
 ) -> None:
     """Draw every crop of the templates (or each template whole), refilled with the text, in the given or named style;
@@ -428,6 +465,7 @@ def generate(
     )
     presets = style_presets(styles)
     loras = lora_dirs(lora)
+    print_hand = print_hand_classifier(print_hand_model) if mark_from_scan else None
     if job_file is not None:
         pages = job_file_pages(ctx, job_file, presets=presets, loras=loras)
     else:
@@ -459,7 +497,8 @@ def generate(
         raise typer.BadParameter("there is no --reference to guide toward", param_hint="--reference-guidance")
     pages = [ResolvedPage(page=single, loras=page.loras) for page in pages for single in single_pages(page.page)]
     groups = page_groups(pages)
-    jobs, failed = plan_groups(pages, groups)  # before any model loads: a run whose pages plan to nothing loads none
+    # before any model loads: a run whose pages plan to nothing loads none
+    jobs, failed = plan_groups(pages, groups, print_hand=print_hand)
     crops: list[CropSummary] = []
     out.mkdir(parents=True, exist_ok=True)
     if jobs:
@@ -478,6 +517,7 @@ def generate(
         model=str(model_dir),
         groups=groups,
         settings=draw_settings,
+        marked_with=print_hand_model if mark_from_scan else None,
         pages=[page.page for page in pages],
         crops=crops,
         failed=failed,

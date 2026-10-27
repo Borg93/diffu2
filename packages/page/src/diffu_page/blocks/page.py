@@ -1,5 +1,6 @@
-"""The page steps that run before any model: a template page read as its layout, refilled with new text and planned
-into the crops a model draws. CPU only; they need no components."""
+"""The page steps that run before any model: a template page read as its layout, marked from its scan if asked, the
+page of an opening asked for taken, refilled with new text and planned into the crops a model draws. CPU only; they
+need no components."""
 
 from __future__ import annotations
 
@@ -10,26 +11,89 @@ from diffusers.modular_pipelines import InputParam, ModularPipeline, ModularPipe
 
 from diffu_page.captions.prompt import PageStyle
 from diffu_page.layout import Layout, PageSide, load_xml_layout, refill, scan_pages
+from diffu_page.marking import PrintHandClassifier, marked, template_scan
 from diffu_page.plan import Reference, plan_page, plan_whole_page
 
 
 class LoadLayoutStep(ModularPipelineBlocks):
-    """A PAGE or ALTO page read as its layout: its size and its text lines in reading order; with a side, that page of
-    a two-page opening in its own coordinates."""
+    """A PAGE or ALTO page read as its layout: its size, its text lines in reading order and its ruled lines."""
+
+    @property
+    @override
+    def description(self) -> str:
+        return "Reads a PAGE or ALTO file as its layout: the page size, and each line's text, box, baseline and region."
+
+    @property
+    @override
+    def inputs(self) -> list[InputParam]:
+        return [InputParam("template", type_hint=Path, required=True, description="A PAGE or ALTO file to redraw.")]
+
+    @property
+    @override
+    def intermediate_outputs(self) -> list[OutputParam]:
+        return [OutputParam("layout", type_hint=Layout, description="The template's size and text lines.")]
+
+    def __call__(self, components: ModularPipeline, state: PipelineState) -> tuple[ModularPipeline, PipelineState]:
+        block_state = self.get_block_state(state)
+        block_state.layout = load_xml_layout(Path(block_state.template))
+        self.set_block_state(state, block_state)
+        return components, state
+
+
+class MarkFromScanStep(ModularPipelineBlocks):
+    """A template's layout marked from the scan beside it (:func:`diffu_page.marking.marked`) when a print/hand
+    classifier is given: its lines printed or handwritten where the template does not say, its ruled lines where it has
+    none. Without a classifier the layout passes as it is."""
 
     @property
     @override
     def description(self) -> str:
         return (
-            "Reads a PAGE or ALTO file as its layout: the page size, and each line's text, box, baseline and region; "
-            "of an opening, the page on the side asked for, as a page of its own."
+            "Marks the template from its scan when a print/hand classifier is given: each line it says nothing of read "
+            "as printed or handwritten, and its ruled lines found on the scan if it has none."
         )
 
     @property
     @override
     def inputs(self) -> list[InputParam]:
         return [
-            InputParam("template", type_hint=Path, required=True, description="A PAGE or ALTO file to redraw."),
+            InputParam("template", type_hint=Path, required=True, description="The PAGE file, its scan beside it."),
+            InputParam("layout", type_hint=Layout, required=True, description="The template's layout."),
+            InputParam(
+                "print_hand",
+                type_hint=PrintHandClassifier,
+                description="The classifier to read the lines with (diffu_page.marking); none leaves the layout as is.",
+            ),
+        ]
+
+    @property
+    @override
+    def intermediate_outputs(self) -> list[OutputParam]:
+        return [OutputParam("layout", type_hint=Layout, description="The layout, marked from its scan.")]
+
+    def __call__(self, components: ModularPipeline, state: PipelineState) -> tuple[ModularPipeline, PipelineState]:
+        block_state = self.get_block_state(state)
+        if block_state.print_hand is not None:
+            template = Path(block_state.template)
+            block_state.layout = marked(block_state.layout, template_scan(template), classifier=block_state.print_hand)
+        self.set_block_state(state, block_state)
+        return components, state
+
+
+class OpeningPageStep(ModularPipelineBlocks):
+    """With a side, that page of a two-page opening, in its own coordinates; without one, the layout as it is."""
+
+    @property
+    @override
+    def description(self) -> str:
+        return "Of an opening, takes the page on the side asked for, as a page of its own."
+
+    @property
+    @override
+    def inputs(self) -> list[InputParam]:
+        return [
+            InputParam("template", type_hint=Path, required=True, description="The PAGE or ALTO file, for errors."),
+            InputParam("layout", type_hint=Layout, required=True, description="The template's layout."),
             InputParam(
                 "side",
                 type_hint=PageSide,
@@ -40,21 +104,19 @@ class LoadLayoutStep(ModularPipelineBlocks):
     @property
     @override
     def intermediate_outputs(self) -> list[OutputParam]:
-        return [OutputParam("layout", type_hint=Layout, description="The template's size and text lines.")]
+        return [OutputParam("layout", type_hint=Layout, description="The page's layout.")]
 
     def __call__(self, components: ModularPipeline, state: PipelineState) -> tuple[ModularPipeline, PipelineState]:
         block_state = self.get_block_state(state)
-        template, side = Path(block_state.template), block_state.side
-        layout = load_xml_layout(template)
+        side = block_state.side
         if side is not None:
-            page = next((page for page in scan_pages(layout) if page.side == side), None)
+            page = next((page for page in scan_pages(block_state.layout) if page.side == side), None)
             if page is None:
                 raise ValueError(
-                    f"{template} has no {side} page to draw: it is a single page, not a two-page opening, or nothing "
-                    "is written on that page"
+                    f"{block_state.template} has no {side} page to draw: it is a single page, not a two-page opening, "
+                    "or nothing is written on that page"
                 )
-            layout = page.layout
-        block_state.layout = layout
+            block_state.layout = page.layout
         self.set_block_state(state, block_state)
         return components, state
 

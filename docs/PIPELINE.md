@@ -8,11 +8,11 @@ consistent. The module layout is in the [README](../README.md); open work is in 
 Every step is a Modular Diffusers block; `diffu_page.pipeline` assembles our blocks around a model's own.
 
 ```
-PAGE/ALTO page ──► LoadLayout ──► Refill ──► PlanCrops ──► per crop: CropPrompt ──► model's blocks ──► judge ──► repair ──► labels
- (any real page)   (lines,        (any       (training-   (caption,    (text encoder,     (reads      (rejected    (PAGE/ALTO,
-                   regions,       text)      scale        boxes,       VAE encoder,       every       lines drawn  unclear lines
-                   blocks)                   windows,     size)        denoise, decode)   line)       again)       tagged)
-                                             or whole)
+PAGE/ALTO page ──► LoadLayout ──► MarkFromScan ──► OpeningPage ──► Refill ──► PlanCrops ──► per crop: CropPrompt ──► model's blocks ──► judge ──► repair ──► labels
+ (any real page)   (lines,        (if asked: print  (a side of     (any       (training-   (caption,    (text encoder,     (reads      (rejected    (PAGE/ALTO,
+                   regions,       and rules read     an opening,   text)      scale        boxes,       VAE encoder,       every       lines drawn  unclear lines
+                   blocks)        off the scan)      if asked)                windows,     size)        denoise, decode)   line)       again)       tagged)
+                                                                              or whole)
 ```
 
 1. **Layout** (`LoadLayoutStep`, `diffu_page.layout`): a real PAGE or ALTO page read as its lines
@@ -20,10 +20,19 @@ PAGE/ALTO page ──► LoadLayout ──► Refill ──► PlanCrops ──�
    reading order; an element without an id is keyed by its place, so it stays a region of its own. The training-crop
    builder cuts its crops from this same layout (`crops.regions_of`, at the scan's size), so a page is planned for
    generation exactly where its training crops were cut. PAGE and ALTO are only formats here: the layout is what the
-   rest uses. Given a side (`PageJob.side`), it reads that page of a two-page opening as a page of its own
-   (`layout.scan_pages`: the scan split at its gutter, the page's lines and ruled lines in its own coordinates), so
-   its crops and labels are a single page's; diffu-generate gives each page of an opening its own job
-   (`jobs.single_pages`).
+   rest uses. A line's PAGE `@production` (printed or handwritten) is kept when the file states it and is None when
+   it does not (drawn as handwriting); `SeparatorRegion`s are the page's ruled lines. Most GT PAGE files state
+   neither, so with a print/hand classifier (`diffu-generate --mark-from-scan`) `MarkFromScanStep` marks the template
+   from the scan beside it first (`diffu_page.marking.marked`): each line it says nothing of is read as printed or
+   handwritten by a small CNN (`marking.print_hand`, 64 px high line images reduced to their ink, read window by
+   window; less than 90 % sure stays handwritten), lines it states keep theirs, and when it has no ruled lines they are
+   found on the scan (`marking.rules`, OpenCV: long thin straight runs of ink, told apart from handwriting, page edges,
+   an opening's fold and the scan's border). The whole scan is marked, then `OpeningPageStep`, given a side
+   (`PageJob.side`), reads that page of a two-page opening as a page of its own (`layout.scan_pages`: the scan split at
+   its gutter, the page's lines and ruled lines in its own coordinates), so its crops and labels are a single page's;
+   diffu-generate gives each page of an opening its own job (`jobs.single_pages`). The classifier is trained on CPU
+   (`python -m diffu_page.data.print_hand_set`, then `python -m diffu_page.marking.train`): printed lines from the OCR
+   ground truth, handwritten ones from the HTR ground truth, validated on held-out collections.
 2. **Refill** (`RefillStep`, `layout.refill`): the running-text lines get new text at the page's own writing density;
    a blank line in the text ends a paragraph and the next starts on a fresh line; margin notes, headings and page
    numbers keep theirs.

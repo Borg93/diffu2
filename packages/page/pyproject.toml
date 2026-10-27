@@ -11,6 +11,7 @@ dependencies = [
     "diffu-moss",
     "diffusers",
     "numpy>=1.26",
+    "opencv-python-headless>=5.0",  # a template's ruled lines, found on its scan (diffu_page.marking)
     "peft>=0.17",
     "pillow>=11",
     "pydantic>=2",

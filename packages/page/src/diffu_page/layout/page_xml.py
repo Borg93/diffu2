@@ -1,5 +1,5 @@
-"""Reading PAGE XML, namespace-agnostic: a line's text, outline and baseline, a region's type and reading order. The
-pieces :mod:`diffu_page.layout.xml_replay` reads a page's layout with.
+"""Reading PAGE XML, namespace-agnostic: a line's text, outline and baseline, a region's type and reading order (the
+pieces :mod:`diffu_page.layout.xml_replay` reads a page's layout with), and the scan a PAGE file describes.
 """
 
 from __future__ import annotations
@@ -7,6 +7,7 @@ from __future__ import annotations
 import re
 import statistics
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 from pydantic import BaseModel
 
@@ -14,6 +15,7 @@ from diffu_page.layout.model import ROLE_NAMES, LineKind
 
 _STRUCTURE = re.compile(r"structure \{type:([^;}]+)")  # Transkribus writes a region's type into @custom
 _READING_ORDER = re.compile(r"readingOrder \{index:(\d+);")
+SCAN_SUFFIXES = (".jpg", ".jpeg", ".png", ".tif", ".tiff")
 
 
 class PageLine(BaseModel):
@@ -99,3 +101,26 @@ def reading_order_index(region: ET.Element, position: int) -> int:
     """A region's Transkribus reading-order index (``readingOrder {index:N;}`` in ``@custom``), else ``position``."""
     match = _READING_ORDER.search(region.get("custom") or "")
     return int(match.group(1)) if match else position
+
+
+def find_scan(xml_path: Path) -> Path | None:
+    """The scan a PAGE XML in ``<volume>/page/`` describes, one folder up (the Transkribus export layout): the image its
+    ``Page/@imageFilename`` names, else one with the PAGE file's stem. A volume can hold a page as two images cut
+    differently (a JPEG and a TIFF), and the coordinates fit only the named one. None when neither is there."""
+    folder = xml_path.parent.parent
+    named = _named_image(xml_path)
+    if named is not None and (folder / named).is_file():
+        return folder / named
+    candidates = (folder / f"{xml_path.stem}{suffix}" for suffix in SCAN_SUFFIXES)
+    return next((path for path in candidates if path.is_file()), None)
+
+
+def _named_image(xml_path: Path) -> str | None:
+    """The file name a PAGE file's ``Page/@imageFilename`` gives, read up to its ``Page`` element; only the name's
+    last part, so it never leads out of the volume."""
+    with xml_path.open("rb") as source:
+        for _, element in ET.iterparse(source, events=("start",)):
+            if local_name(element.tag) == "Page":
+                name = element.get("imageFilename")
+                return Path(name).name if name else None
+    return None

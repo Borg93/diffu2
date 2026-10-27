@@ -93,7 +93,7 @@ def test_replay_keeps_each_lines_production_and_table_cell(form_page: Path) -> N
         ("Anna Lisa", Production.HANDWRITTEN, None),
         ("Namn", Production.PRINTED, CellRef(table="list", row=0, column=0)),
         ("Anders Persson", Production.HANDWRITTEN, CellRef(table="list", row=1, column=0)),
-        ("12 dr", Production.HANDWRITTEN, CellRef(table="ledger", row=1, column=2)),
+        ("12 dr", None, CellRef(table="ledger", row=1, column=2)),  # its file does not say: the scan may tell
     ]
 
 

@@ -71,7 +71,7 @@ type PageBox = tuple[float, float, float, float]  # x0, y0, x1, y1 in page pixel
 class TextLine(BaseModel):
     """One text line of a page, from the reader through the crops: its box and baseline height (page px), its text,
     its kind (running text, a table cell's line or a role, :class:`LineKind`), the block it came from, how it was made
-    and, in a table, its cell."""
+    if its template says (None: it does not, and the line is drawn as handwriting) and, in a table, its cell."""
 
     model_config = {"frozen": True}
 
@@ -80,7 +80,7 @@ class TextLine(BaseModel):
     baseline_y: float
     kind: LineKind = LineKind.BODY
     block: str = ""  # the PAGE TextRegion / TableCell or ALTO TextBlock it came from: its id, else its place
-    production: Production = Production.HANDWRITTEN
+    production: Production | None = None
     cell: CellRef | None = None  # set for a table cell's line
 
     @model_validator(mode="after")
@@ -98,6 +98,11 @@ class TextLine(BaseModel):
     def role(self) -> LineKind | None:
         """The line's role on the page (a margin note, a page number, ...); None for running text and table cells."""
         return self.kind if self.kind in ROLE_NAMES else None
+
+    @property
+    def printed(self) -> bool:
+        """Whether the line is printed: a line its template says nothing of is drawn as handwriting."""
+        return self.production is Production.PRINTED
 
     @property
     def width(self) -> float:

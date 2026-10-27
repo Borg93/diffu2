@@ -4,9 +4,10 @@ A model repo (FLUX.3 Klein for the reference runs; diffu, FLUX.3's architecture 
 ``diffu-moss-init``'s) names its blocks in ``modular_model_index.json``; :data:`FAMILIES` maps those to the model's
 blocks and pipeline class, so a model is chosen by its directory alone. Two sets of blocks are built:
 
-- :class:`PagePlanBlocks` (no model): ``LoadLayoutStep`` -> ``RefillStep`` -> ``PlanCropsStep``. A template page (or
-  one page of a two-page opening), a text, a style and optionally a reference crop in; the crops to draw out, captioned
-  for the reference if there is one.
+- :class:`PagePlanBlocks` (no model): ``LoadLayoutStep`` -> ``MarkFromScanStep`` -> ``OpeningPageStep`` ->
+  ``RefillStep`` -> ``PlanCropsStep``. A template page (or one page of a two-page opening), a text, a style and
+  optionally a reference crop and a print/hand classifier (to mark the template from its scan) in; the crops to draw
+  out, captioned for the reference if there is one.
 - :func:`crop_blocks`: ``CropPromptStep`` -> ``GlyphMapStep`` -> ``ReferenceGridStep`` -> the model's text encoder,
   VAE encoders, denoise and decode. A crop plan in; its image out. The model's auto blocks pick text-to-image or
   reference-conditioned denoising from the inputs (``image``); a line repair sits in both
@@ -45,6 +46,8 @@ from diffu_page.blocks import (
     DrawnCrop,
     GlyphMapStep,
     LoadLayoutStep,
+    MarkFromScanStep,
+    OpeningPageStep,
     PlanCropsStep,
     ReferenceGridStep,
     RefillStep,
@@ -152,16 +155,19 @@ def crop_blocks(family: ModelFamily) -> CropBlocks:
 
 
 class PagePlanBlocks(SequentialPipelineBlocks):
-    """A template page (or one page of a two-page opening), a text, a style and optionally a reference crop in; the
-    crops to draw out. No model: CPU only."""
+    """A template page (or one page of a two-page opening), a text, a style and optionally a reference crop and a
+    print/hand classifier in; the crops to draw out. No model but the small CNN that marks a template: CPU only."""
 
-    block_classes = [LoadLayoutStep, RefillStep, PlanCropsStep]
-    block_names = ["load_layout", "refill", "plan_crops"]
+    block_classes = [LoadLayoutStep, MarkFromScanStep, OpeningPageStep, RefillStep, PlanCropsStep]
+    block_names = ["load_layout", "mark_from_scan", "opening_page", "refill", "plan_crops"]
 
     @property
     @override
     def description(self) -> str:
-        return "Reads a PAGE/ALTO template, writes the text into its running-text lines and plans it as crops."
+        return (
+            "Reads a PAGE/ALTO template (marked from its scan if asked), writes the text into its running-text lines "
+            "and plans it as crops."
+        )
 
     @property
     @override

@@ -208,7 +208,7 @@ def caption_for(crop: Crop, style: PageStyle) -> Caption:
             bbox=crop.slot(line),
             baseline=crop.baseline(line),
             block=line.source,
-            production=line.production,
+            production=Production.PRINTED if line.printed else Production.HANDWRITTEN,
             cell=line.cell,
         )
         for row_id, line in numbered
@@ -225,7 +225,7 @@ def _body_column(lines: list[TextLine]) -> tuple[float, float]:
 
 def _row_desc(line: TextLine, column: tuple[float, float], crop: Crop) -> str:
     """A line's layout row: printed, in a table cell, or placed in the crop's main text."""
-    if line.production is Production.PRINTED:
+    if line.printed:
         what = ROLE_NAMES[line.role] if line.role else "text"
         where = " in a table cell" if line.cell is not None else ""
         return f'Printed {what} reading "{_literal(line.text)}"{where}, in a serif typeface in black printer\'s ink.'
@@ -270,8 +270,8 @@ def _fragment_desc(edge: str) -> str:
 def _opening_sentence(numbered: list[tuple[str, TextLine]]) -> str:
     """The medium, the page and its lines: the handwritten ones counted with their roles, the printed ones cited,
     and the main text (handwritten lines outside a role and a table) in reading order."""
-    written = [(row_id, line) for row_id, line in numbered if line.production is Production.HANDWRITTEN]
-    printed = [row_id for row_id, line in numbered if line.production is Production.PRINTED]
+    written = [(row_id, line) for row_id, line in numbered if not line.printed]
+    printed = [row_id for row_id, line in numbered if line.printed]
     roles = Counter(line.role for _, line in written if line.role)
     parts = [f"a {ROLE_NAMES[r]}" if n == 1 else f"{_count(n)} {ROLE_NAMES[r]} lines" for r, n in roles.items()]
     including = f", including {' and '.join(parts)}" if parts else ""

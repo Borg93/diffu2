@@ -22,7 +22,6 @@ from __future__ import annotations
 import hashlib
 import json
 import random
-import xml.etree.ElementTree as ET
 from collections import Counter
 from contextlib import ExitStack
 from pathlib import Path
@@ -36,7 +35,7 @@ from diffu_page.captions.look import scan_look
 from diffu_page.captions.records import CropRecord, crop_record
 from diffu_page.crops.geometry import CropSettings, Region, crops_for_page, regions_of
 from diffu_page.layout import load_xml_layout
-from diffu_page.layout.page_xml import local_name
+from diffu_page.layout.page_xml import find_scan
 from diffu_page.local_run import describe
 from diffu_page.output import console, err_console, load_rgb
 
@@ -45,7 +44,6 @@ TILE_QUALITY = 95  # the training tiles: what the LoRAs learn from, a step above
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 
 SPLITS = ("train", "val")
-SCAN_SUFFIXES = (".jpg", ".jpeg", ".png", ".tif", ".tiff")
 
 
 class Page(BaseModel):
@@ -83,7 +81,7 @@ def sample_pages(collection_dir: Path, count: int, rng: random.Random) -> tuple[
 
 
 def _load_page(collection_dir: Path, xml_path: Path) -> Page | None:
-    scan = _find_scan(xml_path)
+    scan = find_scan(xml_path)
     if scan is None:
         return None
     regions = regions_of(load_xml_layout(xml_path))
@@ -95,29 +93,6 @@ def _load_page(collection_dir: Path, xml_path: Path) -> Page | None:
         scan=scan,
         regions=regions,
     )
-
-
-def _find_scan(xml_path: Path) -> Path | None:
-    """The scan a PAGE XML in ``<volume>/page/`` describes, one folder up: the image its ``Page/@imageFilename``
-    names, else one with the PAGE file's stem. A volume can hold a page as two images cut differently (a JPEG and a
-    TIFF), and the coordinates fit only the named one."""
-    folder = xml_path.parent.parent
-    named = _named_image(xml_path)
-    if named is not None and (folder / named).is_file():
-        return folder / named
-    candidates = (folder / f"{xml_path.stem}{suffix}" for suffix in SCAN_SUFFIXES)
-    return next((path for path in candidates if path.is_file()), None)
-
-
-def _named_image(xml_path: Path) -> str | None:
-    """The file name a PAGE file's ``Page/@imageFilename`` gives, read up to its ``Page`` element; only the name's
-    last part, so it never leads out of the volume."""
-    with xml_path.open("rb") as source:
-        for _, element in ET.iterparse(source, events=("start",)):
-            if local_name(element.tag) == "Page":
-                name = element.get("imageFilename")
-                return Path(name).name if name else None
-    return None
 
 
 def split_of(page: Page, val_frac: float) -> str:

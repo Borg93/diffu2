@@ -1,9 +1,10 @@
-"""Fixtures shared by every workspace member's tests: PAGE pages to plan and draw, a crop and its training record,
-diffusers' tiny FLUX.3 test model (with a VAE that downsamples as FLUX.3's does), a tiny diffu model repo (a tiny
-Qwen3-VL (tiny FLUX.3's), a tiny Qwen-Image VAE and a tiny transformer, all random weights) and its glyph model, a
-tiny MOSS-Image repo (MOSS's own tokenizer, a tiny Qwen3.5, a tiny FLUX.2-class VAE and a tiny DiT, random weights),
-and a reference training on it: a tiny style-pair set in the described reference form, its caches, a short training
-run and the MOSS repo of its merged export, which takes a reference image."""
+"""Fixtures shared by every workspace member's tests: PAGE pages to plan and draw, a ground-truth form beside its scan
+and a stand-in print/hand classifier to mark it with, a crop and its training record, diffusers' tiny FLUX.3 test model
+(with a VAE that downsamples as FLUX.3's does), a tiny diffu model repo (a tiny Qwen3-VL (tiny FLUX.3's), a tiny
+Qwen-Image VAE and a tiny transformer, all random weights) and its glyph model, a tiny MOSS-Image repo (MOSS's own
+tokenizer, a tiny Qwen3.5, a tiny FLUX.2-class VAE and a tiny DiT, random weights), and a reference training on it: a
+tiny style-pair set in the described reference form, its caches, a short training run and the MOSS repo of its merged
+export, which takes a reference image."""
 
 from __future__ import annotations
 
@@ -12,6 +13,8 @@ import shutil
 from pathlib import Path
 from typing import Protocol
 
+import cv2
+import numpy as np
 import pytest
 import torch
 from diffusers import AutoencoderKLFlux2, AutoencoderKLQwenImage, Flux3Transformer2DModel
@@ -33,7 +36,8 @@ from diffu_page.captions.prompt import PageStyle
 from diffu_page.captions.provenance import Provenance
 from diffu_page.captions.records import CropRecord, crop_record
 from diffu_page.crops.geometry import Crop, CropSettings, crops_for_page, regions_of
-from diffu_page.layout import load_xml_layout
+from diffu_page.layout import PageBox, load_xml_layout
+from diffu_page.marking import PrintHandClassifier
 
 
 def _line(line_id: str, x0: int, x1: int, baseline: int, text: str) -> str:
@@ -215,6 +219,98 @@ def certificate_page(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+PAPER, INK = 225, 40  # a synthetic scan's greys
+# The scanned form's regions: the attributes of each, its lines' ids, boxes and texts, and how they are inked: the
+# width of a stroke every 8 px (4: as densely as type is, 3: printed faintly), or 0: scribbled as handwriting is
+FORM_REGIONS: list[tuple[str, list[tuple[str, PageBox, str]], int]] = [
+    ('type="heading"', [("h", (300, 60, 900, 100), "Mantalslängd 1765")], 4),
+    ("", [(f"e{k}", (120, 180 + 60 * k, 1080, 220 + 60 * k), f"entry {k} of the roll") for k in range(6)], 0),
+    ('production="printed"', [("s", (120, 560, 400, 600), "Summa")], 0),
+    ('production="handwritten-cursive"', [("n", (600, 560, 1080, 600), "Anders Persson")], 4),
+    ("", [("a", (120, 640, 600, 680), "Anno")], 3),
+]
+FORM_RULES: list[PageBox] = [(100, 140, 1100, 140), (100, 720, 1100, 720), (100, 140, 100, 720), (1100, 140, 1100, 720)]
+
+
+def _form_scan() -> np.ndarray:
+    """The scanned form's 1200 x 900 px grey scan: each line inked as ``FORM_REGIONS`` says, ``FORM_RULES`` 2 px
+    wide."""
+    rng = np.random.default_rng(0)
+    scan = np.full((900, 1200), PAPER, np.uint8)
+    for _, lines, stroke in FORM_REGIONS:
+        for _, box, _ in lines:
+            left, top, right, bottom = (round(v) for v in box)
+            if stroke:
+                for x in range(left, right, 8):
+                    scan[top + 2 : bottom - 2, x : x + stroke] = INK
+                continue
+            for word in range(left + 5, right - 35, 45):
+                points = np.stack([rng.integers(word, word + 35, 8), rng.integers(top + 6, bottom - 6, 8)], axis=1)
+                cv2.polylines(scan, [points.astype(np.int32)], isClosed=False, color=INK, thickness=2)
+    for x0, y0, x1, y1 in FORM_RULES:
+        cv2.line(scan, (round(x0), round(y0)), (round(x1), round(y1)), INK, 2)
+    return scan
+
+
+def _box_line(line_id: str, box: PageBox, text: str) -> str:
+    x0, y0, x1, y1 = (round(v) for v in box)
+    return (
+        f'<TextLine id="{line_id}"><Coords points="{x0},{y0} {x1},{y0} {x1},{y1} {x0},{y1}"/>'
+        f'<Baseline points="{x0},{y1 - 8} {x1},{y1 - 8}"/><TextEquiv><Unicode>{text}</Unicode></TextEquiv></TextLine>'
+    )
+
+
+class ScannedFormMaker(Protocol):
+    """``make_scanned_form``: the scanned form's PAGE file, holding the ``separators`` (PAGE ``SeparatorRegion`` s)."""
+
+    def __call__(self, separators: str = ...) -> Path: ...
+
+
+@pytest.fixture
+def make_scanned_form(tmp_path: Path) -> ScannedFormMaker:
+    """A 1200 x 900 px ground-truth form whose PAGE file, in ``<volume>/page/``, sits beside its scan as the Transkribus
+    export has them: a printed heading ("Mantalslängd 1765"), six handwritten entries, a printed label and a handwritten
+    name its PAGE file says are, a faintly printed "Anno", and four ruled lines framing the entries (``FORM_RULES``,
+    y 140 and 720, x 100 and 1100). The PAGE file says nothing more of how its lines were made, and holds the
+    ``separators`` given: ``make_scanned_form(separators="")``."""
+
+    def make(separators: str = "") -> Path:
+        volume = tmp_path / "form"
+        (volume / "page").mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(volume / "form.png"), _form_scan())
+        regions = "".join(
+            f'<TextRegion id="r{k}" {attributes}>{"".join(_box_line(*line) for line in lines)}</TextRegion>'
+            for k, (attributes, lines, _) in enumerate(FORM_REGIONS)
+        )
+        path = volume / "page" / "form.xml"
+        path.write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<PcGts xmlns="http://schema.primaresearch.org/PAGE/gts/pagecontent/2019-07-15">'
+            f'<Page imageFilename="form.png" imageWidth="1200" imageHeight="900">{regions}{separators}</Page></PcGts>',
+            encoding="utf-8",
+        )
+        return path
+
+    return make
+
+
+class InkMeter(torch.nn.Module):
+    """Stands in for the print/hand net: the more of a window is ink, the surer it is printed (a window 0.45 inked, as
+    the form's type is: 99.5 %; 0.34, as its faint print: 70 %; 0.15, as its scribbles: 0.1 %)."""
+
+    def forward(  # ty: ignore[invalid-mutable-override]  torch declares forward an attribute; Modules override it
+        self, windows: torch.Tensor
+    ) -> torch.Tensor:
+        return 40 * (windows.mean(dim=(1, 2, 3)) - 0.316)
+
+
+@pytest.fixture
+def ink_meter() -> PrintHandClassifier:
+    """A print/hand classifier of the :class:`InkMeter`: a densely inked line is printed, a scribbled one handwritten,
+    a faintly inked one not surely printed."""
+    return PrintHandClassifier(InkMeter())
 
 
 @pytest.fixture
