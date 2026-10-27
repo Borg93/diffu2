@@ -20,8 +20,11 @@ named instead of spelled out: ``--style`` (or a job line's ``style``) names a pr
 the preset's hand alone; a style spelled out is drawn with ``--lora``. A run can so draw several hands: its pages are
 drawn group by group, one group per set of LoRAs, each group's pipeline loaded once and released before the next loads.
 Writes ``<out>/<page>_<k>.jpg`` + ``.xml`` per crop and ``<out>/summary.json``; a page that cannot be planned and a crop
-that cannot be drawn are recorded there by name and the run goes on. ``--profile <dir>`` also records a torch profiler
-trace (Perfetto) of crops 2-3 after a warm-up crop. One GPU job, through jobs/spark_guard.sh:
+that cannot be drawn are recorded there by name and the run goes on. ``--reader-labels`` also writes each crop's labels
+for page readers beside it (:data:`diffu_page.labels.READER_FILES`: ``.md``, ``.grounded.md`` for DeepSeek-OCR 2,
+``.elements.json`` for PaddleOCR-VL), which ``diffu-reader-set`` turns into their fine-tuning sets. ``--profile <dir>``
+also records a torch profiler trace (Perfetto) of crops 2-3 after a warm-up crop. One GPU job, through
+jobs/spark_guard.sh:
 
     jobs/spark_guard.sh --need-gb 45 --name pages -- diffu-generate \\
         --templates <page.xml> --templates <page.xml> --text-from <page.xml> --lora v2=<ckpt>/model --out <dir> \\
@@ -34,7 +37,7 @@ trace (Perfetto) of crops 2-3 after a warm-up crop. One GPU job, through jobs/sp
 from __future__ import annotations
 
 import gc
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 from statistics import fmean
@@ -75,6 +78,7 @@ from diffu_page.cli.options import (
 )
 from diffu_page.jobs import CropJob, PageJob, PageRequest, ResolvedPage, crop_jobs, read_page_jobs, single_pages
 from diffu_page.judge import Judge, TrOCRJudge
+from diffu_page.labels import READER_FILES, PageElements, page_elements
 from diffu_page.layout import load_xml_layout, running_text
 from diffu_page.local_run import run_each
 from diffu_page.marking import PrintHandClassifier
@@ -112,6 +116,7 @@ PAGE_OPTIONS = (  # what a job file gives each page instead
 STYLE_OPTIONS = ("title", "years", "greyscale", "paper", "ink")  # what a style preset gives instead (--style)
 
 type LoraJob = tuple[dict[str, Path], CropJob]  # a crop job and the LoRAs that draw it, by adapter name
+type LabelFiles = Mapping[str, Callable[[PageElements], str]]  # label files written beside each crop, by suffix
 
 
 class CropSummary(BaseModel):
@@ -149,9 +154,12 @@ class Summary(BaseModel):
     failed: dict[str, str]
 
 
-def _save(crop: DrawnCrop, template: Path, out: Path, *, repaired: int) -> CropSummary:
+def _save(crop: DrawnCrop, template: Path, out: Path, *, repaired: int, label_files: LabelFiles) -> CropSummary:
     crop.image.save(out / f"{crop.name}.jpg", quality=JPEG_QUALITY)
     (out / f"{crop.name}.xml").write_text(crop.labels_xml, encoding="utf-8")
+    elements = page_elements(crop.labels)
+    for suffix, write in label_files.items():
+        (out / f"{crop.name}{suffix}").write_text(f"{write(elements)}\n", encoding="utf-8")
     return CropSummary(
         name=crop.name,
         template=str(template),
@@ -163,7 +171,13 @@ def _save(crop: DrawnCrop, template: Path, out: Path, *, repaired: int) -> CropS
 
 
 def _draw(
-    pipe: ModularPipeline, job: CropJob, *, settings: DrawSettings, out: Path, judge: Judge | None
+    pipe: ModularPipeline,
+    job: CropJob,
+    *,
+    settings: DrawSettings,
+    out: Path,
+    judge: Judge | None,
+    label_files: LabelFiles,
 ) -> CropSummary:
     reference = job.reference_image()
     crop = draw_crop(pipe, job.plan, name=job.name, seed=job.seed, reference=reference, settings=settings, judge=judge)
@@ -172,7 +186,7 @@ def _draw(
         crop = repair_lines(
             pipe, crop, seed=repair_seed(job.seed, repair_pass), reference=reference, settings=settings, judge=judge
         )
-    result = _save(crop, job.template, out, repaired=drawn_unclear - crop.unclear_lines)
+    result = _save(crop, job.template, out, repaired=drawn_unclear - crop.unclear_lines, label_files=label_files)
     console.print(f"{crop.name}: CER {result.cer:.3f}, {crop.unclear_lines} unclear lines ({result.repaired} repaired)")
     return result
 
@@ -207,9 +221,11 @@ def draw_pages(
     out: Path,
     prof: profile | None,
     judge: Judge | None = None,
+    label_files: LabelFiles | None = None,
 ) -> tuple[list[CropSummary], dict[str, str]]:
     """Every planned crop drawn, in the order given, by the crop pipeline ``load`` gives for its LoRAs, judged by
-    ``judge`` (the default TrOCR judge if none) and saved. One pipeline is held at a time: loaded for the first crop
+    ``judge`` (the default TrOCR judge if none) and saved: its image, its XML labels and each of ``label_files``
+    (:data:`diffu_page.labels.READER_FILES`) beside them. One pipeline is held at a time: loaded for the first crop
     and again for each crop whose LoRAs differ from the crop's before, the previous one released first, so give the
     crops grouped by their LoRAs. A crop that cannot be drawn, or whose pipeline cannot be loaded, is recorded by name
     with its error and the rest still run, unless the device failed: then every crop after it is recorded as not run
@@ -224,7 +240,7 @@ def draw_pages(
             pipe = None  # released before the next one loads: two pipelines never share the device
             _release_device_memory(settings.device)
             pipe, pipe_loras = load(loras), loras
-        result = _draw(pipe, job, settings=settings, out=out, judge=judge)
+        result = _draw(pipe, job, settings=settings, out=out, judge=judge, label_files=label_files or {})
         if prof is not None:
             prof.step()
         return result
@@ -421,6 +437,14 @@ def generate(
     device: Device = DEFAULTS.device,
     max_line_cer: MaxLineCer = DEFAULTS.max_line_cer,
     label_format: Format = DEFAULTS.label_format,
+    reader_labels: Annotated[
+        bool,
+        typer.Option(
+            "--reader-labels",
+            help="also write each crop's labels for page readers beside it: <name>.md (Markdown), <name>.grounded.md "
+            "(DeepSeek-OCR 2's grounded Markdown) and <name>.elements.json (PaddleOCR-VL's layout elements)",
+        ),
+    ] = False,
     lora_scale: LoraScale = DEFAULTS.lora_scale,
     sampling_shift: SamplingShift = DEFAULTS.sampling_shift,
     fuse_loras: FuseLoras = DEFAULTS.fuse_loras,
@@ -511,6 +535,7 @@ def generate(
                 out=out,
                 prof=prof,
                 judge=judge,
+                label_files=READER_FILES if reader_labels else None,
             )
         failed |= draw_failed
     summary = Summary(

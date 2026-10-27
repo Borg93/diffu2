@@ -1,8 +1,10 @@
 """Label export: PAGE XML that validates against PRImA's schema, ALTO in the htrflow shape, both carrying the same
-regions, reading order, baselines and tags."""
+regions, reading order, baselines and tags; and the page readers' formats written from the same regions: the page as
+Markdown, as DeepSeek-OCR 2's grounded Markdown and as PaddleOCR-VL's layout elements."""
 
 from __future__ import annotations
 
+import re
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from pathlib import Path
@@ -12,14 +14,24 @@ import pytest
 import xmlschema
 from pydantic import ValidationError
 
-from diffu_page.blocks.ground_truth import line_labels, rule_rects
+from diffu_page.blocks.ground_truth import crop_labels, line_labels, rule_rects
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.prompt import LineRecord, PageStyle
 from diffu_page.captions.provenance import Provenance
 from diffu_page.judge import LineVerdict
-from diffu_page.labels import LineLabel, PageLabels, export, to_alto, to_page_xml
+from diffu_page.labels import (
+    LineLabel,
+    PageLabels,
+    Point,
+    export,
+    page_elements,
+    to_alto,
+    to_grounded_markdown,
+    to_markdown,
+    to_page_xml,
+)
 from diffu_page.layout import CellRef, Production, load_xml_layout
-from diffu_page.plan import CropPlan, plan_page
+from diffu_page.plan import CropPlan, plan_page, plan_whole_page
 
 # PRImA's PAGE 2019-07-15 schema (Apache-2.0, github.com/PRImA-Research-Lab/PAGE-XML,
 # PAGE-release/gts/pagecontent/2019-07-15/pagecontent.xsd): the version the exports declare
@@ -363,3 +375,123 @@ def test_export_refuses_an_unknown_format() -> None:
     with pytest.raises(ValueError, match="unknown format 'json'"):
         unknown: Any = "json"  # not a LabelFormat: the point of the test
         export(_labels(), unknown)
+
+
+def _box(x0: int, y0: int, x1: int, y1: int) -> list[Point]:
+    """A box as a line's polygon."""
+    return [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+
+
+def _read_right(plan: CropPlan) -> list[LineVerdict]:
+    """A judge's verdicts on a crop whose every line reads as its text."""
+    return [LineVerdict(read=line.text, cer=0.0, numbers_differ=False) for line in plan.lines]
+
+
+def test_markdown_writes_a_plans_blocks_in_reading_order_each_line_on_a_line_of_its_own(
+    wide_and_narrow_body_page: Path, page_style: PageStyle
+) -> None:
+    # the two blocks side by side in one crop: the plan numbers their lines across both, row by row
+    plan = plan_page(load_xml_layout(wide_and_narrow_body_page), page_style)[0]
+    labels = crop_labels(plan, _read_right(plan), max_line_cer=0.0, image_name="page.jpg")
+
+    markdown = to_markdown(page_elements(labels))
+
+    assert markdown == "wide line 0\nwide line 1\nwide line 2\n\nnarrow line 0\nnarrow line 1\nnarrow line 2"
+
+
+def test_a_table_is_written_with_its_cells_in_place_as_html_in_the_markdown_and_as_otsl_for_the_recogniser() -> None:
+    # rows 5 and 6, columns 1 and 2 of a page's table: a header row, then a name over two lines and an empty cell
+    cells = [
+        ("Namn", 5, 1, 100, 100),
+        ("Ort & by", 5, 2, 300, 100),
+        ("Anders", 6, 1, 100, 140),
+        ("Persson", 6, 1, 100, 180),
+    ]
+    labels = PageLabels(
+        width=800,
+        height=1000,
+        lines=[
+            LineLabel(
+                text=text,
+                polygon=_box(x, y, x + 200, y + 40),
+                region="table",
+                block=f"table|c{row}{column}",
+                order=order,
+                cell=CellRef(table="register", row=row, column=column),
+            )
+            for order, (text, row, column, x, y) in enumerate(cells)
+        ],
+    )
+
+    (table,) = page_elements(labels).elements
+
+    assert table.markdown == (
+        "<table><tr><td>Namn</td><td>Ort &amp; by</td></tr><tr><td>Anders\nPersson</td><td></td></tr></table>"
+    )
+    assert (table.task, table.text) == (
+        "Table Recognition:",
+        "<fcel>Namn<fcel>Ort & by<nl><fcel>Anders\nPersson<ecel><nl>",
+    )
+
+
+# DeepSeek-OCR's own decoder: a reference to an element, and the clean-up that takes each out of the Markdown
+GROUNDING = re.compile(r"<\|ref\|>(.*?)<\|/ref\|><\|det\|>(.*?)<\|/det\|>", re.DOTALL)
+
+
+def test_grounded_markdown_puts_each_element_under_its_label_and_box_on_0_to_999_of_the_page() -> None:
+    lines = [  # an 800 x 1000 px page: a heading of two lines, two lines of running text and a margin note
+        ("Förteckning öfver", "heading", _box(100, 20, 700, 60)),
+        ("Jämtlands län", "heading", _box(100, 60, 700, 100)),
+        ("Anno 1715 den 4 maj", "body", _box(100, 300, 700, 340)),
+        ("kom för rätten", "body", _box(100, 340, 700, 380)),
+        ("12 dr", "marginalia", _box(10, 800, 90, 840)),
+    ]
+    labels = PageLabels(
+        width=800,
+        height=1000,
+        lines=[
+            LineLabel(text=text, polygon=polygon, region=region, order=order)
+            for order, (text, region, polygon) in enumerate(lines)
+        ],
+    )
+    page = page_elements(labels)
+
+    grounded = to_grounded_markdown(page)
+
+    # x of 800 px, y of 1000 px, on 0-999: the heading's 700 px across is 874, the note's 800 px down 799
+    assert GROUNDING.findall(grounded) == [
+        ("sub_title", "[[125, 20, 874, 100]]"),
+        ("text", "[[125, 300, 874, 380]]"),
+        ("text", "[[12, 799, 112, 839]]"),
+    ]
+    assert GROUNDING.sub("", grounded).replace("\n\n\n", "\n\n") == f"\n{to_markdown(page)}"
+
+
+def test_page_elements_hold_each_line_of_a_form_once_as_labelled_in_its_regions_element_with_its_layout_category(
+    certificate_page: Path, page_style: PageStyle
+) -> None:
+    plan = plan_whole_page(load_xml_layout(certificate_page), page_style, pixels=250_000)
+    verdicts = [  # the judge misreads one field
+        LineVerdict.of("Clara förs" if line.text == "Clara församling" else line.text, line.text) for line in plan.lines
+    ]
+    labels = crop_labels(plan, verdicts, max_line_cer=0.0, image_name="certificate.jpg")
+
+    page = page_elements(labels)
+
+    printed, handwritten = Production.PRINTED, Production.HANDWRITTEN
+    assert [
+        (element.category, [(line.text, line.production, line.tag) for line in element.lines])
+        for element in page.elements
+    ] == [
+        ("paragraph_title", [("Flyttningsbetyg", printed, "")]),  # the title, then each printed label and its field
+        ("text", [("Att", printed, "")]),
+        ("text", [("Anna Lisa Ersdotter", handwritten, "")]),
+        ("text", [("född", printed, "")]),
+        ("text", [("den 14 Mars 1832", handwritten, "")]),
+        ("text", [("i", printed, "")]),
+        ("text", [("Bro socken och Upsala län", handwritten, "")]),
+        ("text", [("flyttar till", printed, "")]),
+        ("text", [("Clara församling", handwritten, "unclear")]),
+        ("text", [("Nattvard", printed, "")]),
+        ("text", [("den 3 Maj 1857", handwritten, "")]),
+    ]

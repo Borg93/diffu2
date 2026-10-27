@@ -33,6 +33,7 @@ from diffu_page.crops.grid import as_reference
 from diffu_page.glyphs import glyph_map
 from diffu_page.jobs import PageJob, crop_jobs
 from diffu_page.judge import LineVerdict
+from diffu_page.labels import PageElements, to_grounded_markdown, to_markdown
 from diffu_page.layout import PageSide
 from diffu_page.local_run import NOT_RUN
 from diffu_page.lora import ADAPTER_CONFIG, ADAPTER_WEIGHTS, nemo_lora_state_dict
@@ -604,6 +605,46 @@ def test_generate_draws_an_opening_whole_as_its_two_pages_each_labelled_in_its_o
     assert [(crop.name, *_page_geometry(tmp_path / "out" / f"{crop.name}.xml")) for crop in summary.crops] == [
         ("000_opening_left_0", (512, 480), [(34, 408)] * 4 + [(416, 468)]),  # four lines, then the inner margin's note
         ("001_opening_right_0", (512, 496), [(46, 477)] * 3),
+    ]
+
+
+def _page_lines(labels: Path) -> list[tuple[str, tuple[int, int, int, int]]]:
+    """A PAGE label file's lines in reading order: each one's text and the box of its outline."""
+    lines: list[tuple[str, tuple[int, int, int, int]]] = []
+    for line in (e for e in ET.parse(labels).iter() if e.tag.endswith("}TextLine")):
+        outline = next(e for e in line if e.tag.endswith("}Coords")).get("points", "")
+        points = [(int(x), int(y)) for x, y in (point.split(",") for point in outline.split())]
+        xs, ys = [x for x, _ in points], [y for _, y in points]
+        text = next(e for e in line.iter() if e.tag.endswith("}Unicode")).text or ""
+        lines.append((text, (min(xs), min(ys), max(xs), max(ys))))
+    return lines
+
+
+def test_generate_writes_each_crops_reader_labels_beside_it_from_the_labels_its_xml_holds(
+    tiny_flux3: Path, certificate_page: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, page_text: str
+) -> None:
+    text_file = tmp_path / "text.txt"
+    text_file.write_text(page_text, encoding="utf-8")
+    monkeypatch.setattr("diffu_page.cli.generate.TrOCRJudge", lambda device: ScriptedJudge())  # reads are not tested
+    args = ["--templates", str(certificate_page), "--text-from", str(text_file), "--title", "the archive"]
+    args += ["--whole-page", "--page-megapixels", "0.25", "--format", "page", "--reader-labels"]
+    args += ["--model", str(tiny_flux3), "--out", str(tmp_path / "out")]
+
+    result = CliRunner().invoke(generate_app, [*args, *TINY_OPTIONS])
+
+    crop = "000_certificate_0"  # a printed heading, and each printed label and its field a region of their own
+    out = tmp_path / "out"
+    assert result.exit_code == 0
+    assert sorted(path.name for path in out.glob(f"{crop}.*")) == [
+        f"{crop}{suffix}" for suffix in (".elements.json", ".grounded.md", ".jpg", ".md", ".xml")
+    ]
+    page = PageElements.model_validate_json((out / f"{crop}.elements.json").read_text(encoding="utf-8"))
+    assert [(line.text, line.box) for element in page.elements for line in element.lines] == _page_lines(
+        out / f"{crop}.xml"
+    )
+    assert [(out / f"{crop}{suffix}").read_text(encoding="utf-8") for suffix in (".md", ".grounded.md")] == [
+        f"{to_markdown(page)}\n",
+        f"{to_grounded_markdown(page)}\n",
     ]
 
 

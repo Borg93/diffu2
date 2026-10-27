@@ -4,6 +4,12 @@
 production and table cell, and the ruled lines); PAGE and ALTO XML are only serializations of it, each a
 ``PageLabels -> str`` function in :data:`EXPORTERS`. PAGE writes a table as PAGE 2019 does: a ``TableRegion`` of nested
 cell ``TextRegion``s, each with a ``TableCellRole``; ALTO, which has no tables, writes each cell as a ``TextBlock``.
+
+The page readers' formats (:data:`READER_FILES`) are written from the same regions, as :class:`PageElements`: each text
+region and each table one element, in reading order. :func:`to_markdown` is the page as Markdown (an element's lines one
+under the other, a heading after ``## ``, a table as HTML), :func:`to_grounded_markdown` is DeepSeek-OCR 2's grounded
+form of it (each element under its label and box), and the elements themselves, as JSON, are PaddleOCR-VL's layout
+elements (each with its PP-DocLayoutV3 category, its box and the prompt and text its recogniser reads its crop with).
 """
 
 from __future__ import annotations
@@ -15,7 +21,7 @@ from importlib.metadata import PackageNotFoundError, version
 from typing import Self
 from xml.sax.saxutils import escape
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, computed_field, model_validator
 
 from diffu_page.layout.model import ROLE_NAMES, CellRef, LineKind, Production
 
@@ -380,3 +386,194 @@ def export(labels: PageLabels, fmt: LabelFormat) -> str:
     if fmt not in EXPORTERS:
         raise ValueError(f"unknown format {fmt!r}; options: {sorted(EXPORTERS)}")
     return EXPORTERS[fmt](labels)
+
+
+# PaddleOCR-VL's layout categories (PP-DocLayoutV3's label_list, its layout model from 1.5 on) for each kind of element.
+# A catchword and a signature mark are page furniture under the text, as a footer is; the categories have neither.
+LAYOUT_CATEGORIES: dict[LineKind, str] = {
+    LineKind.BODY: "text",
+    LineKind.TABLE: "table",
+    LineKind.HEADING: "paragraph_title",
+    LineKind.MARGINALIA: "aside_text",
+    LineKind.PAGE_NUMBER: "number",
+    LineKind.HEADER: "header",
+    LineKind.FOOTER: "footer",
+    LineKind.CATCH_WORD: "footer",
+    LineKind.SIGNATURE_MARK: "footer",
+}
+
+# DeepSeek-OCR's labels for each kind of element, of those its paper's examples show: text, table and sub_title (a
+# heading, written after "## "). They show none for page furniture or margin notes, so those are text.
+GROUNDING_LABELS: dict[LineKind, str] = {
+    LineKind.BODY: "text",
+    LineKind.TABLE: "table",
+    LineKind.HEADING: "sub_title",
+    LineKind.MARGINALIA: "text",
+    LineKind.PAGE_NUMBER: "text",
+    LineKind.HEADER: "text",
+    LineKind.FOOTER: "text",
+    LineKind.CATCH_WORD: "text",
+    LineKind.SIGNATURE_MARK: "text",
+}
+
+GROUNDING_SCALE = 999  # DeepSeek-OCR's boxes: on 0-999 of the image's width and height, as its decoder divides them
+
+OCR_PROMPT = "OCR:"  # PaddleOCR-VL's recognition prompts: an element's crop read as text, or as a table (OTSL)
+TABLE_PROMPT = "Table Recognition:"
+
+
+class ElementLine(BaseModel):
+    """One line of a page element: its text, its box (page px: x0, y0, x1, y1), how it was made, its tag (``unclear``
+    when it read back badly) and, in a table, its cell, counted from the first row and column of the table in the
+    image."""
+
+    text: str
+    box: Rect
+    production: Production = Production.HANDWRITTEN
+    tag: str = ""
+    cell: CellRef | None = None
+
+
+type TableGrid = list[list[str | None]]  # a table's cells, row by row: each its text, None where nothing is written
+
+
+def _table_grid(lines: list[ElementLine]) -> TableGrid:
+    """A table's cells by row and column, each its lines' texts one under the other."""
+    texts: dict[tuple[int, int], list[str]] = {}
+    for line in lines:
+        if line.cell is not None:
+            texts.setdefault((line.cell.row, line.cell.column), []).append(line.text)
+    rows, columns = max(row for row, _ in texts) + 1, max(column for _, column in texts) + 1
+    return [
+        ["\n".join(texts[row, column]) if (row, column) in texts else None for column in range(columns)]
+        for row in range(rows)
+    ]
+
+
+def _html_table(grid: TableGrid) -> str:
+    """A table as the HTML DeepSeek-OCR writes in its Markdown: ``<table>``, ``<tr>`` and ``<td>`` alone, each cell's
+    text escaped (``&``, ``<``, ``>``)."""
+    rows = "".join("<tr>" + "".join(f"<td>{escape(text or '')}</td>" for text in row) + "</tr>" for row in grid)
+    return f"<table>{rows}</table>"
+
+
+def _otsl_table(grid: TableGrid) -> str:
+    """A table as PaddleOCR-VL's recogniser reads it (OTSL): ``<fcel>`` and its text for a written cell, ``<ecel>``
+    for an empty one, ``<nl>`` after each row."""
+    return "".join("".join("<ecel>" if text is None else f"<fcel>{text}" for text in row) + "<nl>" for row in grid)
+
+
+class PageElement(BaseModel):
+    """One element of a page as a page reader reads it: a text region, or a whole table; its kind, its box (page px)
+    and its lines in reading order (a table's cell by cell). As JSON it also gives its PaddleOCR-VL category, the
+    prompt PaddleOCR-VL's recogniser reads its crop with and the text it reads there."""
+
+    kind: LineKind
+    box: Rect
+    lines: list[ElementLine]
+
+    @computed_field
+    @property
+    def category(self) -> str:
+        """The element's layout category (PP-DocLayoutV3's)."""
+        return LAYOUT_CATEGORIES[self.kind]
+
+    @computed_field
+    @property
+    def task(self) -> str:
+        """The prompt PaddleOCR-VL's recogniser reads the element's crop with."""
+        return TABLE_PROMPT if self.kind is LineKind.TABLE else OCR_PROMPT
+
+    @computed_field
+    @property
+    def text(self) -> str:
+        """What the recogniser reads in the element's crop: a table as OTSL, any other element its lines one under
+        the other."""
+        if self.kind is LineKind.TABLE:
+            return _otsl_table(_table_grid(self.lines))
+        return "\n".join(line.text for line in self.lines)
+
+    @property
+    def markdown(self) -> str:
+        """The element in the page's Markdown: a table as HTML, a heading after ``## `` on one line, any other element
+        its lines one under the other (a soft line break each: still one paragraph)."""
+        if self.kind is LineKind.TABLE:
+            return _html_table(_table_grid(self.lines))
+        if self.kind is LineKind.HEADING:
+            return f"## {' '.join(line.text for line in self.lines)}"
+        return "\n".join(line.text for line in self.lines)
+
+
+class PageElements(BaseModel):
+    """A page as the page readers read it (``<name>.elements.json``): its image, its size (px) and its elements in
+    reading order."""
+
+    image: str
+    width: int
+    height: int
+    elements: list[PageElement]
+
+
+def _element_line(line: LineLabel, row0: int, column0: int) -> ElementLine:
+    """``line`` as an element's line, its cell counted from row ``row0`` and column ``column0`` of its table."""
+    cell = (
+        None
+        if line.cell is None
+        else line.cell.model_copy(update={"row": line.cell.row - row0, "column": line.cell.column - column0})
+    )
+    return ElementLine(text=line.text, box=_region_rect([line]), production=line.production, tag=line.tag, cell=cell)
+
+
+def page_elements(labels: PageLabels) -> PageElements:
+    """The page's elements in reading order: each text region one, each table one (its cells together, where its first
+    cell is read), as PAGE and ALTO write their regions, so every format holds the same blocks."""
+    elements: list[PageElement] = []
+    for group in _top_level(_ordered_regions(labels)):
+        lines = [line for region in group for line in region.lines]
+        refs = [line.cell for line in lines if line.cell is not None]
+        row0, column0 = min((ref.row for ref in refs), default=0), min((ref.column for ref in refs), default=0)
+        elements.append(
+            PageElement(
+                kind=group[0].kind,
+                box=_region_rect(lines),
+                lines=[_element_line(line, row0, column0) for line in lines],
+            )
+        )
+    return PageElements(image=labels.image, width=labels.width, height=labels.height, elements=elements)
+
+
+def to_markdown(page: PageElements) -> str:
+    """The page as Markdown: its elements in reading order, a blank line between two. Each line of the page stays a
+    line of its own, as transcribed: Markdown reads lines one under the other as one paragraph."""
+    return "\n\n".join(element.markdown for element in page.elements)
+
+
+def _grounding(element: PageElement, page: PageElements) -> str:
+    """DeepSeek-OCR's reference to an element: its label and its box, x on 0-999 of the page's width, y of its
+    height."""
+    x0, y0, x1, y1 = element.box
+    sides = ((x0, page.width), (y0, page.height), (x1, page.width), (y1, page.height))
+    box = ", ".join(str(round(GROUNDING_SCALE * value / size)) for value, size in sides)
+    return f"<|ref|>{GROUNDING_LABELS[element.kind]}<|/ref|><|det|>[[{box}]]<|/det|>"
+
+
+def to_grounded_markdown(page: PageElements) -> str:
+    """The page as DeepSeek-OCR 2 writes a document grounded: :func:`to_markdown`'s elements, each under its label and
+    box (``<|ref|>text<|/ref|><|det|>[[x0, y0, x1, y1]]<|/det|>``). Its decoder's clean-up (each reference taken out,
+    three line breaks made two) gives :func:`to_markdown`'s text back."""
+    return "\n\n".join(f"{_grounding(element, page)}\n{element.markdown}" for element in page.elements)
+
+
+def to_elements_json(page: PageElements) -> str:
+    """The page's elements as JSON: each with its PaddleOCR-VL category, box, recognition prompt, text and lines."""
+    return page.model_dump_json(indent=1)
+
+
+ELEMENTS_FILE = ".elements.json"  # the suffix of a crop's elements file, which the readers' sets are made from
+
+# The page readers' labels of a crop, by the suffix of the file each is written to beside its image
+READER_FILES: dict[str, Callable[[PageElements], str]] = {
+    ".md": to_markdown,
+    ".grounded.md": to_grounded_markdown,
+    ELEMENTS_FILE: to_elements_json,
+}

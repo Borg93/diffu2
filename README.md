@@ -2,7 +2,8 @@
 
 Synthetic archive pages with ground truth, for training HTR and vision-language models: any real page layout (from a
 PAGE or ALTO file), any text, a chosen archive's hand, paper and scan look. Every generated line is read back by an
-HTR model, and the labels (PAGE or ALTO XML) mark the lines that came out wrong. It runs today with **FLUX.3 Klein**
+HTR model, and the labels (PAGE or ALTO XML; also, when asked, in the formats DeepSeek-OCR 2 and PaddleOCR-VL train
+on) mark the lines that came out wrong. It runs today with **FLUX.3 Klein**
 and our LoRAs (the research reference); **diffu** is our own model on FLUX.3's architecture, trained only on our data,
 so the same pipeline can run on a model we may ship; **MOSS-Image** (Apache-2.0, our own implementation around its
 released weights) writes every line's exact text in its box, and with a hand LoRA merged into it, the hand. The old
@@ -20,7 +21,7 @@ model's own (FLUX.3 Klein from diffusers, diffu, or MOSS-Image), chosen by the m
 | --- | --- | --- | --- |
 | `src/diffu`, `tests/` | diffu | The model, laid out like a diffusers model (`modular_pipelines/diffu/`): FLUX.3's transformer with our own weights, FLUX.3's text encoder (Qwen3-VL-4B-Instruct) and the Qwen-Image VAE; `diffu-init` writes a new model repo, `diffu-export` a trained checkpoint's (sampled at the shift it trained at) | torch, diffusers |
 | `packages/moss` | diffu-moss | MOSS-Image as the third model family: our DiT (`transformer.py`; the released weights load into it by name; reference images as FLUX.3 Klein takes them), its blocks (`modular_pipelines/moss/`: `MossAutoBlocks`, `MossModularPipeline`), a crop's caption compiled as MOSS's Layout prompt (`layout_prompt.py`); `diffu-moss-init` writes a MOSS model repo; our reference training (`train/`: `diffu-moss-cache-pairs`, `diffu-moss-train-ref`, `diffu-moss-export-ref`) | torch, diffusers, transformers, peft |
-| `packages/page` | diffu-page | Archive pages as data (`layout/`, `crops/`, `captions/`, plans, labels, the training-data builders in `data/`), a template marked from its scan (`marking/`: printed lines and ruled lines), our blocks (`blocks/`), the page and crop pipelines (`pipeline.py`) and their CLIs: `diffu-generate`, `diffu-evaluate`, `diffu-sheets` | torch, diffusers, transformers, OpenCV |
+| `packages/page` | diffu-page | Archive pages as data (`layout/`, `crops/`, `captions/`, plans, labels, the training-data builders in `data/`), a template marked from its scan (`marking/`: printed lines and ruled lines), our blocks (`blocks/`), the page and crop pipelines (`pipeline.py`) and their CLIs: `diffu-generate`, `diffu-evaluate`, `diffu-sheets`, `diffu-reader-set` | torch, diffusers, transformers, OpenCV |
 | `packages/train` | diffu-train | NeMo AutoModel glue: the training configs (`configs/flux3/`, `configs/diffu/`), dataloader configs, the v3 pair cache and diffu's training cache | NeMo AutoModel (its environment only) |
 | `packages/runner` | diffu-runner | Generation at scale on a Ray cluster: pages planned on CPU workers, crops drawn by GPU actors each holding a crop pipeline | ray |
 | `packages/studio` | diffu-studio | The pipeline as a `gr.Workflow` canvas: a plan node feeding one draw node per drawer (a model and its LoRAs), so models draw the same page side by side; app view and REST endpoint included | gradio |
@@ -108,6 +109,28 @@ to N times, each pass from its own noise and kept only where it reads back; ever
 (on four whole 1715 pages one pass fixed 14 of 45 rejected lines and spoiled none; a pass costs about one drawing).
 `summary.json` gives each crop's lines repaired.
 
+### Labels for page readers
+
+`--reader-labels` also writes each crop's labels in the formats page readers train on, beside its image and from the
+same regions as its XML (`diffu_page.labels`): `<name>.md`, the page as Markdown (its regions in reading order, a blank
+line between two, each line of the page on a line of its own, a heading after `## `, a table as HTML);
+`<name>.grounded.md`, DeepSeek-OCR 2's grounded form of it (each region under
+`<|ref|>text<|/ref|><|det|>[[x0, y0, x1, y1]]<|/det|>`, on 0-999 of the page); and `<name>.elements.json`, the
+regions as PaddleOCR-VL's layout elements (each one's PP-DocLayoutV3 category, box in pixels, recognition prompt and
+the text its recogniser reads there, a table as OTSL, and its lines with how each was made and whether it read back
+badly). `diffu-reader-set` turns such a run into a fine-tuning set, JSON lines in the reader's own conversation format,
+image paths absolute (train readers on `--whole-page` runs: a window's labels leave out the lines its edges cut):
+
+```bash
+uv run diffu-reader-set --run runs/pages --model deepseek-ocr-2 --out data/readers/deepseek_ocr_2.jsonl
+uv run diffu-reader-set --run runs/pages --model deepseek-ocr-2 --task markdown --out data/readers/free_ocr.jsonl
+uv run diffu-reader-set --run runs/pages --model paddleocr-vl --out data/readers/paddleocr_vl.jsonl
+```
+
+DeepSeek-OCR 2 gets a sample per page, asked with its document prompt and answered with the grounded Markdown
+(`--task markdown`: its prompt for a page without layouts, Free OCR, and the Markdown); PaddleOCR-VL a sample per
+element, the element cut from its page into `<out stem>_crops/` and answered with what its recogniser reads there.
+
 ### MOSS-Image
 
 A MOSS-Image model directory is a `modular_model_index.json` naming `MossAutoBlocks` and the folders its components
@@ -160,7 +183,8 @@ crops = [
     draw_crop(pipe, job.plan, name=job.name, seed=job.seed, reference=job.reference_image(), settings=settings)
     for job in crop_jobs(page, 0)
 ]
-# each crop: .image, .labels_xml (ALTO), .line_reads, .line_cers, .unclear_lines
+# each crop: .image, .labels (the label data; diffu_page.labels.page_elements(crop.labels) for the page readers'),
+# .labels_xml (ALTO), .line_reads, .line_cers, .unclear_lines
 # with a reference-style LoRA, give the page the crop to draw in the hand of, captioned as that LoRA was trained:
 #   PageJob(..., reference=Reference.of_crop(Path("crop.jpg"), ReferenceCaption.PLAIN))
 #   (diffu_page.plan, diffu_page.captions.restyle)

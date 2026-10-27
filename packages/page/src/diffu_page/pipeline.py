@@ -304,11 +304,9 @@ def draw_crop(
     """
     image = _draw(pipe, plan, seed=seed, reference=reference, settings=settings)
     verdicts = (judge or default_judge(settings.device))(image, plan.lines)
-    labels_xml, unclear_lines = crop_labels(
-        plan, verdicts, max_line_cer=settings.max_line_cer, label_format=settings.label_format, image_name=f"{name}.jpg"
-    )
+    labels = crop_labels(plan, verdicts, max_line_cer=settings.max_line_cer, image_name=f"{name}.jpg")
     return DrawnCrop(
-        name=name, plan=plan, image=image, verdicts=verdicts, labels_xml=labels_xml, unclear_lines=unclear_lines
+        name=name, plan=plan, image=image, verdicts=verdicts, labels=labels, label_format=settings.label_format
     )
 
 
@@ -358,20 +356,14 @@ def repair_lines(
     if not kept:
         return crop
     verdicts = judge(image, crop.plan.lines)
-    labels_xml, unclear_lines = crop_labels(
-        crop.plan,
-        verdicts,
-        max_line_cer=settings.max_line_cer,
-        label_format=settings.label_format,
-        image_name=f"{crop.name}.jpg",
-    )
+    labels = crop_labels(crop.plan, verdicts, max_line_cer=settings.max_line_cer, image_name=f"{crop.name}.jpg")
     return DrawnCrop(
         name=crop.name,
         plan=crop.plan,
         image=image,
         verdicts=verdicts,
-        labels_xml=labels_xml,
-        unclear_lines=unclear_lines,
+        labels=labels,
+        label_format=settings.label_format,
     )
 
 

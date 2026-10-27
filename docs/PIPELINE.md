@@ -85,9 +85,12 @@ PAGE/ALTO page ──► LoadLayout ──► MarkFromScan ──► OpeningPage
      Layout prompt names "the sample image" where the caption cites `<ref_image_0>` (without a reference the
      citation is dropped); any other MOSS model refuses a reference.
    - The judge (`diffu_page.judge`: a `Judge`, by default `TrOCRJudge`) reads every line box of the drawn crop, and the
-     labels (`blocks.ground_truth.crop_labels`, ALTO or PAGE) tag a line it rejects `unclear`: a read-back CER above
-     `max_line_cer`, or any number read otherwise. Drawing, judging and labelling are separate stages
-     (`pipeline.draw_crop` runs the three in one process).
+     labels (`blocks.ground_truth.crop_labels`, written as ALTO or PAGE) tag a line it rejects `unclear`: a read-back
+     CER above `max_line_cer`, or any number read otherwise. Drawing, judging and labelling are separate stages
+     (`pipeline.draw_crop` runs the three in one process). The page readers' formats are written from the same label
+     data and regions (`labels.page_elements`; `diffu-generate --reader-labels`): the page as Markdown, as
+     DeepSeek-OCR 2's grounded Markdown and as PaddleOCR-VL's layout elements, which `diffu-reader-set` turns into
+     each reader's fine-tuning JSON lines.
    - `pipeline.repair_lines` draws a crop's rejected lines again in place: the crop is drawn from new noise while
      after every step the latents outside the lines' boxes are set back to the drawn crop's own at that noise level
      (`(1 - sigma) * drawn + sigma * noise`), so the lines are redrawn in the context of the page and every other

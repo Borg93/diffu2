@@ -1,11 +1,12 @@
-"""A drawn crop's ground truth: its lines and ruled lines as ALTO or PAGE XML, every line a judge could not confirm
-tagged ``unclear``. Pure functions of the plan and the judge's verdicts, run after the judge (:mod:`diffu_page.judge`)."""
+"""A drawn crop's ground truth: its lines and ruled lines, every line a judge could not confirm tagged ``unclear``, as
+the label data ALTO, PAGE and the page readers' formats are written from (:mod:`diffu_page.labels`). Pure functions of
+the plan and the judge's verdicts, run after the judge (:mod:`diffu_page.judge`)."""
 
 from __future__ import annotations
 
 from diffu_page.crops.geometry import SLOT_ABOVE_BASELINE, SLOT_BELOW_BASELINE, pixel_box
 from diffu_page.judge import LineVerdict
-from diffu_page.labels import LabelFormat, LineLabel, PageLabels, Rect, export
+from diffu_page.labels import LineLabel, PageLabels, Rect
 from diffu_page.plan import CropPlan
 
 
@@ -45,11 +46,8 @@ def rule_rects(plan: CropPlan) -> list[Rect]:
     ]
 
 
-def crop_labels(
-    plan: CropPlan, verdicts: list[LineVerdict], *, max_line_cer: float, label_format: LabelFormat, image_name: str
-) -> tuple[str, int]:
-    """The crop's labels as ``label_format`` XML naming ``image_name``, and how many of its lines are tagged
-    ``unclear``."""
+def crop_labels(plan: CropPlan, verdicts: list[LineVerdict], *, max_line_cer: float, image_name: str) -> PageLabels:
+    """The crop's labels naming its image ``image_name``: its lines (:func:`line_labels`) and ruled lines in crop
+    pixels."""
     lines = line_labels(plan, verdicts, max_line_cer)
-    page = PageLabels(width=plan.width, height=plan.height, image=image_name, lines=lines, rules=rule_rects(plan))
-    return export(page, label_format), sum(line.tag == "unclear" for line in lines)
+    return PageLabels(width=plan.width, height=plan.height, image=image_name, lines=lines, rules=rule_rects(plan))
