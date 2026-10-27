@@ -484,7 +484,11 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
       `scheduler/scheduler_config.json`); sweep 3–7 by editing that config, it costs nothing.
 - [ ] **Leonardo**: compute nodes have no internet; pre-fetch Qwen3.5-4B and the Qwen-Image VAE at the pinned
       revisions (a local repo copy with the files loads from the copy).
-- [ ] **Data**: GT-Lejonet, 103,285 pages (~3M lines). Never FLUX.3 outputs.
+- [ ] **Data**: GT-Lejonet, 30,983 scans with PAGE XML (+ 50,343 ALTO files) in 59 collections: 1,696,416 lines,
+      ~54.3M characters, 320 table regions (counted 27 Oct; the earlier "103,285 pages (~3M lines)" counted XML files,
+      PAGE, ALTO and macOS "._" copies). 28,417 scans are wider than tall, mostly two-page openings: split at the
+      gutter, ~59k single pages. Never FLUX.3 outputs. What training on them takes (data, hardware, time per track):
+      scratchpad research_pages/report.md (27 Oct).
   - [ ] Crops from every page, not 40 per collection: ~6 crops per page (v2: 1,866 pages -> 11,329 crops), so
         ~600k crops. `build_crops` reads PAGE only: wire the ALTO reader (`layout/xml_replay.py`) into it for the
         100k+ ALTO pages, each with its scan image.
