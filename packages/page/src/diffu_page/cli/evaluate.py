@@ -1,8 +1,11 @@
 """Evaluate a model (FLUX.3 + LoRAs, or diffu) on held-out crops: draw each from its stored caption with the crop
 pipeline (:func:`diffu_page.pipeline.crop_blocks`) and read every line back, beside the real crop's read-back.
 
-A crop that names a ``reference`` image is drawn conditioned on it (v3, style by example). A crop's optional ``seed``
-overrides ``--seed + index`` (the steering test draws every variant of a template from the same noise). Every drawn
+A crop that names a ``reference`` image is drawn conditioned on it (v3, style by example); with
+``--without-reference`` it is drawn from its caption alone, its reference still shown and measured beside it (a
+reference-trained MOSS-Image then drops the caption's citation): the same crops without the sample, to set beside a run
+with it. A crop's optional ``seed`` overrides ``--seed + index`` (the steering test draws every variant of a template
+from the same noise). Every drawn
 hand is measured beside the real crop's (``diffu_page.captions.hand``) and, when the crop lists its reference's line
 boxes (``reference_lines``), beside the reference's: the summary's medians show whether the drawings take their hand
 from the reference at all (``HandFidelity``). Writes contact sheets (``[reference,] real, generated``),
@@ -125,12 +128,14 @@ def evaluate_crop(
     out: Path,
     settings: DrawSettings,
     judge: Judge,
+    draw_reference: bool = True,
 ) -> CropEvaluation:
-    """Draw one held-out crop with the crop pipeline, read it and its real counterpart back, and save its contact
-    sheet."""
+    """Draw one held-out crop with the crop pipeline (from its reference unless ``draw_reference`` is false), read it
+    and its real counterpart back, and save its contact sheet."""
     plan = crop.plan()
     reference = crop.reference_image(crops_dir)
-    drawn = draw_crop(pipe, plan, name=f"{index:03d}", seed=seed, reference=reference, settings=settings, judge=judge)
+    drawn_from = reference if draw_reference else None
+    drawn = draw_crop(pipe, plan, name=f"{index:03d}", seed=seed, reference=drawn_from, settings=settings, judge=judge)
     drawn.image.save(generated_path(out, index))
     real = crop.real_image(crops_dir, drawn.image.size)
     real_verdicts = judge(real, plan.lines)
@@ -158,16 +163,26 @@ def evaluate_crops(
     seed: int,
     settings: DrawSettings,
     judge: Judge,
+    draw_references: bool = True,
 ) -> tuple[list[CropEvaluation], dict[int, str]]:
-    """Every crop evaluated (:func:`evaluate_crop`, seeded by its own seed or ``seed`` + its index); a crop that fails
-    is recorded by its index with its error and the rest still run, unless the device failed: then every crop after
-    it is recorded as not run (:func:`diffu_page.local_run.run_each`)."""
+    """Every crop evaluated (:func:`evaluate_crop`, seeded by its own seed or ``seed`` + its index, drawn from its
+    reference unless ``draw_references`` is false); a crop that fails is recorded by its index with its error and the
+    rest still run, unless the device failed: then every crop after it is recorded as not run
+    (:func:`diffu_page.local_run.run_each`)."""
 
     def evaluate_one(indexed: tuple[int, EvalCrop]) -> CropEvaluation:
         k, crop = indexed
         crop_seed = crop.seed if crop.seed is not None else seed + k
         sample = evaluate_crop(
-            pipe, crop, index=k, seed=crop_seed, crops_dir=crops, out=out, settings=settings, judge=judge
+            pipe,
+            crop,
+            index=k,
+            seed=crop_seed,
+            crops_dir=crops,
+            out=out,
+            settings=settings,
+            judge=judge,
+            draw_reference=draw_references,
         )
         console.print(f"{k:3d} {crop.file_name}: gen CER {sample.gen_cer:.3f}, real CER {sample.real_cer:.3f}")
         return sample
@@ -196,6 +211,13 @@ def evaluate(
     sampling_shift: SamplingShift = DEFAULTS.sampling_shift,
     fuse_loras: FuseLoras = DEFAULTS.fuse_loras,
     compile_blocks: CompileBlocks = DEFAULTS.compile_blocks,
+    without_reference: Annotated[
+        bool,
+        typer.Option(
+            "--without-reference",
+            help="draw each crop from its caption alone, its reference still shown and measured beside the drawing",
+        ),
+    ] = False,
 ) -> None:
     """Draw held-out crops from their stored captions and compare their read-back with the real crops'."""
     model = required_model(model)
@@ -213,16 +235,24 @@ def evaluate(
         fuse_loras=fuse_loras,
         compile_blocks=compile_blocks,
     )
-    if draw_settings.guides_reference and not any(crop.reference for crop in eval_crops):
+    if draw_settings.guides_reference and (without_reference or not any(crop.reference for crop in eval_crops)):
         raise typer.BadParameter(
-            "these crops name no reference image to guide toward", param_hint="--reference-guidance"
+            "these crops name no reference image to guide toward, or are drawn without it",
+            param_hint="--reference-guidance",
         )
     (out / "generated").mkdir(parents=True, exist_ok=True)
     loras = lora_dirs(lora)
     pipe = load_pipeline(model, crop_blocks, loras=loras, settings=draw_settings)
     judge = TrOCRJudge(device=device)
     samples, failed = evaluate_crops(
-        pipe, eval_crops, crops=crops, out=out, seed=seed, settings=draw_settings, judge=judge
+        pipe,
+        eval_crops,
+        crops=crops,
+        out=out,
+        seed=seed,
+        settings=draw_settings,
+        judge=judge,
+        draw_references=not without_reference,
     )
     if not samples:
         err_console.print("no crop could be evaluated")

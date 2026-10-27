@@ -1,7 +1,9 @@
 """Fixtures shared by every workspace member's tests: PAGE pages to plan and draw, a crop and its training record,
 diffusers' tiny FLUX.3 test model (with a VAE that downsamples as FLUX.3's does), a tiny diffu model repo (a tiny
-Qwen3-VL (tiny FLUX.3's), a tiny Qwen-Image VAE and a tiny transformer, all random weights) and its glyph model, and a
-tiny MOSS-Image repo (MOSS's own tokenizer, a tiny Qwen3.5, a tiny FLUX.2-class VAE and a tiny DiT, random weights)."""
+Qwen3-VL (tiny FLUX.3's), a tiny Qwen-Image VAE and a tiny transformer, all random weights) and its glyph model, a
+tiny MOSS-Image repo (MOSS's own tokenizer, a tiny Qwen3.5, a tiny FLUX.2-class VAE and a tiny DiT, random weights),
+and a reference training on it: a tiny style-pair set in the described reference form, its caches, a short training
+run and the MOSS repo of its merged export, which takes a reference image."""
 
 from __future__ import annotations
 
@@ -14,12 +16,17 @@ import pytest
 import torch
 from diffusers import AutoencoderKLFlux2, AutoencoderKLQwenImage, Flux3Transformer2DModel
 from huggingface_hub import snapshot_download
+from PIL import Image
 from safetensors.torch import save_file
 from transformers import Qwen3_5Config, Qwen3_5Model
 
 from diffu.configs import DiffuConfig, DiffuSize, TextEncoder, Vae
 from diffu.init import write_model_repo
+from diffu.repo import ModelIndex
 from diffu_moss.init import write_moss_repo
+from diffu_moss.train.cache import CacheSettings, write_cache
+from diffu_moss.train.export import export_merged
+from diffu_moss.train.loop import TrainSettings, train
 from diffu_moss.transformer import MossTransformer
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.prompt import PageStyle
@@ -405,6 +412,115 @@ def tiny_moss(tiny_flux3_snapshot: Path, tmp_path_factory: pytest.TempPathFactor
     MossTransformer(**TINY_MOSS_DIT).save_pretrained(base / "transformer")
     repo = tmp_path_factory.mktemp("moss")
     write_moss_repo(repo, base=base, uncond_skip_layers=(1,))
+    return repo
+
+
+TINY_PAIRS = 11  # a style-pair set of 11 targets, each pair's reference the next target's crop
+LEAKING_PAIR = 3  # its reference (pair 4's crop) also holds its first line: left out, so 10 pairs are kept
+PAIR_TARGET_SIZE = (64, 32)  # px: a 4 x 2 latent grid
+PAIR_REFERENCE_SIZE = (32, 32)  # px: shrunk, as a style pair's reference is
+
+
+def _pair_texts(k: int) -> tuple[str, str]:
+    """The two lines of pair ``k``'s target crop."""
+    first = f"Anno 17{k:02d} den {k + 1} Maj" if k != LEAKING_PAIR + 1 else _pair_texts(LEAKING_PAIR)[0]
+    return first, f"på Rådstugan, nummer {k}"
+
+
+def _described_caption(texts: tuple[str, ...]) -> str:
+    """A target's caption as style_pairs writes a described reference pair (v3d): its lines drawn in the hand, ink and
+    paper of <ref_image_0>, described as measured, each line in the reference's hand."""
+    lines = [
+        {
+            "id": f"Sv_Text_{k}",
+            "from": "target",
+            "src_bbox": None,
+            "tgt_bbox": [100 + 450 * (k - 1), 50, 450 + 450 * (k - 1), 950],
+            "desc": f'Handwritten line of text reading "{text}", right-slanted cursive in the reference\'s hand, in '
+            "brown ink.",
+        }
+        for k, text in enumerate(texts, start=1)
+    ]
+    paper = {
+        "id": "paper_1",
+        "from": "ref_image_0",
+        "src_bbox": [0, 0, 1000, 1000],
+        "tgt_bbox": [0, 0, 1000, 1000],
+        "desc": "Aged cream paper (#D8C8A8) of a bound archival volume.",
+    }
+    cited = " ".join(f"<Sv_Text_{k}>" for k in range(1, len(texts) + 1))
+    paragraph = (
+        "Create a flat, evenly lit archival scan of a new handwritten page in the hand, ink and paper of <ref_image_0>: "
+        "right-slanted cursive, about 30 degrees, with fine pen strokes and small, closely packed letters, in brown ink "
+        f"(#5A4632) on cream paper (#D8C8A8). The paper <paper_1> carries {len(texts)} lines of cursive handwriting in "
+        f"brown ink; the main text runs from top to bottom: {cited}."
+    )
+    return f"{paragraph} {json.dumps([paper, *lines], ensure_ascii=False)}"
+
+
+def _noise_image(size: tuple[int, int], seed: int) -> Image.Image:
+    pixels = torch.rand(size[1], size[0], 3, generator=torch.Generator().manual_seed(seed))
+    return Image.fromarray((pixels * 255).to(torch.uint8).numpy())
+
+
+@pytest.fixture(scope="session")
+def tiny_pairs(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A tiny style-pair set as diffu_page.data.style_pairs writes a described one: ``train.jsonl`` (the image-edit
+    manifest) of 11 pairs ``vol_00`` ... ``vol_10``, its targets (64 x 32 px, two lines each: pair ``k``'s "Anno 17kk
+    den k+1 Maj" and "på Rådstugan, nummer k", in brown ink #5A4632 on cream paper by its caption) and its references
+    (32 x 32 px), noise images. Pair ``k``'s reference is pair ``k + 1``'s crop; pair 3's reference, pair 4's crop,
+    holds pair 3's first line."""
+    root = tmp_path_factory.mktemp("pairs")
+    (root / "targets").mkdir()
+    (root / "refs").mkdir()
+    rows = []
+    for k in range(TINY_PAIRS):
+        crop, reference = f"vol_{k:02d}", f"vol_{(k + 1) % TINY_PAIRS:02d}"
+        _noise_image(PAIR_TARGET_SIZE, k).save(root / "targets" / f"{crop}.png")
+        _noise_image(PAIR_REFERENCE_SIZE, 100 + k).save(root / "refs" / f"{crop}.png")
+        media = [
+            {"role": "target", "file_name": f"targets/{crop}.png"},
+            {"role": "context", "file_name": f"refs/{reference}.png"},
+        ]
+        row = {"id": crop, "prompt": _described_caption(_pair_texts(k)), "media": media}
+        rows.append(json.dumps({**row, "metadata": {"row_index": k, "reference": f"{reference}.png"}}))
+    (root / "train.jsonl").write_text("".join(f"{row}\n" for row in rows), encoding="utf-8")
+    return root
+
+
+@pytest.fixture(scope="session")
+def tiny_pair_cache(tiny_moss: Path, tiny_pairs: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The tiny pairs cached by the tiny MOSS's encoders, each kept pair in the form the mix gives it."""
+    cache = tmp_path_factory.mktemp("pair_cache") / "cache"
+    write_cache(tiny_moss, tiny_pairs / "train.jsonl", cache, CacheSettings(device="cpu"))
+    return cache
+
+
+@pytest.fixture(scope="session")
+def tiny_moss_dit(tiny_moss: Path) -> Path:
+    """The tiny MOSS's DiT folder (its Base snapshot's ``transformer/``)."""
+    return Path(ModelIndex.read(tiny_moss).source("transformer").repo)
+
+
+@pytest.fixture(scope="session")
+def tiny_reference_run(tiny_moss_dit: Path, tiny_pair_cache: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A reference training of the tiny MOSS's DiT on the tiny pairs' cache: 5 steps of 2 samples (one pass over its
+    10 entries), a checkpoint at the end. Its run directory."""
+    run = tmp_path_factory.mktemp("reference_run") / "run"
+    train(tiny_moss_dit, tiny_pair_cache, run, TrainSettings(steps=5, save_every=5, val_every=5, device="cpu"))
+    return run
+
+
+@pytest.fixture(scope="session")
+def tiny_reference_moss(
+    tiny_moss_dit: Path, tiny_reference_run: Path, tmp_path_factory: pytest.TempPathFactory
+) -> Path:
+    """The tiny reference training's last checkpoint merged into the tiny MOSS's DiT (diffu-moss-export-ref), as a MOSS
+    repo on the tiny Base snapshot (diffu-moss-init --transformer): a model that takes a reference image."""
+    export = tmp_path_factory.mktemp("reference_export") / "export"
+    export_merged(tiny_moss_dit, tiny_reference_run / "checkpoints" / "step_000005", export)
+    repo = tmp_path_factory.mktemp("reference_moss")
+    write_moss_repo(repo, base=tiny_moss_dit.parent, transformer=export, uncond_skip_layers=(1,))
     return repo
 
 

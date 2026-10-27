@@ -19,7 +19,7 @@ model's own (FLUX.3 Klein from diffusers, diffu, or MOSS-Image), chosen by the m
 | Where | Package | What it is | Heavy dependencies |
 | --- | --- | --- | --- |
 | `src/diffu`, `tests/` | diffu | The model, laid out like a diffusers model (`modular_pipelines/diffu/`): FLUX.3's transformer with our own weights, FLUX.3's text encoder (Qwen3-VL-4B-Instruct) and the Qwen-Image VAE; `diffu-init` writes a new model repo, `diffu-export` a trained checkpoint's (sampled at the shift it trained at) | torch, diffusers |
-| `packages/moss` | diffu-moss | MOSS-Image as the third model family: our DiT (`transformer.py`; the released weights load into it by name), its blocks (`modular_pipelines/moss/`: `MossAutoBlocks`, `MossModularPipeline`), a crop's caption compiled as MOSS's Layout prompt (`layout_prompt.py`); `diffu-moss-init` writes a MOSS model repo | torch, diffusers, transformers |
+| `packages/moss` | diffu-moss | MOSS-Image as the third model family: our DiT (`transformer.py`; the released weights load into it by name; reference images as FLUX.3 Klein takes them), its blocks (`modular_pipelines/moss/`: `MossAutoBlocks`, `MossModularPipeline`), a crop's caption compiled as MOSS's Layout prompt (`layout_prompt.py`); `diffu-moss-init` writes a MOSS model repo; our reference training (`train/`: `diffu-moss-cache-pairs`, `diffu-moss-train-ref`, `diffu-moss-export-ref`) | torch, diffusers, transformers, peft |
 | `packages/page` | diffu-page | Archive pages as data (`layout/`, `crops/`, `captions/`, plans, labels, the training-data builders in `data/`), our blocks (`blocks/`), the page and crop pipelines (`pipeline.py`) and their CLIs: `diffu-generate`, `diffu-evaluate`, `diffu-sheets` | torch, diffusers, transformers |
 | `packages/train` | diffu-train | NeMo AutoModel glue: the training configs (`configs/flux3/`, `configs/diffu/`), dataloader configs, the v3 pair cache and diffu's training cache | NeMo AutoModel (its environment only) |
 | `packages/runner` | diffu-runner | Generation at scale on a Ray cluster: pages planned on CPU workers, crops drawn by GPU actors each holding a crop pipeline | ray |
@@ -112,8 +112,13 @@ Each crop's caption is compiled as MOSS's Layout prompt (the caption's prose as 
 with its exact text in its pixel box, its paper and ruled lines as objects); the prompt may take 4,096 tokens (a 44-47
 line page takes 1,500-2,500), and a longer one is refused, not cut. MOSS draws at its own guidance (3) and sampling
 shift (5) unless `--guidance` or `--sampling-shift` name others, as FLUX.3 draws at its 4 and 6.93. It takes no
-`--reference` (it has no image input) and no `--lora` at draw time (merge the LoRA into the DiT folder the model
-directory names); `--repair` redraws its rejected lines in place as FLUX.3's.
+`--lora` at draw time (merge the LoRA into the DiT folder the model directory names); `--repair` redraws its rejected
+lines in place as FLUX.3's. It takes a `--reference` (a sample page of the same volume) only when its DiT was trained
+to read one: the released models were not, so `diffu-moss-init` marks a directory `takes_reference` only for a DiT
+exported by our reference training (`diffu-moss-train-ref`, `diffu-moss-export-ref`; the pilot is
+`jobs/moss/run_ref_pilot.sh`), and the caption's citation of the reference then names "the sample image" as in
+training. `diffu-evaluate --without-reference` draws a reference set's crops from their captions alone, beside a run
+with them.
 
 In Python, a page planned into crop jobs on CPU, then each crop drawn by the crop pipeline (a Modular Diffusers
 pipeline), as diffu-generate and diffu-runner do it:

@@ -10,6 +10,10 @@ tokenizer and the VAE from the Base snapshot's folders, the DiT from ``--transfo
 ``config.json`` and safetensors: a LoRA merged into Base, or a full fine-tune, as KohakuMossTrainer exports them) or
 the snapshot's own. Nothing is copied: the index names the folders where they are. The scheduler is MOSS-Image's
 sampler at its demo's shift, 5 (``--sampling-shift`` changes it per run).
+
+The index's ``takes_reference`` says whether the model draws from a reference image: true only for a DiT exported by a
+reference training (``diffu-moss-export-ref``, whose ``export.json`` says so), never by hand, so a DiT that never saw
+a reference (the released ones, a hand LoRA) is refused one rather than shown tokens it cannot read.
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ from transformers import AutoTokenizer, Qwen3_5Model
 from diffu.repo import INDEX, ModelIndex, index_entry
 from diffu_moss.modular_pipelines.moss import MossAutoBlocks, MossModularPipeline
 from diffu_moss.modular_pipelines.moss.denoise import DEMO_UNCOND_SKIP_LAYERS
+from diffu_moss.train.records import EXPORT_RECORD, ExportRecord
 from diffu_moss.transformer import MossTransformer
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
@@ -39,10 +44,16 @@ def _require(path: Path, what: str) -> None:
         raise ValueError(f"{path.parent} is not {what}: it has no {path.name}")
 
 
+def takes_reference(transformer: Path) -> bool:
+    """Whether the DiT folder ``transformer`` was trained to take a reference image, by its export's record."""
+    record = transformer / EXPORT_RECORD
+    return record.is_file() and ExportRecord.read(record).takes_reference
+
+
 def moss_index(base: Path, transformer: Path, *, uncond_skip_layers: tuple[int, ...]) -> ModelIndex:
     """The ``modular_model_index.json`` of a MOSS-Image repo: its pipeline and block classes, the blocks its
-    unconditional pass skips, the text encoder, tokenizer and VAE in the Base snapshot ``base``'s folders and the DiT
-    in the folder ``transformer``."""
+    unconditional pass skips, whether it takes a reference image, the text encoder, tokenizer and VAE in the Base
+    snapshot ``base``'s folders and the DiT in the folder ``transformer``."""
     snapshot = str(base.resolve())
     return ModelIndex.model_validate(
         {
@@ -50,6 +61,7 @@ def moss_index(base: Path, transformer: Path, *, uncond_skip_layers: tuple[int, 
             "_class_name": MossModularPipeline.__name__,
             "_diffusers_version": diffusers.__version__,
             "uncond_skip_layers": list(uncond_skip_layers),
+            "takes_reference": takes_reference(transformer),
             "text_encoder": index_entry(
                 "transformers", Qwen3_5Model, repo=snapshot, revision=None, subfolder="text_encoder"
             ),
@@ -109,10 +121,11 @@ def main(
 ) -> None:
     """Write a MOSS-Image model repo of the Base snapshot's components and a DiT."""
     try:
-        write_moss_repo(out, base=base, transformer=transformer)
+        index = write_moss_repo(out, base=base, transformer=transformer)
     except ValueError as error:  # every refusal is about the arguments: a usage error
         raise typer.BadParameter(str(error)) from error
-    console.print(f"MOSS-Image, the DiT in {transformer or base / 'transformer'} -> {out}")
+    reference = "takes a reference image" if (index.model_extra or {}).get("takes_reference") else "text only"
+    console.print(f"MOSS-Image, the DiT in {transformer or base / 'transformer'} ({reference}) -> {out}")
 
 
 if __name__ == "__main__":

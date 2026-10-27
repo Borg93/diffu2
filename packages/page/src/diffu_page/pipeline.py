@@ -11,7 +11,8 @@ blocks and pipeline class, so a model is chosen by its directory alone. Two sets
   VAE encoders, denoise and decode. A crop plan in; its image out. The model's auto blocks pick text-to-image or
   reference-conditioned denoising from the inputs (``image``); a line repair sits in both
   (:mod:`diffu_page.blocks.repair`). A glyph model (diffu's ``glyph_channels``) draws from its plan's glyph map;
-  MOSS-Image compiles the plan's caption and lines into its own Layout prompt first, and takes no reference.
+  MOSS-Image compiles the plan's caption and lines into its own Layout prompt first, and takes a reference only when
+  its DiT was trained to (``takes_reference`` in its model index: ``diffu_moss.train``).
 
 A page is planned with :class:`PagePlanBlocks`; each of its crops is drawn on its own with the crop pipeline, judged
 line by line (:mod:`diffu_page.judge`) and labelled (:func:`diffu_page.blocks.ground_truth.crop_labels`). Draw, judge
@@ -371,8 +372,8 @@ def repair_lines(
 def page_latents(pipe: ModularPipeline, image: Image.Image) -> torch.Tensor:
     """``image`` as the model's latents ``(1, C, height / 16, width / 16)``, made by the model's own VAE encoder step as
     it encodes a reference image, without the reference preprocessing (a drawn crop is already on the latent grid).
-    MOSS-Image, which takes no reference image and so has no such step, encodes as its decoder decodes
-    (:func:`diffu_moss.latents.encode_latents`)."""
+    MOSS-Image, whose reference encoder takes a reference only for a DiT trained with them, encodes as that step and
+    its decoder do (:func:`diffu_moss.latents.encode_latents`)."""
     processor = pipe.image_processor
     pixels = processor.normalize(processor.numpy_to_pt(processor.pil_to_numpy(image.convert("RGB"))))
     if isinstance(pipe, MossModularPipeline):

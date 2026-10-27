@@ -9,8 +9,11 @@ authors = [{ name = "Gabriel Borg" }]
 dependencies = [
     "diffu",
     "diffusers",
+    "peft>=0.17",  # the reference training's LoRA
+    "pillow>=11",
     "pydantic>=2",
     "rich>=13",
+    "safetensors>=0.4",
     "torch>=2.10",
     "transformers>=5.18",  # Qwen3.5, MOSS-Image's text encoder
     "typer>=0.20",
@@ -18,6 +21,9 @@ dependencies = [
 
 [project.scripts]
 diffu-moss-init = "diffu_moss.init:app"  # a MOSS model repo: the Base snapshot's components around its own or a trained DiT
+diffu-moss-cache-pairs = "diffu_moss.train.cache:app"  # style pairs' prompt embeddings and latents, for a reference training
+diffu-moss-train-ref = "diffu_moss.train.loop:app"  # a LoRA that teaches MOSS-Image to draw from a reference image
+diffu-moss-export-ref = "diffu_moss.train.export:app"  # that LoRA merged into the Base DiT, for diffu-moss-init
 
 [build-system]
 requires = ["hatchling"]

@@ -1,17 +1,34 @@
 """MOSS-Image's latents: the FLUX.2 VAE's, each 2x2 patch packed on channels, normalized by the VAE's batch-norm
 running statistics.
 
-The one place an image becomes the DiT's latents and back: the decode step decodes with :func:`decode_latents`, and a
-drawn crop is encoded with :func:`encode_latents` for a line repair (``diffu_page.pipeline.page_latents``).
+The one place an image becomes the DiT's latents and back: the decode step decodes with :func:`decode_latents`, a
+drawn crop is encoded with :func:`encode_latents` for a line repair (``diffu_page.pipeline.page_latents``), and a
+reference image is read by :func:`image_pixels` and encoded by :func:`encode_latents` alike in drawing (the reference
+encode step) and in training (``diffu_moss.train.cache``).
 """
 
 from __future__ import annotations
 
 import torch
 from diffusers import AutoencoderKLFlux2
+from diffusers.image_processor import VaeImageProcessor
+from PIL import Image
 from torch import Tensor
 
 PIXELS_PER_LATENT = 16  # 8x VAE downsampling, then 2x2 patches
+
+
+def image_pixels(image: Image.Image) -> Tensor:
+    """An image on the latent grid as the VAE encodes it: ``[1, 3, H, W]`` in [-1, 1], never resized.
+
+    Raises:
+        ValueError: If a side is not a multiple of 16 px (``diffu_page``'s ``ReferenceGridStep`` and its training
+            pairs put a reference on the grid; resizing here would read it otherwise than training did).
+    """
+    if image.width % PIXELS_PER_LATENT or image.height % PIXELS_PER_LATENT:
+        raise ValueError(f"the image's size {image.size} is not on the {PIXELS_PER_LATENT}-px latent grid")
+    pixels = VaeImageProcessor.numpy_to_pt(VaeImageProcessor.pil_to_numpy(image.convert("RGB")))
+    return VaeImageProcessor.normalize(pixels)
 
 
 def _batch_norm(vae: AutoencoderKLFlux2, like: Tensor) -> tuple[Tensor, Tensor]:

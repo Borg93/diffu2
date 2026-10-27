@@ -22,7 +22,8 @@ from diffusers.guiders.guider_utils import GuiderOutput
 from diffusers.modular_pipelines.modular_pipeline import BlockState
 from torch.utils.hooks import RemovableHandle
 
-REFERENCE_INPUTS = ("image_cond_hidden_states", "image_cond_ids")  # Flux3Transformer2DModel's reference tokens
+# the transformers' reference inputs: Flux3Transformer2DModel's tokens and their ids, MossTransformer's latents
+REFERENCE_INPUTS = ("image_cond_hidden_states", "image_cond_ids", "references")
 
 
 class ReferenceGuidance(ClassifierFreeGuidance):
@@ -30,9 +31,9 @@ class ReferenceGuidance(ClassifierFreeGuidance):
 
     Diffusers' :class:`ClassifierFreeGuidance` with a third pass: the denoiser without the caption and without its
     reference inputs (:data:`REFERENCE_INPUTS`), removed by a forward pre-hook for that pass only, so FLUX.3-family
-    denoiser blocks, which hand the reference to the transformer as those keyword arguments, work unchanged. At
-    ``reference_scale`` 1 there is no third pass and this is classifier-free guidance exactly. ``guidance_rescale``
-    rescales the caption's guidance only.
+    and MOSS-Image denoiser blocks, which hand the reference to the transformer as those keyword arguments, work
+    unchanged. At ``reference_scale`` 1 there is no third pass and this is classifier-free guidance exactly.
+    ``guidance_rescale`` rescales the caption's guidance only.
 
     Args:
         guidance_scale: How hard to push toward the caption.

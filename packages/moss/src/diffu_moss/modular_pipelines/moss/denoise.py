@@ -1,6 +1,7 @@
 """MOSS-Image's denoising loop: at each noise level the DiT predicts the velocity of the latents from the prompt, and
 under classifier-free guidance from the negative prompt too with some of its blocks skipped; the two are combined in
-fp32 and the scheduler steps the latents with it (FLUX.3's own scheduler step).
+fp32 and the scheduler steps the latents with it (FLUX.3's own scheduler step). A reference image's latents, for a DiT
+trained to take them, go into every pass: the reference conditions the look, guidance pushes toward the prompt.
 
 The latents stay tokens through the loop, as FLUX.3's do, and the loop's steps carry FLUX.3's names (``denoiser``,
 ``after_denoiser``), so the page pipeline's line repair (``diffu_page.blocks.repair``) runs in it as in FLUX.3's. The
@@ -45,7 +46,8 @@ UNCOND_SKIP_LAYERS = ConfigSpec(
 class MossLoopDenoiser(ModularPipelineBlocks):
     """The guided velocity of the latents at one noise level: the DiT's prediction from the prompt and, while the
     guider guides, from the negative prompt with the model's ``uncond_skip_layers`` skipped, combined by the guider in
-    fp32."""
+    fp32. The reference latents, when there are any, go into both passes (``references``, which a reference guider's
+    third pass leaves out)."""
 
     model_name = "moss"
 
@@ -73,8 +75,8 @@ class MossLoopDenoiser(ModularPipelineBlocks):
         return (
             "Step within the denoising loop that predicts the guided velocity of the latents: the DiT on the prompt "
             "and, under guidance, on the negative prompt with the model's uncond_skip_layers skipped, combined in "
-            "fp32. This block should be used to compose the `sub_blocks` attribute of a `LoopSequentialPipelineBlocks` "
-            "object (e.g. `MossDenoiseStep`)"
+            "fp32; the reference latents, if any, in both passes. This block should be used to compose the "
+            "`sub_blocks` attribute of a `LoopSequentialPipelineBlocks` object (e.g. `MossDenoiseStep`)"
         )
 
     @property
@@ -86,6 +88,11 @@ class MossLoopDenoiser(ModularPipelineBlocks):
             InputParam.template("negative_prompt_embeds"),
             InputParam("height", required=True, type_hint=int, description="The height in pixels of the image drawn"),
             InputParam("width", required=True, type_hint=int, description="The width in pixels of the image drawn"),
+            InputParam(
+                "reference_latents",
+                type_hint=list,
+                description="The references' clean latents, one (1, latent_channels, h, w) each, or None",
+            ),
         ]
 
     @property
@@ -113,7 +120,9 @@ class MossLoopDenoiser(ModularPipelineBlocks):
             guider.prepare_models(components.transformer)
             text: torch.Tensor = guider_pass.text
             mask = torch.ones(text.shape[:2], dtype=torch.bool, device=text.device)
-            velocity = components.transformer(latents, t, text, mask, guider_pass.skip_layers).float()
+            velocity = components.transformer(
+                latents, t, text, mask, guider_pass.skip_layers, references=block_state.reference_latents
+            ).float()
             guider_pass.noise_pred = velocity.flatten(2).transpose(1, 2)
             guider.cleanup_models(components.transformer)
         block_state.noise_pred = guider(passes)[0]

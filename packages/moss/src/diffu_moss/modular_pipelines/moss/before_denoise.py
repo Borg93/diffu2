@@ -43,8 +43,7 @@ class MossPrepareLatentsStep(ModularPipelineBlocks):
     and packed into tokens ``[1, H / 16 * W / 16, latent_channels]``, row by row.
 
     Raises:
-        ValueError: From the call, if a side is not a positive multiple of 16 px, or a reference image is given:
-            MOSS-Image draws from its prompt alone.
+        ValueError: From the call, if a side is not a positive multiple of 16 px.
     """
 
     model_name = "moss"
@@ -64,7 +63,6 @@ class MossPrepareLatentsStep(ModularPipelineBlocks):
             InputParam.template("height", default=1024),
             InputParam.template("width", default=1024),
             InputParam.template("generator"),
-            InputParam("image", description="Refused: MOSS-Image takes no reference image"),
         ]
 
     @property
@@ -81,8 +79,6 @@ class MossPrepareLatentsStep(ModularPipelineBlocks):
         self, components: MossModularPipeline, state: PipelineState
     ) -> tuple[MossModularPipeline, PipelineState]:
         block_state = self.get_block_state(state)
-        if block_state.image is not None:
-            raise ValueError("MOSS-Image draws from its prompt alone: it takes no reference image")
         height, width = block_state.height, block_state.width
         if height <= 0 or width <= 0 or height % PIXELS_PER_LATENT or width % PIXELS_PER_LATENT:
             raise ValueError(f"the size {(width, height)} is not a positive multiple of {PIXELS_PER_LATENT} px")

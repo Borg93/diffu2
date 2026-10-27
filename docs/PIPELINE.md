@@ -68,8 +68,13 @@ PAGE/ALTO page ──► LoadLayout ──► Refill ──► PlanCrops ──�
      nearest level of the 1,000-step training grid (the scheduler's shift, 5, is the sampling shift, and the grid is
      stepped as given), and guidance combines in fp32 with the unconditional pass skipping block 22 (its model index's
      `uncond_skip_layers`). The FLUX.2 VAE decodes (`diffu_moss.latents`, which also encodes a drawn crop for a
-     repair). It takes no reference image. On a tiny random model it draws bit for bit what the scratchpad's verified
-     MOSS code (`moss_draw`) draws, and that code redrew the official demo's published images at 20.9 and 26.2 dB.
+     repair). On a tiny random model it draws bit for bit what the scratchpad's verified MOSS code (`moss_draw`)
+     draws, and that code redrew the official demo's published images at 20.9 and 26.2 dB. A DiT trained with
+     references (`takes_reference` in its model index) also takes a reference image: `MossReferenceEncodeStep` encodes
+     it on its own grid, never resized (after `ReferenceGridStep`), the DiT reads its tokens after the prompt's on the
+     reference axis at timestep 0 in every guidance pass (`ReferenceGuidance`'s third pass leaves them out), and the
+     Layout prompt names "the sample image" where the caption cites `<ref_image_0>` (without a reference the
+     citation is dropped); any other MOSS model refuses a reference.
    - The judge (`diffu_page.judge`: a `Judge`, by default `TrOCRJudge`) reads every line box of the drawn crop, and the
      labels (`blocks.ground_truth.crop_labels`, ALTO or PAGE) tag a line it rejects `unclear`: a read-back CER above
      `max_line_cer`, or any number read otherwise. Drawing, judging and labelling are separate stages
@@ -134,8 +139,16 @@ Checked 2026-10-21 (reference rows 2026-10-23); each would silently cost quality
 | Position ids | image (0, h·0.5, w·0.5, 0), reference l = −1, text (0, 0, 0, i) | the same |
 | No-prompt input | v3d: a tenth of the pairs on the empty prompt as NeMo encodes a caption (`diffu_train.dropout`), bit-identical to diffusers' unconditional input; earlier runs none (`cfg_dropout_prob: 0`; NeMo's own would use zeros) | the empty prompt |
 
-MOSS-Image trains with KohakuMossTrainer (its own environment, `~/Desktop/repos/kohakumoss`), on manifests whose
-captions the scratchpad's `moss_prompt.layout_prompt` compiled: `diffu_moss.layout_prompt` compiles a crop plan's
+MOSS-Image's reference training is our own (`diffu_moss.train`, run by `jobs/moss/run_ref_pilot.sh`), and reads a
+pair as drawing reads a crop: its prompt is compiled by `diffu_moss.layout_prompt` from the pair's caption in the form
+drawing gives it (`diffu_moss.sample_caption`) and encoded by `MossTextEncoderStep` with the components loaded as the
+page pipeline loads them, its latents by the reference encode step's functions (`packages/page/tests/test_moss.py`
+checks a cached pair against the page pipeline's encoding of the same crop and reference, bit for bit). Its noise
+levels are MOSS-Image's own (KohakuMossTrainer's default sampler: the training grid j/1000, a truncated logit-normal
+of median 0.78, 1% uniform), its loss flow matching's over the drawn image's tokens.
+
+MOSS-Image hand LoRAs train with KohakuMossTrainer (its own environment, `~/Desktop/repos/kohakumoss`), on manifests
+whose captions the scratchpad's `moss_prompt.layout_prompt` compiled: `diffu_moss.layout_prompt` compiles a crop plan's
 caption to the same string (`packages/page/tests/test_moss.py`). The trainer's text caches are written with
 transformers' forward, one prompt a call (`forward: hf`), as `MossTextEncoderStep` encodes; its latents (the VAE's
 mode, 2x2, batch-norm statistics) matched ours at cosine 0.99998 (27 Oct).

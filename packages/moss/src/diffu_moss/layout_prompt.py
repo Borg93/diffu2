@@ -22,6 +22,8 @@ from pydantic import AliasChoices, BaseModel, Field
 LAYOUT_META = ["archival document scan", "handwritten manuscript"]
 TOKEN = re.compile(r" ?<[A-Za-z_]+_\d+>")
 LINE_LIST = "; the main text runs from top to bottom:."  # the caption's line list, once its citations are gone
+# A line row's quote: its text up to the last closing quote, then its look (no quote in it) or its table cell
+QUOTED_TEXT = re.compile(r' reading "(?P<text>.*)"(?:,| in a table cell,) ')
 
 
 class LayoutEntry(BaseModel):
@@ -43,6 +45,16 @@ def caption_layout(caption: str) -> list[LayoutEntry]:
     if start < 0:
         raise ValueError(f"no layout list in caption: {caption[:120]!r}")
     return [LayoutEntry.model_validate(row) for row in json.loads(caption[start + 1 :])]
+
+
+def caption_texts(caption: str) -> dict[str, str]:
+    """The text of every line a caption's layout list quotes, by row id: what a crop plan's lines give the Layout
+    prompt (:func:`layout_prompt`'s ``texts``), read from a caption that comes without its lines (a training pair's).
+
+    Raises:
+        ValueError: If the caption has no layout list.
+    """
+    return {entry.id: match["text"] for entry in caption_layout(caption) if (match := QUOTED_TEXT.search(entry.desc))}
 
 
 def summary_caption(caption: str) -> str:

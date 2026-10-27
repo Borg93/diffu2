@@ -124,6 +124,21 @@ def test_evaluate_guides_toward_each_crops_reference_when_asked(tiny_flux3: Path
     assert drawn[1] != drawn[0]
 
 
+def test_evaluate_without_reference_draws_each_crop_from_its_caption_alone_and_measures_it_beside_its_reference(
+    tiny_flux3: Path, tmp_path: Path
+) -> None:
+    crops, references = _referenced_set(tmp_path / "crops")
+    _evaluate(tiny_flux3, _eval_set(tmp_path / "plain", [_crop("a.jpg")]), tmp_path / "caption", "-n", "1")
+
+    exit_code = _evaluate(tiny_flux3, crops, tmp_path / "out", "-n", "1", "--without-reference").exit_code
+
+    results = Results.model_validate_json((tmp_path / "out" / "results.json").read_text())
+    drawn = [(tmp_path / run / "generated" / "000.png").read_bytes() for run in ("caption", "out")]
+    assert exit_code == 0
+    assert drawn[1] == drawn[0]  # as from the same caption with no reference at all
+    assert results.samples[0].hands.reference == hand_look(references[0], REFERENCE_LINES)
+
+
 def test_evaluate_refuses_reference_guidance_on_crops_without_references_before_it_loads(tmp_path: Path) -> None:
     crops = _eval_set(tmp_path / "crops", [_crop("a.jpg"), _crop("b.jpg")])
 

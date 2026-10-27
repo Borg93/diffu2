@@ -1,7 +1,9 @@
 """The page and crop pipelines with a MOSS-Image repo on CPU (conftest's tiny MOSS, random weights, so it draws noise):
 a crop plan's caption compiled as MOSS's Layout prompt exactly as the verified scratchpad code compiled it, a crop drawn
 end to end from its seed, the line repair in MOSS's denoise loop, MOSS's own guidance and sampling shift, what MOSS
-refuses, and each repo drawn by its own family."""
+refuses, and each repo drawn by its own family. A MOSS trained to take a reference (conftest's tiny reference training,
+exported and initialised): its training cache holds what drawing encodes, it draws a crop from a reference and guides
+toward it, and a described caption's look words drop to exactly the plain caption the page captions would write."""
 
 from __future__ import annotations
 
@@ -16,8 +18,18 @@ from diffusers.modular_pipelines import ModularPipeline, SequentialPipelineBlock
 from PIL import Image
 
 from diffu.modular_pipelines.diffu import DiffuAutoBlocks, DiffuModularPipeline
+from diffu.modular_pipelines.loading import COMPONENT_DTYPES
+from diffu_moss.layout_prompt import caption_layout, caption_texts
 from diffu_moss.modular_pipelines.moss import MossAutoBlocks, MossModularPipeline
+from diffu_moss.sample_caption import without_look
+from diffu_moss.train.cache import load_sample, read_entries
+from diffu_moss.train.pairs import Pair, Variant, read_pairs
+from diffu_page.captions.hand import HandLook, ReferenceLook
+from diffu_page.captions.look import ScanLook
 from diffu_page.captions.prompt import LineRecord, PageStyle
+from diffu_page.captions.restyle import CaptionParts, described_edit_caption, edit_caption
+from diffu_page.crops.geometry import Crop, CropSettings, crops_for_page, regions_of
+from diffu_page.evalset import EvalCrop
 from diffu_page.judge import LineVerdict
 from diffu_page.layout import load_xml_layout
 from diffu_page.pipeline import (
@@ -32,7 +44,7 @@ from diffu_page.pipeline import (
 from diffu_page.plan import CropPlan, plan_page, plan_whole_page
 
 if TYPE_CHECKING:
-    from conftest import NemoLoraWriter
+    from conftest import NemoLoraWriter, RecordMaker
 
 # The scratchpad's moss_prompt.layout_prompt (27 Oct; the prompts MOSS's 1715 LoRA trained on) of the certificate
 # page's crop: its printed and handwritten lines as text items, its paper and ruled lines as objects
@@ -158,9 +170,122 @@ def test_moss_steps_its_sampling_grid_at_its_own_shift_or_the_one_asked_for(
     assert pipe.scheduler.timesteps.tolist() == pytest.approx(timesteps)
 
 
-def test_moss_refuses_to_draw_a_crop_from_a_reference_image(moss_pipe: ModularPipeline, small_plan: CropPlan) -> None:
-    with pytest.raises(ValueError, match="MOSS-Image draws from its prompt alone: it takes no reference image"):
+def test_moss_not_trained_with_references_refuses_to_draw_a_crop_from_a_reference_image(
+    moss_pipe: ModularPipeline, small_plan: CropPlan
+) -> None:
+    with pytest.raises(ValueError, match="this MOSS-Image model takes no reference image"):
         _draw(moss_pipe, small_plan, seed=0, reference=Image.new("RGB", (64, 32), "white"))
+
+
+def _pair_plan(pair: Pair) -> CropPlan:
+    """A style pair's target as diffu-evaluate draws a held-out crop of its set: its caption and lines (each line's
+    text as its row quotes it, its box the row's) at the target's size."""
+    texts = caption_texts(pair.caption)
+    lines = [
+        LineRecord(id=entry.id, text=texts[entry.id], role="", bbox=entry.bbox)
+        for entry in caption_layout(pair.caption)
+        if entry.id in texts
+    ]
+    with Image.open(pair.target) as target:
+        width, height = target.size
+    return EvalCrop(file_name=pair.target.name, caption=pair.caption, width=width, height=height, lines=lines).plan()
+
+
+@pytest.fixture(scope="module")
+def first_pair(tiny_pairs: Path) -> Pair:
+    return read_pairs(tiny_pairs / "train.jsonl")[0]
+
+
+def test_reference_cache_holds_what_drawing_encodes_for_the_same_crop_and_reference(
+    tiny_pairs: Path, tiny_pair_cache: Path, tiny_reference_moss: Path
+) -> None:
+    entry = next(entry for entry in read_entries(tiny_pair_cache) if entry.variant is Variant.LOOK)
+    pair = next(pair for pair in read_pairs(tiny_pairs / "train.jsonl") if pair.id == entry.pair)
+    blocks = crop_blocks(FAMILIES["MossAutoBlocks"]).sub_blocks
+    names = ("crop_prompt", "reference_grid", "layout_prompt", "text_encoder", "reference_encoder")
+    steps = SequentialPipelineBlocks.from_blocks_dict({name: blocks[name] for name in names})
+    pipe = MossModularPipeline(blocks=steps, pretrained_model_name_or_path=str(tiny_reference_moss))
+    pipe.load_components(names=["text_encoder", "tokenizer", "vae"], dtype=COMPONENT_DTYPES)
+
+    drawn = pipe(
+        crop_plan=_pair_plan(pair), image=Image.open(pair.reference), output=["prompt_embeds", "reference_latents"]
+    )
+
+    cached = load_sample(tiny_pair_cache, entry, "cpu")
+    assert torch.equal(cached.prompt_embeds, drawn["prompt_embeds"])
+    assert cached.reference is not None
+    assert torch.equal(cached.reference, drawn["reference_latents"][0].to(cached.reference.dtype))
+
+
+def test_reference_trained_moss_draws_a_crop_from_its_reference_through_the_page_pipeline(
+    tiny_reference_moss: Path, first_pair: Pair
+) -> None:
+    pipe = load_pipeline(tiny_reference_moss, crop_blocks, loras={}, settings=MOSS_SETTINGS)
+    plan = _pair_plan(first_pair)
+    # another sample under the same prompt: a reference also changes the prompt, which names the sample image
+    from_blank = _draw(pipe, plan, seed=0, reference=Image.new("RGB", (32, 32), "white"))
+
+    referenced = _draw(pipe, plan, seed=0, reference=Image.open(first_pair.reference))
+
+    assert referenced.size == (64, 32)
+    assert referenced.tobytes() != from_blank.tobytes()
+
+
+def test_reference_trained_moss_guides_toward_its_reference_with_a_pass_without_it(
+    tiny_reference_moss: Path, first_pair: Pair
+) -> None:
+    guided_settings = MOSS_SETTINGS.model_copy(update={"reference_guidance_scale": 3.0})
+    plain, guided = (
+        load_pipeline(tiny_reference_moss, crop_blocks, loras={}, settings=settings)
+        for settings in (MOSS_SETTINGS, guided_settings)
+    )
+    plan, reference = _pair_plan(first_pair), Image.open(first_pair.reference)
+    unguided = _draw(plain, plan, seed=0, reference=reference)
+
+    drawn = draw_crop(
+        guided, plan, name="000", seed=0, reference=reference, settings=guided_settings, judge=ScriptedJudge()
+    ).image
+
+    assert drawn.tobytes() != unguided.tobytes()
+
+
+@pytest.fixture
+def certificate_crop(certificate_page: Path) -> Crop:
+    """The crop of a printed certificate filled in by hand: printed lines, handwritten ones and ruled lines."""
+    layout = load_xml_layout(certificate_page)
+    rules = [(rule.x0, rule.y0, rule.x1, rule.y1) for rule in layout.rules]
+    return crops_for_page(regions_of(layout), (layout.width, layout.height), CropSettings(), rules=rules)[0]
+
+
+@pytest.mark.parametrize(
+    ("crop", "reference"),
+    [
+        pytest.param(
+            "body_and_notes_crop",
+            ReferenceLook(
+                scan=ScanLook(greyscale=False, paper="cream", ink="dark brown"),
+                hand=HandLook(slant=33.0, stroke=0.05, letters=0.3, density=0.2, paper="#D8C8A8", ink="#4A3828"),
+            ),
+            id="colour-scan-margin-notes",
+        ),
+        pytest.param(
+            "certificate_crop",
+            ReferenceLook(
+                scan=ScanLook(greyscale=True, paper="light grey", ink="black"),
+                hand=HandLook(slant=None, stroke=0.09, letters=0.4, density=0.15, paper="#C8C8C8", ink="#202020"),
+            ),
+            id="greyscale-scan-unmeasured-slant-printed-lines-and-rules",
+        ),
+    ],
+)
+def test_without_look_turns_a_described_reference_caption_into_the_plain_caption_of_the_same_crop(
+    crop: str, reference: ReferenceLook, make_record: RecordMaker, request: pytest.FixtureRequest
+) -> None:
+    parts = CaptionParts.of(make_record(request.getfixturevalue(crop)))
+
+    plain = without_look(described_edit_caption(parts, reference))
+
+    assert plain == edit_caption(parts)
 
 
 def test_load_pipeline_refuses_a_lora_for_a_moss_repo(tiny_moss: Path, write_nemo_lora: NemoLoraWriter) -> None:

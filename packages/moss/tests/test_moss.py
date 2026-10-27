@@ -1,5 +1,6 @@
-"""MOSS-Image on CPU: our DiT predicts the velocity the verified implementation predicted, the text encoder refuses a
-prompt past its 4,096 tokens, and a MOSS repo draws with the DiT folder it names."""
+"""MOSS-Image on CPU: our DiT predicts bit for bit the velocity the verified implementation predicted when it is given
+no reference, and with a reference reads its tokens at timestep 0 on their own grid and reference axis; the text
+encoder refuses a prompt past its 4,096 tokens, and a MOSS repo draws with the DiT folder it names."""
 
 from __future__ import annotations
 
@@ -10,12 +11,13 @@ from pathlib import Path
 import pytest
 import torch
 from diffusers.modular_pipelines import ModularPipeline, SequentialPipelineBlocks
+from torch import nn
 
 from diffu.repo import ModelIndex
 from diffu_moss.init import write_moss_repo
 from diffu_moss.modular_pipelines.moss import MossModularPipeline
 from diffu_moss.modular_pipelines.moss.encoders import MossTextEncoderStep
-from diffu_moss.transformer import MossTransformer
+from diffu_moss.transformer import MossTransformer, token_positions
 
 # The verified implementation's velocities (the scratchpad's moss_model.MossTransformer, from which this DiT was
 # ported, 27 Oct) for the weights and inputs below, with every block and with block 1 skipped; float32 values as JSON
@@ -41,6 +43,14 @@ def _seeded_dit() -> MossTransformer:
     return model
 
 
+def _inputs() -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Two samples' latents on a grid of 3 rows and 5 columns, prompts of 6 and 3 tokens and their mask."""
+    latents = torch.randn(2, 4, 3, 5, generator=torch.Generator().manual_seed(1))
+    text = torch.randn(2, 6, 8, generator=torch.Generator().manual_seed(2))
+    mask = torch.tensor([[1, 1, 1, 1, 1, 1], [1, 1, 1, 0, 0, 0]], dtype=torch.bool)
+    return latents, text, mask
+
+
 @pytest.mark.parametrize(
     ("skip_layers", "expected"),
     [
@@ -48,19 +58,72 @@ def _seeded_dit() -> MossTransformer:
         pytest.param(frozenset({1}), "velocity_skipping_1", id="block-1-skipped"),
     ],
 )
-def test_moss_transformer_predicts_the_velocity_the_verified_implementation_predicted(
+def test_moss_transformer_without_references_predicts_exactly_the_velocity_the_verified_implementation_predicted(
     skip_layers: frozenset[int], expected: str
 ) -> None:
     model = _seeded_dit()
-    latents = torch.randn(2, 4, 3, 5, generator=torch.Generator().manual_seed(1))  # a grid of 3 rows, 5 columns
-    text = torch.randn(2, 6, 8, generator=torch.Generator().manual_seed(2))
-    mask = torch.tensor([[1, 1, 1, 1, 1, 1], [1, 1, 1, 0, 0, 0]], dtype=torch.bool)  # the second prompt 3 tokens long
+    latents, text, mask = _inputs()
 
     with torch.no_grad():
         velocity = model(latents, torch.tensor([700.0, 300.0]), text, mask, skip_layers)
 
     golden = json.loads(VELOCITIES.read_text(encoding="utf-8"))[expected]
-    torch.testing.assert_close(velocity, torch.tensor(golden, dtype=torch.float32))
+    assert torch.equal(velocity, torch.tensor(golden, dtype=torch.float32))  # bit for bit, as before references
+
+
+def test_moss_transformer_reads_a_references_content_into_the_drawn_images_velocity_not_its_shape() -> None:
+    model = _seeded_dit()
+    latents, text, mask = _inputs()
+    reference, other = torch.randn(2, 2, 4, 2, 6, generator=torch.Generator().manual_seed(3))  # a grid of its own size
+    timesteps = torch.tensor([700.0, 300.0])
+    with torch.no_grad():
+        alone = model(latents, timesteps, text, mask)
+        from_other = model(latents, timesteps, text, mask, references=[other])
+
+        referenced = model(latents, timesteps, text, mask, references=[reference])
+
+    assert referenced.shape == alone.shape == (2, 4, 3, 5)
+    assert not torch.allclose(referenced, alone, rtol=0, atol=1e-4)
+    assert not torch.allclose(referenced, from_other, rtol=0, atol=1e-4)
+
+
+def _block_modulation(model: MossTransformer, *args: object, **kwargs: object) -> torch.Tensor:
+    """The time modulation the first joint block is given in a forward of ``model``."""
+    seen: list[torch.Tensor] = []
+
+    def capture(module: nn.Module, inputs: tuple[torch.Tensor, ...]) -> None:
+        seen.append(inputs[2])
+
+    hook = model.layers[0].register_forward_pre_hook(capture)
+    with torch.no_grad():
+        model(*args, **kwargs)
+    hook.remove()
+    return seen[0]
+
+
+def test_moss_transformer_modulates_reference_tokens_as_at_timestep_0_and_the_rest_at_the_flow_timestep() -> None:
+    model = _seeded_dit()
+    latents, text, mask = _inputs()
+    latents, text, mask = latents[:1], text[:1], mask[:1]
+    reference = torch.randn(1, 4, 2, 2, generator=torch.Generator().manual_seed(3))
+    at_t = _block_modulation(model, latents, torch.tensor([700.0]), text, mask)  # shared by every token: [1, 6, 32]
+    at_0 = _block_modulation(model, latents, torch.tensor([0.0]), text, mask)
+
+    by_token = _block_modulation(model, latents, torch.tensor([700.0]), text, mask, references=[reference])
+
+    drawn = 3 * 5 + 6  # the drawn image's 15 tokens, then the prompt's 6; then the reference's 4
+    assert by_token.shape == (1, drawn + 4, 6, 32)
+    assert torch.equal(by_token[:, :drawn], at_t[:, None].expand(1, drawn, 6, 32))
+    assert torch.equal(by_token[:, drawn:], at_0[:, None].expand(1, 4, 6, 32))
+
+
+def test_token_positions_put_reference_k_on_the_reference_axis_at_k_plus_1_centred_on_its_own_grid() -> None:
+    positions = token_positions(2, 2, 3, torch.device("cpu"), references=[(1, 2), (2, 1)])
+
+    drawn = [[0, 3, -0.5, -0.5], [0, 3, -0.5, 0.5], [0, 3, 0.5, -0.5], [0, 3, 0.5, 0.5]]
+    prompt = [[0, 0, 0, 0], [0, 1, 0, 0], [0, 2, 0, 0]]
+    references = [[1, 3, 0, -0.5], [1, 3, 0, 0.5], [2, 3, -0.5, 0], [2, 3, 0.5, 0]]
+    assert positions.tolist() == drawn + prompt + references
 
 
 @pytest.fixture(scope="module")
