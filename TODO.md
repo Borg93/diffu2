@@ -216,6 +216,22 @@ What is known to be wrong or unfinished. Remove an item when it is done; add the
       steps 1,000 and 2,000: can one adapter hold many hands, or do they blend? Writer identification over every run
       of the night once the draws are done: scratchpad writer/run_tonight.sh (add_moss.py now knows the four new
       hands).
+- [ ] **Drawn ink on the real page's paper** (27 Oct, scratchpad paper/paper_composite.py, CPU, OpenCV; after the
+      first blind rater: "the background and the details in the paper and the hand style look more real", and all the
+      damage, bleed-through and fingers): a ground-truth template is a real scan, so its paper can be kept and only
+      its writing replaced. Every stroke of the scan (a connected run of pixels darker than the paper's local level)
+      that reaches into a transcribed line's box is erased whole (a flourish out of its box too; nothing taller than
+      four lines or wider than half the page: edges, stains), grown by its soft edges and inpainted; the drawing's
+      ink (each pixel's share of the drawing's paper light) is matched to the scan's own ink depth and colour and
+      multiplied onto the erased page. The new lines are the template's, so they fall where the erased ones were and
+      the labels stay exact; stains, torn edges, show-through between the lines, the scanning operator's glove and
+      the page block's edge stay as scanned. On the 4 held-out 1715 pages (the LoRA's step-700 drawings) by eye: the
+      real sheet's fibres and laid lines show through the strokes, the ink takes the page's faded brown; a register
+      heading's flourish outside its box was left behind until strokes were erased whole. Next: windows; a blind test
+      where a rebuilt page never sits beside its own scan; a repo stage after the drawing (the template's scan
+      beside it, as --mark-from-scan finds it). Limits: only a template that is a scan has paper to keep (our own
+      forms need the canvas or a reference); the hand is still the model's; writing a transcription leaves out stays
+      (as in the scan).
 - [ ] **Unlabelled writing check** (scratchpad hand/unlabelled_words.py, CPU, OpenCV): word-sized clusters of ink on
       the paper outside every text item's box of the page's prompt (the paper's border band, narrow flourishes and
       edge strokes left out). On 27 Oct's pages: untrained MOSS 0 on every page, the 1715 LoRA 0-2 (the livestock
