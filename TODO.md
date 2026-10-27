@@ -216,6 +216,13 @@ What is known to be wrong or unfinished. Remove an item when it is done; add the
       steps 1,000 and 2,000: can one adapter hold many hands, or do they blend? Writer identification over every run
       of the night once the draws are done: scratchpad writer/run_tonight.sh (add_moss.py now knows the four new
       hands).
+- [x] **Looks asked in words** (27 Oct, runs/moss_test/look_*; 4 held-out 1715 windows each; by eye beside the
+      measures): untrained MOSS draws white paper with black ink, and a greyscale microfilm-like scan, as asked
+      (paper and ink 4 of 4; its "greyscale 1 of 4" is the measure calling a white sheet with black ink greyscale).
+      The 1715 LoRA (step 700) keeps the clerk's hand in every look (slant gap 2.0 deg) and follows a greyscale scan
+      (4 of 4) and white paper, but keeps its brown ink when asked for black (0 of 4): a LoRA's ink is sticky, its
+      paper and scan are not. The real-paper composite sets the ink from the page itself. The full fine-tune's looks
+      run with the requeued fine-tune.
 - [ ] **The reader we make data for** (the user, 27 Oct): DeepSeek-OCR 2 or PaddleOCR-VL 1.6, trained end to end on
       whole pages; TrOCR is not the target ("don't focus on what's good or bad for trocr"), only our own line
       read-back check on drawings. Both run on transformers' own implementations (5.20: `deepseek_ocr2`,
