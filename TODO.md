@@ -60,6 +60,23 @@ What is known to be wrong or unfinished. Remove an item when it is done; add the
         memory profile (`auto` picks streaming): `speed` for LoRAs, `ckpt-resident-optfused` + AdamW for a full
         fine-tune (~65 GiB). Installed in its own venv (~/Desktop/repos/kohakumoss at da5dd97, kohakuvault 0.9.0, no
         GPU extras); its source checked for remote code, unsafe loads and network calls (none in training paths).
+- [x] **Both repos checked again (27 Oct evening)**, at MOSS-Image 2b46b1e and KohakuMossTrainer 67f3bb5: Base is a
+      "Base text-to-image model" (SFT is Base fine-tuned on curated data); the user guide: "We have found that simple
+      SFT can enable features such as GIF generation and reference-based generation in MOSS-Image-Base. Stay tuned."
+      (not released), and "keep the text encoder frozen". KohakuMossTrainer: full fine-tune, LoRA and LyCORIS; DDP,
+      FSDP2 and pipeline parallelism on one machine (it spawns its own processes); SM70-SM120; "about 16 bytes" of
+      state per weight for a full fine-tune; no reference or editing training anywhere in its code or docs, so the
+      sample page needs our own trainer (`diffu-moss-train-ref`).
+- [ ] **The full fine-tune with sample pages (the prize; the user, 27 Oct: test it on the Spark first, "see that we are
+      at least overfitting")**: our trainer's full mode being built (MOSS's recipe as KohakuMossTrainer documents it:
+      Muon for the blocks' matrices and AdamW at 5e-5, weight decay 0.01 but none on biases, norms and embedders, the
+      last block's q/k norms decaying to 1, clip 1.0, EMA 0.9999 on HPC only; fp32 weights, bf16 compute; ~65-70 GB on
+      one GPU), then on the Spark a 5-step smoke and an overfit test (8 pairs, ~300 steps, drawn back), queued right
+      after the reference pilot. HPC after: FSDP2, two nodes for 8 A100s; one pass over 200,000 pages estimated at
+      ~23 h on 8 A100s or ~9 h on 3 B200s at 1 MP (+0.5 MP sample), ~51 h / ~19 h at 2 MP.
+- [ ] **Queue reordered (27 Oct 20:20): MOSS first.** The reference pilot (LoRA, 1,500 steps, jobs/moss/run_ref_pilot.sh)
+      started 20:21; then the full fine-tune test, the canvas, KohakuMossTrainer's full fine-tunes, the repo draw and
+      microfilm LoRAs, the print mix, eight hands, step-350 pages and guidance, then the readers, then E2c.
 - [ ] **MOSS validated like FLUX.3, queued after E2n** (the user, 26 Oct: layout control, LoRA, fine-tune and
       sample images for the style and the hand; scratchpad moss_test/ and queue_moss.sh), every drawing scored as
       diffu-evaluate scores (read-back, hand measures; writer ID after) and looked at beside the real scans first:
@@ -230,13 +247,24 @@ What is known to be wrong or unfinished. Remove an item when it is done; add the
       fetched) and deepseek-community/DeepSeek-OCR-2 (Apache-2.0, the official weights converted for the native
       class; deepseek-ai's own repo needs its code). The loop: (1) where the reader is weak: it reads whole held-out
       real single pages of every handwritten collection (scratchpad readers/reader_eval.py, page CER against the
-      transcription in reading order, markup stripped), queued first after tonight's queue (queue_readers.sh); the CPU
+      transcription in reading order, markup stripped); its first run (27 Oct 19:20) was stopped after 3 collections:
+      PaddleOCR-VL's generation_config sets `use_cache: false`, so every token recomputed the page (338-571 s a page;
+      with `use_cache=True` the same text 24x faster, checked on CPU), and on those Finnish pages it hallucinated
+      (English, Arabic script, "day / day / ..." loops; CER 1.3-6.8). Fixed, and moved behind the MOSS work (the user,
+      27 Oct: MOSS's fine-tune first). PaddleOCR-VL's processor also shrinks a page to ~1 MP (`max_pixels` 1,003,520;
+      a 2,048 px page is 2.9 MP): queue_readers2.sh rereads 20 collections at full size. The CPU
       smoke test: untrained PaddleOCR-VL reads "618 / October" right and the 1715 clerk's first line as "The Rung Hoh
       can…"; (2) learn those hands (4 transcribed pages are enough, 27 Oct); (3) generate pages of them with text aimed
       at what the reader misreads, on the volumes' own layouts and real paper; (4) oversample them; (5) fine-tune the
-      reader on real and real + synthetic pages, compared on held-out real pages. Labels in the readers' formats
-      (Markdown in reading order with tables, DeepSeek's grounded form, PaddleOCR-VL's element records, fine-tuning
-      JSONL): being built (27 Oct).
+      reader on real and real + synthetic pages, compared on held-out real pages. Labels in the readers' formats:
+      done (48ecb0a, aae7320): `diffu-generate --reader-labels` writes `<name>.md`, `.grounded.md` and
+      `.elements.json` beside each page; `diffu-reader-set` makes DeepSeek-OCR 2's set (grounded or Free OCR) and
+      PaddleOCR-VL's (whole page `OCR:` by default, `Spotting:` with each line's box, or per element). A PaddleOCR-VL
+      fine-tune script (scratchpad readers/finetune_paddle.py, transformers' own model, every weight, fp32 AdamW
+      states, loss on the answer alone) overfits one page on CPU (loss 5.63, 4.33, 2.98 in three steps).
+- [x] Refill kept a form's print as print only by luck: it rewrote every running-text line, so a certificate's printed
+      labels became new text ("Att" became "Anno"). Fixed (8037018): on a page with handwriting only the handwritten
+      lines are rewritten, and the density is measured on them.
 - [x] The two full fine-tunes were refused by spark_guard (they asked 85 GB plus its 20 GB floor; the box keeps ~18 GB
       for its services, so ~101 GB is ever free): the trainer's own estimate for ckpt-resident-optfused at 1 MP is
       64.8 GiB, so they ask 70 GB now and run after the readers and the canvas test (queue_fullft.sh).
