@@ -41,7 +41,10 @@ PAGE/ALTO page ──► LoadLayout ──► Refill ──► PlanCrops ──�
    size, spacing, colours as hex; v3d). The form must be the one the LoRA in use was trained on.
 5. **Drawing** (`diffu_page.pipeline`): a model directory names its blocks in `modular_model_index.json`, and
    `FAMILIES` maps those to the model's blocks and pipeline class (FLUX.3 Klein: `Flux3AutoBlocks` without its prompt
-   upsampler, which would rewrite the quoted lines; diffu: `DiffuAutoBlocks`). Around them:
+   upsampler, which would rewrite the quoted lines; diffu: `DiffuAutoBlocks`; MOSS-Image: `MossAutoBlocks`, a
+   `diffu-moss-init` directory), the guidance scale it draws at unless `--guidance` names one (4; MOSS's 3) and
+   whether LoRAs load into it at draw time (not into MOSS's: a MOSS LoRA is merged into the DiT folder its directory
+   names). Around them:
    - `crop_blocks`: `CropPromptStep` (plan → prompt, boxes, size), `GlyphMapStep` (a glyph model's glyph map of the
      plan), `ReferenceGridStep` (a reference image on the training grid), the model's text encoder, VAE encoders (only
      with a reference image or a glyph map), denoise and decode. The model's auto blocks choose plain or
@@ -54,6 +57,19 @@ PAGE/ALTO page ──► LoadLayout ──► Refill ──► PlanCrops ──�
      map, in every guidance pass, and steps its latents with the first channels of the transformer's prediction (FLUX.3's
      transformer predicts as many channels as it takes). Every other model draws through it as through FLUX.3's own;
      `GlyphMapStep` draws the map only for a glyph model.
+   - MOSS-Image's blocks (`diffu_moss`, our implementation around its released weights): `MossLayoutPromptStep`
+     compiles the plan's caption and lines (`CropPromptStep`'s `prompt` and `page_lines`) into MOSS's Layout prompt,
+     as the MOSS prompt-enhancer skill compiles a draft: the caption's prose as the summary, a text item per line with
+     its exact text and its box in pixels from the canvas centre (`yxyx`), the paper, fragments and ruled lines as
+     objects. The prompt is encoded by the frozen Qwen3.5-9B text encoder (its last hidden states over the chat
+     template, thinking enabled), refused past 4,096 tokens. The denoise step is laid out as FLUX.3's (`prepare_latents`,
+     `set_timesteps`, a loop of `denoiser` and `after_denoiser`, the latents as tokens in FLUX.3's order), so the line
+     repair runs in it unchanged; the noise is drawn in fp32, the sampling grid is the shifted steps moved to the
+     nearest level of the 1,000-step training grid (the scheduler's shift, 5, is the sampling shift, and the grid is
+     stepped as given), and guidance combines in fp32 with the unconditional pass skipping block 22 (its model index's
+     `uncond_skip_layers`). The FLUX.2 VAE decodes (`diffu_moss.latents`, which also encodes a drawn crop for a
+     repair). It takes no reference image. On a tiny random model it draws bit for bit what the scratchpad's verified
+     MOSS code (`moss_draw`) draws, and that code redrew the official demo's published images at 20.9 and 26.2 dB.
    - The judge (`diffu_page.judge`: a `Judge`, by default `TrOCRJudge`) reads every line box of the drawn crop, and the
      labels (`blocks.ground_truth.crop_labels`, ALTO or PAGE) tag a line it rejects `unclear`: a read-back CER above
      `max_line_cer`, or any number read otherwise. Drawing, judging and labelling are separate stages
@@ -117,3 +133,9 @@ Checked 2026-10-21 (reference rows 2026-10-23); each would silently cost quality
 | Glyph map (a glyph model) | `glyphs.glyph_map` of the crop's lines at its size, encoded by `diffu_train.cache.encode_image` | `GlyphMapStep`, the same function on the plan; diffu's glyph encoder encodes it as the cache does (`test_cache`); each token's cell beside its latents, as `GlyphConcatAdapter` puts it |
 | Position ids | image (0, h·0.5, w·0.5, 0), reference l = −1, text (0, 0, 0, i) | the same |
 | No-prompt input | v3d: a tenth of the pairs on the empty prompt as NeMo encodes a caption (`diffu_train.dropout`), bit-identical to diffusers' unconditional input; earlier runs none (`cfg_dropout_prob: 0`; NeMo's own would use zeros) | the empty prompt |
+
+MOSS-Image trains with KohakuMossTrainer (its own environment, `~/Desktop/repos/kohakumoss`), on manifests whose
+captions the scratchpad's `moss_prompt.layout_prompt` compiled: `diffu_moss.layout_prompt` compiles a crop plan's
+caption to the same string (`packages/page/tests/test_moss.py`). The trainer's text caches are written with
+transformers' forward, one prompt a call (`forward: hf`), as `MossTextEncoderStep` encodes; its latents (the VAE's
+mode, 2x2, batch-norm statistics) matched ours at cosine 0.99998 (27 Oct).

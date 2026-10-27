@@ -138,6 +138,30 @@ What is known to be wrong or unfinished. Remove an item when it is done; add the
         prompt a call, as drawing encodes; same cache key `bf16/compute`), the kernel-built 1715 text cache moved
         to `cache/kernels_forward/`. Open for HPC: which forward is nearer an fp32 encode at our lengths (the fast
         packed kernels would matter for big caches).
+- [x] **MOSS-Image in the repo** (27 Oct, the commit "MOSS-Image is the page pipeline's third model family"): the
+      scratchpad's verified implementation ported as `packages/moss` (diffu-moss): `MossTransformer` (moss_model as
+      it was, the checkpoint's names kept), `MossAutoBlocks` / `MossModularPipeline` (the Layout prompt compiled from a
+      crop plan's caption and lines exactly as moss_prompt.layout_prompt compiles it, the Qwen3.5 encoder refusing past
+      4,096 tokens, denoise laid out as FLUX.3's so the line repair runs in it, CFG in fp32 with the negative pass
+      skipping block 22, MOSS's sampling grid, the FLUX.2 VAE) and `diffu-moss-init` (a model directory: the Base
+      snapshot's folders, its own DiT or a trained export). `FAMILIES` draws a MOSS directory with `diffu-generate
+      --model`; `DrawSettings.guidance_scale` defaults to the model's own (FLUX.3 and diffu 4 as before, MOSS 3), the
+      sampling shift to MOSS's 5. On a tiny random model the pipeline draws bit for bit what moss_draw.draw draws (4
+      cases: sizes, 2-4 steps, shifts 3 and 5, guidance 3 and 1). Left out as off the pipeline's path: moss_sample (a
+      sample image carries its text, not its hand), and moss_prompt's per-region and plain-caption prompts, sample
+      citations and `restyled` (the pipeline captions a page in its job's style).
+- [ ] **MOSS LoRA adapters at draw time**: a MOSS repo takes no LoRA (`load_pipeline` refuses one); a hand is drawn by
+      merging its LoRA into Base (KohakuMossTrainer's merge, then `diffu-moss-init --transformer`). Loading the
+      trainer's LoRA checkpoints as adapters on `MossTransformer` (its names are the checkpoint's) would let one
+      loaded model switch hands per drawer, as the studio switches FLUX.3's.
+- [ ] **MOSS trainer glue in the repo**: the manifests (scratchpad write_manifest.py, from `diffu_moss.layout_prompt`),
+      the cache and train configs (moss_encoders.py, moss_hand_*.py, the merge and export configs) and the checks
+      (check_cache.py, check_merged.py) still live in the scratchpad and run from KohakuMossTrainer's venv.
+- [ ] **MOSS single-page training set**: whole single pages (an opening's sides, `diffu_page.layout.scan_pages`) with
+      their Layout prompts, so a MOSS fine-tune learns pages, templates and looks beside the windows.
+- [ ] MOSS's draw-time loose ends: `--compile-blocks` (the DiT names no repeated blocks yet; its per-sample loop and
+      text mask would break a full graph), diffu-studio with a MOSS drawer (untested), and diffu-run's `--guidance`
+      (still a literal 4, with the Ray items).
 
 ## Repo structure
 

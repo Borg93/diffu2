@@ -1,8 +1,8 @@
 """The page pipeline: our blocks around a model's own Modular Diffusers blocks.
 
-A model repo (FLUX.3 Klein for the reference runs; diffu, FLUX.3's architecture with our own weights) names its blocks
-in ``modular_model_index.json``; :data:`FAMILIES` maps those to the model's blocks and pipeline class, so a model is
-chosen by its directory alone. Two sets of blocks are built:
+A model repo (FLUX.3 Klein for the reference runs; diffu, FLUX.3's architecture with our own weights; MOSS-Image,
+``diffu-moss-init``'s) names its blocks in ``modular_model_index.json``; :data:`FAMILIES` maps those to the model's
+blocks and pipeline class, so a model is chosen by its directory alone. Two sets of blocks are built:
 
 - :class:`PagePlanBlocks` (no model): ``LoadLayoutStep`` -> ``RefillStep`` -> ``PlanCropsStep``. A template page (or
   one page of a two-page opening), a text, a style and optionally a reference crop in; the crops to draw out, captioned
@@ -10,7 +10,8 @@ chosen by its directory alone. Two sets of blocks are built:
 - :func:`crop_blocks`: ``CropPromptStep`` -> ``GlyphMapStep`` -> ``ReferenceGridStep`` -> the model's text encoder,
   VAE encoders, denoise and decode. A crop plan in; its image out. The model's auto blocks pick text-to-image or
   reference-conditioned denoising from the inputs (``image``); a line repair sits in both
-  (:mod:`diffu_page.blocks.repair`). A glyph model (diffu's ``glyph_channels``) draws from its plan's glyph map.
+  (:mod:`diffu_page.blocks.repair`). A glyph model (diffu's ``glyph_channels``) draws from its plan's glyph map;
+  MOSS-Image compiles the plan's caption and lines into its own Layout prompt first, and takes no reference.
 
 A page is planned with :class:`PagePlanBlocks`; each of its crops is drawn on its own with the crop pipeline, judged
 line by line (:mod:`diffu_page.judge`) and labelled (:func:`diffu_page.blocks.ground_truth.crop_labels`). Draw, judge
@@ -35,6 +36,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from diffu.modular_pipelines.diffu import DiffuAutoBlocks, DiffuModularPipeline
 from diffu.modular_pipelines.loading import COMPONENT_DTYPES, require_loaded
 from diffu.repo import ModelIndex
+from diffu_moss.latents import encode_latents
+from diffu_moss.modular_pipelines.moss import MossAutoBlocks, MossModularPipeline
+from diffu_moss.modular_pipelines.moss.denoise import GUIDANCE_SCALE as MOSS_GUIDANCE_SCALE
 from diffu_page.blocks import (
     CropPromptStep,
     DrawnCrop,
@@ -61,19 +65,26 @@ REPAIR_SEED_STRIDE = 7919  # between a crop's seed and each repair pass's, so no
 
 
 class ModelFamily(BaseModel):
-    """A model family's own blocks and pipeline class, and the blocks of its that generation leaves out."""
+    """A model family's own blocks and pipeline class, the blocks of its that generation leaves out, the guidance
+    scale it draws at unless the settings name one, and whether LoRAs load into it at draw time."""
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     blocks: type[SequentialPipelineBlocks]
     pipeline: type[ModularPipeline]
     unused: tuple[str, ...] = ()
+    guidance_scale: float = 4.0
+    takes_loras: bool = True
 
 
 FAMILIES: dict[str, ModelFamily] = {
     # FLUX.3's prompt upsampler rewrites a prompt as prose: it would rewrite the quoted lines of a layout caption
     "Flux3AutoBlocks": ModelFamily(blocks=Flux3AutoBlocks, pipeline=Flux3ModularPipeline, unused=("prompt_upsampler",)),
     "DiffuAutoBlocks": ModelFamily(blocks=DiffuAutoBlocks, pipeline=DiffuModularPipeline),
+    # a MOSS LoRA is merged into the DiT a MOSS repo names (diffu-moss-init --transformer)
+    "MossAutoBlocks": ModelFamily(
+        blocks=MossAutoBlocks, pipeline=MossModularPipeline, guidance_scale=MOSS_GUIDANCE_SCALE, takes_loras=False
+    ),
 }
 
 
@@ -162,7 +173,8 @@ class DrawSettings(BaseModel):
 
     Attributes:
         steps: Denoising steps per crop.
-        guidance_scale: Classifier-free guidance scale; exactly 1 samples without guidance (one pass a step).
+        guidance_scale: Classifier-free guidance scale; exactly 1 samples without guidance (one pass a step). ``None``
+            is the model's own (4 for FLUX.3 and diffu; 3 for MOSS-Image, its demo's).
         reference_guidance_scale: How hard guidance also pushes toward the reference image (:mod:`diffu_page.guidance`,
             a third pass per step); 1 guides the caption alone.
         guidance_stop: The fraction of the steps after which guidance stops: one pass a step after it; 1 guides every
@@ -173,7 +185,7 @@ class DrawSettings(BaseModel):
             choice (FLUX.3: every 4th of Qwen3-VL's).
         device: Where the components run.
         sampling_shift: The timestep shift the scheduler samples at; ``None`` is the model's own (FLUX.3's 6.93, which
-            its LoRAs trained at; a diffu export's, the shift it trained at).
+            its LoRAs trained at; a diffu export's, the shift it trained at; MOSS-Image's 5, its demo's).
         lora_scale: How strongly every LoRA applies: 1 at its trained strength, 0 not at all (diffusers'
             ``set_adapters`` weights, which fusing keeps).
         fuse_loras: Fuse the LoRAs into the transformer's weights at load and drop their adapter layers: no LoRA
@@ -187,7 +199,7 @@ class DrawSettings(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     steps: int = Field(default=50, ge=1)
-    guidance_scale: float = 4.0
+    guidance_scale: float | None = None
     reference_guidance_scale: float = 1.0
     guidance_stop: float = Field(default=1.0, ge=0.0, le=1.0)
     label_format: LabelFormat = LabelFormat.ALTO
@@ -217,8 +229,8 @@ type BlocksFor = Callable[[ModelFamily], SequentialPipelineBlocks]
 
 def load_pipeline(model: Path, blocks: BlocksFor, *, loras: dict[str, Path], settings: DrawSettings) -> ModularPipeline:
     """``blocks`` built for the model at ``model``, its components loaded (VAE in float32, the rest in bfloat16) on
-    ``settings.device``, the guider at ``settings.guidance_scale`` (and ``settings.reference_guidance_scale``) until
-    ``settings.guidance_stop``, and every
+    ``settings.device``, the guider at ``settings.guidance_scale`` (the model family's own when None, and
+    ``settings.reference_guidance_scale``) until ``settings.guidance_stop``, and every
     LoRA of ``loras`` (NeMo ``model/`` dirs by adapter name) active, fused into the transformer when
     ``settings.fuse_loras``, and the transformer's repeated blocks compiled when ``settings.compile_blocks``.
 
@@ -226,14 +238,21 @@ def load_pipeline(model: Path, blocks: BlocksFor, *, loras: dict[str, Path], set
 
     Raises:
         ValueError: If the model's blocks have no family, the guidance settings do not go together, a LoRA would
-            load at the wrong strength, or the blocks are to be compiled around LoRAs that are not fused.
+            load at the wrong strength or into a model that takes none at draw time (MOSS-Image), or the blocks are to
+            be compiled around LoRAs that are not fused.
         RuntimeError: If a component failed to load.
     """
     if settings.compile_blocks and loras and not settings.fuse_loras:
         raise ValueError("compile the transformer's blocks only with its LoRAs fused: adapter layers would recompile")
     family = model_family(model)
+    if loras and not family.takes_loras:
+        raise ValueError(
+            f"{model} takes no LoRAs at draw time: merge them into the transformer it draws with (diffu-moss-init "
+            "--transformer)"
+        )
+    guidance_scale = family.guidance_scale if settings.guidance_scale is None else settings.guidance_scale
     guider = ReferenceGuidance(
-        guidance_scale=settings.guidance_scale,
+        guidance_scale=guidance_scale,
         reference_scale=settings.reference_guidance_scale,
         stop=settings.guidance_stop,
     )
@@ -351,9 +370,13 @@ def repair_lines(
 
 def page_latents(pipe: ModularPipeline, image: Image.Image) -> torch.Tensor:
     """``image`` as the model's latents ``(1, C, height / 16, width / 16)``, made by the model's own VAE encoder step as
-    it encodes a reference image, without the reference preprocessing (a drawn crop is already on the latent grid)."""
+    it encodes a reference image, without the reference preprocessing (a drawn crop is already on the latent grid).
+    MOSS-Image, which takes no reference image and so has no such step, encodes as its decoder decodes
+    (:func:`diffu_moss.latents.encode_latents`)."""
     processor = pipe.image_processor
     pixels = processor.normalize(processor.numpy_to_pt(processor.pil_to_numpy(image.convert("RGB"))))
+    if isinstance(pipe, MossModularPipeline):
+        return encode_latents(pipe.vae, pixels)
     encode = pipe.blocks.sub_blocks["vae_encoder"].sub_blocks["image_conditioning"].sub_blocks["encode"]
     state = PipelineState()
     state.set("condition_images", [pixels])

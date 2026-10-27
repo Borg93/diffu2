@@ -38,6 +38,7 @@ members = ["packages/*"]
 
 [tool.uv.sources]
 diffu = { workspace = true }
+diffu-moss = { workspace = true }
 diffu-page = { workspace = true }
 diffu-train = { workspace = true }
 diffu-runner = { workspace = true }
@@ -54,7 +55,7 @@ url = "https://download.pytorch.org/whl/cu130"
 explicit = true
 
 [dependency-groups]
-workspace = ["diffu-page", "diffu-train", "diffu-runner", "diffu-studio"]  # every member; diffu-train's modules import NeMo at runtime
+workspace = ["diffu-moss", "diffu-page", "diffu-train", "diffu-runner", "diffu-studio"]  # every member; diffu-train's modules import NeMo at runtime
 dev = [
     "ruff>=0.17.1",
     "pyrefly>=1.4",
@@ -77,7 +78,7 @@ ignore = ["E501"]
 "dataclasses.dataclass".msg = "Structured values are pydantic BaseModel (NeMo dataloader configs are the exception)."
 
 [tool.ruff.lint.isort]
-known-first-party = ["diffu", "diffu_page", "diffu_train", "diffu_runner", "diffu_studio"]
+known-first-party = ["diffu", "diffu_moss", "diffu_page", "diffu_train", "diffu_runner", "diffu_studio"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "packages"]
@@ -86,7 +87,7 @@ strict = true
 timeout = 3600  # pytest-timeout: a hung test fails; the slowest (the studio's draw test) takes 6.5 min, 25 under coverage
 
 [tool.coverage.run]  # per-test coverage when pruning: production lines only, never the tests'
-source = ["src", "packages/page/src", "packages/runner/src", "packages/studio/src", "packages/train/src"]
+source = ["src", "packages/moss/src", "packages/page/src", "packages/runner/src", "packages/studio/src", "packages/train/src"]
 omit = ["tests/*", "packages/*/tests/*", "conftest.py"]
 
 # ty, as pyrefly.toml: diffusers, transformers and safetensors are typed as Any (diffusers exports a torch-less dummy

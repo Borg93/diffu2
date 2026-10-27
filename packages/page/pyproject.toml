@@ -1,13 +1,14 @@
 [project]
 name = "diffu-page"
 version = "0.1.0"
-description = "Archive pages as data and the page pipeline: PAGE/ALTO layouts, crops, captions and labels, and our Modular Diffusers blocks around a model's own (FLUX.3 Klein or diffu)."
+description = "Archive pages as data and the page pipeline: PAGE/ALTO layouts, crops, captions and labels, and our Modular Diffusers blocks around a model's own (FLUX.3 Klein, diffu or MOSS-Image)."
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 license = "Apache-2.0"
 authors = [{ name = "Gabriel Borg" }]
 dependencies = [
     "diffu",
+    "diffu-moss",
     "diffusers",
     "numpy>=1.26",
     "peft>=0.17",

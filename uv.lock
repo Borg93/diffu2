@@ -12,6 +12,7 @@ supported-markers = [
 [manifest]
 members = [
     "diffu",
+    "diffu-moss",
     "diffu-page",
     "diffu-runner",
     "diffu-studio",
@@ -301,6 +302,7 @@ dev = [
     { name = "xmlschema" },
 ]
 workspace = [
+    { name = "diffu-moss" },
     { name = "diffu-page" },
     { name = "diffu-runner" },
     { name = "diffu-studio" },
@@ -330,10 +332,36 @@ dev = [
     { name = "xmlschema", specifier = ">=4.3.2" },
 ]
 workspace = [
+    { name = "diffu-moss", editable = "packages/moss" },
     { name = "diffu-page", editable = "packages/page" },
     { name = "diffu-runner", editable = "packages/runner" },
     { name = "diffu-studio", editable = "packages/studio" },
     { name = "diffu-train", editable = "packages/train" },
+]
+
+[[package]]
+name = "diffu-moss"
+version = "0.1.0"
+source = { editable = "packages/moss" }
+dependencies = [
+    { name = "diffu" },
+    { name = "diffusers" },
+    { name = "pydantic" },
+    { name = "rich" },
+    { name = "torch" },
+    { name = "transformers" },
+    { name = "typer" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "diffu", editable = "." },
+    { name = "diffusers", git = "https://github.com/huggingface/diffusers?rev=e04f0c5f24392fcd34b32d18d0ce03668f9bcd50" },
+    { name = "pydantic", specifier = ">=2" },
+    { name = "rich", specifier = ">=13" },
+    { name = "torch", specifier = ">=2.10", index = "https://download.pytorch.org/whl/cu130" },
+    { name = "transformers", specifier = ">=5.18" },
+    { name = "typer", specifier = ">=0.20" },
 ]
 
 [[package]]
@@ -342,6 +370,7 @@ version = "0.1.0"
 source = { editable = "packages/page" }
 dependencies = [
     { name = "diffu" },
+    { name = "diffu-moss" },
     { name = "diffusers" },
     { name = "numpy" },
     { name = "peft" },
@@ -359,6 +388,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "diffu", editable = "." },
+    { name = "diffu-moss", editable = "packages/moss" },
     { name = "diffusers", git = "https://github.com/huggingface/diffusers?rev=e04f0c5f24392fcd34b32d18d0ce03668f9bcd50" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "peft", specifier = ">=0.17" },

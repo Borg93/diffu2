@@ -1,6 +1,7 @@
 """Fixtures shared by every workspace member's tests: PAGE pages to plan and draw, a crop and its training record,
-diffusers' tiny FLUX.3 test model (with a VAE that downsamples as FLUX.3's does), and a tiny diffu model repo (a tiny
-Qwen3-VL (tiny FLUX.3's), a tiny Qwen-Image VAE and a tiny transformer, all random weights) and its glyph model."""
+diffusers' tiny FLUX.3 test model (with a VAE that downsamples as FLUX.3's does), a tiny diffu model repo (a tiny
+Qwen3-VL (tiny FLUX.3's), a tiny Qwen-Image VAE and a tiny transformer, all random weights) and its glyph model, and a
+tiny MOSS-Image repo (MOSS's own tokenizer, a tiny Qwen3.5, a tiny FLUX.2-class VAE and a tiny DiT, random weights)."""
 
 from __future__ import annotations
 
@@ -14,9 +15,12 @@ import torch
 from diffusers import AutoencoderKLFlux2, AutoencoderKLQwenImage, Flux3Transformer2DModel
 from huggingface_hub import snapshot_download
 from safetensors.torch import save_file
+from transformers import Qwen3_5Config, Qwen3_5Model
 
 from diffu.configs import DiffuConfig, DiffuSize, TextEncoder, Vae
 from diffu.init import write_model_repo
+from diffu_moss.init import write_moss_repo
+from diffu_moss.transformer import MossTransformer
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.prompt import PageStyle
 from diffu_page.captions.provenance import Provenance
@@ -343,6 +347,64 @@ def tiny_diffu_glyph(
     config = tiny_diffu_config.model_copy(update={"glyph": True})
     torch.manual_seed(1)
     write_model_repo(Flux3Transformer2DModel.from_config(config.transformer_config()), config, repo)
+    return repo
+
+
+MOSS_BASE = "OpenMOSS-Team/MOSS-Image-Base"
+MOSS_BASE_REVISION = "85975793d8b3d432f1b6e27f352abaa4c2a4c0d3"  # pinned: the tokenizer and chat template MOSS reads
+
+# Qwen3.5 at width 16, a linear-attention layer then a full-attention one, its vision tower (never run) as small; the
+# vocabulary in full, as MOSS's own tokenizer writes every id of it
+TINY_QWEN3_5 = {
+    "text_config": {
+        "hidden_size": 16,
+        "intermediate_size": 32,
+        "num_hidden_layers": 2,
+        "layer_types": ["linear_attention", "full_attention"],
+        "num_attention_heads": 2,
+        "num_key_value_heads": 1,
+        "head_dim": 8,
+        "linear_key_head_dim": 8,
+        "linear_value_head_dim": 8,
+        "linear_num_key_heads": 2,
+        "linear_num_value_heads": 2,
+    },
+    "vision_config": {
+        "depth": 1,
+        "hidden_size": 16,
+        "intermediate_size": 32,
+        "num_heads": 2,
+        "out_hidden_size": 16,
+        "num_position_embeddings": 64,
+    },
+}
+# three blocks of width 32 over the tiny VAE's 4 channels packed 2x2 and the tiny Qwen3.5's 16
+TINY_MOSS_DIT = {
+    "dim": 32,
+    "ffn_dim": 64,
+    "num_heads": 2,
+    "num_layers": 3,
+    "text_dim": 16,
+    "freq_dim": 16,
+    "latent_channels": 16,
+}
+
+
+@pytest.fixture(scope="session")
+def tiny_moss(tiny_flux3_snapshot: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A tiny MOSS-Image repo, diffu-moss-init's, on a tiny Base snapshot: MOSS's own tokenizer (downloaded once), a
+    tiny Qwen3.5 text encoder, a VAE of FLUX.2's class that downsamples 8x as MOSS's does (tiny FLUX.3's) and a tiny
+    DiT whose unconditional pass skips its middle block, all random weights, so a prompt changes what it draws."""
+    base = tmp_path_factory.mktemp("moss_base")
+    snapshot = Path(snapshot_download(MOSS_BASE, revision=MOSS_BASE_REVISION, allow_patterns=["tokenizer/*"]))
+    shutil.copytree(snapshot / "tokenizer", base / "tokenizer")
+    torch.manual_seed(0)
+    Qwen3_5Model(Qwen3_5Config(**TINY_QWEN3_5)).save_pretrained(base / "text_encoder")
+    vae_config = {**AutoencoderKLFlux2.load_config(tiny_flux3_snapshot, subfolder="vae"), **TINY_FLUX3_VAE}
+    AutoencoderKLFlux2.from_config(vae_config).save_pretrained(base / "vae")
+    MossTransformer(**TINY_MOSS_DIT).save_pretrained(base / "transformer")
+    repo = tmp_path_factory.mktemp("moss")
+    write_moss_repo(repo, base=base, uncond_skip_layers=(1,))
     return repo
 
 

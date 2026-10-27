@@ -16,7 +16,13 @@ from diffu_page.pipeline import DrawSettings
 DEFAULTS = DrawSettings()  # every draw option's default comes from here
 
 Steps = Annotated[int, typer.Option(min=1, help="denoising steps per crop")]
-Guidance = Annotated[float, typer.Option(help="how hard guidance pushes toward the caption")]
+Guidance = Annotated[
+    float | None,
+    typer.Option(
+        help="how hard guidance pushes toward the caption (default: the model's own, 4 for FLUX.3 and diffu, 3 for "
+        "MOSS-Image)"
+    ),
+]
 ReferenceGuidanceScale = Annotated[
     float, typer.Option(help="how hard guidance also pushes toward the reference image (1: not at all)")
 ]
@@ -83,7 +89,9 @@ def parse_lora(value: str) -> Lora:
     return Lora(name=name, path=path)
 
 
-Model = Annotated[Path | None, typer.Option(help="the model directory (FLUX.3 Klein or diffu); default $FLUX3_MODEL")]
+Model = Annotated[
+    Path | None, typer.Option(help="the model directory (FLUX.3 Klein, diffu or MOSS-Image); default $FLUX3_MODEL")
+]
 Loras = Annotated[list[Lora] | None, typer.Option(parser=parse_lora, help="name=<NeMo LoRA model dir>")]
 
 
@@ -95,7 +103,7 @@ def text_layers(layers: list[int] | None) -> tuple[int, ...] | None:
 def settings_from_options(
     *,
     steps: int,
-    guidance: float,
+    guidance: float | None,
     reference_guidance: float,
     guidance_stop: float,
     text_layer: list[int] | None,
