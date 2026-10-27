@@ -106,9 +106,30 @@ What is known to be wrong or unfinished. Remove an item when it is done; add the
         real windows' 0.82; letter shapes to the sample 0.45, 0.41, 0.46 (real 0.39); ink colour 16.8, 12.3, 14.4
         (real 3.9). Read-back 0.061, 0.069, 0.066. Trained sample conditioning stays a later design; the hand comes
         from a LoRA or fine-tune.
-      - The 1715 LoRA's caches failed at once (27 Oct 08:43): the train configs' weights layer sets TEXT_ENCODER to
-        "" (its weights path) and the cache passes read the same knob as the encoder factory; moss_encoders.py names
-        both factories again (both passes of all four data configs now reach the device check on the CPU).
+        With the sample in the prompt MOSS writes the sample's TEXT, not its hand: the letter template gained lines
+        copied from the 1715 sample ("... 10 ... Månad og 8 ...", "communicera"; read-back 0.087 -> 0.428), and a
+        line of Pahlman's sample ("... à vendre, à vendre ...") showed at the top of its pair. The encoder hands the
+        DiT the sample's content; trained conditioning would have to learn the hand without it (pairs of different
+        text, as our style pairs are).
+      - 1, templates: untrained MOSS draws the letter, ledger and list form about as untrained FLUX.3 did: print
+        stays print, handwriting stays handwriting, the rules drawn, a few letter slips each ("Utgiter",
+        "hämmed"); read-back 0.087, 0.034, 0.034.
+      - 1, whole single pages (the fuller side of each held-out 1715 opening, per line, 2 MP, ~290 s a page on the
+        GB10): every one of the 22-24 lines in its place with its exact text (page number, heading, the indented
+        address block, margin numbers, hyphenated line ends) in a bound-volume look; read-back 0.024-0.099. Beside
+        FLUX.3's LoRA, cut to the same page: FLUX.3 has the clerk's hand and garbles words, MOSS has every word in its
+        own neat round hand. The LoRA is the missing half.
+      - The 1715 LoRA has not trained yet; three things stopped it, each fixed: (1) the train configs' weights layer
+        sets TEXT_ENCODER to "" (its weights path) and the cache passes read the same knob as the encoder factory:
+        moss_encoders.py names both factories again; (2) our cache check's decode ran outside inference mode:
+        moss_draw.decode runs in it now; (3) the cache check then found the trainer's text embeddings at cosine
+        0.991-0.994 from ours (relative 0.13-0.15; latents match at 0.99998, decode round trips 31.7-33.9 dB). Same
+        tokens and chat template; the trainer's packed kernel forward differs from transformers' on our ~1,000-token
+        captions far beyond bf16 rounding (its own docs: bf16 0.99984 from fp64 on short prompts; even fp8 0.996).
+        The caches are now written with the trainer's `forward: hf, layout: single` (transformers' modules, one
+        prompt a call, as drawing encodes; same cache key `bf16/compute`), the kernel-built 1715 text cache moved
+        to `cache/kernels_forward/`. Open for HPC: which forward is nearer an fp32 encode at our lengths (the fast
+        packed kernels would matter for big caches).
 
 ## Repo structure
 
