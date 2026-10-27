@@ -138,6 +138,47 @@ What is known to be wrong or unfinished. Remove an item when it is done; add the
         prompt a call, as drawing encodes; same cache key `bf16/compute`), the kernel-built 1715 text cache moved
         to `cache/kernels_forward/`. Open for HPC: which forward is nearer an fp32 encode at our lengths (the fast
         packed kernels would matter for big caches).
+      - 3, the 1715 LoRA on whole single pages (step 700, the fuller side of the 4 held-out openings, 2 MP, ~300 s a
+        page): read-back 0.027-0.061 (FLUX.3's LoRA drew the openings as spreads at guidance 2, 28 steps: 0.10-0.34).
+        By eye, beside the scans and FLUX.3's spreads cut to the page: the clerk's hand, every line in place (page
+        number, month heading, signature "J. Gripenborg", margin numbers), and the volume itself: the page block's
+        edge, a faint bleed-through, even the scanning operator's glove on some pages (learned from the scans; for
+        training data the glove may need a caption to leave it out). The closest drawings of the book so far.
+      - Document types (runs/moss_test/doc_pages_base, templates_forms_base; runs/moss_hand_1715/doc_pages,
+        templates_forms; scratchpad doctypes/pages.txt). Untrained, each in its own archive and scan look: a
+        livestock register (boskapslängd, two columns of names, animals and sums), a printed court-record form filled
+        in by hand (FNA) and a name register with a ruled number column (Politikollegiet): every entry and number in its
+        place (read-back 0.17, 0.06, 0.11). Two gaps, both in what the prompt is told: the court form's printed column
+        headings come out handwritten and its ruled columns are missing (its PAGE file marks no line printed and has
+        no SeparatorRegion), and the register's water stain and torn edge are not drawn (the look words do not
+        describe damage). Our own forms, untrained: the moving certificate and the parish register come out as printed
+        forms filled in by hand, print as print (the register's Fraktur too), the table ruled (0.04, 0.15: TrOCR does
+        not read Fraktur). With the 1715 LoRA (step 350, the book's look): the same pages in the clerk's hand
+        (0.19, 0.10, 0.04), the forms' printed text turned to handwriting as on the ledger, and the livestock register
+        gained a flourished heading the template has no line for: text the labels lack (FLUX.3's Pahlman LoRA wrote its
+        date range the same way). A page-level check that no ink stands outside the labelled lines must catch it.
+      - Untrained single pages at 2.5 MP (runs/moss_test/pages_line_25mp): the same hand and words as at 2 MP, ~370 s
+        a page against ~290 s, read-back 0.025-0.17 against 0.024-0.10; no gain seen, 2 MP stays the size.
+- [ ] **Templates marked from the scan** (started 27 Oct): ruled lines found on the scan (OpenCV) and each line
+      classified printed or handwritten (a small CNN trained on the printed GT-Lejonet-OCR lines against the HTR
+      lines, held out by collection), filled in where the PAGE file has no SeparatorRegion or @production; behind a
+      `diffu-generate` option. For any ground-truth form to come out with its print and its grid.
+- [ ] **MOSS reference image** (started 27 Oct): FLUX.3 Klein's reference path in our MOSS code (the reference's
+      latents as tokens beside the drawn image's, on the position axis images leave unused, kept at timestep 0, no new
+      weights) and our own LoRA training loop on the same-volume style pairs (data_flux3/style_pairs_v3*), ~20 % of
+      steps without a reference and half the rest without look words. Pilot on the GB10 at ~1 MP once it is in. Watch
+      what FLUX.3's trained reference did: it carried the reference's paper colour, partly its slant, not its ink or
+      hand (the v3 LoRA, above).
+- [ ] Queued 27 Oct after the document types (scratchpad queue_moss5.sh, then queue_moss6b.sh, queue_moss7.sh, then
+      E2c): the 4-page and Pahlman LoRAs, the full fine-tune, the looks, two hands in one fine-tune; the repo's
+      `diffu-generate` drawing a held-out 1715 page with the merged LoRA (the real-weights check of the port); MOSS
+      LoRAs of the two microfilm volumes FLUX.3's LoRAs learned (Stora Kopparbergs bergslag 1743, the 16th-century
+      Landskapshandlingar: MOSS then on all four of FLUX.3's volumes); the 1715 LoRA retrained with 42 printed
+      windows in its mix (data_flux3/hand_printed: books in Antiqua and Fraktur, newspapers, typewritten records,
+      every line captioned printed; scratchpad printmix/build_printed.py), drawn on the 1715 windows and all five
+      templates: does print stay print, and the hand the clerk's?
+- [ ] Still to compare FLUX.3 and MOSS on: several seeds a page, and a blind realism rating of real, FLUX.3 and MOSS
+      pages mixed together.
 - [x] **MOSS-Image in the repo** (27 Oct, the commit "MOSS-Image is the page pipeline's third model family"): the
       scratchpad's verified implementation ported as `packages/moss` (diffu-moss): `MossTransformer` (moss_model as
       it was, the checkpoint's names kept), `MossAutoBlocks` / `MossModularPipeline` (the Layout prompt compiled from a
