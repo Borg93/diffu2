@@ -489,6 +489,17 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
       PAGE, ALTO and macOS "._" copies). 28,417 scans are wider than tall, mostly two-page openings: split at the
       gutter, ~59k single pages. Never FLUX.3 outputs. What training on them takes (data, hardware, time per track):
       scratchpad research_pages/report.md (27 Oct).
+  - [x] Templates are single pages (27 Oct): an opening is split at its gutter (`diffu_page.layout.scan_pages`: the
+        widest line-free band of the scan's middle that parts no table, rather no text region either) and
+        diffu-generate draws and labels each page in its own coordinates. On the GT the cut lands at 0.38-0.62 of the
+        width for 98.6 % of the 27,169 openings and parts no table (a register's column gap, which the widest band
+        alone took on 6 Handelskollegiet / Politikollegiet openings, is passed over for the fold).
+  - [ ] The ~1 % where the transcribers' lines or a table run over the fold leave free bands only inside a page: the
+        cut lands there (FNA_1500 lists between a page's name and amount columns; two-page tables). A fold check on the
+        scan (the binding's shadow, the page edges) would place those; ~1,250 wide scans whose middle the lines cross
+        throughout stay whole (single wide sheets, or such openings).
+  - [ ] An opening's two pages both take the job's text from its start, so the right page repeats the left's first
+        words; give the right page the text the left one leaves over (`refill` would report where it stopped).
   - [ ] Crops from every page, not 40 per collection: ~6 crops per page (v2: 1,866 pages -> 11,329 crops), so
         ~600k crops. `build_crops` reads PAGE only: wire the ALTO reader (`layout/xml_replay.py`) into it for the
         100k+ ALTO pages, each with its scan image.
