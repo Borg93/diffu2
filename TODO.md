@@ -216,6 +216,23 @@ What is known to be wrong or unfinished. Remove an item when it is done; add the
       steps 1,000 and 2,000: can one adapter hold many hands, or do they blend? Writer identification over every run
       of the night once the draws are done: scratchpad writer/run_tonight.sh (add_moss.py now knows the four new
       hands).
+- [ ] **The reader we make data for** (the user, 27 Oct): DeepSeek-OCR 2 or PaddleOCR-VL 1.6, trained end to end on
+      whole pages; TrOCR is not the target ("don't focus on what's good or bad for trocr"), only our own line
+      read-back check on drawings. Both run on transformers' own implementations (5.20: `deepseek_ocr2`,
+      `paddleocr_vl`), no repository code: PaddlePaddle/PaddleOCR-VL-1.6 (Apache-2.0, 0.9B, its chat_template.jinja
+      fetched) and deepseek-community/DeepSeek-OCR-2 (Apache-2.0, the official weights converted for the native
+      class; deepseek-ai's own repo needs its code). The loop: (1) where the reader is weak: it reads whole held-out
+      real single pages of every handwritten collection (scratchpad readers/reader_eval.py, page CER against the
+      transcription in reading order, markup stripped), queued first after tonight's queue (queue_readers.sh); the CPU
+      smoke test: untrained PaddleOCR-VL reads "618 / October" right and the 1715 clerk's first line as "The Rung Hoh
+      can…"; (2) learn those hands (4 transcribed pages are enough, 27 Oct); (3) generate pages of them with text aimed
+      at what the reader misreads, on the volumes' own layouts and real paper; (4) oversample them; (5) fine-tune the
+      reader on real and real + synthetic pages, compared on held-out real pages. Labels in the readers' formats
+      (Markdown in reading order with tables, DeepSeek's grounded form, PaddleOCR-VL's element records, fine-tuning
+      JSONL): being built (27 Oct).
+- [x] The two full fine-tunes were refused by spark_guard (they asked 85 GB plus its 20 GB floor; the box keeps ~18 GB
+      for its services, so ~101 GB is ever free): the trainer's own estimate for ckpt-resident-optfused at 1 MP is
+      64.8 GiB, so they ask 70 GB now and run after the readers and the canvas test (queue_fullft.sh).
 - [ ] **Drawn ink on the real page's paper** (27 Oct, scratchpad paper/paper_composite.py, CPU, OpenCV; after the
       first blind rater: "the background and the details in the paper and the hand style look more real", and all the
       damage, bleed-through and fingers): a ground-truth template is a real scan, so its paper can be kept and only
