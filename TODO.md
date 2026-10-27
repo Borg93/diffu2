@@ -199,7 +199,11 @@ What is known to be wrong or unfinished. Remove an item when it is done; add the
       pages mixed together. On the 1715 windows (medians, scratchpad moss_test/compare_runs.py) MOSS's LoRA reads back
       0.042 / 0.032 at steps 350 / 700 against FLUX.3's 0.056 / 0.064; on the mean the two are close (0.060 / 0.065
       against 0.057 / 0.073): MOSS reads one window badly (0.17-0.24), where by eye its words are right but a line
-      cut off by the window's top edge and a large heading letter read badly.
+      cut off by the window's top edge and a large heading letter read badly. Writer identification on the 4 whole
+      pages (scratchpad writer/add_pages.py, report_pages.json): real 89 %, FLUX.3's LoRA 84 %, MOSS's LoRA 66 % (its
+      pages drawn at step 700, the weaker checkpoint on windows: 67 % against 79 % at 350; step 350's pages queued
+      before E2c, scratchpad queue_pages350.sh), untrained MOSS 0 %: FLUX.3's LoRA carries more of what the identifier
+      reads as the clerk, MOSS more legibility (and, to the first blind rater, a little more realism).
 - [ ] Queued 27 Oct after the microfilm LoRAs (scratchpad queue_canvas.sh, then queue_moss7b.sh, queue_moss8b.sh,
       then E2c): (1) held-out 1715 windows drawn on real blank pages (GT-RA_tomma_sidor: stained paper, microfilm with
       the other side showing through, a brown-stained page, a ruled ledger; moss_test/draw_canvas.py): the drawing
