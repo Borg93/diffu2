@@ -119,7 +119,15 @@ What is known to be wrong or unfinished. Remove an item when it is done; add the
         address block, margin numbers, hyphenated line ends) in a bound-volume look; read-back 0.024-0.099. Beside
         FLUX.3's LoRA, cut to the same page: FLUX.3 has the clerk's hand and garbles words, MOSS has every word in its
         own neat round hand. The LoRA is the missing half.
-      - The 1715 LoRA has not trained yet; three things stopped it, each fixed: (1) the train configs' weights layer
+      - 3, the 1715 LoRA (27 Oct 10:03-11:10, 700 steps of 2 at 5.1-5.6 s a step on the GB10, box peak 69 GB): at
+        step 350 it writes the clerk's hand with every line's exact text in its box. By eye beside the real windows,
+        FLUX.3's LoRA and untrained MOSS: the clerk's fast slanted cursive and his letterforms (the flourished
+        "September", long s, "H:r", the "=" hyphen, the margin numbers), where FLUX.3's LoRA is rounder and garbles
+        words and untrained MOSS writes its own neat hand. Medians over the 8 held-out windows (distance to the real
+        hand): slant 2.5 deg (FLUX.3 LoRA 2.5, untrained MOSS 13.5), pen 0.22 (0.15, 0.78), letters 0.34 (0.33,
+        0.28), density 0.22 (0.12, 0.72), ink dE 13.1 (22.5, 28.0); read-back 0.042 (0.061; real 0.034). The pen is
+        still a little heavier and the writing denser than the clerk's; step 700 and writer-ID follow.
+      - The 1715 LoRA was held back three times before it trained, each fixed: (1) the train configs' weights layer
         sets TEXT_ENCODER to "" (its weights path) and the cache passes read the same knob as the encoder factory:
         moss_encoders.py names both factories again; (2) our cache check's decode ran outside inference mode:
         moss_draw.decode runs in it now; (3) the cache check then found the trainer's text embeddings at cosine
