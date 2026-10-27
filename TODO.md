@@ -182,7 +182,11 @@ What is known to be wrong or unfinished. Remove an item when it is done; add the
 - [ ] **A blind realism test** (https://claude.ai/artifact/JjzgeEcpEzSurya6hGQFx4, scratchpad rating/): 8 windows and
       4 whole pages of the 1715 book, each four ways (the scan, FLUX.3's LoRA, untrained MOSS, MOSS's LoRA), shuffled
       per rater; pick the real one and score each 1-5; answers in the page's database (ratings/<rater>), the key in
-      scratchpad rating/key.json only. Count it once people have answered.
+      scratchpad rating/key.json only. First rater (the project lead, 27 Oct): the real scan picked in 12 of 12 sets
+      (8 windows, 4 pages), so to an expert eye neither model passes for a scan yet. Realism scores 1-5, means: real
+      5.0, MOSS's LoRA 3.42, FLUX.3's LoRA 3.25, untrained MOSS 1.92; windows MOSS 3.25 / FLUX.3 3.25, whole pages
+      MOSS 3.75 / FLUX.3 3.25 (one MOSS page scored 5); per set MOSS higher in 6, FLUX.3 in 3, equal in 3. More
+      raters to come; what gave the scans away decides what to train next.
 - [ ] Queued 27 Oct after the document types (scratchpad queue_moss5.sh, then queue_moss6b.sh, queue_moss7.sh, then
       E2c): the 4-page and Pahlman LoRAs, the full fine-tune, the looks, two hands in one fine-tune; the repo's
       `diffu-generate` drawing a held-out 1715 page with the merged LoRA (the real-weights check of the port); MOSS
