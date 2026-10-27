@@ -159,16 +159,30 @@ What is known to be wrong or unfinished. Remove an item when it is done; add the
         date range the same way). A page-level check that no ink stands outside the labelled lines must catch it.
       - Untrained single pages at 2.5 MP (runs/moss_test/pages_line_25mp): the same hand and words as at 2 MP, ~370 s
         a page against ~290 s, read-back 0.025-0.17 against 0.024-0.10; no gain seen, 2 MP stays the size.
-- [ ] **Templates marked from the scan** (started 27 Oct): ruled lines found on the scan (OpenCV) and each line
-      classified printed or handwritten (a small CNN trained on the printed GT-Lejonet-OCR lines against the HTR
-      lines, held out by collection), filled in where the PAGE file has no SeparatorRegion or @production; behind a
-      `diffu-generate` option. For any ground-truth form to come out with its print and its grid.
-- [ ] **MOSS reference image** (started 27 Oct): FLUX.3 Klein's reference path in our MOSS code (the reference's
-      latents as tokens beside the drawn image's, on the position axis images leave unused, kept at timestep 0, no new
-      weights) and our own LoRA training loop on the same-volume style pairs (data_flux3/style_pairs_v3*), ~20 % of
-      steps without a reference and half the rest without look words. Pilot on the GB10 at ~1 MP once it is in. Watch
-      what FLUX.3's trained reference did: it carried the reference's paper colour, partly its slant, not its ink or
-      hand (the v3 LoRA, above).
+- [x] **MOSS takes a sample page** (27 Oct, the commit "MOSS-Image takes a sample page as a reference image once
+      trained to"): FLUX.3 Klein's reference path in our MOSS code (a reference's clean latents as tokens after the
+      prompt's, on the position axis images left unused at k + 1, modulated as at timestep 0, no new weights; without
+      references the DiT is bit for bit the released one) and our own LoRA training loop (`diffu_moss.train`: v3d's
+      style pairs, the 85 leaky ones left out; each pair's prompt form fixed when cached, 20 % without the reference,
+      40 % with it and the look words, 40 % with it and none; MOSS's own noise levels, flow matching over the drawn
+      image's tokens; the 1715 recipe's LoRA in float32; joint blocks checkpointed; a validation loss per prompt form
+      at the same noise; `diffu-moss-export-ref` merges a checkpoint, and only its export may take a reference).
+      Queued (scratchpad queue_ref.sh, after the print mix): `jobs/moss/run_ref_pilot.sh` (cache 4,000 pairs, a 5-step
+      smoke run, 1,500 steps, export, 8 held-out crops drawn with and without their reference; ~6-8 h). Next if the
+      look carries: pairs from any page of the volume (v3/v3b-style), the intended use.
+- [x] **Templates marked from their scans** (27 Oct, the commit "Ground-truth templates marked from their scans"):
+      `diffu-generate --mark-from-scan`: lines a PAGE file says nothing of are read printed by a small CNN
+      (runs/print_hand/print_hand.pt, outside git) when it is 90 % sure, ruled lines found on the scan (OpenCV) when
+      the file has none. Held out by collection: 89.8 % of printed lines read printed, 0.17 % of handwritten ones;
+      fraktur (55 %) and typewriting (72-97 %) the weakest. By eye on the FNA court form: every printed column heading
+      printed (sideways ones too), no entry; its column rules, heading rules and the double rule found, the fold and
+      the book block's edges left out. Open: an opening's two page jobs mark it twice; wrong rules on plain pages
+      (edges, flourishes, a fold missed); fraktur and typewriting under 0.9; HTR ground truth that labels printed
+      headings as handwriting (noise in the classifier's training lines).
+- [ ] **A blind realism test** (https://claude.ai/artifact/JjzgeEcpEzSurya6hGQFx4, scratchpad rating/): 8 windows and
+      4 whole pages of the 1715 book, each four ways (the scan, FLUX.3's LoRA, untrained MOSS, MOSS's LoRA), shuffled
+      per rater; pick the real one and score each 1-5; answers in the page's database (ratings/<rater>), the key in
+      scratchpad rating/key.json only. Count it once people have answered.
 - [ ] Queued 27 Oct after the document types (scratchpad queue_moss5.sh, then queue_moss6b.sh, queue_moss7.sh, then
       E2c): the 4-page and Pahlman LoRAs, the full fine-tune, the looks, two hands in one fine-tune; the repo's
       `diffu-generate` drawing a held-out 1715 page with the merged LoRA (the real-weights check of the port); MOSS
