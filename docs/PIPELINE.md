@@ -20,7 +20,10 @@ PAGE/ALTO page ──► LoadLayout ──► Refill ──► PlanCrops ──�
    reading order; an element without an id is keyed by its place, so it stays a region of its own. The training-crop
    builder cuts its crops from this same layout (`crops.regions_of`, at the scan's size), so a page is planned for
    generation exactly where its training crops were cut. PAGE and ALTO are only formats here: the layout is what the
-   rest uses.
+   rest uses. Given a side (`PageJob.side`), it reads that page of a two-page opening as a page of its own
+   (`layout.scan_pages`: the scan split at its gutter, the page's lines and ruled lines in its own coordinates), so
+   its crops and labels are a single page's; diffu-generate gives each page of an opening its own job
+   (`jobs.single_pages`).
 2. **Refill** (`RefillStep`, `layout.refill`): the running-text lines get new text at the page's own writing density;
    a blank line in the text ends a paragraph and the next starts on a fresh line; margin notes, headings and page
    numbers keep theirs.

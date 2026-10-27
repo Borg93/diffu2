@@ -53,9 +53,11 @@ cd ~/Desktop/repos/Automodel && ~/Desktop/repos/diffu2/jobs/spark_guard.sh --nee
 ```
 
 `--text-from` also takes a plain text file, written as it stands (a blank line ends a paragraph). `--whole-page`
-draws each template whole (`--page-megapixels`, 2.5 by default) instead of as training-scale windows. To give every
-page its own template, text, style, seed, reference and size, write them to a job file, one `diffu_page.jobs.PageJob`
-per line (the run file diffu-runner reads), and pass `--jobs run.jsonl` instead of the page options:
+draws each template whole (`--page-megapixels`, 2.5 by default) instead of as training-scale windows. A template that
+is a two-page opening, as most GT scans are, is drawn as its single pages, never as a spread (`summary.json` lists
+them; a job line can ask for one, `"side": "left"` or `"right"`). To give every page its own template, text, style,
+seed, reference and size, write them to a job file, one `diffu_page.jobs.PageJob` per line (the run file diffu-runner
+reads), and pass `--jobs run.jsonl` instead of the page options:
 
 ```json
 {"template": "page_a.xml", "text": "Anno 1720 den 5 maj ...", "style": {"provenance": {"title": "the court records of Jämtlands domsaga", "years": "1720"}, "look": {"greyscale": false, "paper": "cream", "ink": "dark brown"}}, "page_pixels": 2500000, "id": "jamt_1720_p1"}

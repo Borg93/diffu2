@@ -2,8 +2,9 @@
 
 A :class:`PageJob` is a real template page, the text to write into it and the style to draw it in (one per line of a
 run file, where a line may name its style instead: a :class:`PageRequest`, resolved with the style presets of
-:mod:`diffu_page.styles`). Each page is planned on CPU into :class:`CropJob` s (:func:`crop_jobs`), and each crop job
-is drawn on its own with the crop pipeline: by diffu-generate one after another, by diffu-runner's GPU actors in
+:mod:`diffu_page.styles`). A job of a two-page opening becomes a job per page (:func:`single_pages`), so a run draws
+single pages, never a spread. Each page is planned on CPU into :class:`CropJob` s (:func:`crop_jobs`), and each crop
+job is drawn on its own with the crop pipeline: by diffu-generate one after another, by diffu-runner's GPU actors in
 parallel. Crops are named and seeded by ``crop_identity``, so a page comes out the same either way.
 """
 
@@ -18,6 +19,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from diffu_page.blocks import crop_identity
 from diffu_page.captions.prompt import PageStyle
+from diffu_page.layout import PageSide, load_xml_layout, scan_pages
 from diffu_page.output import load_rgb, plain_file_name, validation_problems
 from diffu_page.pipeline import PagePlanBlocks
 from diffu_page.plan import CropPlan, Reference
@@ -34,6 +36,7 @@ class PageJob(BaseModel):
     the crops are then captioned as its LoRA was trained. ``page_pixels`` plans the page whole, as one crop of about
     that many pixels, instead of as training-scale windows. ``id``, a plain file name such as a content hash, names and
     seeds the page's crops in place of the page's place in the run, so adding or removing pages moves no other page.
+    ``side`` draws one page of a two-page opening as a single page, in its own coordinates (:func:`single_pages`).
     """
 
     template: Path
@@ -43,6 +46,7 @@ class PageJob(BaseModel):
     reference: Reference | None = None
     page_pixels: int | None = Field(default=None, gt=0)
     id: str | None = None
+    side: PageSide | None = None
 
     @field_validator("id")
     @classmethod
@@ -50,8 +54,12 @@ class PageJob(BaseModel):
         return None if page_id is None else plain_file_name(page_id)
 
     def name_at(self, index: int) -> str:
-        """The page's name as page ``index`` of a run: its id if it has one."""
-        return self.id if self.id is not None else f"{index:03d}_{self.template.stem}"
+        """The page's name as page ``index`` of a run: its id if it has one, else its place and template, then the
+        side of the opening it is a page of."""
+        if self.id is not None:
+            return self.id
+        name = f"{index:03d}_{self.template.stem}"
+        return name if self.side is None else f"{name}_{self.side}"
 
     def seed_at(self, index: int) -> int:
         """The noise seed of the page's first crop as page ``index`` of a run: from its id if it has one."""
@@ -79,6 +87,7 @@ class PageRequest(BaseModel):
     reference: Reference | None = None
     page_pixels: int | None = Field(default=None, gt=0)
     id: str | None = None
+    side: PageSide | None = None
 
     def resolve(self, presets: Mapping[str, StylePreset], loras: dict[str, Path]) -> ResolvedPage:
         """The page asked for and the LoRAs that draw it: a style spelled out by ``loras`` (the run's); a named one in
@@ -104,7 +113,25 @@ class PageRequest(BaseModel):
             reference=reference,
             page_pixels=self.page_pixels,
             id=self.id,
+            side=self.side,
         )
+
+
+def single_pages(page: PageJob) -> list[PageJob]:
+    """The single pages a page job draws: a job for each page of a two-page opening that holds a line
+    (:func:`diffu_page.layout.scan_pages`), its side set and the job's id, if it has one, suffixed with the side. Any
+    other job draws a single page as it is: a single page's job, one already given a side, or one whose template cannot
+    be read."""
+    if page.side is not None:
+        return [page]
+    try:
+        layout = load_xml_layout(page.template)
+    except (OSError, ValueError):
+        return [page]  # planning reads the template too, and records why it cannot
+    sides = [scan_page.side for scan_page in scan_pages(layout) if scan_page.side is not None]
+    return [
+        page.model_copy(update={"side": side, "id": None if page.id is None else f"{page.id}_{side}"}) for side in sides
+    ] or [page]
 
 
 def read_page_jobs(path: Path, *, presets: Mapping[str, StylePreset], loras: dict[str, Path]) -> list[ResolvedPage]:
@@ -151,6 +178,7 @@ def crop_jobs(page: PageJob, index: int) -> list[CropJob]:
     planner = PagePlanBlocks().init_pipeline()
     plans = planner(
         template=page.template,
+        side=page.side,
         text=page.text,
         style=page.style,
         reference=page.reference,

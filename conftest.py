@@ -72,6 +72,28 @@ def two_column_page(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def opening_page(tmp_path: Path) -> Path:
+    """A 2500 x 1200 px two-page opening: four lines on the left page (x 100-1000), three on the right (x 1400-2400), a
+    note in the left page's inner margin (x 1050-1150, read last) and a ruled line across both pages under their first
+    lines. Its gutter is at x 1275, the middle of the widest band of its middle no line crosses (1150-1400)."""
+    left = "".join(_line(f"l{i}", 100, 1000, 300 + 100 * i, f"left line {i}") for i in range(4))
+    right = "".join(_line(f"r{i}", 1400, 2400, 300 + 100 * i, f"right line {i}") for i in range(3))
+    path = tmp_path / "opening.xml"
+    path.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<PcGts xmlns="http://schema.primaresearch.org/PAGE/gts/pagecontent/2019-07-15">'
+        '<Page imageFilename="opening.jpg" imageWidth="2500" imageHeight="1200">'
+        f'<TextRegion id="left" type="paragraph">{left}</TextRegion>'
+        f'<TextRegion id="right" type="paragraph">{right}</TextRegion>'
+        f'<TextRegion id="note" type="marginalia">{_line("n", 1050, 1150, 400, "No 12")}</TextRegion>'
+        '<SeparatorRegion id="rule"><Coords points="100,330 2400,330 2400,332 100,332"/></SeparatorRegion>'
+        "</Page></PcGts>",
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.fixture
 def wide_and_narrow_body_page(tmp_path: Path) -> Path:
     """A 1700 x 900 px page: a wide body block of three lines and beside it a narrow one, too narrow to be cropped
     alone, so both are planned into one crop (as the two pages of a spread can be)."""

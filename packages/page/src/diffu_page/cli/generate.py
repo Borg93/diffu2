@@ -3,21 +3,22 @@ style.
 
 Each template (a real PAGE/ALTO page, or one written for the purpose) is planned on CPU
 (:func:`diffu_page.jobs.crop_jobs`): its running text is replaced by the new text and it is cut into training-scale
-crops, or with ``--whole-page`` kept whole as one crop of ``--page-megapixels``. Each crop is then drawn on its own by the crop
-pipeline (FLUX.3 + LoRAs, or diffu), read back line by line, and labelled with badly read lines tagged ``unclear``,
-as diffu-runner's GPU actors draw it. The text comes from ``--text-from``: a PAGE/ALTO page's running text, or a
-plain text file as it stands (a blank line ends a paragraph). With ``--reference`` (a crop to draw in the hand of,
-for the v3 LoRAs) every crop is drawn from it and captioned as the LoRA was trained (``--reference-caption``:
-``described`` measures the crop's hand, so it needs the crop's ``metadata.jsonl`` from ``diffu_page.data.build_crops``
-beside it). ``--jobs`` gives each page its own template, text, style, seed, reference and size instead: one
-:class:`diffu_page.jobs.PageJob` per line, the run file diffu-runner reads. A style can be named instead of spelled out:
-``--style`` (or a job line's ``style``) names a preset of ``--styles`` (:mod:`diffu_page.styles`: the archive and years,
-the look, the hand's LoRA and a reference), and its page is drawn by the preset's hand alone; a style spelled out is
-drawn with ``--lora``. A run can so draw several hands: its pages are drawn group by group, one group per set of LoRAs,
-each group's pipeline loaded once and released before the next loads. Writes ``<out>/<page>_<k>.jpg`` + ``.xml`` per
-crop and ``<out>/summary.json``; a page that cannot be planned and a crop that cannot be drawn are recorded there by name
-and the run goes on. ``--profile <dir>`` also records a torch profiler trace (Perfetto) of crops 2-3 after a warm-up
-crop. One GPU job, through jobs/spark_guard.sh:
+crops, or with ``--whole-page`` kept whole as one crop of ``--page-megapixels``. A two-page opening (most scans) is
+planned as its single pages, never as a spread (:func:`diffu_page.jobs.single_pages`), and ``summary.json`` lists them.
+Each crop is then drawn on its own by the crop pipeline (FLUX.3 + LoRAs, or diffu), read back line by line, and labelled
+with badly read lines tagged ``unclear``, as diffu-runner's GPU actors draw it. The text comes from ``--text-from``: a
+PAGE/ALTO page's running text, or a plain text file as it stands (a blank line ends a paragraph). With ``--reference``
+(a crop to draw in the hand of, for the v3 LoRAs) every crop is drawn from it and captioned as the LoRA was trained
+(``--reference-caption``: ``described`` measures the crop's hand, so it needs the crop's ``metadata.jsonl`` from
+``diffu_page.data.build_crops`` beside it). ``--jobs`` gives each page its own template, text, style, seed, reference,
+size and side instead: one :class:`diffu_page.jobs.PageJob` per line, the run file diffu-runner reads. A style can be
+named instead of spelled out: ``--style`` (or a job line's ``style``) names a preset of ``--styles``
+(:mod:`diffu_page.styles`: the archive and years, the look, the hand's LoRA and a reference), and its page is drawn by
+the preset's hand alone; a style spelled out is drawn with ``--lora``. A run can so draw several hands: its pages are
+drawn group by group, one group per set of LoRAs, each group's pipeline loaded once and released before the next loads.
+Writes ``<out>/<page>_<k>.jpg`` + ``.xml`` per crop and ``<out>/summary.json``; a page that cannot be planned and a crop
+that cannot be drawn are recorded there by name and the run goes on. ``--profile <dir>`` also records a torch profiler
+trace (Perfetto) of crops 2-3 after a warm-up crop. One GPU job, through jobs/spark_guard.sh:
 
     jobs/spark_guard.sh --need-gb 45 --name pages -- diffu-generate \\
         --templates <page.xml> --templates <page.xml> --text-from <page.xml> --lora v2=<ckpt>/model --out <dir> \\
@@ -69,7 +70,7 @@ from diffu_page.cli.options import (
     required_model,
     settings_from_options,
 )
-from diffu_page.jobs import CropJob, PageJob, PageRequest, ResolvedPage, crop_jobs, read_page_jobs
+from diffu_page.jobs import CropJob, PageJob, PageRequest, ResolvedPage, crop_jobs, read_page_jobs, single_pages
 from diffu_page.judge import Judge, TrOCRJudge
 from diffu_page.layout import load_xml_layout, running_text
 from diffu_page.local_run import run_each
@@ -456,6 +457,7 @@ def generate(
         )
     if draw_settings.guides_reference and all(page.page.reference is None for page in pages):
         raise typer.BadParameter("there is no --reference to guide toward", param_hint="--reference-guidance")
+    pages = [ResolvedPage(page=single, loras=page.loras) for page in pages for single in single_pages(page.page)]
     groups = page_groups(pages)
     jobs, failed = plan_groups(pages, groups)  # before any model loads: a run whose pages plan to nothing loads none
     crops: list[CropSummary] = []

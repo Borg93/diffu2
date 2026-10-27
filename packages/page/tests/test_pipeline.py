@@ -33,6 +33,7 @@ from diffu_page.crops.grid import as_reference
 from diffu_page.glyphs import glyph_map
 from diffu_page.jobs import PageJob, crop_jobs
 from diffu_page.judge import LineVerdict
+from diffu_page.layout import PageSide
 from diffu_page.local_run import NOT_RUN
 from diffu_page.lora import ADAPTER_CONFIG, ADAPTER_WEIGHTS, nemo_lora_state_dict
 from diffu_page.output import jpeg_bytes
@@ -106,6 +107,19 @@ def _alto_lines(labels_xml: str) -> list[str]:
     root = ET.fromstring(labels_xml)
     lines = [e for e in root.iter() if e.tag.endswith("TextLine")]
     return [" ".join(s.get("CONTENT", "") for s in line.iter() if s.tag.endswith("String")) for line in lines]
+
+
+def _page_geometry(labels: Path) -> tuple[tuple[int, int], list[tuple[int, int]]]:
+    """A PAGE label file's page size, and the x-extent of each line's outline in reading order."""
+    root = ET.parse(labels).getroot()
+    page = next(e for e in root.iter() if e.tag.endswith("}Page"))
+    outlines = [
+        next(e for e in line if e.tag.endswith("}Coords")).get("points", "")
+        for line in root.iter()
+        if line.tag.endswith("}TextLine")
+    ]
+    xs = [[int(point.split(",")[0]) for point in outline.split()] for outline in outlines]
+    return (int(page.get("imageWidth", "")), int(page.get("imageHeight", ""))), [(min(x), max(x)) for x in xs]
 
 
 def test_crop_pipeline_draws_a_plan_with_one_unclear_label_per_line(crop_pipe: ModularPipeline) -> None:
@@ -406,12 +420,14 @@ def test_generate_refuses_a_reference_option_without_a_reference_before_it_loads
     assert refusal in message
 
 
-def test_generate_records_a_page_that_plans_to_no_crop_without_loading_the_model(
+def test_generate_records_each_page_it_cannot_plan_without_loading_the_model(
     one_line_page: Path, body_and_notes_page: Path, tmp_path: Path
 ) -> None:
     no_model = tmp_path / "no_model"  # never read: no page plans to a crop
-    args = ["--templates", str(one_line_page), "--text-from", str(body_and_notes_page), "--title", "the archive"]
-    args += ["--model", str(no_model), "--out", str(tmp_path), "--steps", "2", "--text-layer", "1", "--device", "cpu"]
+    missing = tmp_path / "missing.xml"  # a template that cannot be read, so not split into its pages either
+    args = ["--templates", str(one_line_page), "--templates", str(missing), "--text-from", str(body_and_notes_page)]
+    args += ["--title", "the archive", "--model", str(no_model), "--out", str(tmp_path)]
+    args += ["--steps", "2", "--text-layer", "1", "--device", "cpu"]
 
     result = CliRunner().invoke(generate_app, args)
 
@@ -423,10 +439,12 @@ def test_generate_records_a_page_that_plans_to_no_crop_without_loading_the_model
         [],
     )
     assert [(page.template, page.style, page.seed) for page in summary.pages] == [
-        (one_line_page, FLAG_STYLE, 0)  # the style the flags name, with their defaults
+        (one_line_page, FLAG_STYLE, 0),  # the style the flags name, with their defaults
+        (missing, FLAG_STYLE, 0),
     ]
     assert summary.failed == {
-        "000_one_line": f"ValueError: {one_line_page} plans to no crops: no window of it holds enough whole lines"
+        "000_one_line": f"ValueError: {one_line_page} plans to no crops: no window of it holds enough whole lines",
+        "001_missing": f"FileNotFoundError: [Errno 2] No such file or directory: '{missing}'",
     }
 
 
@@ -551,6 +569,41 @@ def test_generate_draws_each_hands_pages_with_its_own_pipeline_and_keeps_their_n
     ]
     drawn = [(tmp_path / "out" / f"{job.name}.jpg").read_bytes() for _, job in jobs]
     assert drawn == [jpeg_bytes(crop.image) for crop in expected]
+
+
+def test_generate_draws_an_opening_whole_as_its_two_pages_each_labelled_in_its_own_coordinates(
+    tiny_flux3: Path, opening_page: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, page_text: str
+) -> None:
+    text_file = tmp_path / "text.txt"
+    text_file.write_text(page_text, encoding="utf-8")
+    monkeypatch.setattr("diffu_page.cli.generate.TrOCRJudge", lambda device: ScriptedJudge())  # reads are not tested
+    args = ["--templates", str(opening_page), "--text-from", str(text_file), "--title", "the archive", "--whole-page"]
+    args += [
+        "--page-megapixels",
+        "0.25",
+        "--format",
+        "page",
+        "--model",
+        str(tiny_flux3),
+        "--out",
+        str(tmp_path / "out"),
+    ]
+
+    result = CliRunner().invoke(generate_app, [*args, *TINY_OPTIONS])
+
+    assert result.exit_code == 0
+    summary = Summary.model_validate_json((tmp_path / "out" / "summary.json").read_text())
+    assert summary.pages == [
+        PageJob(template=opening_page, text=page_text.strip(), style=FLAG_STYLE, page_pixels=250_000, side=side)
+        for side in (PageSide.LEFT, PageSide.RIGHT)
+    ]
+    # each page drawn at about 0.25 MP (the left one, 1275 x 1200 px, at 512 x 480; the right, 1225 x 1200, at
+    # 512 x 496) and each line labelled where it stands on its page: its slot, its x-extent and 15 px (0.15 of the
+    # 100 px pitch) either side, so the right page's lines, x 1400-2400 of the scan and 125-1125 of the page, at 46-477
+    assert [(crop.name, *_page_geometry(tmp_path / "out" / f"{crop.name}.xml")) for crop in summary.crops] == [
+        ("000_opening_left_0", (512, 480), [(34, 408)] * 4 + [(416, 468)]),  # four lines, then the inner margin's note
+        ("001_opening_right_0", (512, 496), [(46, 477)] * 3),
+    ]
 
 
 @pytest.mark.parametrize(

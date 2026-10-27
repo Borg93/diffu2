@@ -4,8 +4,9 @@ A model repo (FLUX.3 Klein for the reference runs; diffu, FLUX.3's architecture 
 in ``modular_model_index.json``; :data:`FAMILIES` maps those to the model's blocks and pipeline class, so a model is
 chosen by its directory alone. Two sets of blocks are built:
 
-- :class:`PagePlanBlocks` (no model): ``LoadLayoutStep`` -> ``RefillStep`` -> ``PlanCropsStep``. A template page, a
-  text, a style and optionally a reference crop in; the crops to draw out, captioned for the reference if there is one.
+- :class:`PagePlanBlocks` (no model): ``LoadLayoutStep`` -> ``RefillStep`` -> ``PlanCropsStep``. A template page (or
+  one page of a two-page opening), a text, a style and optionally a reference crop in; the crops to draw out, captioned
+  for the reference if there is one.
 - :func:`crop_blocks`: ``CropPromptStep`` -> ``GlyphMapStep`` -> ``ReferenceGridStep`` -> the model's text encoder,
   VAE encoders, denoise and decode. A crop plan in; its image out. The model's auto blocks pick text-to-image or
   reference-conditioned denoising from the inputs (``image``); a line repair sits in both
@@ -139,8 +140,8 @@ def crop_blocks(family: ModelFamily) -> CropBlocks:
 
 
 class PagePlanBlocks(SequentialPipelineBlocks):
-    """A template page, a text, a style and optionally a reference crop in; the crops to draw out. No model: CPU
-    only."""
+    """A template page (or one page of a two-page opening), a text, a style and optionally a reference crop in; the
+    crops to draw out. No model: CPU only."""
 
     block_classes = [LoadLayoutStep, RefillStep, PlanCropsStep]
     block_names = ["load_layout", "refill", "plan_crops"]

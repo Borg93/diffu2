@@ -959,6 +959,10 @@ local Ray, profiled before and after; no cluster runs until the tests are done:
 - [ ] The driver reads every job into a list (`read_pages` -> `from_items`) and names and seeds crops by the page's
       position in the run file (two run files reuse the same seeds): read jobs with `ray.data.read_json`, and give
       every page a content-based id (template, text and style hashed) that names and seeds its crops.
+- [ ] The runner plans each page job as it stands, so a template that is a two-page opening (most GT scans) would be
+      drawn as a spread: give each page of an opening its own job before planning, as diffu-generate does
+      (`diffu_page.jobs.single_pages`: the page's side set, the job's id suffixed with it; a template that cannot be
+      read left for planning to record), so a Ray run draws single pages only.
 - [ ] Our own parallelism: `style_pairs` runs a `ProcessPoolExecutor`: build the pairs as a Ray Data map over pages.
 - [x] `page_blocks` looped over a page's crops inside one pipeline call: removed (24 Oct, the user's call); generate
       draws crop jobs one by one, so one failed crop costs no other.

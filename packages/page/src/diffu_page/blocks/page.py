@@ -9,22 +9,33 @@ from typing import override
 from diffusers.modular_pipelines import InputParam, ModularPipeline, ModularPipelineBlocks, OutputParam, PipelineState
 
 from diffu_page.captions.prompt import PageStyle
-from diffu_page.layout import Layout, load_xml_layout, refill
+from diffu_page.layout import Layout, PageSide, load_xml_layout, refill, scan_pages
 from diffu_page.plan import Reference, plan_page, plan_whole_page
 
 
 class LoadLayoutStep(ModularPipelineBlocks):
-    """A PAGE or ALTO page read as its layout: its size and its text lines in reading order."""
+    """A PAGE or ALTO page read as its layout: its size and its text lines in reading order; with a side, that page of
+    a two-page opening in its own coordinates."""
 
     @property
     @override
     def description(self) -> str:
-        return "Reads a PAGE or ALTO file as its layout: the page size, and each line's text, box, baseline and region."
+        return (
+            "Reads a PAGE or ALTO file as its layout: the page size, and each line's text, box, baseline and region; "
+            "of an opening, the page on the side asked for, as a page of its own."
+        )
 
     @property
     @override
     def inputs(self) -> list[InputParam]:
-        return [InputParam("template", type_hint=Path, required=True, description="A PAGE or ALTO file to redraw.")]
+        return [
+            InputParam("template", type_hint=Path, required=True, description="A PAGE or ALTO file to redraw."),
+            InputParam(
+                "side",
+                type_hint=PageSide,
+                description="The page of a two-page opening to redraw, as a single page (diffu_page.layout.pages).",
+            ),
+        ]
 
     @property
     @override
@@ -33,7 +44,17 @@ class LoadLayoutStep(ModularPipelineBlocks):
 
     def __call__(self, components: ModularPipeline, state: PipelineState) -> tuple[ModularPipeline, PipelineState]:
         block_state = self.get_block_state(state)
-        block_state.layout = load_xml_layout(Path(block_state.template))
+        template, side = Path(block_state.template), block_state.side
+        layout = load_xml_layout(template)
+        if side is not None:
+            page = next((page for page in scan_pages(layout) if page.side == side), None)
+            if page is None:
+                raise ValueError(
+                    f"{template} has no {side} page to draw: it is a single page, not a two-page opening, or nothing "
+                    "is written on that page"
+                )
+            layout = page.layout
+        block_state.layout = layout
         self.set_block_state(state, block_state)
         return components, state
 
