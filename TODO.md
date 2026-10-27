@@ -178,7 +178,38 @@ What is known to be wrong or unfinished. Remove an item when it is done; add the
       every line captioned printed; scratchpad printmix/build_printed.py), drawn on the 1715 windows and all five
       templates: does print stay print, and the hand the clerk's?
 - [ ] Still to compare FLUX.3 and MOSS on: several seeds a page, and a blind realism rating of real, FLUX.3 and MOSS
-      pages mixed together.
+      pages mixed together. On the 1715 windows (medians, scratchpad moss_test/compare_runs.py) MOSS's LoRA reads back
+      0.042 / 0.032 at steps 350 / 700 against FLUX.3's 0.056 / 0.064; on the mean the two are close (0.060 / 0.065
+      against 0.057 / 0.073): MOSS reads one window badly (0.17-0.24), where by eye its words are right but a line
+      cut off by the window's top edge and a large heading letter read badly.
+- [ ] Queued 27 Oct after the microfilm LoRAs (scratchpad queue_canvas.sh, then queue_moss7b.sh, queue_moss8b.sh,
+      then E2c): (1) held-out 1715 windows drawn on real blank pages (GT-RA_tomma_sidor: stained paper, microfilm with
+      the other side showing through, a brown-stained page, a ruled ledger; moss_test/draw_canvas.py): the drawing
+      starts from the blank page noised to 0.7-0.9 instead of pure noise (and 1 as the baseline), captioned in the
+      canvas's measured look, by the 1715 LoRA and untrained MOSS: does a real page's look carry with no training?
+      (2) the 1715 LoRA with printed windows in its mix (above); (3) one LoRA on eight hands at once (the four of
+      FLUX.3's volumes, Jämtlands domsaga, a Göteborg register 1790-94, the witchcraft commission 1676,
+      Riksregistraturet; 160 windows each from data_flux3/layout_crops_v2b via hand/subset.py, every caption naming
+      its volume; moss_test/moss_hand_eight.py, 2,000 steps), each hand drawn on its own held-out windows by name at
+      steps 1,000 and 2,000: can one adapter hold many hands, or do they blend? Writer identification over every run
+      of the night once the draws are done: scratchpad writer/run_tonight.sh (add_moss.py now knows the four new
+      hands).
+- [ ] **Unlabelled writing check** (scratchpad hand/unlabelled_words.py, CPU, OpenCV): word-sized clusters of ink on
+      the paper outside every text item's box of the page's prompt (the paper's border band, narrow flourishes and
+      edge strokes left out). On 27 Oct's pages: untrained MOSS 0 on every page, the 1715 LoRA 0-2 (the livestock
+      register's invented heading flagged; the big flourished V and W of the name register too, labelled letters
+      reaching past their boxes), the real scans 0-2 (registers and forms whose transcriptions leave some writing
+      out, which is likely where a LoRA learns to add text). As a judge stage in the repo once the template marking
+      lands; a learned text-line detector would replace the hand-set thresholds.
+- [ ] **The whole-page training set** (scratchpad pages_set/build_pages.py): every ground-truth scan's single pages,
+      each planned whole as `diffu-generate --whole-page` plans one (`plan_whole_page`, ~2 MP), captioned in its
+      own archive and measured look, compiled as a Layout prompt, saved beside the page cut from its scan; a prompt
+      past 4,096 tokens left out. A 196-page pilot (2 scans a collection) has the prompts' boxes on the writing; the
+      10 failures were pages with no text (GT-RA_tomma_sidor, the blank pages). Prompt lengths over a sample of
+      every collection (pages_set/prompt_lengths.py, 1,457 pages): handwritten pages median 1,590 tokens, 90 % under
+      2,550, 1.5 % past 4,096; printed 17 % past (Kommerskollegium's tables of ~130 lines, NLF newspapers of ~230):
+      those as windows or one prompt item per region. The full build (~59,000 handwritten pages, ~60 GB) next, on a
+      quiet CPU; Lance once it feeds a Ray stage.
 - [x] **MOSS-Image in the repo** (27 Oct, the commit "MOSS-Image is the page pipeline's third model family"): the
       scratchpad's verified implementation ported as `packages/moss` (diffu-moss): `MossTransformer` (moss_model as
       it was, the checkpoint's names kept), `MossAutoBlocks` / `MossModularPipeline` (the Layout prompt compiled from a
