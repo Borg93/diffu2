@@ -7,13 +7,15 @@
 Writes ``<out>/modular_model_index.json``: the pipeline and its blocks (``MossAutoBlocks``), the DiT blocks the
 unconditional pass of guidance skips, and where each component loads from: the text encoder (Qwen3.5-9B), its
 tokenizer and the VAE from the Base snapshot's folders, the DiT from ``--transformer`` (a diffusers-format folder, its
-``config.json`` and safetensors: a LoRA merged into Base, or a full fine-tune, as KohakuMossTrainer exports them) or
-the snapshot's own. Nothing is copied: the index names the folders where they are. The scheduler is MOSS-Image's
-sampler at its demo's shift, 5 (``--sampling-shift`` changes it per run).
+``config.json`` and safetensors: a LoRA merged into Base, or a full fine-tune, as KohakuMossTrainer exports them and
+as a checkpoint of ``diffu-moss-train-ref --full`` is) or the snapshot's own. Nothing is copied: the index names the
+folders where they are. The scheduler is MOSS-Image's sampler at its demo's shift, 5 (``--sampling-shift`` changes it
+per run).
 
-The index's ``takes_reference`` says whether the model draws from a reference image: true only for a DiT exported by a
-reference training (``diffu-moss-export-ref``, whose ``export.json`` says so), never by hand, so a DiT that never saw
-a reference (the released ones, a hand LoRA) is refused one rather than shown tokens it cannot read.
+The index's ``takes_reference`` says whether the model draws from a reference image: true only for a DiT of a
+reference training (merged by ``diffu-moss-export-ref``, or a full fine-tune's checkpoint; their ``export.json`` says
+so), never by hand, so a DiT that never saw a reference (the released ones, a hand LoRA) is refused one rather than
+shown tokens it cannot read.
 """
 
 from __future__ import annotations

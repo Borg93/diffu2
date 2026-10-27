@@ -132,6 +132,16 @@ def test_training_draws_every_entry_once_a_pass_so_a_run_keeps_the_caches_mix(
     assert {variant: drawn.count(variant) for variant in set(drawn)} == {"no_reference": 2, "look": 4, "plain": 4}
 
 
+def test_training_limited_to_n_pairs_trains_on_the_caches_first_n_drawn_with_their_reference(
+    tiny_moss_dit: Path, tiny_pair_cache: Path, tmp_path: Path
+) -> None:
+    train(tiny_moss_dit, tiny_pair_cache, tmp_path, TrainSettings(steps=3, limit_pairs=3, save_every=3, device="cpu"))
+
+    steps = [json.loads(line) for line in (tmp_path / LOG).read_text(encoding="utf-8").splitlines()]
+    # 3 steps of 2: two passes over vol_08, vol_09 (look) and vol_06 (plain); vol_01, cached before vol_06, takes none
+    assert sorted(pair for step in steps for pair in step["pairs"]) == sorted(["vol_08", "vol_09", "vol_06"] * 2)
+
+
 def test_training_moves_every_lora_a_weight_at_the_recipes_learning_rate(
     tiny_moss_dit: Path, tiny_reference_run: Path
 ) -> None:

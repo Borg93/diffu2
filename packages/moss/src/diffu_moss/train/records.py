@@ -1,6 +1,7 @@
 """What a reference training writes beside its outputs, so each step reads what the step before it made: a cache's
-record (``cache.json``, written last), a checkpoint's LoRA (``adapter.json`` beside its weights) and an export's
-record (``export.json`` beside the merged DiT, which ``diffu-moss-init`` reads)."""
+record (``cache.json``, written last), a checkpoint's LoRA (``adapter.json`` beside its weights), an export's record
+(``export.json`` beside a merged or fully fine-tuned DiT, which ``diffu-moss-init`` reads) and a full fine-tune's
+progress (``progress.json`` in a checkpoint's state, which a resumed run starts from)."""
 
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ CACHE_RECORD = "cache.json"
 ADAPTER_RECORD = "adapter.json"
 ADAPTER_WEIGHTS = "adapter.safetensors"
 EXPORT_RECORD = "export.json"
+PROGRESS_RECORD = "progress.json"
 
 
 class JsonRecord(BaseModel):
@@ -60,10 +62,25 @@ class CacheRecord(JsonRecord):
 
 
 class ExportRecord(JsonRecord):
-    """A merged DiT's provenance: the Base DiT it was merged into, the checkpoint and LoRA merged, and whether it was
-    trained to take a reference image (``diffu-moss-init`` writes that into the model index's ``takes_reference``)."""
+    """A trained DiT's provenance: the Base DiT it was trained from, the checkpoint it is (or whose LoRA was merged
+    into Base; ``adapter`` is None for a full fine-tune, whose own weights are the DiT), and whether it was trained to
+    take a reference image (``diffu-moss-init`` writes that into the model index's ``takes_reference``)."""
 
     takes_reference: bool
     base: str
     checkpoint: str
-    adapter: AdapterRecord
+    adapter: AdapterRecord | None = None
+
+
+class Progress(JsonRecord):
+    """Where a full fine-tune stood when its state was saved: its last step, its settings (``TrainSettings`` as JSON),
+    its random generator's state, and its place in the sample order (the current pass's order and how much of it was
+    drawn), so a run resumed from the state draws on as the run would have."""
+
+    model_config = ConfigDict(ser_json_bytes="base64", val_json_bytes="base64")
+
+    step: int
+    settings: str
+    generator: bytes
+    order: list[int]
+    drawn: int

@@ -158,7 +158,11 @@ drawing gives it (`diffu_moss.sample_caption`) and encoded by `MossTextEncoderSt
 page pipeline loads them, its latents by the reference encode step's functions (`packages/page/tests/test_moss.py`
 checks a cached pair against the page pipeline's encoding of the same crop and reference, bit for bit). Its noise
 levels are MOSS-Image's own (KohakuMossTrainer's default sampler: the training grid j/1000, a truncated logit-normal
-of median 0.78, 1% uniform), its loss flow matching's over the drawn image's tokens.
+of median 0.78, 1% uniform), its loss flow matching's over the drawn image's tokens. It trains a LoRA, or with
+`--full` every weight of the DiT (`diffu_moss.train.full`, tested on the Spark by `jobs/moss/run_ref_full.sh`) by
+MOSS-Image's own optimizer recipe (its technical report, Appendix A.2): Muon on the joint blocks' matrices and AdamW
+on the rest at 5e-5, the weights in float32 and the forward in bfloat16; its checkpoints are the DiT itself, which
+`diffu-moss-init` draws with as the merged LoRA's export.
 
 MOSS-Image hand LoRAs train with KohakuMossTrainer (its own environment, `~/Desktop/repos/kohakumoss`), on manifests
 whose captions the scratchpad's `moss_prompt.layout_prompt` compiled: `diffu_moss.layout_prompt` compiles a crop plan's

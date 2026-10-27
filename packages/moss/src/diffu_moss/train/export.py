@@ -8,7 +8,8 @@ The Base DiT is loaded in bfloat16, the LoRA (``adapter.json``, ``adapter.safete
 trained and fused into its weights (each merged weight rounded to bfloat16 once), the adapter layers removed, and the
 DiT saved as
 ``config.json`` and safetensors beside ``export.json``: the export's record, which says the DiT was trained to take a
-reference image, so the model directory ``diffu-moss-init`` writes for it takes one.
+reference image, so the model directory ``diffu-moss-init`` writes for it takes one. A full fine-tune's checkpoint
+(``diffu-moss-train-ref --full``) needs no export: it is such a folder already.
 """
 
 from __future__ import annotations
@@ -66,10 +67,10 @@ def main(
 ) -> None:
     """Merge a reference LoRA into the Base DiT, as a folder diffu-moss-init --transformer draws with."""
     try:
-        record = export_merged(transformer, checkpoint, out, device=device)
+        export_merged(transformer, checkpoint, out, device=device)
     except ValueError as error:
         raise typer.BadParameter(str(error)) from error
-    console.print(f"the LoRA of step {record.adapter.step} merged into {transformer} -> {out}")
+    console.print(f"the LoRA of {checkpoint} merged into {transformer} -> {out}")
 
 
 if __name__ == "__main__":

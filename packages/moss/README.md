@@ -12,7 +12,8 @@ implementation, written from the published design, around the released weights.
   names, so the page pipeline's line repair runs in it.
 - **A model repo** (`diffu-moss-init`): a `modular_model_index.json` naming `MossAutoBlocks`, the components loading
   from the Base snapshot's folders, the DiT from the snapshot or a trained export, and whether it takes a reference
-  image (`takes_reference`: only for a DiT exported by a reference training, read from its `export.json`).
+  image (`takes_reference`: only for a DiT of a reference training, a merged LoRA or a full fine-tune's checkpoint,
+  read from its `export.json`).
 
       diffu-moss-init --base <MOSS-Image-Base snapshot> --out runs/moss/base
       diffu-moss-init --base <MOSS-Image-Base snapshot> --transformer <merged export> --out runs/moss/hand_1715
@@ -38,3 +39,26 @@ implementation, written from the published design, around the released weights.
 
   `jobs/moss/run_ref_pilot.sh` runs the pilot through `jobs/spark_guard.sh`: the caches, a smoke run, the training,
   the export and model directory, and 8 held-out crops drawn with and without their reference.
+- **Full fine-tune** (`diffu-moss-train-ref --full`, `train/full.py`): every weight of the DiT on the same pairs and
+  caches, by MOSS-Image's own recipe (its technical report, Appendix A.2 and Table 7): torch's Muon on the joint
+  blocks' weight matrices (Nesterov momentum 0.95, 5 Newton-Schulz steps, matched to AdamW's RMS) and AdamW on the
+  rest (betas 0.9, 0.95), both at 5e-5; weight decay 0.01 but none on biases, norms and the embedders; the last
+  block's q/k norm weights decayed towards one; gradients clipped at 1. The weights stay in float32 and the forward
+  runs in bfloat16 autocast, the joint blocks checkpointed: the layout FSDP2 wraps, with no master copy of our own.
+  On one GB10 that is about 73 GB at the peak (20.3 GB of weights, 20.3 of gradients, 19.0 of Muon momentum, 2.6 of
+  AdamW moments, ~8 of activations at a 1 MP target and a 0.5 MP reference, ~3 for CUDA and the process). A
+  checkpoint is the DiT itself, in bfloat16 (`checkpoints/step_NNNNNN/transformer/`, which `diffu-moss-init
+  --transformer` draws with, no merge); `--ema 0.9999` keeps an average of the weights beside it (`ema/`, 20 GB more
+  in float32) and `--save-state` the float32 weights and optimizer state a run resumes from (`state/`, ~42 GB;
+  `--resume <checkpoint>` goes on exactly as the run would have), both off by default: the Spark holds neither.
+  `--limit-pairs N` trains on the cache's first N pairs drawn with their reference alone, and `diffu-draw-pairs`
+  (diffu-page) draws them back beside their real pages: an overfit test.
+
+      diffu-moss-train-ref --full --transformer <snapshot>/transformer --cache data_flux3/cache_moss_ref_v3d \
+          --val-cache data_flux3/cache_moss_ref_v3d_val --out runs/moss_ref_full/full --steps 500
+      diffu-moss-init --base <snapshot> --transformer runs/moss_ref_full/full/checkpoints/step_000500/transformer \
+          --out runs/moss/ref_full
+
+  `jobs/moss/run_ref_full.sh` tests it on the Spark through `jobs/spark_guard.sh`: a smoke run, the overfit test (300
+  steps on 8 pairs, its loss and drawings read against stated pass criteria), the training, its model directory, and
+  8 held-out crops drawn with and without their reference.

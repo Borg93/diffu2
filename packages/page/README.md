@@ -16,4 +16,5 @@ Archive pages as data, and the page pipeline built on them.
   `ReferenceGridStep`, then `LineReadbackStep` (HTR) and `LabelExportStep`. `CropLoopStep` draws every crop of a page.
 - **Pipeline** (`pipeline.py`): those blocks around whichever model's blocks a model repo names (FLUX.3 Klein or
   diffu), loaded with its LoRAs. CLIs: `diffu-generate` (pages), `diffu-evaluate` (held-out crops), `diffu-sheets`,
-  `diffu-reader-set` (a run's pages as a page reader's fine-tuning set).
+  `diffu-reader-set` (a run's pages as a page reader's fine-tuning set),
+  `diffu-draw-pairs` (a MOSS reference training's own pairs drawn back beside their real pages: an overfit test).

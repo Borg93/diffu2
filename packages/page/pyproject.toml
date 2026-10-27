@@ -27,6 +27,7 @@ dependencies = [
 [project.scripts]
 diffu-generate = "diffu_page.cli.generate:app"  # pages from templates and text, through the page pipeline
 diffu-evaluate = "diffu_page.cli.evaluate:app"  # held-out crops, read-back CER against the real crops
+diffu-draw-pairs = "diffu_page.cli.draw_pairs:app"  # a MOSS reference training's own pairs drawn back (an overfit test)
 diffu-sheets = "diffu_page.cli.sheets:app"  # contact sheets of a steering run
 diffu-reader-set = "diffu_page.cli.reader_set:app"  # a run's pages as a page reader's fine-tuning set (JSON lines)
 

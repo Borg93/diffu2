@@ -22,7 +22,7 @@ dependencies = [
 [project.scripts]
 diffu-moss-init = "diffu_moss.init:app"  # a MOSS model repo: the Base snapshot's components around its own or a trained DiT
 diffu-moss-cache-pairs = "diffu_moss.train.cache:app"  # style pairs' prompt embeddings and latents, for a reference training
-diffu-moss-train-ref = "diffu_moss.train.loop:app"  # a LoRA that teaches MOSS-Image to draw from a reference image
+diffu-moss-train-ref = "diffu_moss.train.loop:app"  # a LoRA, or every weight (--full), teaching MOSS-Image to draw from a reference image
 diffu-moss-export-ref = "diffu_moss.train.export:app"  # that LoRA merged into the Base DiT, for diffu-moss-init
 
 [build-system]

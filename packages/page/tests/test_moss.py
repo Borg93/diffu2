@@ -3,7 +3,8 @@ a crop plan's caption compiled as MOSS's Layout prompt exactly as the verified s
 end to end from its seed, the line repair in MOSS's denoise loop, MOSS's own guidance and sampling shift, what MOSS
 refuses, and each repo drawn by its own family. A MOSS trained to take a reference (conftest's tiny reference training,
 exported and initialised): its training cache holds what drawing encodes, it draws a crop from a reference and guides
-toward it, and a described caption's look words drop to exactly the plain caption the page captions would write."""
+toward it, its own training pairs drawn back (diffu_page.cli.draw_pairs) are the crops the page pipeline draws, and a
+described caption's look words drop to exactly the plain caption the page captions would write."""
 
 from __future__ import annotations
 
@@ -28,6 +29,7 @@ from diffu_page.captions.hand import HandLook, ReferenceLook
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.prompt import LineRecord, PageStyle
 from diffu_page.captions.restyle import CaptionParts, described_edit_caption, edit_caption
+from diffu_page.cli.draw_pairs import draw_pairs
 from diffu_page.crops.geometry import Crop, CropSettings, crops_for_page, regions_of
 from diffu_page.evalset import EvalCrop
 from diffu_page.judge import LineVerdict
@@ -229,6 +231,20 @@ def test_reference_trained_moss_draws_a_crop_from_its_reference_through_the_page
 
     assert referenced.size == (64, 32)
     assert referenced.tobytes() != from_blank.tobytes()
+
+
+def test_draw_pairs_draws_a_trained_pair_back_as_the_page_pipeline_draws_its_crop_from_its_reference(
+    tiny_pairs: Path, tiny_pair_cache: Path, tiny_reference_moss: Path, tmp_path: Path
+) -> None:
+    sheets = draw_pairs(tiny_reference_moss, tiny_pair_cache, tmp_path, count=3, seed=0, settings=MOSS_SETTINGS)
+
+    # the cache's first three pairs drawn with their reference: vol_01, cached without it, is passed over
+    assert [sheet.name for sheet in sheets] == ["000_vol_08.jpg", "001_vol_09.jpg", "002_vol_06.jpg"]
+    pair = next(pair for pair in read_pairs(tiny_pairs / "train.jsonl") if pair.id == "vol_08")  # cached in look form
+    pipe = load_pipeline(tiny_reference_moss, crop_blocks, loras={}, settings=MOSS_SETTINGS)
+    crop = _draw(pipe, _pair_plan(pair), seed=0, reference=Image.open(pair.reference))
+    with Image.open(tmp_path / "generated" / "000.png") as drawn:
+        assert drawn.tobytes() == crop.tobytes()
 
 
 def test_reference_trained_moss_guides_toward_its_reference_with_a_pass_without_it(

@@ -203,6 +203,12 @@ def read_entries(cache: Path) -> list[CacheEntry]:
         return [CacheEntry.model_validate_json(row) for row in rows if row.strip()]
 
 
+def with_reference(entries: list[CacheEntry], count: int) -> list[CacheEntry]:
+    """The first ``count`` of ``entries`` drawn with their reference, in the cache's order: the fixed handful of pairs
+    an overfit test trains on (``diffu-moss-train-ref --limit-pairs``) and draws back."""
+    return [entry for entry in entries if entry.variant.takes_reference][:count]
+
+
 def load_sample(cache: Path, entry: CacheEntry, device: torch.device | str) -> CachedSample:
     """An entry's tensors, on ``device``."""
     tensors = load_file(str(cache / entry.file), device=str(device))
