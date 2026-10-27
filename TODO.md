@@ -78,6 +78,17 @@ What is known to be wrong or unfinished. Remove an item when it is done; add the
          windows, 700 steps); each beside the FLUX.3 LoRA of the same windows and steps.
       4. A short full fine-tune of the 1715 book (350 steps, `ckpt-resident-optfused`, AdamW), drawn at 175 and 350
          beside the LoRA.
+      Added 27 Oct for the user's ask (a fine-tuned MOSS that follows the look and the hand on demand and draws any
+      template): the full fine-tune on the templates and whole single pages; looks the 1715 book never has (white
+      paper and black ink; a greyscale scan) by Base, the LoRA and the full fine-tune (draw_windows `--paper`, `--ink`,
+      `--greyscale`, `--style`: moss_prompt.restyled rewrites a caption's archive and look phrase by phrase); two hands
+      in one full fine-tune (the 1715 book at weight 2 and Pahlman's journals, 700 steps), drawn in each volume's own
+      style, in the other's (the hand named, not the layout's) and on the templates in each style. Whole-page tests
+      now draw single pages: most GT scans are openings (27,408 of 30,983 wider than tall; the 4 held-out 1715 "pages"
+      are spreads of 22-24 lines a side, and so were FLUX.3's whole-page and repair runs), so draw_pages splits an
+      opening at its gutter (the widest band in the scan's middle no line crosses) and draws its fuller side.
+      Order now (scratchpad queue_moss2.sh): the 1715 LoRA, its templates and pages, untrained pages, the 4-page and
+      Pahlman LoRAs, the full fine-tune, its templates and pages, the looks, the two hands; then E2c.
       Results so far (27 Oct, runs/moss_test):
       - 0 passed: our code redraws the two published examples at their seeds at PSNR 20.9 and 26.2 dB; by eye the
         same picture (composition, every word, the chalk hand), the rest is the GPU's arithmetic.
@@ -88,6 +99,16 @@ What is known to be wrong or unfinished. Remove an item when it is done; add the
         (the text is all there but ignores the boxes), the real windows 0.034. On the 12 style pairs without a
         sample (Base Layout) 0.061 against the real windows' 0.137, in the same neat hand on every volume. So MOSS
         brings what diffu lacks (letters, exact text in exact places); the hand is what a LoRA must add.
+      - 2, sample images untrained: the sample does not carry the hand. By eye the 12 pairs come out in the same bold,
+        upright cursive with the sample as all the encoder's tokens, as its text tokens only, or without it (Pahlman's
+        fine slanted hand, the krigsarkivet clerk's quick one: neither); only the paper and ink tone move toward the
+        sample. Hand measures: slant carry-over 0.09 without, 0.14 (all tokens) and 0.10 (text tokens) against the
+        real windows' 0.82; letter shapes to the sample 0.45, 0.41, 0.46 (real 0.39); ink colour 16.8, 12.3, 14.4
+        (real 3.9). Read-back 0.061, 0.069, 0.066. Trained sample conditioning stays a later design; the hand comes
+        from a LoRA or fine-tune.
+      - The 1715 LoRA's caches failed at once (27 Oct 08:43): the train configs' weights layer sets TEXT_ENCODER to
+        "" (its weights path) and the cache passes read the same knob as the encoder factory; moss_encoders.py names
+        both factories again (both passes of all four data configs now reach the device check on the CPU).
 
 ## Repo structure
 
