@@ -1,5 +1,6 @@
 """A page reader's fine-tuning set from a run's images and their elements files: a sample per page in DeepSeek-OCR 2's
-conversation, a sample per element (its crop, recognition prompt and text) in PaddleOCR-VL's."""
+conversation and in PaddleOCR-VL's (the page as Markdown, or its lines spotted), or a sample per element (its crop,
+recognition prompt and text) for PaddleOCR-VL's recogniser."""
 
 from __future__ import annotations
 
@@ -97,11 +98,42 @@ def test_reader_set_writes_a_page_as_deepseek_ocr_2_is_fine_tuned_on_it(
     ]
 
 
+@pytest.mark.parametrize(
+    ("task", "prompt", "answer"),
+    [
+        pytest.param([], "<image>OCR:", "Anno 1715 den 4 maj", id="page"),
+        pytest.param(
+            ["--task", "spotting"],
+            "<image>Spotting:",
+            "Anno 1715 den 4 maj<|LOC_125|><|LOC_300|><|LOC_875|><|LOC_300|><|LOC_875|><|LOC_340|><|LOC_125|><|LOC_340|>",
+            id="spotting",
+        ),
+    ],
+)
+def test_reader_set_writes_a_whole_page_as_paddleocr_vl_is_fine_tuned_on_it(
+    tmp_path: Path, task: list[str], prompt: str, answer: str
+) -> None:
+    run = _run(tmp_path / "run", LINE)
+    out = tmp_path / "set" / "paddleocr_vl.jsonl"
+
+    result = CliRunner().invoke(app, ["--run", str(run), "--model", "paddleocr-vl", "--out", str(out), *task])
+
+    assert result.exit_code == 0
+    assert _lines(out) == [
+        {
+            "messages": [{"role": "user", "content": prompt}, {"role": "assistant", "content": answer}],
+            "images": [str((run / IMAGE).resolve())],
+        }
+    ]
+
+
 def test_reader_set_writes_each_element_of_a_page_as_its_crop_recognition_prompt_and_text(tmp_path: Path) -> None:
     run = _run(tmp_path / "run", HEADING, TABLE, BODY)
     out = tmp_path / "set" / "paddleocr_vl.jsonl"
 
-    result = CliRunner().invoke(app, ["--run", str(run), "--model", "paddleocr-vl", "--out", str(out)])
+    result = CliRunner().invoke(
+        app, ["--run", str(run), "--model", "paddleocr-vl", "--task", "elements", "--out", str(out)]
+    )
 
     crops = [(tmp_path / "set" / "paddleocr_vl_crops" / f"000_page_0_{k}.png").resolve() for k in range(3)]
     texts = [
@@ -140,7 +172,9 @@ def test_reader_set_writes_each_element_of_a_page_as_its_crop_recognition_prompt
             "000_page_0.elements.json labels the image '000_page_0.jpg', which the run does not hold",
             id="image",
         ),
-        pytest.param(True, True, ["--task", "grounded"], "paddleocr-vl is fine-tuned on elements", id="task"),
+        pytest.param(
+            True, True, ["--task", "grounded"], "paddleocr-vl is fine-tuned on page, spotting, elements", id="task"
+        ),
     ],
 )
 def test_reader_set_refuses_a_run_without_reader_labels_or_their_images_and_a_task_its_reader_has_not(

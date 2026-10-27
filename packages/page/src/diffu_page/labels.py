@@ -8,8 +8,9 @@ cell ``TextRegion``s, each with a ``TableCellRole``; ALTO, which has no tables, 
 The page readers' formats (:data:`READER_FILES`) are written from the same regions, as :class:`PageElements`: each text
 region and each table one element, in reading order. :func:`to_markdown` is the page as Markdown (an element's lines one
 under the other, a heading after ``## ``, a table as HTML), :func:`to_grounded_markdown` is DeepSeek-OCR 2's grounded
-form of it (each element under its label and box), and the elements themselves, as JSON, are PaddleOCR-VL's layout
-elements (each with its PP-DocLayoutV3 category, its box and the prompt and text its recogniser reads its crop with).
+form of it (each element under its label and box), :func:`to_spotting` is PaddleOCR-VL's spotting of the page (each
+line's text and box), and the elements themselves, as JSON, are PaddleOCR-VL's layout elements (each with its
+PP-DocLayoutV3 category, its box and the prompt and text its recogniser reads its crop with).
 """
 
 from __future__ import annotations
@@ -417,9 +418,12 @@ GROUNDING_LABELS: dict[LineKind, str] = {
 }
 
 GROUNDING_SCALE = 999  # DeepSeek-OCR's boxes: on 0-999 of the image's width and height, as its decoder divides them
+SPOTTING_SCALE = 1000  # PaddleOCR-VL's spotted boxes: <|LOC_0|> to <|LOC_1000|> of the image's width and height
 
-OCR_PROMPT = "OCR:"  # PaddleOCR-VL's recognition prompts: an element's crop read as text, or as a table (OTSL)
+# PaddleOCR-VL's prompts: a crop or a page read as text, a crop as a table (OTSL), a page's lines spotted
+OCR_PROMPT = "OCR:"
 TABLE_PROMPT = "Table Recognition:"
+SPOTTING_PROMPT = "Spotting:"
 
 
 class ElementLine(BaseModel):
@@ -562,6 +566,22 @@ def to_grounded_markdown(page: PageElements) -> str:
     box (``<|ref|>text<|/ref|><|det|>[[x0, y0, x1, y1]]<|/det|>``). Its decoder's clean-up (each reference taken out,
     three line breaks made two) gives :func:`to_markdown`'s text back."""
     return "\n\n".join(f"{_grounding(element, page)}\n{element.markdown}" for element in page.elements)
+
+
+def _spotted(line: ElementLine, page: PageElements) -> str:
+    """A line as PaddleOCR-VL spots it: its text, then the corners of its box clockwise from the top left, each an x
+    and a y on 0-1000 of the page's width and height."""
+    x0, y0, x1, y1 = (
+        round(SPOTTING_SCALE * value / size)
+        for value, size in zip(line.box, (page.width, page.height, page.width, page.height), strict=True)
+    )
+    return line.text + "".join(f"<|LOC_{value}|>" for value in (x0, y0, x1, y0, x1, y1, x0, y1))
+
+
+def to_spotting(page: PageElements) -> str:
+    """The page as PaddleOCR-VL spots its text (``Spotting:``): every line of it in reading order, a table's cell by
+    cell, each on a line of its own, its text then its box as four corners (``<|LOC_x|><|LOC_y|>`` each)."""
+    return "\n".join(_spotted(line, page) for element in page.elements for line in element.lines)
 
 
 def to_elements_json(page: PageElements) -> str:

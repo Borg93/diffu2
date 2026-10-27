@@ -1,6 +1,6 @@
 """Label export: PAGE XML that validates against PRImA's schema, ALTO in the htrflow shape, both carrying the same
 regions, reading order, baselines and tags; and the page readers' formats written from the same regions: the page as
-Markdown, as DeepSeek-OCR 2's grounded Markdown and as PaddleOCR-VL's layout elements."""
+Markdown, as DeepSeek-OCR 2's grounded Markdown, as PaddleOCR-VL's spotting and as its layout elements."""
 
 from __future__ import annotations
 
@@ -29,6 +29,7 @@ from diffu_page.labels import (
     to_grounded_markdown,
     to_markdown,
     to_page_xml,
+    to_spotting,
 )
 from diffu_page.layout import CellRef, Production, load_xml_layout
 from diffu_page.plan import CropPlan, plan_page, plan_whole_page
@@ -438,15 +439,16 @@ def test_a_table_is_written_with_its_cells_in_place_as_html_in_the_markdown_and_
 GROUNDING = re.compile(r"<\|ref\|>(.*?)<\|/ref\|><\|det\|>(.*?)<\|/det\|>", re.DOTALL)
 
 
-def test_grounded_markdown_puts_each_element_under_its_label_and_box_on_0_to_999_of_the_page() -> None:
-    lines = [  # an 800 x 1000 px page: a heading of two lines, two lines of running text and a margin note
+def _heading_text_and_note() -> PageLabels:
+    """An 800 x 1000 px page: a heading of two lines, two lines of running text and a margin note."""
+    lines = [
         ("Förteckning öfver", "heading", _box(100, 20, 700, 60)),
         ("Jämtlands län", "heading", _box(100, 60, 700, 100)),
         ("Anno 1715 den 4 maj", "body", _box(100, 300, 700, 340)),
         ("kom för rätten", "body", _box(100, 340, 700, 380)),
-        ("12 dr", "marginalia", _box(10, 800, 90, 840)),
+        ("12 dr", "marginalia", _box(11, 800, 91, 840)),
     ]
-    labels = PageLabels(
+    return PageLabels(
         width=800,
         height=1000,
         lines=[
@@ -454,7 +456,10 @@ def test_grounded_markdown_puts_each_element_under_its_label_and_box_on_0_to_999
             for order, (text, region, polygon) in enumerate(lines)
         ],
     )
-    page = page_elements(labels)
+
+
+def test_grounded_markdown_puts_each_element_under_its_label_and_box_on_0_to_999_of_the_page() -> None:
+    page = page_elements(_heading_text_and_note())
 
     grounded = to_grounded_markdown(page)
 
@@ -462,9 +467,29 @@ def test_grounded_markdown_puts_each_element_under_its_label_and_box_on_0_to_999
     assert GROUNDING.findall(grounded) == [
         ("sub_title", "[[125, 20, 874, 100]]"),
         ("text", "[[125, 300, 874, 380]]"),
-        ("text", "[[12, 799, 112, 839]]"),
+        ("text", "[[14, 799, 114, 839]]"),
     ]
     assert GROUNDING.sub("", grounded).replace("\n\n\n", "\n\n") == f"\n{to_markdown(page)}"
+
+
+def _corners(*values: int) -> str:
+    """Spotted coordinates as PaddleOCR-VL writes them."""
+    return "".join(f"<|LOC_{value}|>" for value in values)
+
+
+def test_spotting_writes_each_line_with_its_box_corners_clockwise_on_0_to_1000_of_the_page() -> None:
+    page = page_elements(_heading_text_and_note())
+
+    spotted = to_spotting(page)
+
+    # x of 800 px, y of 1000 px, on 0-1000: 700 px across is 875, the note's 11 and 91 px are 13.75 and 113.75
+    assert spotted.split("\n") == [
+        "Förteckning öfver" + _corners(125, 20, 875, 20, 875, 60, 125, 60),
+        "Jämtlands län" + _corners(125, 60, 875, 60, 875, 100, 125, 100),
+        "Anno 1715 den 4 maj" + _corners(125, 300, 875, 300, 875, 340, 125, 340),
+        "kom för rätten" + _corners(125, 340, 875, 340, 875, 380, 125, 380),
+        "12 dr" + _corners(14, 800, 114, 800, 114, 840, 14, 840),
+    ]
 
 
 def test_page_elements_hold_each_line_of_a_form_once_as_labelled_in_its_regions_element_with_its_layout_category(

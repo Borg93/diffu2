@@ -125,11 +125,16 @@ image paths absolute (train readers on `--whole-page` runs: a window's labels le
 uv run diffu-reader-set --run runs/pages --model deepseek-ocr-2 --out data/readers/deepseek_ocr_2.jsonl
 uv run diffu-reader-set --run runs/pages --model deepseek-ocr-2 --task markdown --out data/readers/free_ocr.jsonl
 uv run diffu-reader-set --run runs/pages --model paddleocr-vl --out data/readers/paddleocr_vl.jsonl
+uv run diffu-reader-set --run runs/pages --model paddleocr-vl --task spotting --out data/readers/spotting.jsonl
 ```
 
-DeepSeek-OCR 2 gets a sample per page, asked with its document prompt and answered with the grounded Markdown
-(`--task markdown`: its prompt for a page without layouts, Free OCR, and the Markdown); PaddleOCR-VL a sample per
-element, the element cut from its page into `<out stem>_crops/` and answered with what its recogniser reads there.
+Pages are sent to the readers whole, so each is taught whole pages. DeepSeek-OCR 2 gets a sample per page, asked with
+its document prompt and answered with the grounded Markdown (`--task markdown`: its prompt for a page without layouts,
+Free OCR, and the Markdown). PaddleOCR-VL gets a sample per page asked `OCR:` and answered with the same Markdown
+(`--task page`, the default), or asked `Spotting:` and answered with each line's text and the corners of its box on
+0-1000 (`--task spotting`, PaddleOCR-VL's text spotting, from which its reading of a page can become ALTO or PAGE with
+line coordinates); `--task elements` gives its recogniser a sample per element instead, the element cut from its page
+into `<out stem>_crops/` and answered with what the recogniser reads there.
 
 ### MOSS-Image
 
