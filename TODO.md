@@ -78,6 +78,16 @@ What is known to be wrong or unfinished. Remove an item when it is done; add the
          windows, 700 steps); each beside the FLUX.3 LoRA of the same windows and steps.
       4. A short full fine-tune of the 1715 book (350 steps, `ckpt-resident-optfused`, AdamW), drawn at 175 and 350
          beside the LoRA.
+      Results so far (27 Oct, runs/moss_test):
+      - 0 passed: our code redraws the two published examples at their seeds at PSNR 20.9 and 26.2 dB; by eye the
+        same picture (composition, every word, the chalk hand), the rest is the GPU's arithmetic.
+      - 1, windows: untrained, the Layout prompt puts each line's exact text inside its box on all 8 held-out 1715
+        windows: headings, margin numbers, signatures, indents, å ä ö (Base even writes long s). The hand is a neat,
+        regular period-style cursive, not the clerk's quick, flourished one; the paper and brown ink follow the
+        caption. Read-back CER (information only): SFT Layout 0.039, Base Layout 0.206, Base plain caption 0.697
+        (the text is all there but ignores the boxes), the real windows 0.034. On the 12 style pairs without a
+        sample (Base Layout) 0.061 against the real windows' 0.137, in the same neat hand on every volume. So MOSS
+        brings what diffu lacks (letters, exact text in exact places); the hand is what a LoRA must add.
 
 ## Repo structure
 
@@ -327,17 +337,24 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
       so diffu-export would refuse it and `set -e` would end the job before its final draws: scratchpad
       consolidate_step4999.sh consolidates it in place once NeMo's LATEST passes it (tested on step 999). A job that
       draws an earlier checkpoint must consolidate it first (NeMo's tools/offline_hf_consolidation.py).
-- [ ] **E2n** (queued 26 Oct after E2b, line repair and the held-in draws: scratchpad queue_e2n.sh;
-      `jobs/diffu/run_e2n.sh`, `configs/diffu/diffu_s_e2n_glyph.yaml`): E2b with our pages' latent stats. The same start,
-      cache (converted on load), settings and learning-rate curve, 5,000 steps, set beside E2b's step 5,000 on the
-      held-out windows (guidance 4 and 1) and the held-in crops: only the normalization differs. Then, on whichever
-      normalization wins (scratchpad diffusers_training_study/report.md, from diffusers' docs and training examples):
+- [x] **E2n** (27 Oct 00:12 - 05:52; `jobs/diffu/run_e2n.sh`, `configs/diffu/diffu_s_e2n_glyph.yaml`): E2b with our
+      pages' latent stats. The same start, cache (converted on load), settings and learning-rate curve, 5,000 steps,
+      set beside E2b's step 5,000 on the held-out windows (guidance 4 and 1) and the held-in crops: only the
+      normalization differs. Our pages' stats win. By eye (scratchpad e2b_compare/held_out, held_in and the stacks
+      beside the real windows): at the same step E2n writes thinner, separate strokes in word-like groups with clear
+      gaps, on cleaner paper; on the sparse held-in crops, where E2b piles dense black hatching over the lines, E2n
+      writes light cursive strokes inside the boxes; the scans' looks (microfilm grey, vignetting, cream paper) stay.
+      Still no legible letter. Read-back CER (information only): held-out 0.895 (guidance 4) and 0.897 (1) against
+      E2b's 0.942 and 1.000 at step 5,000 and 0.932 and 0.941 at 10,000; held-in 0.881 against 0.958 and 0.925. E2's
+      held-in row is missing: its model has the Qwen3.5 encoder and tokenizer, which our text encoder step (a
+      processor) no longer takes. Then, on our pages' stats (scratchpad diffusers_training_study/report.md):
       the shift at 512² (3 against ~1.75, or logit std 1.5; NeMo's mix_uniform_ratio 0.1), the glyph map by channel
       concatenation (E2c, scratchpad glyph_concat/plan.md, which matches diffusers' flux-control recipe point for
       point), EMA weights for drawing, and later 5 % glyph dropout for a glyph guidance scale. Watch: under our pages'
       stats the glyph maps' latents have channel means up to +-2.35 and std 0.67-2.0 (RMS ~1.8x the pages', 405 crops),
       alike at training and drawing; give them their own stats if E2n's rows drift from their lines.
-- [ ] **E2c** (built 26 Oct; runs after E2n, on whichever normalization wins: `jobs/diffu/run_e2c.sh pages|qwen`,
+- [ ] **E2c** (built 26 Oct; queued 27 Oct after the MOSS queue, on our pages' stats, E2n's winner: scratchpad
+      queue_e2c.sh, `jobs/diffu/run_e2c.sh pages|qwen`,
       `configs/diffu/diffu_s_e2c_glyphcat.yaml`; scratchpad glyph_concat/plan.md): the glyph map by channel
       concatenation, as diffusers' flux-control recipe trains FLUX.1 Canny and Depth. E2b's map reaches the image tokens
       only through joint attention (a reference stream at l = -1); a glyph model (`diffu-init --glyph`, `glyph_channels`
@@ -458,8 +475,9 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
       (1-2 % of each page's pixels), the redrawn lines keep the clerk's hand, ink weight, baseline and paper with no
       seam ("T͟cu Hr" -> "Till Hr", a garbled line end -> "tienst"); short lines ("menar.", "Ster-") stay unclear.
       A pass costs about one page's drawing (~115 s at 2.5 MP).
-- [ ] `--repair N` in diffu-generate (N passes, the judge's verdicts in summary.json); then the repair stage for Ray
-      (a row with rejected lines in, the repaired row out), with the Ray items.
+- [x] `--repair N` in diffu-generate (27 Oct): up to N passes, each from its own noise; `summary.json` records
+      `repair_passes` and each crop's lines repaired.
+- [ ] The repair stage for Ray (a row with rejected lines in, the repaired row out), with the Ray items.
 - [x] Reading order across columns: labels follow the source blocks in page order, top to bottom in each
       (`CropPlan.reading_order`).
 - [x] Line polygons: checked against the GT, not a defect (GT bands are 1.6x the line pitch; our slots 1.0x;
