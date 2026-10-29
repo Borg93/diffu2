@@ -167,7 +167,9 @@ drawing gives it (`diffu_moss.sample_caption`) and encoded by `MossTextEncoderSt
 page pipeline loads them, its latents by the reference encode step's functions (`packages/page/tests/test_moss.py`
 checks a cached pair against the page pipeline's encoding of the same crop and reference, bit for bit). Its noise
 levels are MOSS-Image's own (KohakuMossTrainer's default sampler: the training grid j/1000, a truncated logit-normal
-of median 0.78, 1% uniform), its loss flow matching's over the drawn image's tokens. It trains a LoRA, or with
+of median 0.78, 1% uniform; `--sigma-shift k` moves each drawn level to k sigma / (1 + (k - 1) sigma), under 1
+towards the clean end where letter strokes are decided, the validation unshifted), its loss flow matching's over the
+drawn image's tokens. It trains a LoRA, or with
 `--full` every weight of the DiT (`diffu_moss.train.full`, tested on the Spark by `jobs/moss/run_ref_full.sh`) by
 MOSS-Image's own optimizer recipe (its technical report, Appendix A.2): Muon on the joint blocks' matrices (the fused
 gated feed-forward orthogonalised half by half, as the report does: `diffu_moss.train.muon`) and AdamW

@@ -29,6 +29,11 @@ implementation, written from the published design, around the released weights.
   prompt form: a fifth without the reference (its citation dropped, the look words kept), the rest with "the sample
   image", half of those without the look words (`sample_caption.py`), so the look must come from the image. MOSS's
   own noise levels (median 0.78) and flow-matching loss over the drawn image; the joint blocks checkpointed.
+  `--sigma-shift k` (either kind of training; default 1, MOSS's own levels bit for bit) shifts each drawn level
+  `sigma` to `k sigma / (1 + (k - 1) sigma)` (`train/sigmas.py`, the timestep shift of flow-matching samplers): under
+  1 towards the clean end, where letter strokes are decided (`1/3` moves the quartiles 0.64, 0.78, 0.89 to 0.37,
+  0.54, 0.72), to test whether the sample page's hand then carries; the validation stays at MOSS's levels, so runs
+  compare.
 
       diffu-moss-cache-pairs --model runs/moss/base --pairs data_flux3/style_pairs_v3d/train.jsonl \
           --out data_flux3/cache_moss_ref_v3d --limit 4000

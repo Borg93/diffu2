@@ -14,7 +14,8 @@ and the output (final_linear_video); the Base DiT frozen in bfloat16, the LoRA i
 0.999), weight decay 1e-4. The full fine-tune follows MOSS-Image's own recipe: Muon on the joint blocks' matrices and
 AdamW on the rest at 5e-5, every weight in float32, the forward in bfloat16. Both clip the gradients at 1, keep the
 learning rate constant after 50 warmup steps and take two samples a step, one a micro-batch. Each sample is the drawn
-image's clean latents noised to a level drawn as MOSS-Image draws it (:mod:`diffu_moss.train.sigmas`), and the loss is
+image's clean latents noised to a level drawn as MOSS-Image draws it (:mod:`diffu_moss.train.sigmas`; ``--sigma-shift``
+moves the levels towards the clean end, where letter strokes are decided), and the loss is
 flow matching's: the mean squared error between the DiT's velocity and noise minus image over the drawn image's
 tokens; a reference enters clean and is not predicted (:func:`flow_matching_loss`). The joint blocks' activations are
 checkpointed, as a reference adds half the drawn image's tokens again (a 1 MP target, a 0.5 MP reference).
@@ -105,7 +106,8 @@ class TrainSettings(BaseModel):
     """How a reference DiT is trained (the module's docstring): the LoRA's shape and optimizer, or with ``full`` a full
     fine-tune's; the steps and samples (with ``limit_pairs``, only the cache's first that many pairs drawn with their
     reference: an overfit test); whether each prompt is encoded in the step (``encode_text``) or read from the cache;
-    and when it is saved and scored."""
+    the shift of the drawn noise levels (``sigma_shift``, :mod:`diffu_moss.train.sigmas`; 1: MOSS-Image's own); and
+    when it is saved and scored."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -118,6 +120,7 @@ class TrainSettings(BaseModel):
     full: FullSettings | None = None
     limit_pairs: int | None = Field(default=None, ge=1)
     encode_text: bool = False
+    sigma_shift: float = Field(default=1.0, gt=0)
     grad_clip: float = 1.0
     warmup: int = Field(default=50, ge=1)
     grad_accumulation: int = Field(default=2, ge=1)
@@ -326,9 +329,11 @@ def accumulate_gradients(
     *,
     compute_dtype: torch.dtype | None = None,
     encoder: PromptEncoder | None = None,
+    sigma_shift: float = 1.0,
 ) -> tuple[list[float], list[float]]:
     """One step's gradients accumulated into the trained weights: the mean of ``samples``' flow-matching losses, each
-    at a noise level and noise drawn from ``generator``, its prompt encoded by ``encoder`` when given.
+    at a noise level (shifted by ``sigma_shift``) and noise drawn from ``generator``, its prompt encoded by ``encoder``
+    when given.
 
     Returns:
         Each sample's loss and noise level.
@@ -336,7 +341,7 @@ def accumulate_gradients(
     losses, sigmas = [], []
     for entry in samples:
         sample = load_sample(cache, entry, device, encoder)
-        sigma = draw_sigmas(1, generator).item()
+        sigma = draw_sigmas(1, generator, sigma_shift).item()
         noise = torch.randn(sample.target.shape, generator=generator).to(device)
         loss = flow_matching_loss(transformer, sample, sigma, noise, compute_dtype=compute_dtype)
         (loss / len(samples)).backward()
@@ -490,6 +495,7 @@ def train(
             settings.device,
             compute_dtype=training.compute_dtype,
             encoder=encoder,
+            sigma_shift=settings.sigma_shift,
         )
         grad_norm = torch.nn.utils.clip_grad_norm_(training.parameters, settings.grad_clip).item()
         learning_rate = training.step()
@@ -583,6 +589,14 @@ def main(
             "one the cache was made with)"
         ),
     ] = None,
+    sigma_shift: Annotated[
+        float,
+        typer.Option(
+            help="shift the drawn noise levels: sigma -> k sigma / (1 + (k - 1) sigma); under 1 towards the clean end, "
+            "where letter strokes are decided (1/3 moves the median 0.78 to 0.54); 1 draws MOSS-Image's own (the "
+            "validation always does)",
+        ),
+    ] = 1.0,
     seed: Annotated[int, typer.Option(help="the sample order, noise levels, noise and the LoRA's start")] = 0,
     device: Annotated[str, typer.Option(help="where the DiT trains")] = "cuda",
 ) -> None:
@@ -598,6 +612,7 @@ def main(
             "steps": steps,
             "limit_pairs": limit_pairs,
             "encode_text": encode_text,
+            "sigma_shift": sigma_shift,
             "save_every": save_every,
             "val_every": val_every,
         }

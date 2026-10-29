@@ -37,7 +37,7 @@ from diffu_moss.train.loop import (
 )
 from diffu_moss.train.pairs import PagePair, TrainingPair, Variant, apart, read_pairs
 from diffu_moss.train.records import ADAPTER_WEIGHTS
-from diffu_moss.train.sigmas import sigma_grid, sigma_weights
+from diffu_moss.train.sigmas import draw_sigmas, sigma_grid, sigma_weights
 from diffu_moss.transformer import MossTransformer
 
 INK_HEX = "#5A4632"  # the described caption's ink, one of its look words
@@ -127,6 +127,30 @@ def test_moss_training_noise_levels_have_the_quartiles_of_mosss_own_sampler() ->
     ]
 
     assert [round(level.item(), 3) for level in quartiles] == [0.635, 0.781, 0.886]  # its median documented as 0.78
+
+
+def test_shifted_noise_levels_move_mosss_draws_towards_the_clean_end_by_the_timestep_shift() -> None:
+    shift = 1 / 3
+
+    drawn = draw_sigmas(100_000, torch.Generator().manual_seed(0), shift)
+
+    unshifted = draw_sigmas(100_000, torch.Generator().manual_seed(0)).double()
+    assert torch.equal(drawn, (shift * unshifted / (1 + (shift - 1) * unshifted)).float())
+    quartiles = drawn.quantile(torch.tensor([0.25, 0.5, 0.75]))
+    assert [round(level, 3) for level in quartiles.tolist()] == [0.367, 0.543, 0.723]  # MOSS's own: 0.635, 0.781, 0.887
+
+
+def test_training_with_a_sigma_shift_draws_its_samples_at_the_shifted_levels(
+    tiny_moss_dit: Path, tiny_pair_cache: Path, tiny_reference_run: Path, tmp_path: Path
+) -> None:
+    settings = TrainSettings(steps=1, save_every=1, sigma_shift=0.5, device="cpu")
+
+    train(tiny_moss_dit, tiny_pair_cache, tmp_path, settings)
+
+    logged = json.loads((tmp_path / LOG).read_text(encoding="utf-8").splitlines()[0])["sigmas"]
+    unshifted = json.loads((tiny_reference_run / LOG).read_text(encoding="utf-8").splitlines()[0])["sigmas"]
+    # the same seed draws the same levels, each shifted: 0.5 sigma / (1 - 0.5 sigma)
+    assert logged == [torch.tensor(0.5 * sigma / (1 - 0.5 * sigma)).float().item() for sigma in unshifted]
 
 
 def test_flow_matching_loss_is_the_drawn_images_velocity_error_with_the_reference_clean(tiny_moss_dit: Path) -> None:
