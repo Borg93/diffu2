@@ -1,0 +1,63 @@
+#!/bin/bash
+# MOSS-Image's full fine-tune over several GPUs on a Slurm cluster: FSDP2 (diffu_moss.train.distributed) launched by
+# torchrun, one node or several. A template: copy it, fill in the partition, account and paths your site needs (none are
+# set here), and submit with sbatch. Tested on CPU only (gloo, world size 2, tiny models): no run on real GPUs yet.
+#
+# Memory, estimated per GPU before any run (one sample a micro-batch, a 1 MP target and a 0.5 MP reference, ~2k prompt
+# tokens): the float32 weights, gradients, Muon momentum and AdamW moments sharded over N GPUs, 62.2 / N GB; ~8 GB of
+# activations; ~1.5 GB of bfloat16 blocks gathered for the forward and backward and of float32 gradients being
+# reduced; ~0.5 GB of one matrix gathered whole for Muon; ~4 GB for CUDA and NCCL; with --encode-text the text
+# encoder's 16.8 GB on every GPU; with --ema 62.2 -> 82.5 / N GB. On 80 GB A100s:
+#   4 GPUs (one node):  ~30 GB, ~47 GB with --encode-text, ~52 GB with both
+#   8 GPUs (two nodes): ~22 GB, ~39 GB with --encode-text, ~42 GB with both
+# A checkpoint is gathered whole to the main rank's host memory (10 GB in bfloat16; with --save-state ~62 GB more in
+# float32), and each rank loads the DiT whole on the CPU before it is sharded (~20 GB of host memory a rank).
+#
+# Each step's --samples-per-step samples are shared out evenly among the GPUs (a multiple of their number): one
+# micro-batch each per round. The data must sit on a filesystem every node reads (the cache, the DiT, the run dir).
+#
+#SBATCH --job-name=moss-full
+#SBATCH --nodes=1                 # 2 for 8 GPUs on 4-GPU nodes
+#SBATCH --ntasks-per-node=1       # one torchrun per node; it starts a process per GPU
+#SBATCH --gpus-per-node=4
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=0                   # the node's memory: each rank loads the DiT on the CPU before sharding it
+#SBATCH --time=24:00:00
+#SBATCH --output=moss-full-%j.out
+# #SBATCH --partition=<partition>
+# #SBATCH --account=<account>
+
+set -euo pipefail
+
+REPO="${REPO:?set REPO to the repository checkout on the cluster}"
+BASE="${MOSS_BASE:?set MOSS_BASE to the MOSS-Image Base snapshot}"
+CACHE="${CACHE:?set CACHE to a diffu-moss-cache-pairs cache}"
+VAL_CACHE="${VAL_CACHE:-}"
+OUT="${OUT:?set OUT to the run directory}"
+STEPS="${STEPS:-500}"
+SAVE_EVERY="${SAVE_EVERY:-250}"
+GPUS_PER_NODE="${GPUS_PER_NODE:-4}"
+SAMPLES_PER_STEP="${SAMPLES_PER_STEP:-$((SLURM_NNODES * GPUS_PER_NODE * 2))}"  # two rounds of one sample a GPU
+
+# site modules or a container go here; the repository's own environment:
+PY="$REPO/.venv/bin/python"
+
+HEAD_NODE="$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)"
+export OMP_NUM_THREADS=8
+
+options=(--full --transformer "$BASE/transformer" --cache "$CACHE" --out "$OUT" --steps "$STEPS"
+    --samples-per-step "$SAMPLES_PER_STEP" --save-every "$SAVE_EVERY" --val-every "$SAVE_EVERY" --save-state)
+[ -n "$VAL_CACHE" ] && options+=(--val-cache "$VAL_CACHE")
+# a cache of latents alone (diffu-moss-cache-pairs --latents-only): encode the prompts in the step
+# options+=(--encode-text --model "$REPO/runs/moss/base")
+# go on from a checkpoint saved with --save-state, on any number of GPUs:
+# options+=(--resume "$OUT/checkpoints/step_000250")
+
+srun "$PY" -m torch.distributed.run \
+    --nnodes "$SLURM_NNODES" --nproc-per-node "$GPUS_PER_NODE" \
+    --rdzv-backend c10d --rdzv-endpoint "$HEAD_NODE:29500" --rdzv-id "$SLURM_JOB_ID" \
+    -m diffu_moss.train.loop "${options[@]}"
+
+# On one node without Slurm, the same run:
+#   torchrun --standalone --nproc-per-node 4 -m diffu_moss.train.loop --full --transformer <snapshot>/transformer \
+#       --cache <cache> --out <run> --steps 500 --samples-per-step 8 --save-state

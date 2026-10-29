@@ -177,7 +177,10 @@ on the rest at 5e-5, the weights in float32 and the forward in bfloat16; its che
 `diffu-moss-init` draws with as the merged LoRA's export. With `--encode-text` a training encodes each sample's prompt
 in its step by the frozen text encoder, loaded as the cache loads it (`diffu_moss.train.cache.PromptEncoder`), the
 cached embeddings bit for bit (`packages/moss/tests/test_train.py`), so its cache holds the latents alone
-(`diffu-moss-cache-pairs --latents-only`), for 16.8 GB more on each GPU.
+(`diffu-moss-cache-pairs --latents-only`), for 16.8 GB more on each GPU. Launched by `torchrun`, the full fine-tune
+is sharded by FSDP2 over every rank (`diffu_moss.train.distributed`; `jobs/moss/hpc_full.sbatch.example`): the samples
+of a step shared out, Muon orthogonalising each matrix gathered whole, the main rank writing the same checkpoints; at
+world size 2 it trains exactly as at world size 1 (`packages/moss/tests/test_distributed.py`).
 
 MOSS-Image hand LoRAs train with KohakuMossTrainer (its own environment, `~/Desktop/repos/kohakumoss`), on manifests
 whose captions the scratchpad's `moss_prompt.layout_prompt` compiled: `diffu_moss.layout_prompt` compiles a crop plan's

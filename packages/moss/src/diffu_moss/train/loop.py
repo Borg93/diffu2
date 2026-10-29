@@ -65,8 +65,10 @@ from diffu_moss.train.cache import (
     load_sample,
     read_entries,
     read_record,
+    target_shape,
     with_reference,
 )
+from diffu_moss.train.distributed import Ranks, clip_sharded_gradients, joined, left
 from diffu_moss.train.full import STATE, FullSettings, FullTraining
 from diffu_moss.train.records import (
     ADAPTER_RECORD,
@@ -254,20 +256,30 @@ def validation_losses(
     seed: int,
     compute_dtype: torch.dtype | None = None,
     encoder: PromptEncoder | None = None,
+    ranks: Ranks | None = None,
 ) -> dict[str, float]:
     """The mean loss of each prompt form over ``entries``, each pair at its own fixed noise level and noise (drawn
     from ``seed`` and the pair's place), the same for every form of the pair; the prompts encoded by ``encoder`` when
-    given, else cached."""
+    given, else cached. Over several ranks each scores the entries it owns in turn (a rank short of one in the last
+    round scores the first entry again and drops it: a sharded DiT's forward needs every rank), and the losses are
+    summed over the ranks before the means, taken in entry order as one process takes them."""
+    ranks = Ranks() if ranks is None else ranks
     pairs = {pair: k for k, pair in enumerate(dict.fromkeys(entry.pair for entry in entries))}
-    losses: dict[str, list[float]] = defaultdict(list)
+    rounds = -(-len(entries) // ranks.world)
+    scored = [0.0] * len(entries)
     with torch.no_grad():
-        for entry in entries:
+        for index in range(ranks.rank, rounds * ranks.world, ranks.world):
+            entry = entries[index if index < len(entries) else 0]
             sample = load_sample(cache, entry, device, encoder)
             generator = torch.Generator().manual_seed(seed + pairs[entry.pair])
             sigma = draw_sigmas(1, generator).item()
             noise = torch.randn(sample.target.shape, generator=generator).to(device)
             loss = flow_matching_loss(transformer, sample, sigma, noise, compute_dtype=compute_dtype)
-            losses[entry.variant.value].append(loss.item())
+            if index < len(entries):
+                scored[index] = loss.item()
+    losses: dict[str, list[float]] = defaultdict(list)
+    for entry, loss in zip(entries, ranks.summed(scored, device), strict=True):
+        losses[entry.variant.value].append(loss)
     return {variant: fmean(values) for variant, values in losses.items()}
 
 
@@ -330,24 +342,33 @@ def accumulate_gradients(
     compute_dtype: torch.dtype | None = None,
     encoder: PromptEncoder | None = None,
     sigma_shift: float = 1.0,
+    ranks: Ranks | None = None,
 ) -> tuple[list[float], list[float]]:
     """One step's gradients accumulated into the trained weights: the mean of ``samples``' flow-matching losses, each
     at a noise level (shifted by ``sigma_shift``) and noise drawn from ``generator``, its prompt encoded by ``encoder``
-    when given.
+    when given. Over several ranks every rank draws every sample's level and noise in turn, as one process does, and
+    computes the samples it owns (:meth:`Ranks.owns`), each loss divided by its own count: FSDP2 averages the ranks'
+    gradients into the mean over ``samples``.
 
     Returns:
-        Each sample's loss and noise level.
+        Each sample's loss (summed over the ranks) and noise level.
     """
-    losses, sigmas = [], []
-    for entry in samples:
+    ranks = Ranks() if ranks is None else ranks
+    owned = len(samples) // ranks.world
+    losses, sigmas = [0.0] * len(samples), []
+    for index, entry in enumerate(samples):
+        if not ranks.owns(index):  # its level and noise drawn all the same, so every rank's generator goes on alike
+            sigmas.append(draw_sigmas(1, generator, sigma_shift).item())
+            torch.randn(target_shape(cache, entry), generator=generator)
+            continue
         sample = load_sample(cache, entry, device, encoder)
         sigma = draw_sigmas(1, generator, sigma_shift).item()
         noise = torch.randn(sample.target.shape, generator=generator).to(device)
         loss = flow_matching_loss(transformer, sample, sigma, noise, compute_dtype=compute_dtype)
-        (loss / len(samples)).backward()
-        losses.append(loss.item())
+        (loss / owned).backward()
+        losses[index] = loss.item()
         sigmas.append(sigma)
-    return losses, sigmas
+    return ranks.summed(losses, device), sigmas
 
 
 def _validate(
@@ -357,6 +378,7 @@ def _validate(
     step: int,
     settings: TrainSettings,
     encoder: PromptEncoder | None,
+    ranks: Ranks,
 ) -> None:
     training.transformer.eval()
     entries = read_entries(val_cache)
@@ -368,8 +390,11 @@ def _validate(
         seed=VALIDATION_SEED,
         compute_dtype=training.compute_dtype,
         encoder=encoder,
+        ranks=ranks,
     )
     training.transformer.train()
+    if not ranks.main:
+        return
     _log(out, ValidationLog(step=step, val_loss=val_loss))
     console.print(f"step {step}: val loss {json.dumps({form: round(loss, 4) for form, loss in val_loss.items()})}")
 
@@ -441,10 +466,13 @@ def train(
     val_cache: Path | None = None,
     resume: Path | None = None,
     model: Path | None = None,
+    ranks: Ranks | None = None,
 ) -> Path:
     """The DiT at ``base`` trained from the cache at ``cache`` (the module's docstring): a LoRA, or with
     ``settings.full`` every weight, from the start or from ``out``'s checkpoint ``resume``; with
-    ``settings.encode_text`` its prompts encoded by the text encoder of :func:`prompt_encoder` (``model``'s).
+    ``settings.encode_text`` its prompts encoded by the text encoder of :func:`prompt_encoder` (``model``'s). Over
+    several ``ranks`` (a ``torchrun`` launch, :mod:`diffu_moss.train.distributed`) a full fine-tune is sharded by
+    FSDP2, each step's samples shared out among the ranks, and the main rank writes the log and checkpoints.
 
     Returns:
         The last checkpoint's directory.
@@ -452,8 +480,14 @@ def train(
     Raises:
         ValueError: If a cache is not finished, holds no entry to train on or no prompt embeddings to read, ``out``
             holds a training's log already (unless resumed), or the run cannot resume from ``resume``
-            (:func:`resumed_progress`; its cache's entries are others).
+            (:func:`resumed_progress`; its cache's entries are others); over several ranks, if it trains a LoRA or its
+            samples a step do not share out evenly among them.
     """
+    ranks = Ranks() if ranks is None else ranks
+    if ranks.mesh is not None and settings.full is None:
+        raise ValueError("a run over several processes shards a full fine-tune: give --full")
+    if settings.grad_accumulation % ranks.world:
+        raise ValueError(f"{settings.grad_accumulation} samples a step do not share out among {ranks.world} ranks")
     if resume is None and (out / LOG).exists():
         raise ValueError(f"{out} holds a training already ({LOG}); give a new directory")
     entries = read_entries(cache)
@@ -471,7 +505,9 @@ def train(
         training = LoraTraining(base, settings)
     else:
         schedule = warmup(settings.warmup)
-        training = FullTraining(base, settings.full, schedule=schedule, device=settings.device, resume=resume)
+        training = FullTraining(
+            base, settings.full, schedule=schedule, device=settings.device, resume=resume, ranks=ranks
+        )
     generator = torch.Generator().manual_seed(settings.seed)
     order = SampleOrder(len(entries), generator)
     done = 0
@@ -479,7 +515,8 @@ def train(
         generator.set_state(torch.frombuffer(bytearray(progress.generator), dtype=torch.uint8))
         order = SampleOrder(len(entries), generator, order=progress.order, drawn=progress.drawn)
         done = progress.step
-        _cut_log(out, done)
+        if ranks.main:
+            _cut_log(out, done)
     device = torch.device(settings.device)
     checkpoint = out
     for step in range(done + 1, settings.steps + 1):
@@ -496,8 +533,12 @@ def train(
             compute_dtype=training.compute_dtype,
             encoder=encoder,
             sigma_shift=settings.sigma_shift,
+            ranks=ranks,
         )
-        grad_norm = torch.nn.utils.clip_grad_norm_(training.parameters, settings.grad_clip).item()
+        if ranks.mesh is None:
+            grad_norm = torch.nn.utils.clip_grad_norm_(training.parameters, settings.grad_clip).item()
+        else:
+            grad_norm = clip_sharded_gradients(training.parameters, settings.grad_clip)
         learning_rate = training.step()
         seconds = time.monotonic() - started
         peak = _peak_memory_gb(device)
@@ -512,16 +553,18 @@ def train(
             seconds=seconds,
             peak_memory_gb=peak,
         )
-        _log(out, logged)
-        if step % 10 == 0 or step == done + 1:
+        if ranks.main:
+            _log(out, logged)
+        if ranks.main and (step % 10 == 0 or step == done + 1):
             memory = "" if peak is None else f", {peak:.1f} GB"
             console.print(f"step {step}: loss {fmean(losses):.4f}, grad norm {grad_norm:.3f}, {seconds:.1f} s{memory}")
         if step % settings.save_every == 0 or step == settings.steps:
             checkpoint = out / CHECKPOINTS / f"step_{step:06d}"
-            checkpoint.mkdir(parents=True, exist_ok=True)
+            if ranks.main:
+                checkpoint.mkdir(parents=True, exist_ok=True)
             training.save(checkpoint, _progress(step, settings, generator, order))
         if val_cache is not None and (step % settings.val_every == 0 or step == settings.steps):
-            _validate(training, val_cache, out, step, settings, encoder)
+            _validate(training, val_cache, out, step, settings, encoder, ranks)
     return checkpoint
 
 
@@ -540,6 +583,14 @@ def main(
         typer.Option("--full", help="train every weight of the DiT (MOSS-Image's recipe, Muon and AdamW), not a LoRA"),
     ] = False,
     steps: Annotated[int, typer.Option(min=1, help="optimizer steps")] = 1500,
+    samples_per_step: Annotated[
+        int,
+        typer.Option(
+            min=1,
+            help="samples a step, one a micro-batch; under torchrun shared out evenly among the ranks (a multiple of "
+            "their number)",
+        ),
+    ] = 2,
     limit_pairs: Annotated[
         int | None,
         typer.Option(
@@ -600,12 +651,14 @@ def main(
     seed: Annotated[int, typer.Option(help="the sample order, noise levels, noise and the LoRA's start")] = 0,
     device: Annotated[str, typer.Option(help="where the DiT trains")] = "cuda",
 ) -> None:
-    """Train MOSS-Image's DiT to draw from a reference image: a LoRA, or every weight (--full)."""
+    """Train MOSS-Image's DiT to draw from a reference image: a LoRA, or every weight (--full); under torchrun, every
+    weight sharded over the ranks by FSDP2."""
     if not full and (ema is not None or save_state or resume is not None):
         raise typer.BadParameter("--ema, --save-state and --resume are a full fine-tune's: give --full")
     if model is not None and not encode_text:
         raise typer.BadParameter("--model gives the text encoder of --encode-text: give --encode-text")
     rate = {} if learning_rate is None else {"learning_rate": learning_rate}  # else each kind's own default
+    ranks, device = joined(device)
     try:  # a ValidationError (an --ema outside (0, 1)) is a ValueError too
         fine_tune = FullSettings.model_validate({"ema": ema, "save_state": save_state, **rate}) if full else None
         run = {
@@ -613,15 +666,22 @@ def main(
             "limit_pairs": limit_pairs,
             "encode_text": encode_text,
             "sigma_shift": sigma_shift,
+            "grad_accumulation": samples_per_step,
             "save_every": save_every,
             "val_every": val_every,
         }
         settings = TrainSettings.model_validate(
             {**run, "seed": seed, "device": device, "full": fine_tune, **({} if full else rate)}
         )
-        checkpoint = train(transformer, cache, out, settings, val_cache=val_cache, resume=resume, model=model)
+        checkpoint = train(
+            transformer, cache, out, settings, val_cache=val_cache, resume=resume, model=model, ranks=ranks
+        )
     except ValueError as error:  # an unfinished cache, a used run directory, a checkpoint not to resume: the arguments'
         raise typer.BadParameter(str(error)) from error
+    finally:
+        left()
+    if not ranks.main:
+        return
     trained = "the LoRA" if settings.full is None else "the DiT"
     console.print(f"{trained} after {settings.steps} steps -> {checkpoint}")
 

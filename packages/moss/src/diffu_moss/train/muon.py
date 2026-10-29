@@ -9,6 +9,11 @@ AdamW's RMS (``lr * 0.2 * sqrt(max(rows, cols))``, Moonshot's "Muon is Scalable 
 feed-forward's ``ffn_up_gate``: its value half, then its gate half) is orthogonalised and RMS-scaled one block at a
 time, as the separate matrices the fused one stands for; the parameter stays one tensor, so the DiT's weights keep
 their names.
+
+A matrix sharded by FSDP2 (:mod:`diffu_moss.train.distributed`) takes its momentum and decay on each rank's rows; its
+update is gathered whole (in bfloat16, which the Newton-Schulz steps cast it to first) and orthogonalised on every rank,
+each keeping its own rows: exactly the step of one process, at the cost of every rank orthogonalising every matrix
+(about 3.7e14 FLOPs a step on the real DiT, ~1.5 s on an A100) and gathering 9.5 GB of updates.
 """
 
 from __future__ import annotations
@@ -20,6 +25,8 @@ from typing import Any
 import torch
 from torch import Tensor
 from torch.optim import Optimizer
+
+from diffu_moss.train.distributed import sharded_like, whole
 
 NEWTON_SCHULZ = (3.4445, -4.7750, 2.0315)
 NEWTON_SCHULZ_STEPS = 5
@@ -98,7 +105,9 @@ class Muon(Optimizer):
         buffer.lerp_(grad, 1 - group["momentum"])
         update = grad.lerp(buffer, group["momentum"]) if group["nesterov"] else buffer
         splits = group["splits"]
+        update = whole(update.bfloat16())  # what the Newton-Schulz steps read first: the same bits, half the traffic
         blocks = [orthogonalised(block, group["ns_steps"]) for block in update.chunk(splits, 0)]
+        orthogonal = sharded_like(torch.cat(blocks) if splits > 1 else blocks[0], parameter)
         rate = rms_matched_rate(group["lr"], parameter.shape[0] // splits, parameter.shape[1])
         parameter.mul_(1 - group["lr"] * group["weight_decay"])
-        parameter.add_(torch.cat(blocks) if splits > 1 else blocks[0], alpha=-rate)
+        parameter.add_(orthogonal, alpha=-rate)

@@ -264,6 +264,12 @@ def read_record(cache: Path) -> CacheRecord:
     return CacheRecord.read(cache / CACHE_RECORD)
 
 
+def target_shape(cache: Path, entry: CacheEntry) -> list[int]:
+    """The shape of an entry's target latents, read from its file's header."""
+    with safe_open(str(cache / entry.file), framework="pt") as tensors:
+        return list(tensors.get_slice("target").get_shape())
+
+
 def load_sample(
     cache: Path, entry: CacheEntry, device: torch.device | str, encoder: PromptEncoder | None = None
 ) -> CachedSample:

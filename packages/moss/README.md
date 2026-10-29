@@ -79,12 +79,30 @@ implementation, written from the published design, around the released weights.
   for the full fine-tune at 2 samples of a 1 MP target and a 0.5 MP reference: on one GB10, ~73 GB + 17 GB = ~90 GB
   (69 GB measured without it, so ~86 GB; the 128 GB of unified memory holds it, the guard must ask for 92); on one
   80 GB A100, the ~73 GB without it already leaves no room, so with it the full fine-tune needs FSDP2 over several
-  GPUs.
+  GPUs (below).
 
       diffu-moss-cache-pairs --model runs/moss/base --pairs data_flux3/page_pairs/train.jsonl \
           --out data_flux3/cache_moss_pages_latents --latents-only
       diffu-moss-train-ref --full --encode-text --model runs/moss/base --transformer <snapshot>/transformer \
           --cache data_flux3/cache_moss_pages_latents --out runs/moss_pages_full/full --steps 500
+- **Several GPUs** (`train/distributed.py`, the full fine-tune launched by `torchrun`, one node or several): each
+  joint block an FSDP2 unit (`fully_shard`) and the rest of the DiT the root's, every float32 weight, gradient and
+  optimizer state sharded by rows over the ranks, the weights gathered in bfloat16 for the forward and backward and
+  the gradients reduced in float32 (a `MixedPrecisionPolicy`; the inputs not cast, the forward in bfloat16 autocast as
+  on one GPU). A step's `--samples-per-step` samples (a multiple of the ranks) are shared out among the ranks, every
+  rank drawing every sample's noise level and noise as one process does; Muon gathers each sharded matrix's update
+  whole (in bfloat16, which its Newton-Schulz steps read) and orthogonalises it on every rank, each keeping its own
+  rows; the gradient norm is summed row by row in one order on every rank, so the clip is the same bits on any number
+  of ranks. The validation is shared out among the ranks and its losses summed. The main rank writes the log and
+  each checkpoint, gathered whole: the same bfloat16 DiT folder and state as one process writes, and a state resumes
+  on any number of ranks. At world size 2 the tiny models train, score, checkpoint and resume exactly as at world
+  size 1 (`tests/test_distributed.py`, gloo on the CPU). Estimated per 80 GB A100 (the template's header has the
+  sums): ~30 GB on 4 GPUs (47 with `--encode-text`, 52 with `--ema` too), ~22 GB on 8 (39, 42); on 3 GPUs ~35 GB
+  (52 with `--encode-text`). `jobs/moss/hpc_full.sbatch.example` is a Slurm template (no site names) with the
+  torchrun command; not yet run on GPUs.
+
+      torchrun --standalone --nproc-per-node 4 -m diffu_moss.train.loop --full --transformer <snapshot>/transformer \
+          --cache data_flux3/cache_moss_pages --out runs/moss_pages_full/full --steps 500 --samples-per-step 8
 - **Page pairs** (`diffu_page.data.page_pairs`, diffu-page; the big full fine-tune's data): whole single pages of the
   handwritten GT (openings split into their pages), each cut at about 1 MP exactly as `diffu-generate --whole-page`
   plans a page and prompted as drawing prompts it, with a sample page of its own volume sharing none of its lines at

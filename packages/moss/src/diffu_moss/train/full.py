@@ -16,6 +16,9 @@ copies of its weights live only while it runs; the joint blocks' activations are
 FSDP2's MixedPrecisionPolicy takes, with no float32 master copy of our own. On the real DiT (5.08 B parameters, 4.76 B
 of them the joint blocks' matrices) it holds 20.3 GB of weights, 20.3 GB of gradients, 19.0 GB of Muon momentum and
 2.6 GB of AdamW moments: about 73 GB at its peak with the activations of a 1 MP target and a 0.5 MP reference.
+Launched by ``torchrun`` it is sharded by FSDP2 over the ranks (:mod:`diffu_moss.train.distributed`): those 62.2 GB of
+weights and state divided among them, ~14 GB more on each (activations, gathered blocks, CUDA and NCCL), so ~30 GB on
+each of 4 A100s and ~22 GB on each of 8.
 
 A checkpoint (``checkpoints/step_NNNNNN/``) holds the DiT itself: ``transformer/``, its weights in bfloat16 as a
 diffusers folder with its ``export.json``, which ``diffu-moss-init --transformer`` draws with as it is; ``ema/``, the
@@ -35,8 +38,10 @@ from diffusers.utils import SAFETENSORS_WEIGHTS_NAME
 from pydantic import BaseModel, ConfigDict, Field
 from safetensors.torch import load_file, save_file
 from torch import Tensor, nn
+from torch.distributed.tensor import DTensor
 from torch.optim.lr_scheduler import LambdaLR
 
+from diffu_moss.train.distributed import Ranks, gathered, shard, sharded_like
 from diffu_moss.train.muon import Muon
 from diffu_moss.train.records import EXPORT_RECORD, PROGRESS_RECORD, ExportRecord, Progress
 from diffu_moss.transformer import MossTransformer
@@ -134,20 +139,50 @@ class FullOptimizer:
         self.muon.zero_grad(set_to_none=True)
         self.adamw.zero_grad(set_to_none=True)
 
-    def state_dict(self) -> dict[str, Any]:
-        """The optimizers' and their schedules' states."""
+    def state_dict(self, ranks: Ranks) -> dict[str, Any]:
+        """The optimizers' and their schedules' states, as one process holds them: a sharded state tensor gathered
+        whole (every rank taking part) and kept on the CPU on the main rank alone (None on the others), so a state
+        resumes on any number of ranks."""
         return {
-            "muon": self.muon.state_dict(),
-            "adamw": self.adamw.state_dict(),
+            "muon": _whole_state(self.muon, ranks),
+            "adamw": _whole_state(self.adamw, ranks),
             "schedules": [schedule.state_dict() for schedule in self._schedules],
         }
 
     def load_state_dict(self, state: Mapping[str, Any]) -> None:
-        """The optimizers and their schedules set to ``state`` (:meth:`state_dict`'s)."""
-        self.muon.load_state_dict(state["muon"])
-        self.adamw.load_state_dict(state["adamw"])
+        """The optimizers and their schedules set to ``state`` (:meth:`state_dict`'s, whole), each state tensor sharded
+        as its weight is."""
+        self.muon.load_state_dict(_sharded_state(self.muon, state["muon"]))
+        self.adamw.load_state_dict(_sharded_state(self.adamw, state["adamw"]))
         for schedule, saved in zip(self._schedules, state["schedules"], strict=True):
             schedule.load_state_dict(saved)
+
+
+def _whole_state(optimizer: torch.optim.Optimizer, ranks: Ranks) -> dict[str, Any]:
+    saved = optimizer.state_dict()
+    state = {}
+    for index, values in saved["state"].items():
+        state[index] = {}
+        for key, value in values.items():
+            if isinstance(value, DTensor):
+                full = value.full_tensor()
+                value = full.cpu() if ranks.main else None
+            state[index][key] = value
+    return {"state": state, "param_groups": saved["param_groups"]}
+
+
+def _sharded_state(optimizer: torch.optim.Optimizer, saved: Mapping[str, Any]) -> dict[str, Any]:
+    weights = [weight for group in optimizer.param_groups for weight in group["params"]]
+    state = {
+        index: {
+            key: sharded_like(value, weights[index])
+            if isinstance(value, Tensor) and value.shape == weights[index].shape
+            else value
+            for key, value in values.items()
+        }
+        for index, values in saved["state"].items()
+    }
+    return {"state": state, "param_groups": saved["param_groups"]}
 
 
 class WeightAverage:
@@ -189,6 +224,10 @@ class FullTraining:
     """A full fine-tune in training (the module's docstring), from the DiT at ``base`` or, with ``resume``, from that
     checkpoint's state: the DiT's weights, the optimizer's state and the average's as they were saved.
 
+    Over several ranks (``ranks.mesh``) the DiT is loaded on the CPU on each, then sharded onto the mesh's device
+    (:func:`diffu_moss.train.distributed.shard`); the optimizer's and the average's state are sharded as the weights
+    are, and a checkpoint is gathered whole and written by the main rank alone, the same files as one process writes.
+
     Attributes:
         transformer: The DiT, every weight trained in float32.
         parameters: Its weights.
@@ -206,22 +245,33 @@ class FullTraining:
         schedule: Callable[[int], float],
         device: str,
         resume: Path | None = None,
+        ranks: Ranks | None = None,
     ) -> None:
         self._base = base
         self._save_state = settings.save_state
+        self._ranks = Ranks() if ranks is None else ranks
+        mesh = self._ranks.mesh
         state = None if resume is None else resume / STATE
-        self.transformer = full_transformer(base if state is None else state, device=device)
+        self.transformer = full_transformer(base if state is None else state, device="cpu" if mesh else device)
+        if mesh is not None:
+            shard(self.transformer, mesh)
         self.parameters: list[nn.Parameter] = list(self.transformer.parameters())
         self.optimizer = FullOptimizer(self.transformer, settings, schedule=schedule)
         self.average: WeightAverage | None = None
+        held = "cpu" if mesh else device  # sharded, each rank keeps its own rows of what it reads whole
         if state is not None:
-            self.optimizer.load_state_dict(torch.load(state / OPTIMIZER_STATE, map_location=device, weights_only=True))
+            saved = torch.load(state / OPTIMIZER_STATE, map_location=held, weights_only=True, mmap=mesh is not None)
+            self.optimizer.load_state_dict(saved)
         if settings.ema is None:
             return
         if state is None:
             self.average = WeightAverage.of(self.transformer, settings.ema)
         else:
-            self.average = WeightAverage(load_file(str(state / AVERAGE_WEIGHTS), device=device), settings.ema)
+            averaged = load_file(str(state / AVERAGE_WEIGHTS), device=held)
+            weights = {
+                name: sharded_like(averaged[name], weight) for name, weight in self.transformer.named_parameters()
+            }
+            self.average = WeightAverage(weights, settings.ema)
 
     def step(self) -> float:
         """One step of every weight from its gradient (the gradients then dropped), and the average moved after it.
@@ -237,20 +287,33 @@ class FullTraining:
         return learning_rate
 
     def save(self, directory: Path, progress: Progress) -> None:
-        """The checkpoint of ``progress``'s step into ``directory`` (the module's docstring)."""
+        """The checkpoint of ``progress``'s step into ``directory`` (the module's docstring), written by the main rank;
+        every rank calls it, as the sharded weights and state are gathered from all."""
+        ranks = self._ranks
         record = ExportRecord(takes_reference=True, base=str(self._base.resolve()), checkpoint=str(directory.resolve()))
-        _save_dit(self.transformer, dict(self.transformer.named_parameters()), directory / DIT, record)
+        weights = dict(self.transformer.named_parameters())
+        dit = gathered(weights, COMPUTE_DTYPE, ranks)
+        if ranks.main:
+            _save_dit(self.transformer, dit, directory / DIT, record)
+        del dit
         if self.average is not None:
-            _save_dit(self.transformer, self.average.weights, directory / AVERAGE, record)
+            average = gathered(self.average.weights, COMPUTE_DTYPE, ranks)
+            if ranks.main:
+                _save_dit(self.transformer, average, directory / AVERAGE, record)
+            del average
         if not self._save_state:
             return
+        optimizer = self.optimizer.state_dict(ranks)
+        float32 = gathered(weights, torch.float32, ranks)
+        averaged = None if self.average is None else gathered(self.average.weights, torch.float32, ranks)
+        if not ranks.main:
+            return
         state = directory / STATE
+        state.mkdir(parents=True, exist_ok=True)
         (state / PROGRESS_RECORD).unlink(missing_ok=True)  # a stopped run's, until this state is whole
-        self.transformer.save_pretrained(str(state))
-        if self.average is not None:
-            save_file(
-                {name: weight.contiguous() for name, weight in self.average.weights.items()},
-                str(state / AVERAGE_WEIGHTS),
-            )
-        torch.save(self.optimizer.state_dict(), state / OPTIMIZER_STATE)
+        self.transformer.save_config(str(state))
+        save_file(float32, str(state / SAFETENSORS_WEIGHTS_NAME))
+        if averaged is not None:
+            save_file(averaged, str(state / AVERAGE_WEIGHTS))
+        torch.save(optimizer, state / OPTIMIZER_STATE)
         progress.write(state / PROGRESS_RECORD)
