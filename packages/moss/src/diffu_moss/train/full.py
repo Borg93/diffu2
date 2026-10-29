@@ -2,9 +2,10 @@
 pairs, by MOSS-Image's own optimizer recipe (its technical report, Appendix A.2 and its Table 7, which
 KohakuMossTrainer's full fine-tune follows too):
 
-- torch's Muon on the joint blocks' weight matrices: Nesterov momentum 0.95, 5 Newton-Schulz steps, its step matched to
-  AdamW's RMS (``match_rms_adamw``); AdamW on every other parameter, betas (0.9, 0.95), eps 1e-8; both at 5e-5,
-  constant after the warmup;
+- Muon on the joint blocks' weight matrices (:mod:`diffu_moss.train.muon`): Nesterov momentum 0.95, 5 Newton-Schulz
+  steps, its step matched to AdamW's RMS, the fused gated feed-forward's ``ffn_up_gate`` orthogonalised half by half
+  as the report does; AdamW on every other parameter, betas (0.9, 0.95), eps 1e-8; both at 5e-5, constant after the
+  warmup;
 - weight decay 0.01, but none on biases, norms and the embedders (the latents', the prompt's and the timestep's);
 - the last joint block's q/k norm weights decayed towards one instead, ``w -= lr * 0.01 * (w - 1)``;
 - gradients clipped at 1 (the loop's), and an exponential moving average of the weights (the report's 0.9999) when
@@ -36,11 +37,13 @@ from safetensors.torch import load_file, save_file
 from torch import Tensor, nn
 from torch.optim.lr_scheduler import LambdaLR
 
+from diffu_moss.train.muon import Muon
 from diffu_moss.train.records import EXPORT_RECORD, PROGRESS_RECORD, ExportRecord, Progress
 from diffu_moss.transformer import MossTransformer
 
 COMPUTE_DTYPE = torch.bfloat16
 EMBEDDERS = ("video_embedder.", "text_embedder.proj.", "time_embedding.")  # the latents', the prompt's, the timestep's
+FUSED_GATED_FFN = ".ffn_up_gate.weight"  # the value and gate projections in one matrix: Muon steps each half alone
 DIT = "transformer"
 AVERAGE = "ema"
 STATE = "state"
@@ -77,28 +80,26 @@ class FullOptimizer:
     ``settings.learning_rate`` times ``schedule`` of the steps done.
 
     Attributes:
-        muon: torch's Muon over the joint blocks' weight matrices.
+        muon: Muon over the joint blocks' weight matrices: the whole ones, then the fused ``ffn_up_gate`` ones in halves.
         adamw: AdamW over the rest, in two groups: weight-decayed, then not (biases, norms, embedders).
     """
 
     def __init__(
         self, transformer: MossTransformer, settings: FullSettings, *, schedule: Callable[[int], float]
     ) -> None:
-        matrices, decayed, undecayed = [], [], []
+        matrices, fused, decayed, undecayed = [], [], [], []
         for name, parameter in transformer.named_parameters():
             if name.startswith("layers.") and parameter.ndim == 2:
-                matrices.append((name, parameter))
+                (fused if name.endswith(FUSED_GATED_FFN) else matrices).append((name, parameter))
             elif parameter.ndim < 2 or name.startswith(EMBEDDERS):
                 undecayed.append((name, parameter))
             else:
                 decayed.append((name, parameter))
-        self.muon = torch.optim.Muon(
-            matrices,
+        self.muon = Muon(
+            [{"params": matrices}, {"params": fused, "splits": 2}],
             lr=settings.learning_rate,
             weight_decay=settings.weight_decay,
             momentum=settings.momentum,
-            nesterov=True,
-            adjust_lr_fn="match_rms_adamw",
         )
         self.adamw = torch.optim.AdamW(
             [{"params": decayed, "weight_decay": settings.weight_decay}, {"params": undecayed, "weight_decay": 0.0}],

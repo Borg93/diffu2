@@ -14,13 +14,14 @@ import pytest
 import torch
 from diffusers.utils import SAFETENSORS_WEIGHTS_NAME
 from safetensors.torch import load_file
-from torch import Tensor
+from torch import Tensor, nn
 
 from diffu.repo import ModelIndex
 from diffu_moss.init import write_moss_repo
 from diffu_moss.modular_pipelines.moss import MossModularPipeline
 from diffu_moss.train.full import AVERAGE, AVERAGE_WEIGHTS, DIT, STATE, FullOptimizer, FullSettings
 from diffu_moss.train.loop import LOG, TrainSettings, train
+from diffu_moss.train.muon import Muon
 from diffu_moss.transformer import MossTransformer
 
 JOINT_MATRICES = [
@@ -75,25 +76,62 @@ def test_full_optimizer_steps_the_joint_blocks_matrices_by_muon_and_the_rest_by_
 
     optimizer = FullOptimizer(transformer, FullSettings(), schedule=lambda done: 1.0)
 
-    muon = {name: group["weight_decay"] for group in optimizer.muon.param_groups for name in group["param_names"]}
+    muon = {
+        name: (group["weight_decay"], group["splits"])
+        for group in optimizer.muon.param_groups
+        for name in group["param_names"]
+    }
     adamw = {name: group["weight_decay"] for group in optimizer.adamw.param_groups for name in group["param_names"]}
-    assert muon == dict.fromkeys(JOINT_MATRICES, 0.01)
+    # the fused gated feed-forward orthogonalised in halves, every other joint matrix whole
+    assert muon == {name: (0.01, 2 if "ffn_up_gate" in name else 1) for name in JOINT_MATRICES}
     # every other weight, decayed only when a matrix of neither an embedder (the latents', prompt's, timestep's) nor a norm
     rest = [name for name, _ in transformer.named_parameters() if name not in JOINT_MATRICES]
     assert adamw == {name: 0.01 if name in DECAYED else 0.0 for name in rest}
-    recipe = ("lr", "momentum", "nesterov", "ns_steps", "adjust_lr_fn")
+    recipe = ("lr", "momentum", "nesterov", "ns_steps")
     assert {key: optimizer.muon.param_groups[0][key] for key in recipe} == {
         "lr": 5e-5,
         "momentum": 0.95,
         "nesterov": True,
         "ns_steps": 5,
-        "adjust_lr_fn": "match_rms_adamw",
     }
     assert {key: optimizer.adamw.param_groups[0][key] for key in ("lr", "betas", "eps")} == {
         "lr": 5e-5,
         "betas": (0.9, 0.95),
         "eps": 1e-8,
     }
+
+
+def _two_muon_steps(matrix: nn.Parameter, optimizer: Muon, parts: list[nn.Parameter]) -> None:
+    """Two steps of ``optimizer`` on ``matrix`` and of torch's Muon (MOSS's recipe) on ``parts``, its row blocks as
+    matrices of their own, each step from one random gradient of ``matrix``, its row blocks given to ``parts``."""
+    torchs = torch.optim.Muon(
+        parts, lr=0.1, weight_decay=0.01, momentum=0.95, nesterov=True, adjust_lr_fn="match_rms_adamw"
+    )
+    generator = torch.Generator().manual_seed(1)
+    for _ in range(2):  # the second step through the momentum
+        matrix.grad = torch.randn(matrix.shape, generator=generator)
+        for part, grad in zip(parts, matrix.grad.chunk(len(parts)), strict=True):
+            part.grad = grad.clone()
+        optimizer.step()
+        torchs.step()
+
+
+def test_muon_steps_each_half_of_a_fused_matrix_as_torchs_muon_steps_that_half_alone() -> None:
+    fused = nn.Parameter(torch.randn(8, 6, generator=torch.Generator().manual_seed(0)))
+    halves = [nn.Parameter(half.detach().clone()) for half in fused.chunk(2)]
+
+    _two_muon_steps(fused, Muon([fused], lr=0.1, weight_decay=0.01, momentum=0.95, splits=2), halves)
+
+    assert torch.equal(fused.detach(), torch.cat([half.detach() for half in halves]))
+
+
+def test_muon_steps_a_whole_matrix_as_torchs_muon_does() -> None:
+    whole = nn.Parameter(torch.randn(6, 4, generator=torch.Generator().manual_seed(0)))  # tall: stepped transposed
+    alone = nn.Parameter(whole.detach().clone())
+
+    _two_muon_steps(whole, Muon([whole], lr=0.1, weight_decay=0.01, momentum=0.95), [alone])
+
+    assert torch.equal(whole.detach(), alone.detach())
 
 
 def test_full_optimizer_decays_the_last_blocks_q_and_k_norm_weights_towards_one(tiny_moss_dit: Path) -> None:

@@ -40,9 +40,10 @@ implementation, written from the published design, around the released weights.
   `jobs/moss/run_ref_pilot.sh` runs the pilot through `jobs/spark_guard.sh`: the caches, a smoke run, the training,
   the export and model directory, and 8 held-out crops drawn with and without their reference.
 - **Full fine-tune** (`diffu-moss-train-ref --full`, `train/full.py`): every weight of the DiT on the same pairs and
-  caches, by MOSS-Image's own recipe (its technical report, Appendix A.2 and Table 7): torch's Muon on the joint
-  blocks' weight matrices (Nesterov momentum 0.95, 5 Newton-Schulz steps, matched to AdamW's RMS) and AdamW on the
-  rest (betas 0.9, 0.95), both at 5e-5; weight decay 0.01 but none on biases, norms and the embedders; the last
+  caches, by MOSS-Image's own recipe (its technical report, Appendix A.2 and Table 7): Muon on the joint blocks'
+  weight matrices (`train/muon.py`: Nesterov momentum 0.95, 5 Newton-Schulz steps, matched to AdamW's RMS; exactly
+  torch's Muon, but the fused gated feed-forward `ffn_up_gate` is orthogonalised and RMS-scaled half by half, as the
+  report steps fused matrices, its weights' names unchanged) and AdamW on the rest (betas 0.9, 0.95), both at 5e-5; weight decay 0.01 but none on biases, norms and the embedders; the last
   block's q/k norm weights decayed towards one; gradients clipped at 1. The weights stay in float32 and the forward
   runs in bfloat16 autocast, the joint blocks checkpointed: the layout FSDP2 wraps, with no master copy of our own.
   On one GB10 that is about 73 GB at the peak (20.3 GB of weights, 20.3 of gradients, 19.0 of Muon momentum, 2.6 of

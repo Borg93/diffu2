@@ -169,7 +169,8 @@ checks a cached pair against the page pipeline's encoding of the same crop and r
 levels are MOSS-Image's own (KohakuMossTrainer's default sampler: the training grid j/1000, a truncated logit-normal
 of median 0.78, 1% uniform), its loss flow matching's over the drawn image's tokens. It trains a LoRA, or with
 `--full` every weight of the DiT (`diffu_moss.train.full`, tested on the Spark by `jobs/moss/run_ref_full.sh`) by
-MOSS-Image's own optimizer recipe (its technical report, Appendix A.2): Muon on the joint blocks' matrices and AdamW
+MOSS-Image's own optimizer recipe (its technical report, Appendix A.2): Muon on the joint blocks' matrices (the fused
+gated feed-forward orthogonalised half by half, as the report does: `diffu_moss.train.muon`) and AdamW
 on the rest at 5e-5, the weights in float32 and the forward in bfloat16; its checkpoints are the DiT itself, which
 `diffu-moss-init` draws with as the merged LoRA's export.
 

@@ -1,0 +1,104 @@
+"""Muon as MOSS-Image's technical report steps its joint blocks' matrices (Appendix A.2, Table 7): a fused matrix
+orthogonalised block by block, each of its row blocks on its own.
+
+Each matrix takes Nesterov momentum (``buffer = lerp(buffer, gradient, 1 - momentum)``, the update ``lerp(gradient,
+buffer, momentum)``), the update orthogonalised by 5 quintic Newton-Schulz steps in bfloat16 (Keller Jordan's
+coefficients 3.4445, -4.7750, 2.0315), decoupled weight decay (``w *= 1 - lr * decay``) and the step scaled to
+AdamW's RMS (``lr * 0.2 * sqrt(max(rows, cols))``, Moonshot's "Muon is Scalable for LLM Training"). This is exactly
+``torch.optim.Muon`` with ``adjust_lr_fn="match_rms_adamw"``, but a matrix of ``splits`` row blocks (the gated
+feed-forward's ``ffn_up_gate``: its value half, then its gate half) is orthogonalised and RMS-scaled one block at a
+time, as the separate matrices the fused one stands for; the parameter stays one tensor, so the DiT's weights keep
+their names.
+"""
+
+from __future__ import annotations
+
+import math
+from collections.abc import Iterable
+from typing import Any
+
+import torch
+from torch import Tensor
+from torch.optim import Optimizer
+
+NEWTON_SCHULZ = (3.4445, -4.7750, 2.0315)
+NEWTON_SCHULZ_STEPS = 5
+NORM_EPS = 1e-7
+RMS_MATCH = 0.2
+
+
+def orthogonalised(update: Tensor, steps: int = NEWTON_SCHULZ_STEPS) -> Tensor:
+    """The nearest semi-orthogonal matrix to ``update`` (2-D), approximately: ``steps`` quintic Newton-Schulz steps in
+    bfloat16 on it scaled to a spectral norm of at most one (in bfloat16, as torch's Muon returns it)."""
+    a, b, c = NEWTON_SCHULZ
+    tall = update.size(0) > update.size(1)
+    x = update.bfloat16()
+    if tall:
+        x = x.T
+    x = x / x.norm().clamp(min=NORM_EPS)
+    for _ in range(steps):
+        gram = x @ x.T
+        x = torch.addmm(x, torch.addmm(gram, gram, gram, beta=b, alpha=c), x, beta=a)
+    return x.T if tall else x
+
+
+def rms_matched_rate(learning_rate: float, rows: int, cols: int) -> float:
+    """The learning rate of an orthogonalised ``rows`` x ``cols`` update whose RMS matches AdamW's."""
+    return learning_rate * RMS_MATCH * math.sqrt(max(rows, cols))
+
+
+class Muon(Optimizer):
+    """Muon over 2-D matrices (the module's docstring); a group's ``splits`` is how many row blocks each of its
+    matrices is orthogonalised in (1: whole).
+
+    Raises:
+        ValueError: From the constructor, if a parameter is not a matrix or its rows do not split into ``splits``.
+    """
+
+    def __init__(
+        self,
+        params: Iterable[Any],
+        *,
+        lr: float,
+        weight_decay: float,
+        momentum: float,
+        nesterov: bool = True,
+        ns_steps: int = NEWTON_SCHULZ_STEPS,
+        splits: int = 1,
+    ) -> None:
+        defaults = {
+            "lr": lr,
+            "weight_decay": weight_decay,
+            "momentum": momentum,
+            "nesterov": nesterov,
+            "ns_steps": ns_steps,
+            "splits": splits,
+        }
+        super().__init__(params, defaults)
+        for group in self.param_groups:
+            for parameter in group["params"]:
+                if parameter.ndim != 2 or parameter.shape[0] % group["splits"]:
+                    raise ValueError(
+                        f"Muon steps matrices whose rows split into {group['splits']}, not {list(parameter.shape)}"
+                    )
+
+    @torch.no_grad()
+    def step(self, closure: None = None) -> None:  # ty: ignore[invalid-method-override]  no closure: one loss a step
+        """Every matrix with a gradient stepped (the module's docstring)."""
+        for group in self.param_groups:
+            for parameter in group["params"]:
+                if parameter.grad is not None:
+                    self._step(parameter, parameter.grad, group)
+
+    def _step(self, parameter: Tensor, grad: Tensor, group: dict[str, Any]) -> None:
+        state = self.state[parameter]
+        if "momentum_buffer" not in state:
+            state["momentum_buffer"] = torch.zeros_like(grad, memory_format=torch.preserve_format)
+        buffer = state["momentum_buffer"]
+        buffer.lerp_(grad, 1 - group["momentum"])
+        update = grad.lerp(buffer, group["momentum"]) if group["nesterov"] else buffer
+        splits = group["splits"]
+        blocks = [orthogonalised(block, group["ns_steps"]) for block in update.chunk(splits, 0)]
+        rate = rms_matched_rate(group["lr"], parameter.shape[0] // splits, parameter.shape[1])
+        parameter.mul_(1 - group["lr"] * group["weight_decay"])
+        parameter.add_(torch.cat(blocks) if splits > 1 else blocks[0], alpha=-rate)
