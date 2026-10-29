@@ -295,11 +295,13 @@ def print_hand_classifier(weights: Path) -> PrintHandClassifier:
 
 
 def page_reference(image: Path | None, caption: ReferenceCaption) -> Reference | None:
-    """The reference to draw every page from: for a described caption, a crop with its line boxes
-    (``Reference.of_crop``)."""
+    """The reference to draw every page from, captioned in ``caption``'s form: for a described caption, a crop with its
+    line boxes (``Reference.of_crop``)."""
     if image is None:
         return None
-    return Reference.of_crop(image, caption) if caption is ReferenceCaption.DESCRIBED else Reference(image=image)
+    if caption is ReferenceCaption.DESCRIBED:
+        return Reference.of_crop(image, caption)
+    return Reference(image=image, caption=caption)
 
 
 def page_text(path: Path) -> str:
@@ -426,7 +428,10 @@ def generate(
     ] = None,
     reference_caption: Annotated[
         ReferenceCaption,
-        typer.Option(help="the caption form the LoRA was trained on: plain (v3, v3c), described (v3d)"),
+        typer.Option(
+            help="the caption form the model was trained on: plain (v3, v3c), described (v3d), named (v3b) or hand "
+            "(named and hand: MOSS-Image's page pairs, diffu_page.data.page_pairs)"
+        ),
     ] = ReferenceCaption.PLAIN,
     steps: Steps = DEFAULTS.steps,
     guidance: Guidance = DEFAULTS.guidance_scale,

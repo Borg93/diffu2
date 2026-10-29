@@ -13,14 +13,21 @@ handwriting and of every line and fragment row, the paper row's colour and hex. 
   look of a drawing from it must come from the sample image.
 
 A caption that cites no reference (a page drawn in a named style) is left as it is by the first two.
+:func:`sample_layout_prompt` compiles a caption in the form for a drawing with or without the sample image as MOSS's
+Layout prompt, as the page pipeline's ``MossLayoutPromptStep`` compiles a crop and a page pair is trained on.
 """
 
 from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
+
+from diffu_moss.layout_prompt import layout_prompt
 
 CITATIONS = (  # how a caption cites its reference image, and the words that name the sample image instead
+    # after the archive a named caption names (v3b, the page pairs): dropped with its comma
+    (", in the hand, ink and paper of <ref_image_0>", ", in the hand, ink and paper of the sample image"),
     (" in the hand, ink and paper of <ref_image_0>", " in the hand, ink and paper of the sample image"),
     (" in the reference's hand", " in the sample image's hand"),
 )
@@ -51,6 +58,17 @@ def without_sample(caption: str) -> str:
     for cited, _ in CITATIONS:
         caption = caption.replace(cited, "")
     return caption
+
+
+def sample_layout_prompt(caption: str, texts: Mapping[str, str], size: tuple[int, int], *, sample: bool) -> str:
+    """``caption`` as MOSS's Layout prompt (:func:`diffu_moss.layout_prompt.layout_prompt`: each line of ``texts`` by
+    its row id, on a canvas of ``size`` (width, height) px), its citations naming the sample image when the drawing is
+    given it (``sample``) and dropped when not.
+
+    Raises:
+        ValueError: If the caption has no layout list, or a line's row does not quote its text.
+    """
+    return layout_prompt(with_sample(caption) if sample else without_sample(caption), texts, size)
 
 
 def without_look(caption: str) -> str:

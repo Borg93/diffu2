@@ -7,7 +7,7 @@ Archive pages as data, and the page pipeline built on them.
   PAGE/ALTO, and for page readers Markdown, DeepSeek-OCR 2's grounded Markdown, PaddleOCR-VL's spotting and layout
   elements),
   and the builders of the training and evaluation sets (`python -m diffu_page.data.build_crops`, `pick_eval`,
-  `steer_set`, `style_pairs`, `print_hand_set`).
+  `steer_set`, `style_pairs`, `print_hand_set`, `page_pairs`: whole pages with a sample page for MOSS-Image).
 - **Marking** (`marking/`, CPU): a ground-truth template marked from its scan: its lines read as printed or
   handwritten by a small CNN (`print_hand.py`, trained by `python -m diffu_page.marking.train`) and its ruled lines
   found with OpenCV (`rules.py`), where its PAGE file says neither.

@@ -3,8 +3,9 @@ a crop plan's caption compiled as MOSS's Layout prompt exactly as the verified s
 end to end from its seed, the line repair in MOSS's denoise loop, MOSS's own guidance and sampling shift, what MOSS
 refuses, and each repo drawn by its own family. A MOSS trained to take a reference (conftest's tiny reference training,
 exported and initialised): its training cache holds what drawing encodes, it draws a crop from a reference and guides
-toward it, its own training pairs drawn back (diffu_page.cli.draw_pairs) are the crops the page pipeline draws, and a
-described caption's look words drop to exactly the plain caption the page captions would write."""
+toward it, its own training pairs drawn back (diffu_page.cli.draw_pairs) are the crops the page pipeline draws, a
+described caption's look words drop to exactly the plain caption the page captions would write, and a named caption's
+citation drops with the comma after its archive."""
 
 from __future__ import annotations
 
@@ -22,13 +23,13 @@ from diffu.modular_pipelines.diffu import DiffuAutoBlocks, DiffuModularPipeline
 from diffu.modular_pipelines.loading import COMPONENT_DTYPES
 from diffu_moss.layout_prompt import caption_layout, caption_texts
 from diffu_moss.modular_pipelines.moss import MossAutoBlocks, MossModularPipeline
-from diffu_moss.sample_caption import without_look
+from diffu_moss.sample_caption import without_look, without_sample
 from diffu_moss.train.cache import load_sample, read_entries
 from diffu_moss.train.pairs import Pair, Variant, read_pairs
 from diffu_page.captions.hand import HandLook, ReferenceLook
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.prompt import LineRecord, PageStyle
-from diffu_page.captions.restyle import CaptionParts, described_edit_caption, edit_caption
+from diffu_page.captions.restyle import CaptionParts, described_edit_caption, edit_caption, named_edit_caption
 from diffu_page.cli.draw_pairs import draw_pairs
 from diffu_page.crops.geometry import Crop, CropSettings, crops_for_page, regions_of
 from diffu_page.evalset import EvalCrop
@@ -302,6 +303,19 @@ def test_without_look_turns_a_described_reference_caption_into_the_plain_caption
     plain = without_look(described_edit_caption(parts, reference))
 
     assert plain == edit_caption(parts)
+
+
+def test_without_sample_drops_a_named_reference_captions_citation_with_the_comma_after_its_archive(
+    body_and_notes_crop: Crop, make_record: RecordMaker
+) -> None:
+    named = named_edit_caption(CaptionParts.of(make_record(body_and_notes_crop)))
+
+    caption = without_sample(named)
+
+    assert caption.startswith(
+        "Create a flat, evenly lit archival scan of a new handwritten page from the court minutes of Arjeplogs "
+        "tingslag, dated 1690–1700. The yellowed paper <paper_1> carries"
+    )
 
 
 def test_load_pipeline_refuses_a_lora_for_a_moss_repo(tiny_moss: Path, write_nemo_lora: NemoLoraWriter) -> None:

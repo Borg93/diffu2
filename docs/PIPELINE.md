@@ -116,6 +116,15 @@ name and seed crops alike, so a page comes out the same from any of them.
 - `diffu_page.data.build_crops` cuts the GT pages into crops with captions; `steer_set`, `style_pairs` and
   `pick_eval` build the steering, v3 and evaluation sets (`style_pairs --caption described` for v3d's captions;
   `probe_set` the control probe that checks whether such words steer the base model at all).
+- `diffu_page.data.page_pairs` builds MOSS-Image's page pairs, the full fine-tune's data: every single page of the
+  GT (an opening split into its two) cut at about 1 MP as `diffu-generate --whole-page` plans it, with a sample page
+  of its volume sharing none of its lines (0.5 MP), and its MOSS Layout prompt in the three forms the reference
+  training mixes, each naming the hand (the archive and years): without the sample (its own caption, the look in
+  words), with it and the look in words (`--reference-caption named`), with it and the hand alone
+  (`--reference-caption hand`). Prompts past the text encoder's 4,096 tokens are skipped and counted; whole volumes
+  are held out (`val.jsonl`, `val_eval/`); scans run in parallel and a stopped build resumes from the scans it
+  recorded (`scanned/`); `build.json` records the settings and what became of every scan and page.
+  `diffu-moss-cache-pairs` caches its `train.jsonl` as it caches style pairs.
 - NeMo caches latents and prompt embeddings once (its FLUX.3 processor; `diffu_train.cache_pairs` for v3's
   pairs, with the empty prompt beside them), then trains a LoRA with the configs in `packages/train/configs/flux3/`
   and our interleaved bucket dataloader (`diffu_train.nemo`), which can train a share of the pairs on the empty prompt

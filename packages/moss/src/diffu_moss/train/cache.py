@@ -1,10 +1,14 @@
-"""diffu-moss-cache-pairs: style pairs as a reference training reads them, encoded once on the GPU.
+"""diffu-moss-cache-pairs: style pairs or page pairs as a reference training reads them, encoded once on the GPU.
 
     diffu-moss-cache-pairs --model runs/moss/base --pairs data_flux3/style_pairs_v3d/train.jsonl \\
         --out data_flux3/cache_moss_ref_v3d --limit 4000
     diffu-moss-cache-pairs --model runs/moss/base --pairs data_flux3/style_pairs_v3d/val/val.jsonl \\
         --out data_flux3/cache_moss_ref_v3d_val --every-form
+    diffu-moss-cache-pairs --model runs/moss/base --pairs data_flux3/page_pairs/train.jsonl \\
+        --out data_flux3/cache_moss_pages
 
+The manifest is a style-pair set's or a page-pair set's (:func:`diffu_moss.train.pairs.read_manifest`): a page pair's
+row carries its Layout prompt in every form, a style pair's caption is compiled into it here; both are cached alike.
 The pairs whose reference repeats their target's lines are left out (:func:`diffu_moss.train.pairs.apart`); the rest
 are shuffled by ``--seed`` and the first ``--limit`` kept, each in the prompt form the mix gives it
 (:func:`diffu_moss.train.pairs.assign_variants`), or in all three (``--every-form``, a validation set). Each entry is
@@ -38,7 +42,7 @@ from diffu.modular_pipelines.loading import COMPONENT_DTYPES, require_loaded
 from diffu_moss.latents import encode_latents, image_pixels
 from diffu_moss.modular_pipelines.moss import MossModularPipeline
 from diffu_moss.modular_pipelines.moss.encoders import MossReferenceEncodeStep, MossTextEncoderStep
-from diffu_moss.train.pairs import Pair, Variant, apart, assign_variants, read_pairs
+from diffu_moss.train.pairs import TrainingPair, Variant, apart, assign_variants, read_manifest
 from diffu_moss.train.records import CACHE_RECORD, CacheRecord
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
@@ -99,7 +103,9 @@ def image_latents(pipe: ModularPipeline, path: Path) -> tuple[Tensor, tuple[int,
         return encode_latents(pipe.vae, image_pixels(image)), image.size
 
 
-def cache_entry(pipe: ModularPipeline, pair: Pair, variant: Variant, file: str) -> tuple[CacheEntry, dict[str, Tensor]]:
+def cache_entry(
+    pipe: ModularPipeline, pair: TrainingPair, variant: Variant, file: str
+) -> tuple[CacheEntry, dict[str, Tensor]]:
     """``pair`` in ``variant``'s prompt form, encoded: its entry and its tensors (in :data:`CACHE_DTYPE`, on the CPU).
 
     Raises:
@@ -123,7 +129,9 @@ def cache_entry(pipe: ModularPipeline, pair: Pair, variant: Variant, file: str) 
     return entry, {name: tensor.to("cpu", CACHE_DTYPE).contiguous() for name, tensor in tensors.items()}
 
 
-def planned_entries(pairs: list[Pair], *, limit: int | None, seed: int, every_form: bool) -> list[tuple[Pair, Variant]]:
+def planned_entries(
+    pairs: list[TrainingPair], *, limit: int | None, seed: int, every_form: bool
+) -> list[tuple[TrainingPair, Variant]]:
     """The pairs to cache, each with the prompt form it is cached in: the pairs shuffled by ``seed``, the first
     ``limit`` of them (all when None), each in the form the mix gives it, or in every form."""
     chosen = list(pairs)
@@ -158,7 +166,7 @@ def write_cache(model: Path, manifest: Path, out: Path, settings: CacheSettings)
     """
     if (out / CACHE_RECORD).exists():
         raise ValueError(f"{out} holds a finished cache already; give a new directory")
-    pairs = read_pairs(manifest)
+    pairs = read_manifest(manifest)
     kept = apart(pairs)
     planned = planned_entries(kept, limit=settings.limit, seed=settings.seed, every_form=settings.every_form)
     pipe = encoder_pipeline(model, settings.device)
@@ -225,7 +233,10 @@ def main(
     model: Annotated[
         Path, typer.Option(help="a MOSS model directory (diffu-moss-init): its text encoder, tokenizer, VAE")
     ],
-    pairs: Annotated[Path, typer.Option(help="a style-pair manifest (train.jsonl or val/val.jsonl of style_pairs)")],
+    pairs: Annotated[
+        Path,
+        typer.Option(help="a style-pair manifest (style_pairs' train.jsonl or val/val.jsonl) or a page_pairs one"),
+    ],
     out: Annotated[Path, typer.Option(help="the cache's directory (a new one, or a stopped run's to resume)")],
     limit: Annotated[
         int | None, typer.Option(min=1, help="cache this many pairs, picked by --seed (default: all)")

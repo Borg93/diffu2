@@ -1,8 +1,8 @@
 """MOSS-Image's reference training on CPU (conftest's tiny MOSS and tiny style pairs): the caption forms, the mix of
-prompt forms in the cache (the pairs that share a line with their reference left out) and over a run, MOSS's noise
-levels, the flow-matching loss over the drawn image alone, a LoRA that learns at the recipe's learning rate, the
-validation's paired noise, a training that lowers the loss of what it trains on, and one that refuses an empty
-cache."""
+prompt forms in the cache (the pairs that share a line with their reference left out, page pairs too) and over a run, a
+page pair that refuses a target of another size than its prompts, MOSS's noise levels, the flow-matching loss over the
+drawn image alone, a LoRA that learns at the recipe's learning rate, the validation's paired noise, a training that
+lowers the loss of what it trains on, and one that refuses an empty cache."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from diffu_moss.train.loop import (
     train,
     validation_losses,
 )
-from diffu_moss.train.pairs import Variant, read_pairs
+from diffu_moss.train.pairs import PagePair, TrainingPair, Variant, apart, read_pairs
 from diffu_moss.train.records import ADAPTER_WEIGHTS
 from diffu_moss.train.sigmas import sigma_grid, sigma_weights
 from diffu_moss.transformer import MossTransformer
@@ -64,6 +64,42 @@ def test_sample_caption_names_the_sample_image_or_drops_the_citation_keeping_eve
     assert caption.startswith(paragraph)
     assert rows[1]["desc"] == line
     assert rows[0]["from"] == "ref_image_0"  # the layout rows' fields are left as they are
+
+
+def _page_pair(page: str, texts: list[str], sample: str) -> PagePair:
+    """A page pair as diffu_page.data.page_pairs writes one: page ``page`` of lines ``texts`` (64 x 32 px), drawn from
+    page ``sample``; its prompt in every form a Layout prompt of the paper and those lines."""
+    items = [{"label": "object", "caption": "Aged paper.", "bbox": [-16, -32, 16, 32]}]
+    items += [
+        {"label": "text", "caption": "Handwritten line.", "text": text, "bbox": [0, -30, 8, 30]} for text in texts
+    ]
+    prompt = json.dumps({"summary": {"caption": "A page."}, "items": items})
+    return PagePair(
+        id=page,
+        target=Path("pages", f"{page}.jpg"),
+        reference=Path("refs", f"{sample}.jpg"),
+        size=(64, 32),
+        prompts=dict.fromkeys(Variant, prompt),
+    )
+
+
+def test_apart_leaves_out_a_page_pair_whose_sample_page_holds_a_line_of_its_page() -> None:
+    pairs: list[TrainingPair] = [
+        _page_pair("a", ["Anno 1701", "den 5 Maj"], sample="b"),
+        _page_pair("b", ["Anno 1701", "den 6 Maj"], sample="c"),
+        _page_pair("c", ["den 7 Maj"], sample="a"),
+    ]
+
+    kept = apart(pairs)
+
+    assert [pair.id for pair in kept] == ["b", "c"]
+
+
+def test_page_pair_refuses_a_target_of_another_size_than_its_prompts_were_compiled_for() -> None:
+    pair = _page_pair("a", ["Anno 1701"], sample="b")
+
+    with pytest.raises(ValueError, match=r"is \(64, 48\) px, its prompts were compiled for \(64, 32\)"):
+        pair.prompt(Variant.LOOK, (64, 48))
 
 
 def test_moss_training_noise_levels_have_the_quartiles_of_mosss_own_sampler() -> None:

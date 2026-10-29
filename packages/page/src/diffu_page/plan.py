@@ -134,6 +134,17 @@ def plan_page(layout: Layout, style: PageStyle, *, reference: Reference | None =
     return _plans(crops, layout, style, reference)
 
 
+def whole_page_size(width: int, height: int, pixels: int) -> tuple[int, int]:
+    """The size (width, height) px a ``width`` x ``height`` page is planned whole at: scaled to about ``pixels`` pixels,
+    each side rounded onto the latent grid."""
+    scale = (pixels / (width * height)) ** 0.5
+
+    def on_grid(side: int) -> int:
+        return max(LATENT_GRID, round(side * scale / LATENT_GRID) * LATENT_GRID)
+
+    return on_grid(width), on_grid(height)
+
+
 def plan_whole_page(layout: Layout, style: PageStyle, *, pixels: int, reference: Reference | None = None) -> CropPlan:
     """The page as one crop of about ``pixels`` pixels, each side on the latent grid: every text line and ruled line
     of it, captioned in ``style`` (or from a ``reference``) as a window is. The models draw a whole page this way
@@ -146,10 +157,7 @@ def plan_whole_page(layout: Layout, style: PageStyle, *, pixels: int, reference:
     lines = [line for region in regions for line in region.lines]
     if not lines:
         raise ValueError("the page has no line of text to draw")
-    scale = (pixels / (layout.width * layout.height)) ** 0.5
-    width, height = (
-        max(LATENT_GRID, round(side * scale / LATENT_GRID) * LATENT_GRID) for side in (layout.width, layout.height)
-    )
+    width, height = whole_page_size(layout.width, layout.height, pixels)
     pitch = line_spacing(regions) or statistics.median(line.box[3] - line.box[1] for line in lines)
     crop = Crop(
         rect=(0, 0, layout.width, layout.height),

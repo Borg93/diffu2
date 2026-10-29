@@ -14,8 +14,7 @@ from PIL import Image
 from transformers import AutoTokenizer, PreTrainedTokenizerBase, Qwen3_5Model
 
 from diffu_moss.latents import encode_latents, image_pixels
-from diffu_moss.layout_prompt import layout_prompt
-from diffu_moss.sample_caption import with_sample, without_sample
+from diffu_moss.sample_caption import sample_layout_prompt
 
 if TYPE_CHECKING:
     from diffu_moss.modular_pipelines.moss.modular_pipeline import MossModularPipeline
@@ -35,6 +34,12 @@ def chat_text(tokenizer: PreTrainedTokenizerBase, prompt: str) -> str:
     return tokenizer.apply_chat_template(
         [{"role": "user", "content": prompt}], tokenize=False, add_generation_prompt=True, enable_thinking=True
     )
+
+
+def prompt_tokens(tokenizer: PreTrainedTokenizerBase, prompt: str) -> int:
+    """How many tokens the text encoder reads for ``prompt``: its chat template's, as :func:`prompt_embeds` encodes it
+    (at most :data:`MAX_PROMPT_TOKENS`)."""
+    return len(tokenizer(chat_text(tokenizer, prompt))["input_ids"])
 
 
 def prompt_embeds(
@@ -98,10 +103,10 @@ class MossLayoutPromptStep(ModularPipelineBlocks):
         block_state = self.get_block_state(state)
         if block_state.page_lines is not None:
             texts = {line.id: line.text for line in block_state.page_lines}
-            caption = (
-                without_sample(block_state.prompt) if block_state.image is None else with_sample(block_state.prompt)
+            size = (block_state.width, block_state.height)
+            block_state.prompt = sample_layout_prompt(
+                block_state.prompt, texts, size, sample=block_state.image is not None
             )
-            block_state.prompt = layout_prompt(caption, texts, (block_state.width, block_state.height))
         self.set_block_state(state, block_state)
         return components, state
 

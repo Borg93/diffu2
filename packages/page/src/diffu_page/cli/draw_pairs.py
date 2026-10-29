@@ -22,7 +22,7 @@ from PIL import Image
 
 from diffu_moss.modular_pipelines.moss import MossModularPipeline
 from diffu_moss.train.cache import read_entries, with_reference
-from diffu_moss.train.pairs import read_pairs
+from diffu_moss.train.pairs import read_manifest
 from diffu_moss.train.records import CACHE_RECORD, CacheRecord
 from diffu_page.cli.options import DEFAULTS, Device, Steps
 from diffu_page.output import JPEG_QUALITY, console, load_rgb, side_by_side
@@ -49,7 +49,7 @@ def draw_pairs(model: Path, cache: Path, out: Path, *, count: int, seed: int, se
     entries = with_reference(read_entries(cache), count)
     if not entries:
         raise ValueError(f"{cache} holds no pair drawn with its reference")
-    pairs = {pair.id: pair for pair in read_pairs(Path(CacheRecord.read(cache / CACHE_RECORD).pairs))}
+    pairs = {pair.id: pair for pair in read_manifest(Path(CacheRecord.read(cache / CACHE_RECORD).pairs))}
     pipe = load_pipeline(model, lambda family: family.blocks(), loras={}, settings=settings)
     (out / "generated").mkdir(parents=True, exist_ok=True)
     sheets = []

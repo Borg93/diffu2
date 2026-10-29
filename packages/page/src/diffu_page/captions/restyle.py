@@ -11,7 +11,10 @@ or a planned crop's) with other phrases:
   none of them (v3, v3c);
 - ``named_edit_caption``: that record naming the archive and look in words as well (v3b);
 - ``described_edit_caption``: that record describing the reference's measured hand, ink and paper (v3d): BFL's
-  captions state a style's visible features, and FLUX.3 takes its style from the caption more than from a reference.
+  captions state a style's visible features, and FLUX.3 takes its style from the caption more than from a reference;
+- ``hand_edit_caption``: that record naming the archive and years alone, whose hand it is, the look left to the
+  reference (MOSS-Image's page pairs, ``diffu_page.data.page_pairs``: a sample page carries paper and ink, not the
+  hand).
 
 Training captions (from records) and generation captions (from crop plans) go through the same functions, and a
 record keeps the template its own caption was rendered from, so a crop is drawn from exactly the caption grammar it
@@ -48,6 +51,8 @@ class ReferenceCaption(StrEnum):
 
     PLAIN = "plain"  # only by <ref_image_0> (edit_caption: v3, v3c)
     DESCRIBED = "described"  # the reference's measured hand, ink and paper in words too (described_edit_caption: v3d)
+    NAMED = "named"  # the archive, years and look named beside it (named_edit_caption: v3b, the page pairs)
+    HAND = "hand"  # the archive and years named as the hand, the look from it alone (hand_edit_caption: the page pairs)
 
 
 class CaptionParts(BaseModel):
@@ -120,6 +125,20 @@ def _from_reference_naming(parts: CaptionParts) -> StylePhrases:
     )
 
 
+def _from_reference_naming_hand(parts: CaptionParts) -> StylePhrases:
+    """The image-edit phrases that name the caption's archive and years, whose hand it is, and leave the scan, paper
+    and ink to the reference."""
+    provenance = parts.style.provenance
+    return _from_reference(parts).model_copy(
+        update={
+            "opening": (
+                f"Create a flat, evenly lit archival scan of a new {page_words(parts.printed)} from {provenance.title}"
+                f"{dated(provenance)}, in the hand, ink and paper of <ref_image_0>. The paper <paper_1>"
+            )
+        }
+    )
+
+
 def _from_reference_describing(parts: CaptionParts, reference: ReferenceLook) -> StylePhrases:
     """The image-edit phrases that describe the reference's look: the hand first (BFL: what matters most leads),
     then the ink and paper by name and hex; every line row in the reference's hand and ink.
@@ -176,14 +195,21 @@ def named_edit_caption(parts: CaptionParts) -> str:
     return _edit(parts, _from_reference_naming(parts))
 
 
+def hand_edit_caption(parts: CaptionParts) -> str:
+    """``edit_caption`` that also names the caption's archive and years, whose hand it is: the hand in words, the look
+    by example alone."""
+    return _edit(parts, _from_reference_naming_hand(parts))
+
+
 def described_edit_caption(parts: CaptionParts, reference: ReferenceLook) -> str:
     """``edit_caption`` that describes the reference's hand, ink and paper as measured (``reference_look``)."""
     return _edit(parts, _from_reference_describing(parts, reference))
 
 
 def reference_caption(parts: CaptionParts, form: ReferenceCaption, reference: ReferenceLook | None) -> str:
-    """The caption drawn from a reference image in ``form``, the form the LoRA in use was trained on: training pairs
-    (``diffu_page.data.style_pairs``) and planned crops (``diffu_page.plan``) are both captioned here.
+    """The caption drawn from a reference image in ``form``, the form the model in use was trained on: training pairs
+    (``diffu_page.data.style_pairs``, ``diffu_page.data.page_pairs``) and planned crops (``diffu_page.plan``) are both
+    captioned here.
 
     Raises:
         ValueError: If ``form`` describes the reference and its measured look (``reference``) is missing.
@@ -195,6 +221,10 @@ def reference_caption(parts: CaptionParts, form: ReferenceCaption, reference: Re
             if reference is None:
                 raise ValueError(f"{parts.name}: a described caption needs the reference's measured look")
             return described_edit_caption(parts, reference)
+        case ReferenceCaption.NAMED:
+            return named_edit_caption(parts)
+        case ReferenceCaption.HAND:
+            return hand_edit_caption(parts)
 
 
 def _edit(parts: CaptionParts, phrases: StylePhrases) -> str:

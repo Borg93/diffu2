@@ -62,3 +62,18 @@ implementation, written from the published design, around the released weights.
   `jobs/moss/run_ref_full.sh` tests it on the Spark through `jobs/spark_guard.sh`: a smoke run, the overfit test (300
   steps on 8 pairs, its loss and drawings read against stated pass criteria), the training, its model directory, and
   8 held-out crops drawn with and without their reference.
+- **Page pairs** (`diffu_page.data.page_pairs`, diffu-page; the big full fine-tune's data): whole single pages of the
+  handwritten GT (openings split into their pages), each cut at about 1 MP exactly as `diffu-generate --whole-page`
+  plans a page and prompted as drawing prompts it, with a sample page of its own volume sharing none of its lines at
+  0.5 MP. The sample carries paper and ink, not the hand, so every form names the hand (the archive and the volume's
+  years): no reference (the page's own caption, its look in words), look (the sample, and the look in words:
+  `--reference-caption named`) and plain (the sample, the hand alone in words: `--reference-caption hand`). Each row
+  of `train.jsonl` and `val.jsonl` (`train/pairs.py`: `PagePairRow`) carries the page's Layout prompt in all three
+  forms with its length in the text encoder's tokens; `diffu-moss-cache-pairs` reads either kind of manifest and fixes
+  each pair's form by its seed as before. Pages past the encoder's 4,096 tokens are skipped and counted, never cut;
+  whole volumes are held out (`val.jsonl`, and `val_eval/` for `diffu-evaluate`).
+
+      python -m diffu_page.data.page_pairs --gt-root ~/Desktop/data/GT-Lejonet_HTR_202602 --model runs/moss/base \
+          --out data_flux3/page_pairs --workers 8
+      diffu-moss-cache-pairs --model runs/moss/base --pairs data_flux3/page_pairs/train.jsonl \
+          --out data_flux3/cache_moss_pages
