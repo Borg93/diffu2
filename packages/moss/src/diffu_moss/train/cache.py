@@ -19,6 +19,10 @@ style pair's reference is already on the reference grid, as ``ReferenceGridStep`
 one safetensors file per entry (``prompt_embeds``, ``target`` and, drawn with the sample, ``reference``, in bfloat16;
 the entry's facts in its metadata), each written whole before it is named, so a stopped run resumes where it stopped;
 then ``entries.jsonl`` and ``cache.json``, last.
+
+With ``--latents-only`` the text encoder is not loaded and no entry holds ``prompt_embeds``: a training that encodes
+each prompt in its step (``diffu-moss-train-ref --encode-text``, :class:`PromptEncoder`) reads such a cache; the
+entries still give their prompts and token counts (by the tokenizer, as the encoder reads them).
 """
 
 from __future__ import annotations
@@ -41,7 +45,7 @@ from torch import Tensor
 from diffu.modular_pipelines.loading import COMPONENT_DTYPES, require_loaded
 from diffu_moss.latents import encode_latents, image_pixels
 from diffu_moss.modular_pipelines.moss import MossModularPipeline
-from diffu_moss.modular_pipelines.moss.encoders import MossReferenceEncodeStep, MossTextEncoderStep
+from diffu_moss.modular_pipelines.moss.encoders import MossReferenceEncodeStep, MossTextEncoderStep, prompt_tokens
 from diffu_moss.train.pairs import TrainingPair, Variant, apart, assign_variants, read_manifest
 from diffu_moss.train.records import CACHE_RECORD, CacheRecord
 
@@ -51,6 +55,8 @@ console = Console()
 ENTRIES = "entries.jsonl"
 CACHE_DTYPE = torch.bfloat16
 ENCODERS = ("text_encoder", "tokenizer", "vae")
+LATENT_ENCODERS = ("tokenizer", "vae")  # a latents-only cache's: the tokenizer counts each prompt's tokens
+TEXT_ENCODERS = ("text_encoder", "tokenizer")
 
 
 class CacheEntry(BaseModel):
@@ -68,8 +74,9 @@ class CacheEntry(BaseModel):
 
 
 class CachedSample(BaseModel):
-    """A cache entry's tensors: the prompt's embeddings ``[1, tokens, text_dim]``, the target's latents
-    ``[1, latent_channels, H / 16, W / 16]`` and the reference's (None for a sample drawn without it)."""
+    """A cache entry's tensors: the prompt's embeddings ``[1, tokens, text_dim]`` (cached, or encoded as it is
+    loaded), the target's latents ``[1, latent_channels, H / 16, W / 16]`` and the reference's (None for a sample drawn
+    without it)."""
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
@@ -79,10 +86,10 @@ class CachedSample(BaseModel):
     reference: Tensor | None
 
 
-def encoder_pipeline(model: Path, device: str) -> ModularPipeline:
+def encoder_pipeline(model: Path, device: str, names: tuple[str, ...] = ENCODERS) -> ModularPipeline:
     """The encoder steps of the MOSS model directory ``model`` (its text encoder, and its reference encoder for the
-    VAE it names; called without an image, it encodes none), with its text encoder, tokenizer and VAE loaded as the
-    page pipeline loads them (``COMPONENT_DTYPES``), on ``device``.
+    VAE it names; called without an image, it encodes none), with its components ``names`` (by default its text
+    encoder, tokenizer and VAE) loaded as the page pipeline loads them (``COMPONENT_DTYPES``), on ``device``.
 
     Raises:
         RuntimeError: If a component failed to load.
@@ -91,10 +98,31 @@ def encoder_pipeline(model: Path, device: str) -> ModularPipeline:
         {"text_encoder": MossTextEncoderStep(), "reference_encoder": MossReferenceEncodeStep()}
     )
     pipe = MossModularPipeline(blocks=blocks, pretrained_model_name_or_path=str(model))
-    pipe.load_components(names=list(ENCODERS), dtype=COMPONENT_DTYPES)
-    require_loaded(pipe, ENCODERS)
+    pipe.load_components(names=list(names), dtype=COMPONENT_DTYPES)
+    require_loaded(pipe, names)
     pipe.to(device)
     return pipe
+
+
+class PromptEncoder:
+    """The frozen text encoder of the MOSS model directory ``model`` on ``device``, loaded as the cache loads it
+    (:func:`encoder_pipeline`), encoding a prompt in inference mode exactly as the cache encodes it: a training's step
+    reads its prompts from it (``--encode-text``) instead of from cached embeddings.
+
+    Attributes:
+        pipe: The encoder pipeline, its text encoder frozen and in eval mode.
+    """
+
+    def __init__(self, model: Path, device: str) -> None:
+        self.pipe = encoder_pipeline(model, device, TEXT_ENCODERS)
+        self.pipe.text_encoder.requires_grad_(False).eval()
+
+    def encode(self, prompt: str) -> Tensor:
+        """The prompt's embeddings ``[1, tokens, text_dim]`` as a cache entry holds them (in the encoder's bfloat16), on
+        the encoder's device: a plain tensor, which the DiT's backward may save."""
+        with torch.inference_mode():
+            embeds = self.pipe(prompt=prompt, output="prompt_embeds")
+        return embeds.clone()
 
 
 def image_latents(pipe: ModularPipeline, path: Path) -> tuple[Tensor, tuple[int, int]]:
@@ -104,16 +132,22 @@ def image_latents(pipe: ModularPipeline, path: Path) -> tuple[Tensor, tuple[int,
 
 
 def cache_entry(
-    pipe: ModularPipeline, pair: TrainingPair, variant: Variant, file: str
+    pipe: ModularPipeline, pair: TrainingPair, variant: Variant, file: str, *, latents_only: bool = False
 ) -> tuple[CacheEntry, dict[str, Tensor]]:
-    """``pair`` in ``variant``'s prompt form, encoded: its entry and its tensors (in :data:`CACHE_DTYPE`, on the CPU).
+    """``pair`` in ``variant``'s prompt form, encoded: its entry and its tensors (in :data:`CACHE_DTYPE`, on the CPU;
+    with ``latents_only`` no ``prompt_embeds``).
 
     Raises:
         ValueError: If the pair's caption cannot be compiled in that form, or an image is off the latent grid.
     """
     target, target_size = image_latents(pipe, pair.target)
     prompt = pair.prompt(variant, target_size)
-    tensors = {"prompt_embeds": pipe(prompt=prompt, output="prompt_embeds"), "target": target}
+    tensors = {"target": target}
+    if latents_only:
+        tokens = prompt_tokens(pipe.tokenizer, prompt)
+    else:
+        tensors["prompt_embeds"] = pipe(prompt=prompt, output="prompt_embeds")
+        tokens = tensors["prompt_embeds"].shape[1]
     reference_size = None
     if variant.takes_reference:
         tensors["reference"], reference_size = image_latents(pipe, pair.reference)
@@ -122,7 +156,7 @@ def cache_entry(
         pair=pair.id,
         variant=variant,
         prompt=prompt,
-        tokens=tensors["prompt_embeds"].shape[1],
+        tokens=tokens,
         target_size=target_size,
         reference_size=reference_size,
     )
@@ -150,6 +184,7 @@ class CacheSettings(BaseModel):
     limit: int | None = None
     seed: int = 0
     every_form: bool = False
+    latents_only: bool = False
     device: str = "cuda"
 
 
@@ -169,7 +204,7 @@ def write_cache(model: Path, manifest: Path, out: Path, settings: CacheSettings)
     pairs = read_manifest(manifest)
     kept = apart(pairs)
     planned = planned_entries(kept, limit=settings.limit, seed=settings.seed, every_form=settings.every_form)
-    pipe = encoder_pipeline(model, settings.device)
+    pipe = encoder_pipeline(model, settings.device, LATENT_ENCODERS if settings.latents_only else ENCODERS)
     out.mkdir(parents=True, exist_ok=True)
     entries = []
     for index, (pair, variant) in enumerate(planned):
@@ -178,7 +213,7 @@ def write_cache(model: Path, manifest: Path, out: Path, settings: CacheSettings)
             with safe_open(str(out / file), framework="pt") as written:
                 entries.append(CacheEntry.model_validate_json(written.metadata()["entry"]))
             continue
-        entry, tensors = cache_entry(pipe, pair, variant, file)
+        entry, tensors = cache_entry(pipe, pair, variant, file, latents_only=settings.latents_only)
         partial = out / f"{file}.partial"
         save_file(tensors, str(partial), metadata={"entry": entry.model_dump_json()})
         partial.rename(out / file)
@@ -194,6 +229,7 @@ def write_cache(model: Path, manifest: Path, out: Path, settings: CacheSettings)
         pairs_read=len(pairs),
         pairs_sharing_lines=len(pairs) - len(kept),
         entries=counts,
+        latents_only=settings.latents_only,
     )
     record.write(out / CACHE_RECORD)
     return record
@@ -217,9 +253,30 @@ def with_reference(entries: list[CacheEntry], count: int) -> list[CacheEntry]:
     return [entry for entry in entries if entry.variant.takes_reference][:count]
 
 
-def load_sample(cache: Path, entry: CacheEntry, device: torch.device | str) -> CachedSample:
-    """An entry's tensors, on ``device``."""
+def read_record(cache: Path) -> CacheRecord:
+    """The record of the finished cache at ``cache``.
+
+    Raises:
+        ValueError: If ``cache`` holds no finished cache.
+    """
+    if not (cache / CACHE_RECORD).is_file():
+        raise ValueError(f"{cache} holds no finished cache (no {CACHE_RECORD}): run diffu-moss-cache-pairs")
+    return CacheRecord.read(cache / CACHE_RECORD)
+
+
+def load_sample(
+    cache: Path, entry: CacheEntry, device: torch.device | str, encoder: PromptEncoder | None = None
+) -> CachedSample:
+    """An entry's tensors, on ``device``: its prompt's embeddings encoded by ``encoder`` when given, else cached.
+
+    Raises:
+        ValueError: If no encoder is given and the entry holds no prompt embeddings (a latents-only cache).
+    """
     tensors = load_file(str(cache / entry.file), device=str(device))
+    if encoder is not None:
+        tensors["prompt_embeds"] = encoder.encode(entry.prompt).to(device)
+    elif "prompt_embeds" not in tensors:
+        raise ValueError(f"{cache} holds no prompt embeddings (a latents-only cache): encode them (--encode-text)")
     return CachedSample(
         entry=entry,
         prompt_embeds=tensors["prompt_embeds"],
@@ -245,10 +302,17 @@ def main(
     every_form: Annotated[
         bool, typer.Option("--every-form", help="cache every pair in all three prompt forms (a validation set)")
     ] = False,
+    latents_only: Annotated[
+        bool,
+        typer.Option(
+            "--latents-only",
+            help="cache the latents alone, no prompt embeddings (a training then encodes them: --encode-text)",
+        ),
+    ] = False,
     device: Annotated[str, typer.Option(help="where the encoders run")] = "cuda",
 ) -> None:
     """Cache style pairs for a reference training: each pair's prompt embeddings and latents."""
-    settings = CacheSettings(limit=limit, seed=seed, every_form=every_form, device=device)
+    settings = CacheSettings(limit=limit, seed=seed, every_form=every_form, latents_only=latents_only, device=device)
     try:
         record = write_cache(model, pairs, out, settings)
     except ValueError as error:  # the arguments' fault: a finished cache, or a manifest that is not a described set

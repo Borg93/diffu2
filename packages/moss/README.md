@@ -43,9 +43,10 @@ implementation, written from the published design, around the released weights.
   caches, by MOSS-Image's own recipe (its technical report, Appendix A.2 and Table 7): Muon on the joint blocks'
   weight matrices (`train/muon.py`: Nesterov momentum 0.95, 5 Newton-Schulz steps, matched to AdamW's RMS; exactly
   torch's Muon, but the fused gated feed-forward `ffn_up_gate` is orthogonalised and RMS-scaled half by half, as the
-  report steps fused matrices, its weights' names unchanged) and AdamW on the rest (betas 0.9, 0.95), both at 5e-5; weight decay 0.01 but none on biases, norms and the embedders; the last
-  block's q/k norm weights decayed towards one; gradients clipped at 1. The weights stay in float32 and the forward
-  runs in bfloat16 autocast, the joint blocks checkpointed: the layout FSDP2 wraps, with no master copy of our own.
+  report steps fused matrices, its weights' names unchanged) and AdamW on the rest (betas 0.9, 0.95), both at 5e-5;
+  weight decay 0.01 but none on biases, norms and the embedders; the last block's q/k norm weights decayed towards
+  one; gradients clipped at 1. The weights stay in float32 and the forward runs in bfloat16 autocast, the joint blocks
+  checkpointed: the layout FSDP2 wraps, with no master copy of our own.
   On one GB10 that is about 73 GB at the peak (20.3 GB of weights, 20.3 of gradients, 19.0 of Muon momentum, 2.6 of
   AdamW moments, ~8 of activations at a 1 MP target and a 0.5 MP reference, ~3 for CUDA and the process). A
   checkpoint is the DiT itself, in bfloat16 (`checkpoints/step_NNNNNN/transformer/`, which `diffu-moss-init
@@ -63,6 +64,22 @@ implementation, written from the published design, around the released weights.
   `jobs/moss/run_ref_full.sh` tests it on the Spark through `jobs/spark_guard.sh`: a smoke run, the overfit test (300
   steps on 8 pairs, its loss and drawings read against stated pass criteria), the training, its model directory, and
   8 held-out crops drawn with and without their reference.
+- **Prompts encoded in the step** (`--encode-text`, either kind of training): the frozen Qwen3.5-9B text encoder,
+  loaded as the cache loads it (bfloat16, `train/cache.py`: `PromptEncoder`) from `--model` (by default the model
+  directory the cache was made with), encodes each sample's prompt in inference mode in its step, the same embeddings
+  the cache holds, bit for bit; a cache then needs its latents alone (`diffu-moss-cache-pairs --latents-only`: no text
+  encoder loaded, the prompts and their token counts kept), and a training without `--encode-text` refuses one. It
+  costs the encoder's 16.8 GB of bfloat16 weights (its vision tower included, as the cache loads it) and its forward
+  per sample (in inference mode, under 0.5 GB of activations at 4,096 tokens, freed before the DiT runs). Estimated
+  for the full fine-tune at 2 samples of a 1 MP target and a 0.5 MP reference: on one GB10, ~73 GB + 17 GB = ~90 GB
+  (69 GB measured without it, so ~86 GB; the 128 GB of unified memory holds it, the guard must ask for 92); on one
+  80 GB A100, the ~73 GB without it already leaves no room, so with it the full fine-tune needs FSDP2 over several
+  GPUs.
+
+      diffu-moss-cache-pairs --model runs/moss/base --pairs data_flux3/page_pairs/train.jsonl \
+          --out data_flux3/cache_moss_pages_latents --latents-only
+      diffu-moss-train-ref --full --encode-text --model runs/moss/base --transformer <snapshot>/transformer \
+          --cache data_flux3/cache_moss_pages_latents --out runs/moss_pages_full/full --steps 500
 - **Page pairs** (`diffu_page.data.page_pairs`, diffu-page; the big full fine-tune's data): whole single pages of the
   handwritten GT (openings split into their pages), each cut at about 1 MP exactly as `diffu-generate --whole-page`
   plans a page and prompted as drawing prompts it, with a sample page of its own volume sharing none of its lines at

@@ -172,7 +172,10 @@ of median 0.78, 1% uniform), its loss flow matching's over the drawn image's tok
 MOSS-Image's own optimizer recipe (its technical report, Appendix A.2): Muon on the joint blocks' matrices (the fused
 gated feed-forward orthogonalised half by half, as the report does: `diffu_moss.train.muon`) and AdamW
 on the rest at 5e-5, the weights in float32 and the forward in bfloat16; its checkpoints are the DiT itself, which
-`diffu-moss-init` draws with as the merged LoRA's export.
+`diffu-moss-init` draws with as the merged LoRA's export. With `--encode-text` a training encodes each sample's prompt
+in its step by the frozen text encoder, loaded as the cache loads it (`diffu_moss.train.cache.PromptEncoder`), the
+cached embeddings bit for bit (`packages/moss/tests/test_train.py`), so its cache holds the latents alone
+(`diffu-moss-cache-pairs --latents-only`), for 16.8 GB more on each GPU.
 
 MOSS-Image hand LoRAs train with KohakuMossTrainer (its own environment, `~/Desktop/repos/kohakumoss`), on manifests
 whose captions the scratchpad's `moss_prompt.layout_prompt` compiled: `diffu_moss.layout_prompt` compiles a crop plan's

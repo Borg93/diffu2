@@ -2,7 +2,8 @@
 prompt forms in the cache (the pairs that share a line with their reference left out, page pairs too) and over a run, a
 page pair that refuses a target of another size than its prompts, MOSS's noise levels, the flow-matching loss over the
 drawn image alone, a LoRA that learns at the recipe's learning rate, the validation's paired noise, a training that
-lowers the loss of what it trains on, and one that refuses an empty cache."""
+lowers the loss of what it trains on, one that refuses an empty cache, and prompts encoded in the step as the cache
+encodes them, by a frozen encoder, from a cache of latents alone."""
 
 from __future__ import annotations
 
@@ -16,7 +17,15 @@ from peft import get_peft_model_state_dict
 from safetensors.torch import load_file
 
 from diffu_moss.sample_caption import with_sample, without_sample
-from diffu_moss.train.cache import CachedSample, CacheEntry, CacheSettings, load_sample, read_entries, write_cache
+from diffu_moss.train.cache import (
+    CachedSample,
+    CacheEntry,
+    CacheSettings,
+    PromptEncoder,
+    load_sample,
+    read_entries,
+    write_cache,
+)
 from diffu_moss.train.export import export_merged
 from diffu_moss.train.loop import (
     LOG,
@@ -32,6 +41,14 @@ from diffu_moss.train.sigmas import sigma_grid, sigma_weights
 from diffu_moss.transformer import MossTransformer
 
 INK_HEX = "#5A4632"  # the described caption's ink, one of its look words
+
+
+@pytest.fixture(scope="module")
+def latents_only_cache(tiny_moss: Path, tiny_pairs: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The tiny pairs cached as ``tiny_pair_cache`` is, but their latents alone (``--latents-only``)."""
+    cache = tmp_path_factory.mktemp("latents_only") / "cache"
+    write_cache(tiny_moss, tiny_pairs / "train.jsonl", cache, CacheSettings(latents_only=True, device="cpu"))
+    return cache
 
 
 @pytest.mark.parametrize(
@@ -228,3 +245,47 @@ def test_training_refuses_a_cache_without_entries_before_it_loads_the_dit(tiny_m
 
     with pytest.raises(ValueError, match="holds no entry to train on"):
         train(tmp_path / "no_dit", tmp_path / "empty", tmp_path / "run", TrainSettings(steps=1, device="cpu"))
+
+
+def test_prompt_encoder_encodes_each_prompt_exactly_as_the_cache_holds_it_by_a_frozen_encoder_in_eval_mode(
+    tiny_moss: Path, tiny_pair_cache: Path
+) -> None:
+    entries = read_entries(tiny_pair_cache)
+    encoder = PromptEncoder(tiny_moss, "cpu")
+
+    encoded = [encoder.encode(entry.prompt) for entry in entries]
+
+    cached = [load_sample(tiny_pair_cache, entry, "cpu").prompt_embeds for entry in entries]
+    assert [entry.pair for entry, a, b in zip(entries, encoded, cached, strict=True) if not torch.equal(a, b)] == []
+    text_encoder = encoder.pipe.text_encoder
+    assert [name for name, weight in text_encoder.named_parameters() if weight.requires_grad] == []
+    assert text_encoder.training is False
+    assert [embeds.is_inference() for embeds in encoded] == [False] * len(entries)  # the DiT's backward may save them
+
+
+def test_training_that_encodes_its_prompts_from_a_latents_only_cache_logs_exactly_what_the_cached_run_logs(
+    tiny_moss_dit: Path, latents_only_cache: Path, tiny_reference_run: Path, tmp_path: Path
+) -> None:
+    settings = TrainSettings(steps=5, save_every=5, val_every=5, encode_text=True, device="cpu")
+
+    train(tiny_moss_dit, latents_only_cache, tmp_path, settings)
+
+    logs = [
+        [
+            {key: value for key, value in json.loads(line).items() if key != "seconds"}
+            for line in log.read_text(encoding="utf-8").splitlines()
+        ]
+        for log in (tmp_path / LOG, tiny_reference_run / LOG)
+    ]
+    assert logs[0] == logs[1]  # the same samples, noise levels, losses and gradient norms, steps 1 to 5
+    files = [load_file(str(latents_only_cache / entry.file)) for entry in read_entries(latents_only_cache)]
+    assert [name for tensors in files for name in tensors if name == "prompt_embeds"] == []
+
+
+def test_training_refuses_a_latents_only_cache_when_it_does_not_encode_its_prompts(
+    latents_only_cache: Path, tmp_path: Path
+) -> None:
+    (tmp_path / "no_dit").mkdir()  # refused before the DiT is loaded
+
+    with pytest.raises(ValueError, match="holds no prompt embeddings .* train with --encode-text"):
+        train(tmp_path / "no_dit", latents_only_cache, tmp_path / "run", TrainSettings(steps=1, device="cpu"))

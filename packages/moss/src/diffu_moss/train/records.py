@@ -50,8 +50,8 @@ class AdapterRecord(JsonRecord):
 
 class CacheRecord(JsonRecord):
     """How a cache was made: from which pairs and model, how many pairs it holds and how they were drawn into the mix
-    of prompt forms (``diffu_moss.train.pairs.Variant``), and how many pairs were left out for sharing a line with their
-    reference."""
+    of prompt forms (``diffu_moss.train.pairs.Variant``), how many pairs were left out for sharing a line with their
+    reference, and whether it holds the latents alone (no prompt embeddings: a training encodes them)."""
 
     pairs: str
     model: str
@@ -59,6 +59,7 @@ class CacheRecord(JsonRecord):
     pairs_read: int
     pairs_sharing_lines: int
     entries: dict[str, int]
+    latents_only: bool = False
 
 
 class ExportRecord(JsonRecord):

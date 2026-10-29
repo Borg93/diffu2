@@ -29,7 +29,11 @@ noise per pair (the same in every run), the same for a pair's three forms, so th
 reference lower it? A full fine-tune that saves its state (``--save-state``) resumes from a checkpoint (``--resume``)
 as it would have gone on: the same samples, noise and steps, its log cut back to the checkpoint's step. With
 ``--limit-pairs N`` a run trains on the cache's first N pairs drawn with their reference alone: an overfit test, whose
-model ``diffu_page.cli.draw_pairs`` draws the same pairs back.
+model ``diffu_page.cli.draw_pairs`` draws the same pairs back. With ``--encode-text`` each sample's prompt is encoded in
+its step by the frozen text encoder (:class:`diffu_moss.train.cache.PromptEncoder`, loaded as the cache loads it from
+``--model``, by default the model directory the cache was made with) instead of read from the cache, which then needs
+its latents alone (``diffu-moss-cache-pairs --latents-only``): the same embeddings, at the cost of the encoder's
+16.8 GB in bfloat16 beside the DiT and a forward of it per sample.
 """
 
 from __future__ import annotations
@@ -53,7 +57,15 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 from torch.optim.lr_scheduler import LambdaLR
 
-from diffu_moss.train.cache import CachedSample, CacheEntry, load_sample, read_entries, with_reference
+from diffu_moss.train.cache import (
+    CachedSample,
+    CacheEntry,
+    PromptEncoder,
+    load_sample,
+    read_entries,
+    read_record,
+    with_reference,
+)
 from diffu_moss.train.full import STATE, FullSettings, FullTraining
 from diffu_moss.train.records import (
     ADAPTER_RECORD,
@@ -77,14 +89,23 @@ LORA_TARGETS = (
 LOG = "train_log.jsonl"
 CHECKPOINTS = "checkpoints"
 VALIDATION_SEED = 0  # every run scores at the same noise, so runs of different seeds compare
-# what a resumed run may change: how long it runs, how often it saves and scores, where, and whether it saves its state
-RESUMABLE_CHANGES = {"steps": True, "save_every": True, "val_every": True, "device": True, "full": {"save_state": True}}
+# what a resumed run may change: how long it runs, how often it saves and scores, where, whether it saves its state, and
+# whether it encodes its prompts (the same embeddings as cached)
+RESUMABLE_CHANGES = {
+    "steps": True,
+    "save_every": True,
+    "val_every": True,
+    "device": True,
+    "encode_text": True,
+    "full": {"save_state": True},
+}
 
 
 class TrainSettings(BaseModel):
     """How a reference DiT is trained (the module's docstring): the LoRA's shape and optimizer, or with ``full`` a full
     fine-tune's; the steps and samples (with ``limit_pairs``, only the cache's first that many pairs drawn with their
-    reference: an overfit test); and when it is saved and scored."""
+    reference: an overfit test); whether each prompt is encoded in the step (``encode_text``) or read from the cache;
+    and when it is saved and scored."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -96,6 +117,7 @@ class TrainSettings(BaseModel):
     weight_decay: float = 1e-4
     full: FullSettings | None = None
     limit_pairs: int | None = Field(default=None, ge=1)
+    encode_text: bool = False
     grad_clip: float = 1.0
     warmup: int = Field(default=50, ge=1)
     grad_accumulation: int = Field(default=2, ge=1)
@@ -228,14 +250,16 @@ def validation_losses(
     device: str,
     seed: int,
     compute_dtype: torch.dtype | None = None,
+    encoder: PromptEncoder | None = None,
 ) -> dict[str, float]:
     """The mean loss of each prompt form over ``entries``, each pair at its own fixed noise level and noise (drawn
-    from ``seed`` and the pair's place), the same for every form of the pair."""
+    from ``seed`` and the pair's place), the same for every form of the pair; the prompts encoded by ``encoder`` when
+    given, else cached."""
     pairs = {pair: k for k, pair in enumerate(dict.fromkeys(entry.pair for entry in entries))}
     losses: dict[str, list[float]] = defaultdict(list)
     with torch.no_grad():
         for entry in entries:
-            sample = load_sample(cache, entry, device)
+            sample = load_sample(cache, entry, device, encoder)
             generator = torch.Generator().manual_seed(seed + pairs[entry.pair])
             sigma = draw_sigmas(1, generator).item()
             noise = torch.randn(sample.target.shape, generator=generator).to(device)
@@ -301,16 +325,17 @@ def accumulate_gradients(
     device: str,
     *,
     compute_dtype: torch.dtype | None = None,
+    encoder: PromptEncoder | None = None,
 ) -> tuple[list[float], list[float]]:
     """One step's gradients accumulated into the trained weights: the mean of ``samples``' flow-matching losses, each
-    at a noise level and noise drawn from ``generator``.
+    at a noise level and noise drawn from ``generator``, its prompt encoded by ``encoder`` when given.
 
     Returns:
         Each sample's loss and noise level.
     """
     losses, sigmas = [], []
     for entry in samples:
-        sample = load_sample(cache, entry, device)
+        sample = load_sample(cache, entry, device, encoder)
         sigma = draw_sigmas(1, generator).item()
         noise = torch.randn(sample.target.shape, generator=generator).to(device)
         loss = flow_matching_loss(transformer, sample, sigma, noise, compute_dtype=compute_dtype)
@@ -321,7 +346,12 @@ def accumulate_gradients(
 
 
 def _validate(
-    training: LoraTraining | FullTraining, val_cache: Path, out: Path, step: int, settings: TrainSettings
+    training: LoraTraining | FullTraining,
+    val_cache: Path,
+    out: Path,
+    step: int,
+    settings: TrainSettings,
+    encoder: PromptEncoder | None,
 ) -> None:
     training.transformer.eval()
     entries = read_entries(val_cache)
@@ -332,6 +362,7 @@ def _validate(
         device=settings.device,
         seed=VALIDATION_SEED,
         compute_dtype=training.compute_dtype,
+        encoder=encoder,
     )
     training.transformer.train()
     _log(out, ValidationLog(step=step, val_loss=val_loss))
@@ -377,6 +408,25 @@ def _peak_memory_gb(device: torch.device) -> float | None:
     return torch.cuda.max_memory_allocated(device) / 1e9 if device.type == "cuda" else None
 
 
+def prompt_encoder(
+    cache: Path, val_cache: Path | None, settings: TrainSettings, model: Path | None
+) -> PromptEncoder | None:
+    """The text encoder a run encodes its prompts by: with ``settings.encode_text``, the MOSS model directory
+    ``model``'s, or by default that of the model directory ``cache`` was made with; else None.
+
+    Raises:
+        ValueError: If a cache is not finished, or holds no prompt embeddings (a latents-only cache) and the run does
+            not encode them.
+    """
+    record = read_record(cache)
+    if settings.encode_text:
+        return PromptEncoder(Path(record.model) if model is None else model, settings.device)
+    for given in (cache, val_cache):
+        if given is not None and read_record(given).latents_only:
+            raise ValueError(f"{given} holds no prompt embeddings (a latents-only cache): train with --encode-text")
+    return None
+
+
 def train(
     base: Path,
     cache: Path,
@@ -385,17 +435,19 @@ def train(
     *,
     val_cache: Path | None = None,
     resume: Path | None = None,
+    model: Path | None = None,
 ) -> Path:
     """The DiT at ``base`` trained from the cache at ``cache`` (the module's docstring): a LoRA, or with
-    ``settings.full`` every weight, from the start or from ``out``'s checkpoint ``resume``.
+    ``settings.full`` every weight, from the start or from ``out``'s checkpoint ``resume``; with
+    ``settings.encode_text`` its prompts encoded by the text encoder of :func:`prompt_encoder` (``model``'s).
 
     Returns:
         The last checkpoint's directory.
 
     Raises:
-        ValueError: If a cache is not finished or holds no entry to train on, ``out`` holds a training's log already
-            (unless resumed), or the run cannot resume from ``resume`` (:func:`resumed_progress`; its cache's entries
-            are others).
+        ValueError: If a cache is not finished, holds no entry to train on or no prompt embeddings to read, ``out``
+            holds a training's log already (unless resumed), or the run cannot resume from ``resume``
+            (:func:`resumed_progress`; its cache's entries are others).
     """
     if resume is None and (out / LOG).exists():
         raise ValueError(f"{out} holds a training already ({LOG}); give a new directory")
@@ -407,6 +459,7 @@ def train(
     progress = None if resume is None else resumed_progress(out, resume, settings)
     if progress is not None and len(progress.order) != len(entries):
         raise ValueError(f"{cache} holds {len(entries)} entries; the run resumed drew from {len(progress.order)}")
+    encoder = prompt_encoder(cache, val_cache, settings, model)
     out.mkdir(parents=True, exist_ok=True)
     training: LoraTraining | FullTraining
     if settings.full is None:
@@ -430,7 +483,13 @@ def train(
             torch.cuda.reset_peak_memory_stats(device)
         samples = [entries[next(order)] for _ in range(settings.grad_accumulation)]
         losses, sigmas = accumulate_gradients(
-            training.transformer, cache, samples, generator, settings.device, compute_dtype=training.compute_dtype
+            training.transformer,
+            cache,
+            samples,
+            generator,
+            settings.device,
+            compute_dtype=training.compute_dtype,
+            encoder=encoder,
         )
         grad_norm = torch.nn.utils.clip_grad_norm_(training.parameters, settings.grad_clip).item()
         learning_rate = training.step()
@@ -456,7 +515,7 @@ def train(
             checkpoint.mkdir(parents=True, exist_ok=True)
             training.save(checkpoint, _progress(step, settings, generator, order))
         if val_cache is not None and (step % settings.val_every == 0 or step == settings.steps):
-            _validate(training, val_cache, out, step, settings)
+            _validate(training, val_cache, out, step, settings, encoder)
     return checkpoint
 
 
@@ -509,20 +568,43 @@ def main(
     resume: Annotated[
         Path | None, typer.Option(help="with --full: go on from a checkpoint of --out saved with --save-state")
     ] = None,
+    encode_text: Annotated[
+        bool,
+        typer.Option(
+            "--encode-text",
+            help="encode each prompt in its step by the frozen text encoder (16.8 GB more) instead of reading it from "
+            "the cache, which then needs its latents alone (diffu-moss-cache-pairs --latents-only)",
+        ),
+    ] = False,
+    model: Annotated[
+        Path | None,
+        typer.Option(
+            help="with --encode-text: the MOSS model directory whose text encoder encodes the prompts (default: the "
+            "one the cache was made with)"
+        ),
+    ] = None,
     seed: Annotated[int, typer.Option(help="the sample order, noise levels, noise and the LoRA's start")] = 0,
     device: Annotated[str, typer.Option(help="where the DiT trains")] = "cuda",
 ) -> None:
     """Train MOSS-Image's DiT to draw from a reference image: a LoRA, or every weight (--full)."""
     if not full and (ema is not None or save_state or resume is not None):
         raise typer.BadParameter("--ema, --save-state and --resume are a full fine-tune's: give --full")
+    if model is not None and not encode_text:
+        raise typer.BadParameter("--model gives the text encoder of --encode-text: give --encode-text")
     rate = {} if learning_rate is None else {"learning_rate": learning_rate}  # else each kind's own default
     try:  # a ValidationError (an --ema outside (0, 1)) is a ValueError too
         fine_tune = FullSettings.model_validate({"ema": ema, "save_state": save_state, **rate}) if full else None
-        run = {"steps": steps, "limit_pairs": limit_pairs, "save_every": save_every, "val_every": val_every}
+        run = {
+            "steps": steps,
+            "limit_pairs": limit_pairs,
+            "encode_text": encode_text,
+            "save_every": save_every,
+            "val_every": val_every,
+        }
         settings = TrainSettings.model_validate(
             {**run, "seed": seed, "device": device, "full": fine_tune, **({} if full else rate)}
         )
-        checkpoint = train(transformer, cache, out, settings, val_cache=val_cache, resume=resume)
+        checkpoint = train(transformer, cache, out, settings, val_cache=val_cache, resume=resume, model=model)
     except ValueError as error:  # an unfinished cache, a used run directory, a checkpoint not to resume: the arguments'
         raise typer.BadParameter(str(error)) from error
     trained = "the LoRA" if settings.full is None else "the DiT"
