@@ -58,6 +58,11 @@ implementation, written from the published design, around the released weights.
   --transformer` draws with, no merge); `--ema 0.9999` keeps an average of the weights beside it (`ema/`, 20 GB more
   in float32) and `--save-state` the float32 weights and optimizer state a run resumes from (`state/`, ~42 GB;
   `--resume <checkpoint>` goes on exactly as the run would have), both off by default: the Spark holds neither.
+  `--muon-momentum-dtype bfloat16` keeps Muon's momentum in bfloat16 (`train/muon.py`: read in float32 and moved
+  towards the gradient there, the update taken from that float32 momentum, the momentum stored back rounded; the
+  update reaches the Newton-Schulz steps in bfloat16 either way): about 9.5 GB less, ~64 GB at the peak and ~32 GB of
+  state. A checkpoint's state keeps it in bfloat16, and a run resumed with the other dtype is refused; the default,
+  float32, steps as before, bit for bit.
   `--limit-pairs N` trains on the cache's first N pairs drawn with their reference alone, and `diffu-draw-pairs`
   (diffu-page) draws them back beside their real pages: an overfit test.
 

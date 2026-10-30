@@ -10,6 +10,13 @@ feed-forward's ``ffn_up_gate``: its value half, then its gate half) is orthogona
 time, as the separate matrices the fused one stands for; the parameter stays one tensor, so the DiT's weights keep
 their names.
 
+The momentum is kept in float32, as torch's Muon keeps it, or with ``momentum_dtype=torch.bfloat16`` in bfloat16, for
+half its memory (9.5 GB less for the real DiT's 4.76 B joint-block weights). A bfloat16 momentum is read in float32 and
+moved towards the gradient there (the same ``lerp``); the update is taken from that float32 momentum, and the momentum
+is stored back rounded to bfloat16 (to nearest even). The update is cast to bfloat16 for the Newton-Schulz steps either
+way, so the only difference is the rounding of the momentum carried to the next step. A checkpoint's state keeps it in
+bfloat16, and a resumed run reads it back so (:meth:`Muon.load_state_dict`).
+
 A matrix sharded by FSDP2 (:mod:`diffu_moss.train.distributed`) takes its momentum and decay on each rank's rows; its
 update is gathered whole (in bfloat16, which the Newton-Schulz steps cast it to first) and orthogonalised on every rank,
 each keeping its own rows: exactly the step of one process, at the cost of every rank orthogonalising every matrix
@@ -32,6 +39,7 @@ NEWTON_SCHULZ = (3.4445, -4.7750, 2.0315)
 NEWTON_SCHULZ_STEPS = 5
 NORM_EPS = 1e-7
 RMS_MATCH = 0.2
+MOMENTUM_BUFFER = "momentum_buffer"
 
 
 def orthogonalised(update: Tensor, steps: int = NEWTON_SCHULZ_STEPS) -> Tensor:
@@ -58,6 +66,9 @@ class Muon(Optimizer):
     """Muon over 2-D matrices (the module's docstring); a group's ``splits`` is how many row blocks each of its
     matrices is orthogonalised in (1: whole).
 
+    Attributes:
+        momentum_dtype: The dtype every momentum is kept in: float32, or bfloat16 for half the memory.
+
     Raises:
         ValueError: From the constructor, if a parameter is not a matrix or its rows do not split into ``splits``.
     """
@@ -72,6 +83,7 @@ class Muon(Optimizer):
         nesterov: bool = True,
         ns_steps: int = NEWTON_SCHULZ_STEPS,
         splits: int = 1,
+        momentum_dtype: torch.dtype = torch.float32,
     ) -> None:
         defaults = {
             "lr": lr,
@@ -82,6 +94,7 @@ class Muon(Optimizer):
             "splits": splits,
         }
         super().__init__(params, defaults)
+        self.momentum_dtype = momentum_dtype
         for group in self.param_groups:
             for parameter in group["params"]:
                 if parameter.ndim != 2 or parameter.shape[0] % group["splits"]:
@@ -97,13 +110,27 @@ class Muon(Optimizer):
                 if parameter.grad is not None:
                     self._step(parameter, parameter.grad, group)
 
+    def load_state_dict(self, state_dict: dict[str, Any]) -> None:
+        """``state_dict`` loaded, every momentum in :attr:`momentum_dtype`: torch casts each floating-point state to its
+        parameter's dtype (float32), so a bfloat16 momentum is cast back, exactly."""
+        super().load_state_dict(state_dict)
+        for state in self.state.values():
+            if MOMENTUM_BUFFER in state:
+                state[MOMENTUM_BUFFER] = state[MOMENTUM_BUFFER].to(self.momentum_dtype)
+
     def _step(self, parameter: Tensor, grad: Tensor, group: dict[str, Any]) -> None:
         state = self.state[parameter]
-        if "momentum_buffer" not in state:
-            state["momentum_buffer"] = torch.zeros_like(grad, memory_format=torch.preserve_format)
-        buffer = state["momentum_buffer"]
-        buffer.lerp_(grad, 1 - group["momentum"])
-        update = grad.lerp(buffer, group["momentum"]) if group["nesterov"] else buffer
+        if MOMENTUM_BUFFER not in state:
+            state[MOMENTUM_BUFFER] = torch.zeros_like(
+                grad, dtype=self.momentum_dtype, memory_format=torch.preserve_format
+            )
+        buffer = state[MOMENTUM_BUFFER]
+        if buffer.dtype == torch.float32:
+            momentum = buffer.lerp_(grad, 1 - group["momentum"])
+        else:  # read in float32, stored back rounded; the update takes it unrounded
+            momentum = buffer.float().lerp_(grad, 1 - group["momentum"])
+            buffer.copy_(momentum)
+        update = grad.lerp(momentum, group["momentum"]) if group["nesterov"] else momentum
         splits = group["splits"]
         update = whole(update.bfloat16())  # what the Newton-Schulz steps read first: the same bits, half the traffic
         blocks = [orthogonalised(block, group["ns_steps"]) for block in update.chunk(splits, 0)]

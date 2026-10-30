@@ -15,10 +15,12 @@ The weights stay in float32 and the forward runs in bfloat16 autocast, its weigh
 copies of its weights live only while it runs; the joint blocks' activations are checkpointed. That is the layout
 FSDP2's MixedPrecisionPolicy takes, with no float32 master copy of our own. On the real DiT (5.08 B parameters, 4.76 B
 of them the joint blocks' matrices) it holds 20.3 GB of weights, 20.3 GB of gradients, 19.0 GB of Muon momentum and
-2.6 GB of AdamW moments: about 73 GB at its peak with the activations of a 1 MP target and a 0.5 MP reference.
-Launched by ``torchrun`` it is sharded by FSDP2 over the ranks (:mod:`diffu_moss.train.distributed`): those 62.2 GB of
-weights and state divided among them, ~14 GB more on each (activations, gathered blocks, CUDA and NCCL), so ~30 GB on
-each of 4 A100s and ~22 GB on each of 8.
+2.6 GB of AdamW moments: about 73 GB at its peak with the activations of a 1 MP target and a 0.5 MP reference. With
+Muon's momentum kept in bfloat16 (``momentum_dtype``, stepped in float32: :mod:`diffu_moss.train.muon`) that momentum
+is 9.5 GB: about 9.5 GB less at the peak, and in a checkpoint's state. Launched by ``torchrun`` it is sharded by FSDP2
+over the ranks (:mod:`diffu_moss.train.distributed`): those 62.2 GB of weights and state (52.7 GB with a bfloat16
+momentum) divided among them, ~14 GB more on each (activations, gathered blocks, CUDA and NCCL), so ~30 GB on each of
+4 A100s and ~22 GB on each of 8.
 
 A checkpoint (``checkpoints/step_NNNNNN/``) holds the DiT itself: ``transformer/``, its weights in bfloat16 as a
 diffusers folder with its ``export.json``, which ``diffu-moss-init --transformer`` draws with as it is; ``ema/``, the
@@ -30,6 +32,7 @@ weights in float32 (a diffusers folder too), the average's (``ema.safetensors``)
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, Self
 
@@ -56,9 +59,22 @@ AVERAGE_WEIGHTS = "ema.safetensors"
 OPTIMIZER_STATE = "optimizer.pt"
 
 
+class MomentumDtype(StrEnum):
+    """The dtype Muon keeps its momentum in (:mod:`diffu_moss.train.muon`)."""
+
+    FLOAT32 = "float32"  # as torch's Muon keeps it
+    BFLOAT16 = "bfloat16"  # half the memory: stepped in float32, stored rounded
+
+    @property
+    def dtype(self) -> torch.dtype:
+        """The dtype in torch."""
+        return torch.bfloat16 if self is MomentumDtype.BFLOAT16 else torch.float32
+
+
 class FullSettings(BaseModel):
-    """How a full fine-tune steps (the module's docstring): its optimizers' settings, the decay of the average of its
-    weights (None: no average), and whether each checkpoint keeps the state a run resumes from."""
+    """How a full fine-tune steps (the module's docstring): its optimizers' settings (Muon's momentum kept in
+    ``momentum_dtype``), the decay of the average of its weights (None: no average), and whether each checkpoint keeps
+    the state a run resumes from."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -66,6 +82,7 @@ class FullSettings(BaseModel):
     betas: tuple[float, float] = (0.9, 0.95)
     eps: float = 1e-8
     momentum: float = 0.95
+    momentum_dtype: MomentumDtype = MomentumDtype.FLOAT32
     weight_decay: float = 0.01
     ema: float | None = Field(default=None, gt=0, lt=1)
     save_state: bool = False
@@ -105,6 +122,7 @@ class FullOptimizer:
             lr=settings.learning_rate,
             weight_decay=settings.weight_decay,
             momentum=settings.momentum,
+            momentum_dtype=settings.momentum_dtype.dtype,
         )
         self.adamw = torch.optim.AdamW(
             [{"params": decayed, "weight_decay": settings.weight_decay}, {"params": undecayed, "weight_decay": 0.0}],

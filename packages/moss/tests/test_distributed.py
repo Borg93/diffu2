@@ -1,6 +1,6 @@
 """MOSS-Image's full fine-tune over several processes on CPU (gloo; conftest's tiny MOSS and tiny style pairs): FSDP2
 launched by torchrun at world size 2 trains, scores, checkpoints and resumes exactly as at world size 1 for the same
-global batch, and a step's samples must share out evenly among the ranks."""
+global batch, Muon's momentum kept in bfloat16 too, and a step's samples must share out evenly among the ranks."""
 
 from __future__ import annotations
 
@@ -110,6 +110,29 @@ def test_full_fine_tune_resumed_at_world_size_2_from_a_world_size_1_state_goes_o
     assert _log(resumed) == _log(world_runs[1])
     tensors = _tensors(_checkpoint(resumed, STEPS)), _tensors(_checkpoint(world_runs[1], STEPS))
     assert [name for name in tensors[1] if not torch.equal(tensors[0][name], tensors[1][name])] == []
+
+
+def test_full_fine_tune_with_a_bfloat16_muon_momentum_resumed_at_world_size_2_goes_on_exactly_as_at_world_size_1(
+    tiny_moss_dit: Path, tiny_pair_cache: Path, tmp_path: Path
+) -> None:
+    ran, resumed = tmp_path / "world_1", tmp_path / "resumed"
+    bfloat16 = ("--muon-momentum-dtype", "bfloat16")
+    _torchrun(1, ran, tiny_moss_dit, tiny_pair_cache, *bfloat16)
+    shutil.copytree(ran, resumed)
+    for step in range(2, STEPS + 1):
+        shutil.rmtree(_checkpoint(resumed, step))
+
+    _torchrun(2, resumed, tiny_moss_dit, tiny_pair_cache, *bfloat16, "--resume", str(_checkpoint(resumed, 1)))
+
+    assert _log(resumed) == _log(ran)
+    tensors = _tensors(_checkpoint(resumed, STEPS)), _tensors(_checkpoint(ran, STEPS))
+    assert [name for name in tensors[1] if not torch.equal(tensors[0][name], tensors[1][name])] == []
+    states = _optimizer_tensors(_checkpoint(resumed, STEPS)), _optimizer_tensors(_checkpoint(ran, STEPS))
+    # the momentum of each of the 18 joint-block matrices saved in bfloat16, read back, stepped and saved so again
+    momenta = [[state.dtype for name, state in saved.items() if name.startswith("muon/")] for saved in states]
+    assert momenta == [[torch.bfloat16] * 18] * 2
+    assert sorted(states[0]) == sorted(states[1])
+    assert [name for name in states[1] if not torch.equal(states[0][name], states[1][name])] == []
 
 
 def test_training_refuses_samples_a_step_that_do_not_share_out_evenly_among_the_ranks(

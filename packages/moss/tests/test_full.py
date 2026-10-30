@@ -1,8 +1,8 @@
 """MOSS-Image's full fine-tune on CPU (conftest's tiny MOSS and tiny style pairs): MOSS's optimizer recipe (Muon on the
 joint blocks' matrices, AdamW on the rest, no weight decay on biases, norms and embedders, the last block's q/k norm
-weights decayed towards one), a step that trains every weight in float32, a checkpoint that diffu-moss-init draws
-with, the average of the weights by its formula, and a run resumed from a checkpoint's state going on exactly as it
-would have, and refused one it was not trained with."""
+weights decayed towards one), Muon's momentum kept in bfloat16 when asked, a step that trains every weight in float32,
+a checkpoint that diffu-moss-init draws with, the average of the weights by its formula, and a run resumed from a
+checkpoint's state going on exactly as it would have, and refused one it was not trained with."""
 
 from __future__ import annotations
 
@@ -19,9 +19,9 @@ from torch import Tensor, nn
 from diffu.repo import ModelIndex
 from diffu_moss.init import write_moss_repo
 from diffu_moss.modular_pipelines.moss import MossModularPipeline
-from diffu_moss.train.full import AVERAGE, AVERAGE_WEIGHTS, DIT, STATE, FullOptimizer, FullSettings
+from diffu_moss.train.full import AVERAGE, AVERAGE_WEIGHTS, DIT, STATE, FullOptimizer, FullSettings, MomentumDtype
 from diffu_moss.train.loop import LOG, TrainSettings, train
-from diffu_moss.train.muon import Muon
+from diffu_moss.train.muon import Muon, orthogonalised, rms_matched_rate
 from diffu_moss.transformer import MossTransformer
 
 JOINT_MATRICES = [
@@ -38,9 +38,10 @@ DECAYED = [  # the tiny DiT's other matrices: the text refiner's, the modulation
     "final_linear_video.weight",
 ]
 DECAY = 0.9
+FULL = FullSettings(ema=DECAY, save_state=True)
 # 3 steps of 2 samples, the learning rate rising over 4 steps (so a resumed run must restore its schedule), an average
 # of the weights, a checkpoint and its state after every step
-FULL_RUN = TrainSettings(steps=3, save_every=1, warmup=4, full=FullSettings(ema=DECAY, save_state=True), device="cpu")
+FULL_RUN = TrainSettings(steps=3, save_every=1, warmup=4, full=FULL, device="cpu")
 
 
 def _weights(folder: Path) -> dict[str, Tensor]:
@@ -94,6 +95,7 @@ def test_full_optimizer_steps_the_joint_blocks_matrices_by_muon_and_the_rest_by_
         "nesterov": True,
         "ns_steps": 5,
     }
+    assert optimizer.muon.momentum_dtype == torch.float32  # as torch's Muon keeps it
     assert {key: optimizer.adamw.param_groups[0][key] for key in ("lr", "betas", "eps")} == {
         "lr": 5e-5,
         "betas": (0.9, 0.95),
@@ -132,6 +134,29 @@ def test_muon_steps_a_whole_matrix_as_torchs_muon_does() -> None:
     _two_muon_steps(whole, Muon([whole], lr=0.1, weight_decay=0.01, momentum=0.95), [alone])
 
     assert torch.equal(whole.detach(), alone.detach())
+
+
+def test_muon_with_a_bfloat16_momentum_stores_it_rounded_and_steps_from_it_unrounded_in_float32() -> None:
+    generator = torch.Generator().manual_seed(0)
+    weight = nn.Parameter(torch.randn(4, 6, generator=generator))
+    grads = [torch.randn(4, 6, generator=generator) for _ in range(2)]  # the second step from the stored momentum
+    expected, momentum = weight.detach().clone(), torch.zeros(4, 6, dtype=torch.bfloat16)
+    optimizer = Muon([weight], lr=0.1, weight_decay=0.01, momentum=0.95, momentum_dtype=torch.bfloat16)
+
+    for grad in grads:
+        weight.grad = grad.clone()
+        optimizer.step()
+
+    # by hand: the momentum 0.95 m + 0.05 g (a lerp) in float32, kept in bfloat16, and the update from it unrounded
+    for grad in grads:
+        unrounded = momentum.float().lerp(grad, 1 - 0.95)
+        momentum = unrounded.bfloat16()
+        orthogonal = orthogonalised(grad.lerp(unrounded, 0.95))  # the Nesterov update, in bfloat16 for Newton-Schulz
+        expected = expected.mul(1 - 0.1 * 0.01).add(orthogonal, alpha=-rms_matched_rate(0.1, 4, 6))
+    stored = optimizer.state_dict()["state"][0]["momentum_buffer"]
+    assert stored.dtype == torch.bfloat16
+    assert torch.equal(stored, momentum)
+    assert torch.equal(weight.detach(), expected)
 
 
 def test_full_optimizer_decays_the_last_blocks_q_and_k_norm_weights_towards_one(tiny_moss_dit: Path) -> None:
@@ -224,12 +249,21 @@ def test_full_fine_tune_resumed_from_a_checkpoints_state_goes_on_exactly_as_the_
     assert logs[0] == logs[1]  # the same samples, noise levels, losses and learning rates, steps 1 to 3
 
 
+@pytest.mark.parametrize(
+    "change",
+    [
+        pytest.param({"seed": 1}, id="seed"),
+        pytest.param(
+            {"full": FULL.model_copy(update={"momentum_dtype": MomentumDtype.BFLOAT16})}, id="muon-momentum-dtype"
+        ),
+    ],
+)
 def test_full_fine_tune_refuses_to_resume_with_settings_it_was_not_trained_with(
-    bfloat16_dit: Path, tiny_pair_cache: Path, full_run: Path, tmp_path: Path
+    bfloat16_dit: Path, tiny_pair_cache: Path, full_run: Path, tmp_path: Path, change: dict[str, object]
 ) -> None:
     resumed = tmp_path / "run"
     shutil.copytree(full_run, resumed)
-    other = FULL_RUN.model_copy(update={"seed": 1})
+    other = FULL_RUN.model_copy(update=change)
 
     with pytest.raises(ValueError, match="was trained with other settings"):
         train(bfloat16_dit, tiny_pair_cache, resumed, other, resume=_checkpoint(resumed, 1))

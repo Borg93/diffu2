@@ -181,7 +181,8 @@ drawn image's tokens. It trains a LoRA, or with
 `--full` every weight of the DiT (`diffu_moss.train.full`, tested on the Spark by `jobs/moss/run_ref_full.sh`) by
 MOSS-Image's own optimizer recipe (its technical report, Appendix A.2): Muon on the joint blocks' matrices (the fused
 gated feed-forward orthogonalised half by half, as the report does: `diffu_moss.train.muon`) and AdamW
-on the rest at 5e-5, the weights in float32 and the forward in bfloat16; its checkpoints are the DiT itself, which
+on the rest at 5e-5, the weights in float32 and the forward in bfloat16 (`--muon-momentum-dtype bfloat16` keeps Muon's
+momentum in bfloat16, stepped in float32: about 9.5 GB less); its checkpoints are the DiT itself, which
 `diffu-moss-init` draws with as the merged LoRA's export. With `--encode-text` a training encodes each sample's prompt
 in its step by the frozen text encoder, loaded as the cache loads it (`diffu_moss.train.cache.PromptEncoder`), the
 cached embeddings bit for bit (`packages/moss/tests/test_train.py`), so its cache holds the latents alone

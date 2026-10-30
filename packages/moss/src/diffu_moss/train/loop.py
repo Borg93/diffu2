@@ -12,7 +12,8 @@ attention (q, k, v, o) and feed-forward (ffn_up_gate, ffn_down) of every joint b
 proj, ffn_gate, ffn_up, ffn_down), the prompt's projection (text_embedder.proj), the latents' embedder (video_embedder)
 and the output (final_linear_video); the Base DiT frozen in bfloat16, the LoRA in float32; AdamW at 1e-4, betas (0.9,
 0.999), weight decay 1e-4. The full fine-tune follows MOSS-Image's own recipe: Muon on the joint blocks' matrices and
-AdamW on the rest at 5e-5, every weight in float32, the forward in bfloat16. Both clip the gradients at 1, keep the
+AdamW on the rest at 5e-5, every weight in float32, the forward in bfloat16 (``--muon-momentum-dtype bfloat16`` keeps
+Muon's momentum in bfloat16, stepped in float32: about 9.5 GB less). Both clip the gradients at 1, keep the
 learning rate constant after 50 warmup steps and take two samples a step, one a micro-batch. Each sample is the drawn
 image's clean latents noised to a level drawn as MOSS-Image draws it (:mod:`diffu_moss.train.sigmas`; ``--sigma-shift``
 moves the levels towards the clean end, where letter strokes are decided), and the loss is
@@ -69,7 +70,7 @@ from diffu_moss.train.cache import (
     with_reference,
 )
 from diffu_moss.train.distributed import Ranks, clip_sharded_gradients, joined, left
-from diffu_moss.train.full import STATE, FullSettings, FullTraining
+from diffu_moss.train.full import STATE, FullSettings, FullTraining, MomentumDtype
 from diffu_moss.train.records import (
     ADAPTER_RECORD,
     ADAPTER_WEIGHTS,
@@ -625,6 +626,13 @@ def main(
     resume: Annotated[
         Path | None, typer.Option(help="with --full: go on from a checkpoint of --out saved with --save-state")
     ] = None,
+    muon_momentum_dtype: Annotated[
+        MomentumDtype,
+        typer.Option(
+            help="with --full: the dtype Muon keeps its momentum in: float32 as torch's Muon, or bfloat16, about 9.5 "
+            "GB less (the momentum stepped in float32 and stored rounded)",
+        ),
+    ] = MomentumDtype.FLOAT32,
     encode_text: Annotated[
         bool,
         typer.Option(
@@ -653,14 +661,19 @@ def main(
 ) -> None:
     """Train MOSS-Image's DiT to draw from a reference image: a LoRA, or every weight (--full); under torchrun, every
     weight sharded over the ranks by FSDP2."""
-    if not full and (ema is not None or save_state or resume is not None):
-        raise typer.BadParameter("--ema, --save-state and --resume are a full fine-tune's: give --full")
+    if not full and (
+        ema is not None or save_state or resume is not None or muon_momentum_dtype is not MomentumDtype.FLOAT32
+    ):
+        raise typer.BadParameter(
+            "--ema, --save-state, --resume and --muon-momentum-dtype are a full fine-tune's: give --full"
+        )
     if model is not None and not encode_text:
         raise typer.BadParameter("--model gives the text encoder of --encode-text: give --encode-text")
     rate = {} if learning_rate is None else {"learning_rate": learning_rate}  # else each kind's own default
     ranks, device = joined(device)
     try:  # a ValidationError (an --ema outside (0, 1)) is a ValueError too
-        fine_tune = FullSettings.model_validate({"ema": ema, "save_state": save_state, **rate}) if full else None
+        full_settings = {"ema": ema, "save_state": save_state, "momentum_dtype": muon_momentum_dtype, **rate}
+        fine_tune = FullSettings.model_validate(full_settings) if full else None
         run = {
             "steps": steps,
             "limit_pairs": limit_pairs,

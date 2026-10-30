@@ -9,7 +9,9 @@
 # HPC). Its memory, estimated before any run: 20.3 GB of weights, 20.3 GB of gradients, 19.0 GB of Muon momentum (the
 # 4.76 B block weights), 2.6 GB of AdamW moments, ~8 GB of activations at the second sample's backward (the first's
 # gradients held) and ~3 GB for CUDA and the process: ~73 GB, so every training asks the guard for 75 (plus its 20 GB
-# floor: it starts only with 95 GB free). One GPU job at a time through jobs/spark_guard.sh:
+# floor: it starts only with 95 GB free). MUON_MOMENTUM_DTYPE=bfloat16 keeps Muon's momentum in bfloat16
+# (--muon-momentum-dtype; stepped in float32, stored rounded): 9.5 GB less, ~64 GB, so the guard is asked for 66 (86 GB
+# free to start); unset, the momentum stays float32. One GPU job at a time through jobs/spark_guard.sh:
 #   1. MOSS-Image Base as a model directory (CPU): the encoders the caches are made with      runs/moss/base
 #   2. cache 4,000 training pairs and 32 validation pairs, unless the pilot did              data_flux3/cache_moss_ref_v3d(_val)
 #   3. a 5-step smoke run: each step's time and peak memory from the trainer's log           runs/moss_ref_full/smoke
@@ -30,7 +32,7 @@
 #     and paper.
 # The long run goes on whatever the verdict: read the overfit test first. A stopped cache resumes where it stopped; a
 # stopped training does not (it saves no state: move its directory aside and rerun). Run detached (STEPS, SAVE_EVERY,
-# OVERFIT_PAIRS and OVERFIT_STEPS may be set in the environment):
+# OVERFIT_PAIRS, OVERFIT_STEPS and MUON_MOMENTUM_DTYPE may be set in the environment):
 #
 #   mkdir -p runs/moss_ref_full && setsid nohup jobs/moss/run_ref_full.sh >> runs/moss_ref_full/run.log 2>&1 < /dev/null &
 
@@ -51,9 +53,13 @@ STEPS="${STEPS:-500}"
 SAVE_EVERY="${SAVE_EVERY:-250}"
 OVERFIT_PAIRS="${OVERFIT_PAIRS:-8}"
 OVERFIT_STEPS="${OVERFIT_STEPS:-300}"
+MUON_MOMENTUM_DTYPE="${MUON_MOMENTUM_DTYPE:-}"  # unset: float32, the trainer's default
 FINAL="$OUT/full/checkpoints/step_$(printf %06d "$STEPS")"
 OVERFIT_FINAL="$OUT/overfit/checkpoints/step_$(printf %06d "$OVERFIT_STEPS")"
 TRAIN_GB=75  # the full fine-tune's ~73 GB at its peak (the estimate above)
+if [ "$MUON_MOMENTUM_DTYPE" = bfloat16 ]; then
+    TRAIN_GB=66  # ~64 GB: Muon's momentum in 9.5 GB, not 19.0
+fi
 export CUDA_VISIBLE_DEVICES=0
 
 [ -f "$BASE/transformer/config.json" ] || { echo "no MOSS-Image Base snapshot at $BASE (set MOSS_BASE)"; exit 1; }
@@ -79,7 +85,7 @@ train() {  # train <name> [diffu-moss-train-ref options ...]: a full fine-tune i
     shift
     "$GUARD" --need-gb "$TRAIN_GB" --name "moss-full-$name" --log "$OUT/guard.log" -- \
         "$PY" -m diffu_moss.train.loop --full --transformer "$BASE/transformer" --cache "$CACHE" --out "$OUT/$name" \
-        "$@" > "$OUT/$name.log" 2>&1
+        ${MUON_MOMENTUM_DTYPE:+--muon-momentum-dtype "$MUON_MOMENTUM_DTYPE"} "$@" > "$OUT/$name.log" 2>&1
 }
 
 steps_of() {  # steps_of <name>: each step of $OUT/<name> as its trainer logged it: loss, seconds, peak GB on the GPU
