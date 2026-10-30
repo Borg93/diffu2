@@ -320,7 +320,11 @@ What is known to be wrong or unfinished. Remove an item when it is done; add the
       the cache and train configs (moss_encoders.py, moss_hand_*.py, the merge and export configs) and the checks
       (check_cache.py, check_merged.py) still live in the scratchpad and run from KohakuMossTrainer's venv.
 - [ ] **MOSS single-page training set**: whole single pages (an opening's sides, `diffu_page.layout.scan_pages`) with
-      their Layout prompts, so a MOSS fine-tune learns pages, templates and looks beside the windows.
+      their Layout prompts, so a MOSS fine-tune learns pages, templates and looks beside the windows. The builder is
+      `diffu_page.data.page_pairs` (spreads its lines cannot split left out, 30 Oct); `--windows-per-page N` adds up to
+      N windows of each page as rows of their own (whole lines of a column as diffu-generate plans its crops, at the
+      pages' pixels, with the page's sample), for the big run's mix of ~60 % pages and ~40 % windows. Open: the mix is
+      the trainer's to draw (N = 2 gives about two windows a page), and the whole GT is not built yet.
 - [ ] MOSS's draw-time loose ends: `--compile-blocks` (the DiT names no repeated blocks yet; its per-sample loop and
       text mask would break a full graph), diffu-studio with a MOSS drawer (untested), and diffu-run's `--guidance`
       (still a literal 4, with the Ray items).

@@ -127,8 +127,12 @@ name and seed crops alike, so a page comes out the same from any of them.
   words), with it and the look in words (`--reference-caption named`), with it and the hand alone
   (`--reference-caption hand`). Prompts past the text encoder's 4,096 tokens are skipped and counted; whole volumes
   are held out (`val.jsonl`, `val_eval/`); scans run in parallel and a stopped build resumes from the scans it
-  recorded (`scanned/`); `build.json` records the settings and what became of every scan and page.
-  `diffu-moss-cache-pairs` caches its `train.jsonl` as it caches style pairs.
+  recorded (`scanned/`); `build.json` records the settings and what became of every scan, page and window.
+  `--windows-per-page N` adds up to N windows of each page: whole lines of one column planned on the single page as
+  diffu-generate plans its crops (`plan.plan_page`), cut at the pages' pixels (larger letters), prompted in the same
+  three forms, each a row with its page's sample in its volume's split, marked as a window (`PagePairRow.window`),
+  after the page rows, which stay exactly as without windows. `diffu-moss-cache-pairs` caches its `train.jsonl` as it
+  caches style pairs.
 - NeMo caches latents and prompt embeddings once (its FLUX.3 processor; `diffu_train.cache_pairs` for v3's
   pairs, with the empty prompt beside them), then trains a LoRA with the configs in `packages/train/configs/flux3/`
   and our interleaved bucket dataloader (`diffu_train.nemo`), which can train a share of the pairs on the empty prompt

@@ -113,9 +113,16 @@ implementation, written from the published design, around the released weights.
   of `train.jsonl` and `val.jsonl` (`train/pairs.py`: `PagePairRow`) carries the page's Layout prompt in all three
   forms with its length in the text encoder's tokens; `diffu-moss-cache-pairs` reads either kind of manifest and fixes
   each pair's form by its seed as before. Pages past the encoder's 4,096 tokens are skipped and counted, never cut;
-  whole volumes are held out (`val.jsonl`, and `val_eval/` for `diffu-evaluate`).
+  whole volumes are held out (`val.jsonl`, and `val_eval/` for `diffu-evaluate`). With `--windows-per-page N` each
+  page also gives up to N windows (picked by a stream seeded with its id): consecutive whole lines of one column,
+  planned on the single page as `diffu-generate` plans its crops (`plan_page`: a 64 px line pitch, 8-15 lines), cut from
+  the scan at the pages' pixels, so their letters are larger, and prompted as their page in all three forms (each
+  naming the hand, each its own Layout prompt). A window is a row like a page's, with its page's sample and in its
+  volume's split, marked by `window` (its page's id and its rectangle there, page px); a page too long to be a pair
+  still gives its windows a sample. The window rows follow the page rows, which are written exactly as without windows
+  (the default, 0).
 
       python -m diffu_page.data.page_pairs --gt-root ~/Desktop/data/GT-Lejonet_HTR_202602 --model runs/moss/base \
-          --out data_flux3/page_pairs --workers 8
+          --out data_flux3/page_pairs --workers 8 --windows-per-page 2
       diffu-moss-cache-pairs --model runs/moss/base --pairs data_flux3/page_pairs/train.jsonl \
           --out data_flux3/cache_moss_pages

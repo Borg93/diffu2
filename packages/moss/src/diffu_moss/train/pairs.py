@@ -1,9 +1,9 @@
 """Pairs as MOSS-Image trains on them, of two kinds. A style pair: a target crop, a reference crop of the same hand (its
 page or the facing page, sharing none of its lines) and the target's caption in the described reference form
 (``diffu_page.data.style_pairs --reference page --caption described``: v3d), read from the image-edit manifest the
-FLUX.3 runs trained on. A page pair (:class:`PagePair`): a whole single page and a sample page of its volume sharing
-none of its lines, its Layout prompt in each form compiled by ``diffu_page.data.page_pairs``, read from its page-pair
-manifest. :func:`read_manifest` reads either.
+FLUX.3 runs trained on. A page pair (:class:`PagePair`): a whole single page, or a window of one, and a sample page of
+its volume sharing none of its lines, its Layout prompt in each form compiled by ``diffu_page.data.page_pairs``, read
+from its page-pair manifest. :func:`read_manifest` reads either.
 
 Each pair is drawn into one of three prompt forms, its :class:`Variant`, the mix fixed per pair by a seed
 (:func:`assign_variants`): a fifth without the reference (the caption's citation dropped, its look words kept: plain
@@ -20,7 +20,7 @@ import random
 from enum import StrEnum
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from diffu_moss.layout_prompt import caption_texts, layout_prompt
 from diffu_moss.sample_caption import with_sample, without_look, without_sample
@@ -89,10 +89,19 @@ class Pair(BaseModel):
         return set(caption_texts(self.caption).values())
 
 
+class PageWindow(BaseModel):
+    """What a window row's target is a window of: its page's id (its row's, when the page is a pair) and its rectangle
+    there, px of the page's own coordinates."""
+
+    page: str
+    rect: tuple[float, float, float, float]  # x0, y0, x1, y1
+
+
 class PagePairRow(BaseModel):
     """One row of a page-pair manifest (``diffu_page.data.page_pairs``' ``train.jsonl`` or ``val.jsonl``): a whole
-    single page, a sample page of its volume and the page's MOSS Layout prompt in every form, with its length in the
-    text encoder's tokens, compiled for the page's size."""
+    single page, or a window of one (``window``), a sample page of its volume and the target's MOSS Layout prompt in
+    every form, with its length in the text encoder's tokens, compiled for the target's size. A page's row has no
+    ``window`` key, so a set built without windows is written as one was before them."""
 
     id: str
     target: str  # relative to the manifest's directory
@@ -101,6 +110,7 @@ class PagePairRow(BaseModel):
     volume: str  # "<collection>/<volume>"
     prompts: dict[Variant, str]
     tokens: dict[Variant, int]
+    window: PageWindow | None = Field(default=None, exclude_if=lambda window: window is None)  # None: a whole page
 
 
 class PagePair(BaseModel):
