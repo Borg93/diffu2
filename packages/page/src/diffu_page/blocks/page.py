@@ -10,7 +10,7 @@ from typing import override
 from diffusers.modular_pipelines import InputParam, ModularPipeline, ModularPipelineBlocks, OutputParam, PipelineState
 
 from diffu_page.captions.prompt import PageStyle
-from diffu_page.layout import Layout, PageSide, load_xml_layout, refill, scan_pages
+from diffu_page.layout import Layout, PageSide, is_unsplit_spread, load_xml_layout, refill, scan_pages
 from diffu_page.marking import PrintHandClassifier, marked, template_scan
 from diffu_page.plan import Reference, plan_page, plan_whole_page
 
@@ -81,12 +81,17 @@ class MarkFromScanStep(ModularPipelineBlocks):
 
 
 class OpeningPageStep(ModularPipelineBlocks):
-    """With a side, that page of a two-page opening, in its own coordinates; without one, the layout as it is."""
+    """With a side, that page of a two-page opening, in its own coordinates; without one, the layout as it is. A scan
+    wider than tall whose pages its lines cannot split (:func:`diffu_page.layout.is_unsplit_spread`) is refused, with
+    a side or without: a spread is never drawn."""
 
     @property
     @override
     def description(self) -> str:
-        return "Of an opening, takes the page on the side asked for, as a page of its own."
+        return (
+            "Of an opening, takes the page on the side asked for, as a page of its own; refuses a scan wider than tall "
+            "whose pages cannot be split."
+        )
 
     @property
     @override
@@ -108,6 +113,12 @@ class OpeningPageStep(ModularPipelineBlocks):
 
     def __call__(self, components: ModularPipeline, state: PipelineState) -> tuple[ModularPipeline, PipelineState]:
         block_state = self.get_block_state(state)
+        layout: Layout = block_state.layout
+        if is_unsplit_spread(layout):
+            raise ValueError(
+                f"{block_state.template} is a spread whose pages cannot be split: wider than tall ({layout.width} x "
+                f"{layout.height} px), and its lines leave no gutter down its middle to cut at; a spread is never drawn"
+            )
         side = block_state.side
         if side is not None:
             page = next((page for page in scan_pages(block_state.layout) if page.side == side), None)

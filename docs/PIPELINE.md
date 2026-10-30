@@ -30,7 +30,10 @@ PAGE/ALTO page ──► LoadLayout ──► MarkFromScan ──► OpeningPage
    an opening's fold and the scan's border). The whole scan is marked, then `OpeningPageStep`, given a side
    (`PageJob.side`), reads that page of a two-page opening as a page of its own (`layout.scan_pages`: the scan split at
    its gutter, the page's lines and ruled lines in its own coordinates), so its crops and labels are a single page's;
-   diffu-generate gives each page of an opening its own job (`jobs.single_pages`). The classifier is trained on CPU
+   diffu-generate gives each page of an opening its own job (`jobs.single_pages`). A scan wider than tall whose lines
+   leave no gutter (`layout.is_unsplit_spread`: on the GT 1,176 of 30,983 scans, about 880 openings whose pages' lines
+   overlap side to side, the rest mostly single wide sheets, which the lines cannot tell apart) is refused here, with a
+   side or without, and a run records it as failed: a spread is never drawn, and the page-pair builder skips it too. The classifier is trained on CPU
    (`python -m diffu_page.data.print_hand_set`, then `python -m diffu_page.marking.train`): printed lines from the OCR
    ground truth, handwritten ones from the HTR ground truth, validated on held-out collections.
 2. **Refill** (`RefillStep`, `layout.refill`): the running-text lines get new text at the page's own writing density;
@@ -117,7 +120,8 @@ name and seed crops alike, so a page comes out the same from any of them.
   `pick_eval` build the steering, v3 and evaluation sets (`style_pairs --caption described` for v3d's captions;
   `probe_set` the control probe that checks whether such words steer the base model at all).
 - `diffu_page.data.page_pairs` builds MOSS-Image's page pairs, the full fine-tune's data: every single page of the
-  GT (an opening split into its two) cut at about 1 MP as `diffu-generate --whole-page` plans it, with a sample page
+  GT (an opening split into its two; a scan wider than tall that its lines cannot split skipped and counted as
+  `spread`) cut at about 1 MP as `diffu-generate --whole-page` plans it, with a sample page
   of its volume sharing none of its lines (0.5 MP), and its MOSS Layout prompt in the three forms the reference
   training mixes, each naming the hand (the archive and years): without the sample (its own caption, the look in
   words), with it and the look in words (`--reference-caption named`), with it and the hand alone

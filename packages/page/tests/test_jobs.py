@@ -41,7 +41,7 @@ def test_crop_jobs_plan_a_page_with_page_pixels_whole_as_one_named_and_seeded_cr
 
     jobs = crop_jobs(page, 2)
 
-    assert [(job.name, job.seed, job.plan.width, job.plan.height) for job in jobs] == [("002_page_0", 2005, 1024, 976)]
+    assert [(job.name, job.seed, job.plan.width, job.plan.height) for job in jobs] == [("002_page_0", 2005, 912, 1088)]
 
 
 def test_crop_jobs_name_and_seed_a_page_with_an_id_alike_wherever_it_stands_in_a_run(
@@ -106,8 +106,7 @@ def test_read_page_jobs_keep_the_page_of_an_opening_a_line_asks_for(
 def test_crop_jobs_refuse_a_side_of_a_single_page_naming_its_template(
     body_and_notes_page: Path, page_style: PageStyle, page_text: str
 ) -> None:
-    # wider than tall (2000 x 1900 px), but its body lines cross its middle: a single page
-    page = PageJob(template=body_and_notes_page, text=page_text, style=page_style, side=PageSide.LEFT)
+    page = PageJob(template=body_and_notes_page, text=page_text, style=page_style, side=PageSide.LEFT)  # 2000 x 2400 px
 
     with pytest.raises(ValueError, match=f"^{re.escape(str(body_and_notes_page))} has no left page to draw: "):
         crop_jobs(page, 0)

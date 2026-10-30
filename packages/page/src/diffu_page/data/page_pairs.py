@@ -3,7 +3,9 @@ sample page of its own volume.
 
 Every PAGE file of the GT (``<root>/<collection>/<volume>/<volume>/page/<file>.xml``, macOS ``._*`` files passed over)
 is read with its scan (``find_scan``) and split into its single pages (``scan_pages``: an opening's two, else the scan
-whole). Each page is cut from its scan at about ``--megapixels`` on the latent grid, exactly as ``diffu-generate
+whole). A scan wider than tall that its lines cannot split (``is_unsplit_spread``: an opening whose pages' lines overlap
+side to side, or a single wide sheet, which the lines cannot tell apart) gives no page: it is skipped and counted, as
+no spread is ever trained on. Each page is cut from its scan at about ``--megapixels`` on the latent grid, exactly as ``diffu-generate
 --whole-page`` plans a page (``plan_whole_page``), and prompted as drawing prompts it: the caption of its whole-page
 plan compiled as MOSS's Layout prompt (``diffu_moss.sample_caption.sample_layout_prompt``, as ``MossLayoutPromptStep``
 compiles it), every line's exact text in its box. The page is captioned in its own style: the archive and the volume's
@@ -71,7 +73,7 @@ from diffu_page.crops.grid import as_reference
 from diffu_page.data.build_crops import TILE_QUALITY
 from diffu_page.data.style_pairs import link
 from diffu_page.evalset import ReferencedCrop, write_jsonl
-from diffu_page.layout import ScanPage, load_xml_layout, scan_pages
+from diffu_page.layout import ScanPage, is_unsplit_spread, load_xml_layout, scan_pages
 from diffu_page.layout.page_xml import find_scan
 from diffu_page.local_run import describe
 from diffu_page.output import JPEG_QUALITY, console, load_rgb
@@ -126,6 +128,7 @@ class ScanProblem(StrEnum):
 
     NO_SCAN = "no scan"  # its PAGE file names no image beside it
     NO_TEXT = "no text"  # no page of it holds a line
+    SPREAD = "spread"  # wider than tall, and its lines leave no gutter to split its pages at
     FAILED = "failed"  # reading or cutting it failed: its error is kept
 
 
@@ -152,6 +155,7 @@ class BuildCounts(BaseModel):
     scans: int
     no_scan: int
     no_text: int
+    spread: int  # wider than tall, its pages not split: an opening whose lines overlap, or a single wide sheet
     failed: int
     pages: int
     too_long: int  # a form's prompt passes the text encoder's tokens
@@ -256,6 +260,8 @@ def scanned(task: ScanTask) -> ScanResult:
     pages = [page for page in scan_pages(layout) if regions_of(page.layout)]  # a page holding a line of text
     if not pages:
         return ScanResult(xml=xml.as_posix(), problem=ScanProblem.NO_TEXT)
+    if is_unsplit_spread(layout):
+        return ScanResult(xml=xml.as_posix(), problem=ScanProblem.SPREAD)
     Image.MAX_IMAGE_PIXELS = None  # archival spreads exceed PIL's decompression-bomb default
     scan = load_rgb(scan_path)
     if scan.size != (layout.width, layout.height):
@@ -440,6 +446,7 @@ def build(out: Path, settings: BuildSettings, *, workers: int) -> BuildRecord:
             scans=len(results),
             no_scan=problems.count(ScanProblem.NO_SCAN),
             no_text=problems.count(ScanProblem.NO_TEXT),
+            spread=problems.count(ScanProblem.SPREAD),
             failed=problems.count(ScanProblem.FAILED),
             pages=len(pages),
             too_long=too_long,

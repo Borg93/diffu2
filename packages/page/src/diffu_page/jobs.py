@@ -3,7 +3,9 @@
 A :class:`PageJob` is a real template page, the text to write into it and the style to draw it in (one per line of a
 run file, where a line may name its style instead: a :class:`PageRequest`, resolved with the style presets of
 :mod:`diffu_page.styles`). A job of a two-page opening becomes a job per page (:func:`single_pages`), so a run draws
-single pages, never a spread. Each page is planned on CPU into :class:`CropJob` s (:func:`crop_jobs`), and each crop
+single pages, never a spread; a scan wider than tall whose pages its lines cannot split is refused when it is planned
+(:func:`diffu_page.layout.is_unsplit_spread`), its error recorded as any page's that cannot be planned. Each page is
+planned on CPU into :class:`CropJob` s (:func:`crop_jobs`), and each crop
 job is drawn on its own with the crop pipeline: by diffu-generate one after another, by diffu-runner's GPU actors in
 parallel. Crops are named and seeded by ``crop_identity``, so a page comes out the same either way.
 """
@@ -121,8 +123,8 @@ class PageRequest(BaseModel):
 def single_pages(page: PageJob) -> list[PageJob]:
     """The single pages a page job draws: a job for each page of a two-page opening that holds a line
     (:func:`diffu_page.layout.scan_pages`), its side set and the job's id, if it has one, suffixed with the side. Any
-    other job draws a single page as it is: a single page's job, one already given a side, or one whose template cannot
-    be read."""
+    other job is kept as it is: a single page's job, one already given a side, one whose template cannot be read, or one
+    of a spread its lines cannot split, which planning refuses (:func:`crop_jobs`)."""
     if page.side is not None:
         return [page]
     try:

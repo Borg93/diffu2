@@ -45,7 +45,7 @@ def test_plan_whole_page_draws_every_line_of_the_page_at_the_pixels_asked_for(
 
     plan = plan_whole_page(layout, page_style, pixels=1_000_000)
 
-    assert (plan.width, plan.height) == (1024, 976)  # 2000 x 1900 px at 0.513, each side on the 16-px grid
+    assert (plan.width, plan.height) == (912, 1088)  # 2000 x 2400 px at 0.456, each side on the 16-px grid
     assert sorted(line.text for line in plan.lines) == sorted(line.text for line in layout.lines)
     assert [plan.lines[i].text for i in plan.reading_order][-2:] == ["note 0", "note 1"]
 

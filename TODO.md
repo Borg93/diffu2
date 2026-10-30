@@ -690,8 +690,10 @@ Research 2026-10-21 (reports: FLUX.3 recipe, NeMo feasibility; both read-only).
         alone took on 6 Handelskollegiet / Politikollegiet openings, is passed over for the fold).
   - [ ] The ~1 % where the transcribers' lines or a table run over the fold leave free bands only inside a page: the
         cut lands there (FNA_1500 lists between a page's name and amount columns; two-page tables). A fold check on the
-        scan (the binding's shadow, the page edges) would place those; ~1,250 wide scans whose middle the lines cross
-        throughout stay whole (single wide sheets, or such openings).
+        scan (the binding's shadow, the page edges) would place those. The 1,176 wide scans whose middle the lines
+        cross throughout (about 880 openings whose pages' lines overlap, the rest mostly single wide sheets) are left
+        out since 30 Oct (`layout.is_unsplit_spread`: the page-pair builder skips them, planning refuses them, so no
+        spread is trained on or drawn); a fold check would win the openings back.
   - [ ] An opening's two pages both take the job's text from its start, so the right page repeats the left's first
         words; give the right page the text the left one leaves over (`refill` would report where it stopped).
   - [ ] Crops from every page, not 40 per collection: ~6 crops per page (v2: 1,866 pages -> 11,329 crops), so

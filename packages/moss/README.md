@@ -104,7 +104,8 @@ implementation, written from the published design, around the released weights.
       torchrun --standalone --nproc-per-node 4 -m diffu_moss.train.loop --full --transformer <snapshot>/transformer \
           --cache data_flux3/cache_moss_pages --out runs/moss_pages_full/full --steps 500 --samples-per-step 8
 - **Page pairs** (`diffu_page.data.page_pairs`, diffu-page; the big full fine-tune's data): whole single pages of the
-  handwritten GT (openings split into their pages), each cut at about 1 MP exactly as `diffu-generate --whole-page`
+  handwritten GT (openings split into their pages; a scan wider than tall that its lines cannot split is skipped and
+  counted, never a page), each cut at about 1 MP exactly as `diffu-generate --whole-page`
   plans a page and prompted as drawing prompts it, with a sample page of its own volume sharing none of its lines at
   0.5 MP. The sample carries paper and ink, not the hand, so every form names the hand (the archive and the volume's
   years): no reference (the page's own caption, its look in words), look (the sample, and the look in words:

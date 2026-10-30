@@ -423,11 +423,17 @@ def test_generate_refuses_a_reference_option_without_a_reference_before_it_loads
 
 
 def test_generate_records_each_page_it_cannot_plan_without_loading_the_model(
-    one_line_page: Path, body_and_notes_page: Path, tmp_path: Path
+    one_line_page: Path,
+    unsplit_spread_page: Path,
+    body_and_notes_page: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr("diffu_page.cli.generate.TrOCRJudge", lambda device: ScriptedJudge())  # reads are not tested
     no_model = tmp_path / "no_model"  # never read: no page plans to a crop
     missing = tmp_path / "missing.xml"  # a template that cannot be read, so not split into its pages either
-    args = ["--templates", str(one_line_page), "--templates", str(missing), "--text-from", str(body_and_notes_page)]
+    args = ["--templates", str(one_line_page), "--templates", str(missing), "--templates", str(unsplit_spread_page)]
+    args += ["--text-from", str(body_and_notes_page)]
     args += ["--title", "the archive", "--model", str(no_model), "--out", str(tmp_path)]
     args += ["--steps", "2", "--text-layer", "1", "--device", "cpu"]
 
@@ -440,13 +446,16 @@ def test_generate_records_each_page_it_cannot_plan_without_loading_the_model(
         DrawSettings(steps=2, text_layers=(1,), device="cpu"),
         [],
     )
-    assert [(page.template, page.style, page.seed) for page in summary.pages] == [
-        (one_line_page, FLAG_STYLE, 0),  # the style the flags name, with their defaults
-        (missing, FLAG_STYLE, 0),
+    assert [(page.template, page.style, page.seed, page.side) for page in summary.pages] == [
+        (one_line_page, FLAG_STYLE, 0, None),  # the style the flags name, with their defaults
+        (missing, FLAG_STYLE, 0, None),
+        (unsplit_spread_page, FLAG_STYLE, 0, None),  # kept whole: its pages cannot be split
     ]
     assert summary.failed == {
         "000_one_line": f"ValueError: {one_line_page} plans to no crops: no window of it holds enough whole lines",
         "001_missing": f"FileNotFoundError: [Errno 2] No such file or directory: '{missing}'",
+        "002_spread": f"ValueError: {unsplit_spread_page} is a spread whose pages cannot be split: wider than tall "
+        "(2500 x 1200 px), and its lines leave no gutter down its middle to cut at; a spread is never drawn",
     }
 
 

@@ -4,7 +4,12 @@ page, never as a spread. Any other scan is one page.
 
 The gutter is read from the lines alone. On the GT (27 Oct) it cuts the 27,169 openings it finds at 0.38-0.62 of
 their width in 98.6 % of them, and no table in two; where the transcribers' lines or a table run over the fold, the
-only free bands lie inside a page and the cut lands there (about 1 %): telling them apart needs the scan itself."""
+only free bands lie inside a page and the cut lands there (about 1 %): telling them apart needs the scan itself.
+
+A scan wider than tall with lines but no gutter is no page at all (:func:`is_unsplit_spread`). Of the GT's 30,983
+scans 1,176 are: about 880 openings whose pages' lines overlap side to side (a tilted or curved fold, lines boxed wide),
+the rest with a line across their middle, mostly single wide sheets. The lines alone cannot tell a single wide sheet
+from such an opening, so every one is left out, the sheets with the spreads: a spread is never trained on or drawn."""
 
 from __future__ import annotations
 
@@ -81,9 +86,17 @@ def _parts(layout: Layout, x: float, *, tables: bool) -> bool:
     return any(len(seen) == 2 for seen in sides.values())
 
 
+def is_unsplit_spread(layout: Layout) -> bool:
+    """Whether the scan is wider than tall and holds lines but :func:`gutter` finds no band to split it at, so
+    :func:`scan_pages` gives it whole: most such scans are openings whose pages' lines overlap side to side, the rest
+    mostly single wide sheets, which the lines cannot tell apart. Neither is a page to draw or train on."""
+    return layout.width > layout.height and bool(layout.lines) and gutter(layout) is None
+
+
 def scan_pages(layout: Layout) -> list[ScanPage]:
     """The scan's pages: an opening's two pages, split at its gutter (a line on the side its middle is on), those that
-    hold a line, each in its own coordinates; any other scan whole, as its one page."""
+    hold a line, each in its own coordinates; any other scan whole, as its one page (a scan wider than tall given whole
+    is a spread its lines cannot split, :func:`is_unsplit_spread`, which no caller takes for a page)."""
     split = gutter(layout)
     if split is None:
         return [ScanPage(side=None, rect=(0.0, 0.0, float(layout.width), float(layout.height)), layout=layout)]

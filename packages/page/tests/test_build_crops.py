@@ -25,7 +25,7 @@ def test_build_records_a_page_it_cannot_read_and_writes_the_crops_of_the_rest(
     shutil.copy(body_and_notes_page, volume / "page" / "0001.xml")
     (volume / "page" / "0002.xml").write_text('<?xml version="1.0"?><PcGts', encoding="utf-8")  # cut off mid-write
     for scan in ("0001.jpg", "0002.jpg"):
-        Image.new("RGB", (2000, 1900), "white").save(volume / scan)
+        Image.new("RGB", (2000, 2400), "white").save(volume / scan)
     out = tmp_path / "out"
 
     failed = build(tmp_path / "gt", [COLLECTION], out, max_pages=2, val_frac=0.0, seed=0, settings=CropSettings())
@@ -51,8 +51,8 @@ def test_build_cuts_the_image_the_page_xml_names_beside_another_scan_of_the_page
         'imageFilename="page.jpg"', 'imageFilename="0001.tif"'
     )
     (volume / "page" / "0001.xml").write_text(xml, encoding="utf-8")
-    Image.new("RGB", (2000, 1900), "white").save(volume / "0001.jpg")  # another cut of the page, as a volume may hold
-    Image.new("RGB", (2000, 1900), "black").save(volume / "0001.tif")  # the image the PAGE coordinates belong to
+    Image.new("RGB", (2000, 2400), "white").save(volume / "0001.jpg")  # another cut of the page, as a volume may hold
+    Image.new("RGB", (2000, 2400), "black").save(volume / "0001.tif")  # the image the PAGE coordinates belong to
     out = tmp_path / "out"
 
     build(tmp_path / "gt", [COLLECTION], out, max_pages=1, val_frac=0.0, seed=0, settings=CropSettings())

@@ -59,7 +59,10 @@ cd ~/Desktop/repos/Automodel && ~/Desktop/repos/diffu2/jobs/spark_guard.sh --nee
 `--text-from` also takes a plain text file, written as it stands (a blank line ends a paragraph). `--whole-page`
 draws each template whole (`--page-megapixels`, 2.5 by default) instead of as training-scale windows. A template that
 is a two-page opening, as most GT scans are, is drawn as its single pages, never as a spread (`summary.json` lists
-them; a job line can ask for one, `"side": "left"` or `"right"`). `--mark-from-scan` marks each template from the
+them; a job line can ask for one, `"side": "left"` or `"right"`). A template wider than tall whose lines leave no
+gutter to split it at is refused and recorded in `summary.json` as failed, the run going on: of the GT's 30,983 scans
+1,176 are, about 880 openings whose pages' lines overlap side to side and the rest mostly single wide sheets, which the
+lines cannot tell apart, so the sheets are refused with the spreads (`layout.is_unsplit_spread`). `--mark-from-scan` marks each template from the
 scan beside it before planning (off by default): a GT PAGE file mostly says neither which lines are printed
 (`@production`) nor where the ruled lines run (`SeparatorRegion`), so a printed form filled in by hand would be drawn
 as handwriting without its grid. Each line the file says nothing of is read as printed or handwritten by a small CNN

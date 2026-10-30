@@ -50,14 +50,14 @@ def _line(line_id: str, x0: int, x1: int, baseline: int, text: str) -> str:
 
 @pytest.fixture
 def body_and_notes_page(tmp_path: Path) -> Path:
-    """A 2000 x 1900 px page: 14 body lines at a 100 px pitch, and two margin notes left of body lines 3 and 4."""
+    """A 2000 x 2400 px page: 14 body lines at a 100 px pitch, and two margin notes left of body lines 3 and 4."""
     body = "".join(_line(f"b{i}", 600, 1900, 300 + 100 * i, f"body line {i} of the running text") for i in range(14))
     notes = "".join(_line(f"n{i}", 120, 520, baseline, f"note {i}") for i, baseline in enumerate((600, 700)))
     path = tmp_path / "page.xml"
     path.write_text(
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<PcGts xmlns="http://schema.primaresearch.org/PAGE/gts/pagecontent/2019-07-15">'
-        '<Page imageFilename="page.jpg" imageWidth="2000" imageHeight="1900">'
+        '<Page imageFilename="page.jpg" imageWidth="2000" imageHeight="2400">'
         f'<TextRegion id="body" type="paragraph">{body}</TextRegion>'
         f'<TextRegion id="notes" type="marginalia">{notes}</TextRegion>'
         "</Page></PcGts>",
@@ -103,6 +103,23 @@ def opening_page(tmp_path: Path) -> Path:
         f'<TextRegion id="note" type="marginalia">{_line("n", 1050, 1150, 400, "No 12")}</TextRegion>'
         '<SeparatorRegion id="rule"><Coords points="100,330 2400,330 2400,332 100,332"/></SeparatorRegion>'
         "</Page></PcGts>",
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.fixture
+def unsplit_spread_page(tmp_path: Path) -> Path:
+    """A 2500 x 1200 px scan whose four lines run from x 100 to 2400, across its middle: an opening whose pages' lines
+    overlap side to side, or a single wide sheet, which its lines cannot tell apart. No band of its middle is free of
+    lines, so its pages cannot be split."""
+    lines = "".join(_line(f"l{i}", 100, 2400, 300 + 100 * i, f"line {i} across the fold") for i in range(4))
+    path = tmp_path / "spread.xml"
+    path.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<PcGts xmlns="http://schema.primaresearch.org/PAGE/gts/pagecontent/2019-07-15">'
+        '<Page imageFilename="spread.jpg" imageWidth="2500" imageHeight="1200">'
+        f'<TextRegion id="text" type="paragraph">{lines}</TextRegion></Page></PcGts>',
         encoding="utf-8",
     )
     return path
@@ -234,11 +251,14 @@ FORM_REGIONS: list[tuple[str, list[tuple[str, PageBox, str]], int]] = [
 FORM_RULES: list[PageBox] = [(100, 140, 1100, 140), (100, 720, 1100, 720), (100, 140, 100, 720), (1100, 140, 1100, 720)]
 
 
+FORM_SIZE = (1200, 1600)  # (width, height) px: a portrait sheet, its form in the upper half
+
+
 def _form_scan() -> np.ndarray:
-    """The scanned form's 1200 x 900 px grey scan: each line inked as ``FORM_REGIONS`` says, ``FORM_RULES`` 2 px
+    """The scanned form's grey scan (``FORM_SIZE``): each line inked as ``FORM_REGIONS`` says, ``FORM_RULES`` 2 px
     wide."""
     rng = np.random.default_rng(0)
-    scan = np.full((900, 1200), PAPER, np.uint8)
+    scan = np.full(FORM_SIZE[::-1], PAPER, np.uint8)
     for _, lines, stroke in FORM_REGIONS:
         for _, box, _ in lines:
             left, top, right, bottom = (round(v) for v in box)
@@ -270,7 +290,7 @@ class ScannedFormMaker(Protocol):
 
 @pytest.fixture
 def make_scanned_form(tmp_path: Path) -> ScannedFormMaker:
-    """A 1200 x 900 px ground-truth form whose PAGE file, in ``<volume>/page/``, sits beside its scan as the Transkribus
+    """A 1200 x 1600 px ground-truth form whose PAGE file, in ``<volume>/page/``, sits beside its scan as the Transkribus
     export has them: a printed heading ("Mantalslängd 1765"), six handwritten entries, a printed label and a handwritten
     name its PAGE file says are, a faintly printed "Anno", and four ruled lines framing the entries (``FORM_RULES``,
     y 140 and 720, x 100 and 1100). The PAGE file says nothing more of how its lines were made, and holds the
@@ -288,7 +308,8 @@ def make_scanned_form(tmp_path: Path) -> ScannedFormMaker:
         path.write_text(
             '<?xml version="1.0" encoding="UTF-8"?>\n'
             '<PcGts xmlns="http://schema.primaresearch.org/PAGE/gts/pagecontent/2019-07-15">'
-            f'<Page imageFilename="form.png" imageWidth="1200" imageHeight="900">{regions}{separators}</Page></PcGts>',
+            f'<Page imageFilename="form.png" imageWidth="{FORM_SIZE[0]}" imageHeight="{FORM_SIZE[1]}">'
+            f"{regions}{separators}</Page></PcGts>",
             encoding="utf-8",
         )
         return path

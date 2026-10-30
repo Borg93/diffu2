@@ -1,7 +1,8 @@
 """MOSS-Image's page pairs (diffu_page.data.page_pairs) built from a tiny ground truth of three volumes: each page's
 prompts are the ones drawing compiles for it planned whole, from its sample or without, its sample is a page of its own
-volume sharing none of its lines, whole volumes are held out, the build records what became of every scan, a stopped
-build resumes from what it recorded, and diffu-moss-cache-pairs caches the pairs as their rows give them."""
+volume sharing none of its lines, whole volumes are held out, the build records what became of every scan (a scan
+wider than tall that cannot be split gives no page), a stopped build resumes from what it recorded, and
+diffu-moss-cache-pairs caches the pairs as their rows give them."""
 
 from __future__ import annotations
 
@@ -85,10 +86,11 @@ def _texts(tag: str, count: int) -> list[str]:
 
 @pytest.fixture(scope="module")
 def tiny_gt(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """A tiny GT of two collections, three volumes and ten PAGE files (and a macOS ``._`` file):
+    """A tiny GT of two collections, three volumes and eleven PAGE files (and a macOS ``._`` file):
 
     - Arjeplogs tingslag (1690-1700): an opening (two pages: three lines left, two right), a single page, a PAGE file
-      without its scan, one that is not XML (its scan beside it);
+      without its scan, one that is not XML (its scan beside it), a scan wider than tall whose lines run across its
+      middle, so its pages cannot be split;
     - Arjeplogs tingslag (1701-1710): two single pages sharing a line, so neither has a sample;
     - SSA Deputerade: a page whose prompt is too long, two single pages, a page without a line.
     """
@@ -99,6 +101,7 @@ def tiny_gt(tmp_path_factory: pytest.TempPathFactory) -> Path:
     _write_page(early, "0003", (800, 1000), [(100, 700, _texts("utan bild", 2))], scan=False)
     (early / "0004.xml").write_text("<PcGts><Page", encoding="utf-8")
     Image.new("RGB", (800, 1000), PAPER).save(early.parent / "0004.png")
+    _write_page(early, "0005", (1600, 1000), [(100, 1500, _texts("över uppslaget", 3))])
     (early / "._0001.xml").write_bytes(b"\x00\x05\x16\x07 macOS resource fork")
     late = root / ARJEPLOG / LATE / LATE / "page"
     _write_page(late, "0001", (800, 1000), [(100, 700, ["Anno 1701", *_texts("första", 2)])])
@@ -244,9 +247,10 @@ def test_page_pairs_record_what_became_of_every_scan_and_page(built: Path) -> No
     counts = record.counts
 
     assert counts == BuildCounts(
-        scans=10,  # the macOS ._ file is not read
+        scans=11,  # the macOS ._ file is not read
         no_scan=1,
         no_text=1,
+        spread=1,  # a page of it is never a pair, nor a sample
         failed=1,
         pages=8,  # the opening's two, a single page and the 2 + 3 of the other volumes
         too_long=1,
