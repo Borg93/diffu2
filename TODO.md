@@ -74,6 +74,20 @@ What is known to be wrong or unfinished. Remove an item when it is done; add the
       one GPU), then on the Spark a 5-step smoke and an overfit test (8 pairs, ~300 steps, drawn back), queued right
       after the reference pilot. HPC after: FSDP2, two nodes for 8 A100s; one pass over 200,000 pages estimated at
       ~23 h on 8 A100s or ~9 h on 3 B200s at 1 MP (+0.5 MP sample), ~51 h / ~19 h at 2 MP.
+- [ ] **The eight-hands full fine-tune ignored its sample pages (31 Oct; full_r3, stopped by the guard at step 1588,
+      a rask build's spike while a save's copies were still held, fixed in 9387fe0).** At step 1500, held-out pages:
+      layout and text follow the real page; the look in words is right; the hand by name carries for Påhlman (writer
+      ID 88 % of the drawn lines against 81 % for the real pages cut at the same size) and Överståthållarämbetet (69 %
+      against 92 %), not for Kopparberg (2 % against 68 %) or Göteborg (0 % against 57 %); Jämtland, Trolldom,
+      Landskap and Riksregistraturet can't be scored on 1 MP pages (their real pages score 0-24 %). With the sample
+      and the name, Jämtland and Göteborg come out grey from colour samples. The sample is not read: the swap test
+      (the same page and noise with three samples, ~/diffu_queue/weekend/draw_swap.py) draws the same page whatever
+      the sample; validation at step 1000 scores every form alike (0.5714); guidance off or toward the sample changes
+      nothing for those hands. Every form named the hand, and each volume has one look, so the name gave the look and
+      hand away; the crop pilot, whose plain form named nothing, did read its sample. Fix: the sample form (c0d5eff,
+      the sample alone, two fifths of the steps); full_r5 tests it (~/diffu_queue/queue_sample.sh: its caches,
+      1,500 steps, the swap test in the sample form, held-out pages, writer ID). The test passes when validation
+      in the sample form drops below the by-name form and the swap test's pages follow their samples.
 - [ ] **Queue reordered (27 Oct 20:20): MOSS first.** The reference pilot (LoRA, 1,500 steps, jobs/moss/run_ref_pilot.sh)
       started 20:21; then the full fine-tune test, the canvas, KohakuMossTrainer's full fine-tunes, the repo draw and
       microfilm LoRAs, the print mix, eight hands, step-350 pages and guidance, then the readers, then E2c.
