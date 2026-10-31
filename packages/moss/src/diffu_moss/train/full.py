@@ -26,7 +26,10 @@ A checkpoint (``checkpoints/step_NNNNNN/``) holds the DiT itself: ``transformer/
 diffusers folder with its ``export.json``, which ``diffu-moss-init --transformer`` draws with as it is; ``ema/``, the
 same of the average, when kept; and with ``save_state`` ``state/``, what a resumed run starts from (about 42 GB): the
 weights in float32 (a diffusers folder too), the average's (``ema.safetensors``), the optimizer's state
-(``optimizer.pt``) and, written last, the loop's place (``progress.json``).
+(``optimizer.pt``) and, written last, the loop's place (``progress.json``). Its files are written one at a time, each
+one's weights copied to the CPU tensor by tensor and held there only while it is written, in memory given back to the
+system once it is (:func:`diffu_moss.train.distributed.gathered`), so the steps after a checkpoint have the memory
+the steps before it had.
 """
 
 from __future__ import annotations
@@ -185,6 +188,7 @@ def _whole_state(optimizer: torch.optim.Optimizer, ranks: Ranks) -> dict[str, An
             if isinstance(value, DTensor):
                 full = value.full_tensor()
                 value = full.cpu() if ranks.main else None
+                del full  # off the device before the next is gathered
             state[index][key] = value
     return {"state": state, "param_groups": saved["param_groups"]}
 
@@ -226,16 +230,6 @@ class WeightAverage:
         with torch.no_grad():
             for name, weight in transformer.named_parameters():
                 self.weights[name].lerp_(weight, 1 - self.decay)
-
-
-def _save_dit(
-    transformer: MossTransformer, weights: Mapping[str, Tensor], directory: Path, record: ExportRecord
-) -> None:
-    directory.mkdir(parents=True, exist_ok=True)
-    transformer.save_config(str(directory))
-    bfloat16 = {name: weight.detach().to("cpu", torch.bfloat16).contiguous() for name, weight in weights.items()}
-    save_file(bfloat16, str(directory / SAFETENSORS_WEIGHTS_NAME))
-    record.write(directory / EXPORT_RECORD)
 
 
 class FullTraining:
@@ -306,32 +300,42 @@ class FullTraining:
 
     def save(self, directory: Path, progress: Progress) -> None:
         """The checkpoint of ``progress``'s step into ``directory`` (the module's docstring), written by the main rank;
-        every rank calls it, as the sharded weights and state are gathered from all."""
-        ranks = self._ranks
+        every rank calls it, as the sharded weights and state are gathered from all. One file at a time: its weights
+        copied to the CPU tensor by tensor and held there only while it is written
+        (:func:`diffu_moss.train.distributed.gathered`); CUDA's free cached blocks go back to the system after."""
         record = ExportRecord(takes_reference=True, base=str(self._base.resolve()), checkpoint=str(directory.resolve()))
         weights = dict(self.transformer.named_parameters())
-        dit = gathered(weights, COMPUTE_DTYPE, ranks)
-        if ranks.main:
-            _save_dit(self.transformer, dit, directory / DIT, record)
-        del dit
+        self._save_dit(weights, directory / DIT, record)
         if self.average is not None:
-            average = gathered(self.average.weights, COMPUTE_DTYPE, ranks)
-            if ranks.main:
-                _save_dit(self.transformer, average, directory / AVERAGE, record)
-            del average
-        if not self._save_state:
-            return
+            self._save_dit(self.average.weights, directory / AVERAGE, record)
+        if self._save_state:
+            self._save_state_folder(weights, directory / STATE, progress)
+        torch.cuda.empty_cache()
+
+    def _save_dit(self, weights: Mapping[str, Tensor], directory: Path, record: ExportRecord) -> None:
+        bfloat16 = gathered(weights, COMPUTE_DTYPE, self._ranks)
+        if self._ranks.main:
+            directory.mkdir(parents=True, exist_ok=True)
+            self.transformer.save_config(str(directory))
+            save_file(bfloat16, str(directory / SAFETENSORS_WEIGHTS_NAME))
+            record.write(directory / EXPORT_RECORD)
+
+    def _save_state_folder(self, weights: Mapping[str, Tensor], state: Path, progress: Progress) -> None:
+        ranks = self._ranks
         optimizer = self.optimizer.state_dict(ranks)
-        float32 = gathered(weights, torch.float32, ranks)
-        averaged = None if self.average is None else gathered(self.average.weights, torch.float32, ranks)
-        if not ranks.main:
-            return
-        state = directory / STATE
-        state.mkdir(parents=True, exist_ok=True)
-        (state / PROGRESS_RECORD).unlink(missing_ok=True)  # a stopped run's, until this state is whole
-        self.transformer.save_config(str(state))
-        save_file(float32, str(state / SAFETENSORS_WEIGHTS_NAME))
-        if averaged is not None:
-            save_file(averaged, str(state / AVERAGE_WEIGHTS))
-        torch.save(optimizer, state / OPTIMIZER_STATE)
-        progress.write(state / PROGRESS_RECORD)
+        if ranks.main:
+            state.mkdir(parents=True, exist_ok=True)
+            (state / PROGRESS_RECORD).unlink(missing_ok=True)  # a stopped run's, until this state is whole
+            self.transformer.save_config(str(state))
+            torch.save(optimizer, state / OPTIMIZER_STATE)
+        del optimizer  # sharded: the main rank's whole copy on the CPU, dropped before the weights are gathered
+        files = {SAFETENSORS_WEIGHTS_NAME: weights}
+        if self.average is not None:
+            files[AVERAGE_WEIGHTS] = self.average.weights
+        for name, tensors in files.items():
+            float32 = gathered(tensors, torch.float32, ranks)
+            if ranks.main:
+                save_file(float32, str(state / name))
+            del float32  # before the next file's weights are gathered
+        if ranks.main:
+            progress.write(state / PROGRESS_RECORD)

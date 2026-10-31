@@ -14,6 +14,7 @@ bfloat16 autocast, as on one GPU. Without ``torchrun`` nothing here runs: one pr
 
 from __future__ import annotations
 
+import mmap
 import os
 from collections.abc import Iterable, Mapping
 
@@ -108,14 +109,30 @@ def sharded_like(full: Tensor, like: Tensor) -> Tensor:
 
 
 def gathered(tensors: Mapping[str, Tensor], dtype: torch.dtype, ranks: Ranks) -> dict[str, Tensor]:
-    """``tensors`` whole, in ``dtype`` on the CPU, on the main rank (every rank gathering each in turn); empty on the
-    others."""
-    out = {}
+    """``tensors`` whole, in ``dtype`` on the CPU, on the main rank (every rank gathering each in turn and dropping it
+    once copied, so a device holds one gathered tensor at a time); empty on the others.
+
+    The copies are views of one anonymous memory map of their own, unmapped as soon as the last of them is dropped:
+    torch's CPU allocator can keep what it frees (on the GB10, aarch64 torch's mimalloc still held most of a
+    checkpoint's 10 GB of bfloat16 copies 50 minutes later, memory the GPU shares).
+    """
+    held = _anonymous(sum(tensor.numel() for tensor in tensors.values()) * dtype.itemsize) if ranks.main else None
+    copies = {}
+    start = 0
     for name, tensor in tensors.items():
         full = whole(tensor).detach()
-        if ranks.main:
-            out[name] = full.to("cpu", dtype).contiguous()
-    return out
+        if held is not None:
+            end = start + full.numel() * dtype.itemsize
+            copies[name] = held[start:end].view(dtype).view(full.shape).copy_(full)
+            start = end
+        del full
+    return copies
+
+
+def _anonymous(size: int) -> Tensor:
+    """``size`` bytes of zeros in an anonymous memory map of their own (at least one: a map is never empty), unmapped
+    when the last tensor viewing it is dropped."""
+    return torch.frombuffer(mmap.mmap(-1, max(size, 1), flags=mmap.MAP_PRIVATE), dtype=torch.uint8)
 
 
 def clip_sharded_gradients(parameters: Iterable[Tensor], max_norm: float) -> float:

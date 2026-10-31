@@ -58,6 +58,10 @@ implementation, written from the published design, around the released weights.
   --transformer` draws with, no merge); `--ema 0.9999` keeps an average of the weights beside it (`ema/`, 20 GB more
   in float32) and `--save-state` the float32 weights and optimizer state a run resumes from (`state/`, ~42 GB;
   `--resume <checkpoint>` goes on exactly as the run would have), both off by default: the Spark holds neither.
+  A checkpoint's files are written one at a time, each one's weights copied to the CPU tensor by tensor into an
+  anonymous memory map of their own, given back to the system once the file is written (the files' bytes unchanged).
+  Copies made by torch's own CPU allocator stayed with the process after they were freed (mimalloc, in aarch64
+  torch): 10 GB of bfloat16 copies, most of them still held 50 minutes later, which the GB10's GPU lacked.
   `--muon-momentum-dtype bfloat16` keeps Muon's momentum in bfloat16 (`train/muon.py`: read in float32 and moved
   towards the gradient there, the update taken from that float32 momentum, the momentum stored back rounded; the
   update reaches the Newton-Schulz steps in bfloat16 either way): about 9.5 GB less, ~64 GB at the peak and ~32 GB of

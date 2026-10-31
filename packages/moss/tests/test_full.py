@@ -1,19 +1,25 @@
 """MOSS-Image's full fine-tune on CPU (conftest's tiny MOSS and tiny style pairs): MOSS's optimizer recipe (Muon on the
 joint blocks' matrices, AdamW on the rest, no weight decay on biases, norms and embedders, the last block's q/k norm
 weights decayed towards one), Muon's momentum kept in bfloat16 when asked, a step that trains every weight in float32,
-a checkpoint that diffu-moss-init draws with, the average of the weights by its formula, and a run resumed from a
-checkpoint's state going on exactly as it would have, and refused one it was not trained with."""
+a checkpoint that diffu-moss-init draws with, its files byte for byte safetensors' own, the memory of its copies of the
+weights given back to the system once each file is written and CUDA's cache emptied after, the average of the weights
+by its formula, and a run resumed from a checkpoint's state going on exactly as it would have, and refused one it was
+not trained with."""
 
 from __future__ import annotations
 
+import ctypes
 import json
+import mmap
 import shutil
+import weakref
 from pathlib import Path
+from typing import Any, Self
 
 import pytest
 import torch
 from diffusers.utils import SAFETENSORS_WEIGHTS_NAME
-from safetensors.torch import load_file
+from safetensors.torch import load_file, save, save_file
 from torch import Tensor, nn
 
 from diffu.repo import ModelIndex
@@ -22,6 +28,7 @@ from diffu_moss.modular_pipelines.moss import MossModularPipeline
 from diffu_moss.train.full import AVERAGE, AVERAGE_WEIGHTS, DIT, STATE, FullOptimizer, FullSettings, MomentumDtype
 from diffu_moss.train.loop import LOG, TrainSettings, train
 from diffu_moss.train.muon import Muon, orthogonalised, rms_matched_rate
+from diffu_moss.train.records import PROGRESS_RECORD
 from diffu_moss.transformer import MossTransformer
 
 JOINT_MATRICES = [
@@ -51,6 +58,17 @@ def _weights(folder: Path) -> dict[str, Tensor]:
 
 def _checkpoint(run: Path, step: int) -> Path:
     return run / "checkpoints" / f"step_{step:06d}"
+
+
+def _weights_files(checkpoint: Path) -> list[Path]:
+    """The safetensors files of a checkpoint with an average and a state: the DiT's, the average's, the state's float32
+    weights and average."""
+    return [
+        checkpoint / DIT / SAFETENSORS_WEIGHTS_NAME,
+        checkpoint / AVERAGE / SAFETENSORS_WEIGHTS_NAME,
+        checkpoint / STATE / SAFETENSORS_WEIGHTS_NAME,
+        checkpoint / STATE / AVERAGE_WEIGHTS,
+    ]
 
 
 @pytest.fixture(scope="module")
@@ -204,6 +222,71 @@ def test_full_checkpoint_is_a_bfloat16_dit_folder_diffu_moss_init_draws_with_its
     assert {weight.dtype for weight in _weights(checkpoint / DIT).values()} == {torch.bfloat16}
     assert sorted(drawn) == sorted(trained)
     assert [name for name in trained if not torch.equal(drawn[name], trained[name].to(torch.bfloat16))] == []
+
+
+def test_full_checkpoint_writes_each_weights_file_byte_for_byte_as_safetensors_writes_its_weights(
+    bfloat16_dit: Path, tiny_pair_cache: Path, tmp_path: Path
+) -> None:
+    train(bfloat16_dit, tiny_pair_cache, tmp_path, FULL_RUN.model_copy(update={"steps": 1}))
+
+    checkpoint = _checkpoint(tmp_path, 1)
+    trained, averaged = _weights(checkpoint / STATE), load_file(str(checkpoint / STATE / AVERAGE_WEIGHTS))
+    expected = [
+        save({name: weight.to(torch.bfloat16) for name, weight in trained.items()}),  # each rounded once
+        save({name: weight.to(torch.bfloat16) for name, weight in averaged.items()}),
+        save(trained),  # the state's, in float32
+        save(averaged),
+    ]
+    files = _weights_files(checkpoint)
+    differ = [file for file, data in zip(files, expected, strict=True) if file.read_bytes() != data]
+    assert [str(file.relative_to(checkpoint)) for file in differ] == []
+
+
+def test_full_checkpoint_holds_each_files_weights_in_a_memory_map_of_their_own_unmapped_once_it_is_written(
+    bfloat16_dit: Path, tiny_pair_cache: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    made: list[weakref.ref[mmap.mmap]] = []  # every memory map made: dead once unmapped
+    alive: list[int] = []  # for each map, how many earlier ones were still alive when it was made
+
+    class RecordedMap(mmap.mmap):
+        def __new__(cls, *args: Any, **kwargs: Any) -> Self:
+            alive.append(sum(ref() is not None for ref in made))
+            new = super().__new__(cls, *args, **kwargs)
+            made.append(weakref.ref(new))
+            return new
+
+    held: dict[str, bool] = {}  # each file written: whether a live map held all its tensors
+
+    def recording_save_file(tensors: dict[str, Tensor], filename: str, metadata: dict[str, str] | None = None) -> None:
+        maps = [live for live in (ref() for ref in made) if live is not None]
+        spans = [(ctypes.addressof(ctypes.c_char.from_buffer(live)), len(live)) for live in maps]
+        ends = [(tensor.data_ptr(), tensor.data_ptr() + tensor.nbytes) for tensor in tensors.values()]
+        held[filename] = all(
+            any(start <= first and last <= start + size for start, size in spans) for first, last in ends
+        )
+        save_file(tensors, filename, metadata)
+
+    monkeypatch.setattr(mmap, "mmap", RecordedMap)
+    monkeypatch.setattr("diffu_moss.train.full.save_file", recording_save_file)
+
+    train(bfloat16_dit, tiny_pair_cache, tmp_path, FULL_RUN.model_copy(update={"steps": 1}))
+
+    files = [str(file) for file in _weights_files(_checkpoint(tmp_path, 1))]
+    assert held == dict.fromkeys(files, True)  # each file's tensors in a map
+    assert alive == [0] * len(files)  # each map made once every earlier one was unmapped: one file's copies at a time
+    assert [ref() for ref in made] == [None] * len(files)  # the last one unmapped too, once its file was written
+
+
+def test_full_checkpoint_empties_cudas_cache_once_its_files_are_written(
+    bfloat16_dit: Path, tiny_pair_cache: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    last = _checkpoint(tmp_path, 1) / STATE / PROGRESS_RECORD
+    emptied: list[bool] = []  # each call's: whether the checkpoint's last file was written by then
+    monkeypatch.setattr(torch.cuda, "empty_cache", lambda: emptied.append(last.exists()))
+
+    train(bfloat16_dit, tiny_pair_cache, tmp_path, FULL_RUN.model_copy(update={"steps": 1}))
+
+    assert emptied.count(True) == 1  # once after it (diffusers empties a visible GPU's cache on loading the DiT too)
 
 
 def test_full_fine_tune_averages_the_weights_after_each_step_by_the_ema_formula(
