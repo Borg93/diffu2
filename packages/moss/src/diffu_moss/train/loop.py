@@ -27,7 +27,7 @@ and every ``--save-every`` steps and at the end ``checkpoints/step_NNNNNN/``: th
 (``adapter.safetensors``) and shape (``adapter.json``), which ``diffu-moss-export-ref`` merges into the DiT, or the
 fine-tuned DiT itself (``transformer/``, which ``diffu-moss-init`` draws with as it is). With ``--val-cache`` (a cache
 of every form, ``--every-form``) the loss of each form is scored every ``--val-every`` steps at a fixed noise level and
-noise per pair (the same in every run), the same for a pair's three forms, so the forms' losses compare: does the
+noise per pair (the same in every run), the same for each of a pair's forms, so the forms' losses compare: does the
 reference lower it? A full fine-tune that saves its state (``--save-state``) resumes from a checkpoint (``--resume``)
 as it would have gone on: the same samples, noise and steps, its log cut back to the checkpoint's step. With
 ``--limit-pairs N`` a run trains on the cache's first N pairs drawn with their reference alone: an overfit test, whose

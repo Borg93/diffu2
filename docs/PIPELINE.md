@@ -122,17 +122,21 @@ name and seed crops alike, so a page comes out the same from any of them.
 - `diffu_page.data.page_pairs` builds MOSS-Image's page pairs, the full fine-tune's data: every single page of the
   GT (an opening split into its two; a scan wider than tall that its lines cannot split skipped and counted as
   `spread`) cut at about 1 MP as `diffu-generate --whole-page` plans it, with a sample page
-  of its volume sharing none of its lines (0.5 MP), and its MOSS Layout prompt in the three forms the reference
-  training mixes, each naming the hand (the archive and years): without the sample (its own caption, the look in
-  words), with it and the look in words (`--reference-caption named`), with it and the hand alone
-  (`--reference-caption hand`). Prompts past the text encoder's 4,096 tokens are skipped and counted; whole volumes
-  are held out (`val.jsonl`, `val_eval/`); scans run in parallel and a stopped build resumes from the scans it
-  recorded (`scanned/`); `build.json` records the settings and what became of every scan, page and window.
+  of its volume sharing none of its lines (0.5 MP), and its MOSS Layout prompt in the four forms the reference
+  training mixes (a fifth, a fifth, a fifth and two fifths of the pairs: `diffu_moss.train.pairs.SHARES`): without
+  the sample (its own caption, the hand and the look in words), with it and the hand and the look in words
+  (`--reference-caption named`), with it and the hand alone (`--reference-caption hand`), with it alone, naming no
+  hand and no look (`--reference-caption plain`), so the hand and the look must be read from the sample. Prompts past
+  the text encoder's 4,096 tokens are skipped and counted; whole volumes are held out (`val.jsonl`, `val_eval/`);
+  scans run in parallel and a stopped build resumes from the scans it recorded (`scanned/`); `build.json` records the
+  settings and what became of every scan, page and window.
   `--windows-per-page N` adds up to N windows of each page: whole lines of one column planned on the single page as
   diffu-generate plans its crops (`plan.plan_page`), cut at the pages' pixels (larger letters), prompted in the same
-  three forms, each a row with its page's sample in its volume's split, marked as a window (`PagePairRow.window`),
+  four forms, each a row with its page's sample in its volume's split, marked as a window (`PagePairRow.window`),
   after the page rows, which stay exactly as without windows. `diffu-moss-cache-pairs` caches its `train.jsonl` as it
-  caches style pairs.
+  caches style pairs. `diffu_page.data.page_pair_forms` gives the rows of a manifest of a set built before a form
+  every form, in a new manifest beside it: each row planned again from its PAGE file and scan exactly as the build
+  planned it (the forms it holds must come out as it holds them), its images left as they are.
 - NeMo caches latents and prompt embeddings once (its FLUX.3 processor; `diffu_train.cache_pairs` for v3's
   pairs, with the empty prompt beside them), then trains a LoRA with the configs in `packages/train/configs/flux3/`
   and our interleaved bucket dataloader (`diffu_train.nemo`), which can train a share of the pairs on the empty prompt

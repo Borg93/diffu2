@@ -1,9 +1,9 @@
 """MOSS-Image's reference training on CPU (conftest's tiny MOSS and tiny style pairs): the caption forms, the mix of
 prompt forms in the cache (the pairs that share a line with their reference left out, page pairs too) and over a run, a
-page pair that refuses a target of another size than its prompts, MOSS's noise levels, the flow-matching loss over the
-drawn image alone, a LoRA that learns at the recipe's learning rate, the validation's paired noise, a training that
-lowers the loss of what it trains on, one that refuses an empty cache, and prompts encoded in the step as the cache
-encodes them, by a frozen encoder, from a cache of latents alone."""
+page pair that refuses a prompt its row was not compiled for (another size, a form built after its set), MOSS's noise
+levels, the flow-matching loss over the drawn image alone, a LoRA that learns at the recipe's learning rate, the
+validation's paired noise, a training that lowers the loss of what it trains on, one that refuses an empty cache, and
+prompts encoded in the step as the cache encodes them, by a frozen encoder, from a cache of latents alone."""
 
 from __future__ import annotations
 
@@ -112,11 +112,25 @@ def test_apart_leaves_out_a_page_pair_whose_sample_page_holds_a_line_of_its_page
     assert [pair.id for pair in kept] == ["b", "c"]
 
 
-def test_page_pair_refuses_a_target_of_another_size_than_its_prompts_were_compiled_for() -> None:
+@pytest.mark.parametrize(
+    ("variant", "size", "message"),
+    [
+        pytest.param(
+            Variant.LOOK, (64, 48), r"is \(64, 48\) px, its prompts were compiled for \(64, 32\)", id="another-size"
+        ),
+        pytest.param(Variant.SAMPLE, (64, 32), "has no sample prompt, built before that form", id="a-form-it-lacks"),
+    ],
+)
+def test_page_pair_refuses_a_prompt_its_row_was_not_compiled_for(
+    variant: Variant, size: tuple[int, int], message: str
+) -> None:
     pair = _page_pair("a", ["Anno 1701"], sample="b")
+    built_before_the_sample_form = pair.model_copy(
+        update={"prompts": {form: prompt for form, prompt in pair.prompts.items() if form is not Variant.SAMPLE}}
+    )
 
-    with pytest.raises(ValueError, match=r"is \(64, 48\) px, its prompts were compiled for \(64, 32\)"):
-        pair.prompt(Variant.LOOK, (64, 48))
+    with pytest.raises(ValueError, match=message):
+        built_before_the_sample_form.prompt(variant, size)
 
 
 def test_moss_training_noise_levels_have_the_quartiles_of_mosss_own_sampler() -> None:
@@ -171,7 +185,7 @@ def test_flow_matching_loss_is_the_drawn_images_velocity_error_with_the_referenc
     assert loss.item() == pytest.approx(((velocity - (noise - target)) ** 2).mean().item(), rel=1e-6)
 
 
-def test_cache_holds_a_fifth_of_the_pairs_without_the_reference_and_half_the_rest_without_look_words(
+def test_cache_holds_a_fifth_of_the_pairs_in_each_form_but_two_fifths_with_the_sample_image_alone(
     tiny_pair_cache: Path,
 ) -> None:
     entries = read_entries(tiny_pair_cache)
@@ -187,11 +201,12 @@ def test_cache_holds_a_fifth_of_the_pairs_without_the_reference_and_half_the_res
         for entry in entries
     }
     # 10 of the 11 pairs: vol_03's reference (vol_04's crop) holds its first line, so it is left out
-    assert counts == {Variant.NO_REFERENCE: 2, Variant.LOOK: 4, Variant.PLAIN: 4}
+    assert counts == {Variant.NO_REFERENCE: 2, Variant.LOOK: 2, Variant.PLAIN: 2, Variant.SAMPLE: 4}
     assert forms == {
         (Variant.NO_REFERENCE, False, False, True),  # no image, no citation, the look in words
         (Variant.LOOK, True, True, True),
         (Variant.PLAIN, True, True, False),  # the look from the image alone
+        (Variant.SAMPLE, True, True, False),  # a style pair's caption names no hand: its plain form
     }
 
 
@@ -201,12 +216,9 @@ def test_training_draws_every_entry_once_a_pass_so_a_run_keeps_the_caches_mix(
     train(tiny_moss_dit, tiny_pair_cache, tmp_path, TrainSettings(steps=5, save_every=5, device="cpu"))
 
     steps = [json.loads(line) for line in (tmp_path / LOG).read_text(encoding="utf-8").splitlines()]
-    drawn = [variant for step in steps for variant in step["variants"]]
-    # 5 steps of 2: one pass over the 10 entries, each once
-    assert sorted(pair for step in steps for pair in step["pairs"]) == sorted(
-        entry.pair for entry in read_entries(tiny_pair_cache)
-    )
-    assert {variant: drawn.count(variant) for variant in set(drawn)} == {"no_reference": 2, "look": 4, "plain": 4}
+    drawn = [sample for step in steps for sample in zip(step["pairs"], step["variants"], strict=True)]
+    # 5 steps of 2: one pass over the 10 entries, each once, in the form it was cached in
+    assert sorted(drawn) == sorted((entry.pair, entry.variant.value) for entry in read_entries(tiny_pair_cache))
 
 
 def test_training_limited_to_n_pairs_trains_on_the_caches_first_n_drawn_with_their_reference(
@@ -215,7 +227,8 @@ def test_training_limited_to_n_pairs_trains_on_the_caches_first_n_drawn_with_the
     train(tiny_moss_dit, tiny_pair_cache, tmp_path, TrainSettings(steps=3, limit_pairs=3, save_every=3, device="cpu"))
 
     steps = [json.loads(line) for line in (tmp_path / LOG).read_text(encoding="utf-8").splitlines()]
-    # 3 steps of 2: two passes over vol_08, vol_09 (look) and vol_06 (plain); vol_01, cached before vol_06, takes none
+    # 3 steps of 2: two passes over vol_08 (sample), vol_09 (look) and vol_06 (sample); vol_01, cached before vol_06,
+    # takes none
     assert sorted(pair for step in steps for pair in step["pairs"]) == sorted(["vol_08", "vol_09", "vol_06"] * 2)
 
 
@@ -230,7 +243,7 @@ def test_training_moves_every_lora_a_weight_at_the_recipes_learning_rate(
     assert min(moved) > 0.99  # warmup steps of 2e-6 to 1e-5: below bfloat16's resolution on weights of about 0.1
 
 
-def test_validation_scores_a_pairs_three_forms_at_the_same_noise_level_and_noise(
+def test_validation_scores_each_of_a_pairs_forms_at_the_same_noise_level_and_noise(
     tiny_moss: Path, tiny_pairs: Path, tmp_path: Path
 ) -> None:
     write_cache(tiny_moss, tiny_pairs / "train.jsonl", tmp_path, CacheSettings(limit=2, every_form=True, device="cpu"))
@@ -238,9 +251,9 @@ def test_validation_scores_a_pairs_three_forms_at_the_same_noise_level_and_noise
 
     losses = validation_losses(blind.eval(), tmp_path, read_entries(tmp_path), device="cpu", seed=0)
 
-    # a DiT without blocks reads neither the prompt nor the reference: a pair's three forms differ in nothing else
-    assert sorted(losses) == ["look", "no_reference", "plain"]
-    assert losses["look"] == losses["plain"] == losses["no_reference"]
+    # a DiT without blocks reads neither the prompt nor the reference: a pair's forms differ in nothing else
+    assert sorted(losses) == ["look", "no_reference", "plain", "sample"]
+    assert losses["look"] == losses["plain"] == losses["sample"] == losses["no_reference"]
 
 
 def test_training_lowers_the_loss_of_the_sample_it_trains_on(

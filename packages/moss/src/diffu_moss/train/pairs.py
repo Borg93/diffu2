@@ -5,12 +5,14 @@ FLUX.3 runs trained on. A page pair (:class:`PagePair`): a whole single page, or
 its volume sharing none of its lines, its Layout prompt in each form compiled by ``diffu_page.data.page_pairs``, read
 from its page-pair manifest. :func:`read_manifest` reads either.
 
-Each pair is drawn into one of three prompt forms, its :class:`Variant`, the mix fixed per pair by a seed
-(:func:`assign_variants`): a fifth without the reference (the caption's citation dropped, its look words kept: plain
-text-to-image, as MOSS-Image was trained), and of the rest half with the sample image and the look words, half with
-the sample image and no look words (the plain reference caption), so the look must come from the image. Each form is
-compiled as MOSS's Layout prompt of the target (:mod:`diffu_moss.layout_prompt`), as the page pipeline compiles a crop
-drawn with or without its reference (``MossLayoutPromptStep``); a page pair's rows carry theirs compiled.
+Each pair is drawn into one of four prompt forms, its :class:`Variant`, the mix fixed per pair by a seed
+(:func:`assign_variants`, :data:`SHARES`): a fifth without the reference (the caption's citation dropped, its look
+words kept: plain text-to-image, as MOSS-Image was trained), a fifth with the sample image and the look words, a fifth
+with the sample image and no look words (a page pair's prompt still names its hand), and two fifths with the sample
+image alone, naming no hand and no look, so the hand and the look must come from the image. A style pair's caption
+names no hand, so its plain and sample forms are one prompt. Each form is compiled as MOSS's Layout prompt of the target
+(:mod:`diffu_moss.layout_prompt`), as the page pipeline compiles a crop drawn with or without its reference
+(``MossLayoutPromptStep``); a page pair's rows carry theirs compiled.
 """
 
 from __future__ import annotations
@@ -31,7 +33,8 @@ class Variant(StrEnum):
 
     NO_REFERENCE = "no_reference"  # no reference image: the citation dropped, the look words kept
     LOOK = "look"  # the sample image, and the look in words too
-    PLAIN = "plain"  # the sample image alone: the look words dropped
+    PLAIN = "plain"  # the sample image, the look words dropped (a page pair's prompt still names its hand)
+    SAMPLE = "sample"  # the sample image alone: no hand named, no look words
 
     @property
     def takes_reference(self) -> bool:
@@ -39,8 +42,7 @@ class Variant(StrEnum):
         return self is not Variant.NO_REFERENCE
 
 
-NO_REFERENCE_SHARE = 0.2
-PLAIN_SHARE = 0.4  # of all pairs: half of those drawn with the reference
+SHARES = {Variant.NO_REFERENCE: 0.2, Variant.PLAIN: 0.2, Variant.SAMPLE: 0.4}  # of all pairs; the look form the rest
 
 
 class Media(BaseModel):
@@ -69,18 +71,19 @@ class Pair(BaseModel):
     caption: str
 
     def prompt(self, variant: Variant, size: tuple[int, int]) -> str:
-        """The target's MOSS Layout prompt in ``variant``'s form, on its canvas of ``size`` (width, height) px.
+        """The target's MOSS Layout prompt in ``variant``'s form, on its canvas of ``size`` (width, height) px. The
+        caption names no hand, so its plain and sample forms are the same prompt.
 
         Raises:
-            ValueError: If the caption has no layout list, does not quote a line's text, or (for :attr:`Variant.PLAIN`)
-                describes no look to drop.
+            ValueError: If the caption has no layout list, does not quote a line's text, or (for the plain and the
+                sample form) describes no look to drop.
         """
         match variant:
             case Variant.NO_REFERENCE:
                 caption = without_sample(self.caption)
             case Variant.LOOK:
                 caption = with_sample(self.caption)
-            case Variant.PLAIN:
+            case Variant.PLAIN | Variant.SAMPLE:
                 caption = with_sample(without_look(self.caption))
         return layout_prompt(caption, caption_texts(self.caption), size)
 
@@ -100,8 +103,9 @@ class PageWindow(BaseModel):
 class PagePairRow(BaseModel):
     """One row of a page-pair manifest (``diffu_page.data.page_pairs``' ``train.jsonl`` or ``val.jsonl``): a whole
     single page, or a window of one (``window``), a sample page of its volume and the target's MOSS Layout prompt in
-    every form, with its length in the text encoder's tokens, compiled for the target's size. A page's row has no
-    ``window`` key, so a set built without windows is written as one was before them."""
+    every form, with its length in the text encoder's tokens, compiled for the target's size (a set built before a form
+    lacks it: ``diffu_page.data.page_pair_forms`` adds it). A page's row has no ``window`` key, so a set built without
+    windows is written as one was before them."""
 
     id: str
     target: str  # relative to the manifest's directory
@@ -128,10 +132,16 @@ class PagePair(BaseModel):
         """The page's Layout prompt in ``variant``'s form.
 
         Raises:
-            ValueError: If its target is not of ``size`` (width, height), the size its prompts were compiled for.
+            ValueError: If its target is not of ``size`` (width, height), the size its prompts were compiled for, or
+                its row has no prompt in that form (its set was built before the form).
         """
         if size != self.size:
             raise ValueError(f"{self.target} is {size} px, its prompts were compiled for {self.size}")
+        if variant not in self.prompts:
+            raise ValueError(
+                f"{self.id} has no {variant} prompt, built before that form: give its manifest every form "
+                "(diffu_page.data.page_pair_forms)"
+            )
         return self.prompts[variant]
 
     def texts(self) -> set[str]:
@@ -208,12 +218,9 @@ def apart(pairs: list[TrainingPair]) -> list[TrainingPair]:
 
 
 def assign_variants(count: int, seed: int) -> list[Variant]:
-    """The prompt forms of ``count`` pairs, in pair order: exactly :data:`NO_REFERENCE_SHARE` of them (rounded)
-    without the reference, :data:`PLAIN_SHARE` with the sample image and no look words, the rest with both, placed by a
-    shuffle seeded by ``seed``."""
-    no_reference = round(count * NO_REFERENCE_SHARE)
-    plain = round(count * PLAIN_SHARE)
-    variants = [Variant.NO_REFERENCE] * no_reference + [Variant.PLAIN] * plain
+    """The prompt forms of ``count`` pairs, in pair order: of each form of :data:`SHARES` exactly its share of them
+    (rounded), the look form the rest, placed by a shuffle seeded by ``seed``."""
+    variants = [variant for variant, share in SHARES.items() for _ in range(round(count * share))]
     variants += [Variant.LOOK] * (count - len(variants))
     random.Random(seed).shuffle(variants)
     return variants

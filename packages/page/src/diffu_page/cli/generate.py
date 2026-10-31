@@ -429,8 +429,9 @@ def generate(
     reference_caption: Annotated[
         ReferenceCaption,
         typer.Option(
-            help="the caption form the model was trained on: plain (v3, v3c), described (v3d), named (v3b) or hand "
-            "(named and hand: MOSS-Image's page pairs, diffu_page.data.page_pairs)"
+            help="the caption form the model was trained on: plain (v3, v3c), described (v3d), named (v3b) or hand; "
+            "MOSS-Image's page pairs (diffu_page.data.page_pairs) train named, hand and plain (their look, plain and "
+            "sample forms)"
         ),
     ] = ReferenceCaption.PLAIN,
     steps: Steps = DEFAULTS.steps,

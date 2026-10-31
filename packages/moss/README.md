@@ -26,9 +26,12 @@ implementation, written from the published design, around the released weights.
 - **Reference training** (`train/`, our own loop): a LoRA (rank 32, alpha 32, the 1715 hand LoRA's modules and
   optimizer) on v3d's described style pairs (`data_flux3/style_pairs_v3d`: a target and a crop of its own or facing
   page, sharing none of its lines; the pairs whose reference repeats a line are left out). Each pair is cached in one
-  prompt form: a fifth without the reference (its citation dropped, the look words kept), the rest with "the sample
-  image", half of those without the look words (`sample_caption.py`), so the look must come from the image. MOSS's
-  own noise levels (median 0.78) and flow-matching loss over the drawn image; the joint blocks checkpointed.
+  of four prompt forms (`train/pairs.py`: `Variant`, `SHARES`): a fifth without the reference (no reference: its
+  citation dropped, the look words kept), the rest with "the sample image": a fifth with the look words too (look), a
+  fifth without them (plain: a page pair still names its hand) and two fifths naming nothing but the sample image
+  (sample: no hand, no look words; `sample_caption.py`), so the hand and the look must come from the image. A style
+  pair's caption names no hand, so its plain and sample forms are one prompt. MOSS's own noise levels (median 0.78)
+  and flow-matching loss over the drawn image; the joint blocks checkpointed.
   `--sigma-shift k` (either kind of training; default 1, MOSS's own levels bit for bit) shifts each drawn level
   `sigma` to `k sigma / (1 + (k - 1) sigma)` (`train/sigmas.py`, the timestep shift of flow-matching samplers): under
   1 towards the clean end, where letter strokes are decided (`1/3` moves the quartiles 0.64, 0.78, 0.89 to 0.37,
@@ -116,20 +119,26 @@ implementation, written from the published design, around the released weights.
   handwritten GT (openings split into their pages; a scan wider than tall that its lines cannot split is skipped and
   counted, never a page), each cut at about 1 MP exactly as `diffu-generate --whole-page`
   plans a page and prompted as drawing prompts it, with a sample page of its own volume sharing none of its lines at
-  0.5 MP. The sample carries paper and ink, not the hand, so every form names the hand (the archive and the volume's
-  years): no reference (the page's own caption, its look in words), look (the sample, and the look in words:
-  `--reference-caption named`) and plain (the sample, the hand alone in words: `--reference-caption hand`). Each row
-  of `train.jsonl` and `val.jsonl` (`train/pairs.py`: `PagePairRow`) carries the page's Layout prompt in all three
-  forms with its length in the text encoder's tokens; `diffu-moss-cache-pairs` reads either kind of manifest and fixes
-  each pair's form by its seed as before. Pages past the encoder's 4,096 tokens are skipped and counted, never cut;
-  whole volumes are held out (`val.jsonl`, and `val_eval/` for `diffu-evaluate`). With `--windows-per-page N` each
-  page also gives up to N windows (picked by a stream seeded with its id): consecutive whole lines of one column,
-  planned on the single page as `diffu-generate` plans its crops (`plan_page`: a 64 px line pitch, 8-15 lines), cut from
-  the scan at the pages' pixels, so their letters are larger, and prompted as their page in all three forms (each
-  naming the hand, each its own Layout prompt). A window is a row like a page's, with its page's sample and in its
-  volume's split, marked by `window` (its page's id and its rectangle there, page px); a page too long to be a pair
-  still gives its windows a sample. The window rows follow the page rows, which are written exactly as without windows
-  (the default, 0).
+  0.5 MP. Three forms name the hand (the archive and the volume's years): no reference (the page's own caption, its
+  look in words), look (the sample, and the look in words: `--reference-caption named`) and plain (the sample, the
+  hand alone in words: `--reference-caption hand`); the fourth, sample, names nothing but the sample image
+  (`--reference-caption plain`), so the hand and the look must be read from it. Where each archive has one look (the
+  eight hands' set), the name gives both away: trained on the first three forms, the model ignored the sample (its
+  validation losses the same with and without it). Each row of `train.jsonl` and `val.jsonl` (`train/pairs.py`:
+  `PagePairRow`) carries the page's Layout prompt in all four forms with its length in the text encoder's tokens;
+  `diffu-moss-cache-pairs` reads either kind of manifest and fixes each pair's form by its seed as before. A set built
+  before a form gets it for its manifests' rows from `python -m diffu_page.data.page_pair_forms` (`--pairs
+  <set>/train.jsonl --out <set>/train_sample.jsonl`): each row planned again from its PAGE file and scan as its build
+  planned it, the forms it holds checked to come out as it holds them and the new ones added, in a new manifest
+  beside the old, the images as they are; a cache refuses a row lacking a form it draws. Pages past the encoder's
+  4,096 tokens are skipped and counted, never cut; whole volumes are held out (`val.jsonl`, and `val_eval/` for
+  `diffu-evaluate`). With `--windows-per-page N` each page also gives up to N windows (picked by a stream seeded with
+  its id): consecutive whole lines of one column, planned on the single page as `diffu-generate` plans its crops
+  (`plan_page`: a 64 px line pitch, 8-15 lines), cut from the scan at the pages' pixels, so their letters are larger,
+  and prompted as their page in all four forms (each its own Layout prompt). A window is a row like a page's, with its
+  page's sample and in its volume's split, marked by `window` (its page's id and its rectangle there, page px); a page
+  too long to be a pair still gives its windows a sample. The window rows follow the page rows, which are written
+  exactly as without windows (the default, 0).
 
       python -m diffu_page.data.page_pairs --gt-root ~/Desktop/data/GT-Lejonet_HTR_202602 --model runs/moss/base \
           --out data_flux3/page_pairs --workers 8 --windows-per-page 2

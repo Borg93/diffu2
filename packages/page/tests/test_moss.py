@@ -241,10 +241,10 @@ def test_draw_pairs_draws_a_trained_pair_back_as_the_page_pipeline_draws_its_cro
 
     # the cache's first three pairs drawn with their reference: vol_01, cached without it, is passed over
     assert [sheet.name for sheet in sheets] == ["000_vol_08.jpg", "001_vol_09.jpg", "002_vol_06.jpg"]
-    pair = next(pair for pair in read_pairs(tiny_pairs / "train.jsonl") if pair.id == "vol_08")  # cached in look form
+    pair = next(pair for pair in read_pairs(tiny_pairs / "train.jsonl") if pair.id == "vol_09")  # cached in look form
     pipe = load_pipeline(tiny_reference_moss, crop_blocks, loras={}, settings=MOSS_SETTINGS)
-    crop = _draw(pipe, _pair_plan(pair), seed=0, reference=Image.open(pair.reference))
-    with Image.open(tmp_path / "generated" / "000.png") as drawn:
+    crop = _draw(pipe, _pair_plan(pair), seed=1, reference=Image.open(pair.reference))  # drawn second: seed 0 + 1
+    with Image.open(tmp_path / "generated" / "001.png") as drawn:
         assert drawn.tobytes() == crop.tobytes()
 
 

@@ -11,7 +11,7 @@ The manifest is a style-pair set's or a page-pair set's (:func:`diffu_moss.train
 row carries its Layout prompt in every form, a style pair's caption is compiled into it here; both are cached alike.
 The pairs whose reference repeats their target's lines are left out (:func:`diffu_moss.train.pairs.apart`); the rest
 are shuffled by ``--seed`` and the first ``--limit`` kept, each in the prompt form the mix gives it
-(:func:`diffu_moss.train.pairs.assign_variants`), or in all three (``--every-form``, a validation set). Each entry is
+(:func:`diffu_moss.train.pairs.assign_variants`), or in every form (``--every-form``, a validation set). Each entry is
 encoded exactly as drawing encodes it, by the MOSS model directory's own components loaded as the page pipeline loads
 them (the text encoder in bfloat16, the VAE in float32): the target's Layout prompt by ``MossTextEncoderStep``, the
 target and the reference by :func:`diffu_moss.latents.encode_latents` from :func:`diffu_moss.latents.image_pixels` (a
@@ -306,7 +306,7 @@ def main(
     ] = None,
     seed: Annotated[int, typer.Option(help="picks the pairs and their prompt forms")] = 0,
     every_form: Annotated[
-        bool, typer.Option("--every-form", help="cache every pair in all three prompt forms (a validation set)")
+        bool, typer.Option("--every-form", help="cache every pair in every prompt form (a validation set)")
     ] = False,
     latents_only: Annotated[
         bool,

@@ -9,15 +9,20 @@ counted, as no spread is ever trained on. Each page is cut from its scan at abou
 exactly as ``diffu-generate --whole-page`` plans a page (``plan_whole_page``), and prompted as drawing prompts it: the
 caption of its whole-page plan compiled as MOSS's Layout prompt (``diffu_moss.sample_caption.sample_layout_prompt``,
 as ``MossLayoutPromptStep`` compiles it), every line's exact text in its box. The page is captioned in its own style:
-the archive and the volume's years (``provenance_of``: whose hand it is, by name, as every caption names an archive)
-and the look measured on the page (``scan_look``: greyscale or colour, the paper's and the ink's colour). A sample page
-carries paper and ink, not the hand, so every form names the hand; each row carries the page's prompt in all three
-forms the training mixes (``diffu_moss.train.pairs.Variant``; ``diffu-moss-cache-pairs`` fixes each pair's by its
-seed):
+the archive and the volume's years (``provenance_of``: whose hand it is, by name, as a v2 caption names its archive)
+and the look measured on the page (``scan_look``: greyscale or colour, the paper's and the ink's colour). Each row
+carries the page's prompt in all four forms the training mixes (``diffu_moss.train.pairs.Variant``;
+``diffu-moss-cache-pairs`` fixes each pair's by its seed):
 
 - no reference: the page's own caption (``plan_whole_page`` without a reference), hand and look in words;
 - look: the sample image, and hand and look in words (``ReferenceCaption.NAMED``: ``--reference-caption named``);
-- plain: the sample image, and the hand alone in words (``ReferenceCaption.HAND``: ``--reference-caption hand``).
+- plain: the sample image, and the hand alone in words (``ReferenceCaption.HAND``: ``--reference-caption hand``);
+- sample: the sample image alone, naming neither the hand nor the look (``ReferenceCaption.PLAIN``:
+  ``--reference-caption plain``), so both must be read from it: where each archive has one look, its name gives the
+  hand and the look away and the sample need not be read.
+
+A set built before a form was added gets it for the rows of its manifests from ``diffu_page.data.page_pair_forms``, in
+new manifests beside the old, its images as they are.
 
 A page's prompt is counted in the text encoder's tokens by MOSS's own tokenizer (``--model``'s); a page whose longest
 form passes the encoder's 4,096 tokens is skipped and counted, never cut. A page's sample is another single page of its
@@ -31,8 +36,8 @@ With ``--windows-per-page N`` each page also gives up to N windows: consecutive 
 planned on the single page exactly as ``diffu-generate`` plans its crops (``plan_page``: a 64 px line pitch at a NeMo
 bucket's size, 8-15 lines on real pages), so never across a spread, and picked among the page's windows by a stream
 seeded with the page's id. A window is cut from the scan at about ``--megapixels`` as a page is (the same pixels,
-larger letters) and prompted as its page is, in its page's style: the same three forms, each naming the hand, its own
-exact Layout prompt. Each window is a pair row as a page is, with its page's sample, marked as a window
+larger letters) and prompted as its page is, in its page's style: the same four forms, each its own exact Layout
+prompt. Each window is a pair row as a page is, with its page's sample, marked as a window
 (``PagePairRow.window``: its page and its rectangle there); a held-out volume's windows go to ``val.jsonl``, and a
 window whose longest form passes the encoder's tokens is skipped and counted. A page too long to be a pair still gives
 its windows a sample, drawn after every page's from the same stream. The window rows follow the page rows, which are
@@ -61,7 +66,7 @@ import multiprocessing
 import os
 import random
 from collections import defaultdict
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from concurrent.futures import ProcessPoolExecutor
 from enum import StrEnum
 from functools import cache
@@ -86,7 +91,7 @@ from diffu_page.crops.grid import as_reference
 from diffu_page.data.build_crops import TILE_QUALITY
 from diffu_page.data.style_pairs import link
 from diffu_page.evalset import ReferencedCrop, write_jsonl
-from diffu_page.layout import PageBox, ScanPage, is_unsplit_spread, load_xml_layout, scan_pages
+from diffu_page.layout import Layout, PageBox, ScanPage, is_unsplit_spread, load_xml_layout, scan_pages
 from diffu_page.layout.page_xml import find_scan
 from diffu_page.local_run import describe
 from diffu_page.output import JPEG_QUALITY, console, load_rgb, validation_problems
@@ -105,6 +110,7 @@ FORM_REFERENCES: dict[Variant, Reference | None] = {  # the sample is only named
     Variant.NO_REFERENCE: None,
     Variant.LOOK: Reference(image=Path("sample"), caption=ReferenceCaption.NAMED),
     Variant.PLAIN: Reference(image=Path("sample"), caption=ReferenceCaption.HAND),
+    Variant.SAMPLE: Reference(image=Path("sample"), caption=ReferenceCaption.PLAIN),
 }
 
 
@@ -319,26 +325,51 @@ def planned_windows(
     return windows
 
 
-def written_page(
-    page: ScanPage, cut: Image.Image, task: ScanTask, *, identity: str, volume: str, provenance: Provenance
+def load_scan(path: Path, layout: Layout) -> Image.Image:
+    """The scan at ``path`` of the PAGE file read as ``layout``, whole and as RGB.
+
+    Raises:
+        ValueError: If it is not the size its PAGE file gives.
+    """
+    Image.MAX_IMAGE_PIXELS = None  # archival spreads exceed PIL's decompression-bomb default
+    scan = load_rgb(path)
+    if scan.size != (layout.width, layout.height):
+        raise ValueError(f"{path.name} is {scan.size} px, its PAGE file {(layout.width, layout.height)}")
+    return scan
+
+
+def whole_page(page: ScanPage, cut: Image.Image, pixels: int) -> Image.Image:
+    """``cut``, ``page`` cut from its scan, at the page's whole-page size (about ``pixels``, each side on the latent
+    grid): the page's target, which its look is measured on."""
+    return cut.resize(whole_page_size(page.layout.width, page.layout.height, pixels), Image.Resampling.LANCZOS)
+
+
+def page_record(
+    page: ScanPage, image: Image.Image, identity: str, *, provenance: Provenance, settings: ScanSettings
 ) -> PageRecord:
-    """``page`` (its id ``identity``, of ``volume``), ``cut`` from its scan, captioned in its archive's name and the
-    look measured on it, planned whole (:func:`planned_page`) and its windows planned (:func:`planned_windows`): its
-    images and its windows' written under ``task.out``, and its record."""
-    settings = task.settings
+    """``page`` (its id ``identity``) captioned in its archive's name (``provenance``) and the look measured on
+    ``image``, the page at its whole-page size (:func:`whole_page`), planned whole (:func:`planned_page`) and its
+    windows planned (:func:`planned_windows`), every form prompted: its record (its volume left blank)."""
     tokenizer = tokenizer_of(settings.model)
-    image = cut.resize(
-        whole_page_size(page.layout.width, page.layout.height, settings.pixels), Image.Resampling.LANCZOS
-    )
     style = PageStyle(provenance=provenance, look=scan_look(image))
     record = planned_page(page, style, pixels=settings.pixels, tokenizer=tokenizer)
     windows = planned_windows(page, style, identity, settings=settings, tokenizer=tokenizer)
+    return record.model_copy(update={"id": identity, "windows": windows})
+
+
+def written_page(
+    page: ScanPage, cut: Image.Image, task: ScanTask, *, identity: str, volume: str, provenance: Provenance
+) -> PageRecord:
+    """``page`` (its id ``identity``, of ``volume``), ``cut`` from its scan, planned and prompted at its whole-page
+    size (:func:`page_record`): its images and its windows' written under ``task.out``, and its record."""
+    image = whole_page(page, cut, task.settings.pixels)
+    record = page_record(page, image, identity, provenance=provenance, settings=task.settings)
     image.save(task.out / PAGES / f"{identity}.jpg", quality=TILE_QUALITY)
     as_reference(cut).save(task.out / REFS / f"{identity}.jpg", quality=JPEG_QUALITY)
-    for window in windows:
+    for window in record.windows:
         window_image = cut.crop(window.rect).resize(window.size, Image.Resampling.LANCZOS)
         window_image.save(task.out / WINDOWS / f"{window.id}.jpg", quality=TILE_QUALITY)
-    return record.model_copy(update={"id": identity, "volume": volume, "windows": windows})
+    return record.model_copy(update={"volume": volume})
 
 
 def scanned(task: ScanTask) -> ScanResult:
@@ -359,10 +390,7 @@ def scanned(task: ScanTask) -> ScanResult:
         return ScanResult(xml=xml.as_posix(), problem=ScanProblem.NO_TEXT)
     if is_unsplit_spread(layout):
         return ScanResult(xml=xml.as_posix(), problem=ScanProblem.SPREAD)
-    Image.MAX_IMAGE_PIXELS = None  # archival spreads exceed PIL's decompression-bomb default
-    scan = load_rgb(scan_path)
-    if scan.size != (layout.width, layout.height):
-        raise ValueError(f"{scan_path.name} is {scan.size} px, its PAGE file {(layout.width, layout.height)}")
+    scan = load_scan(scan_path, layout)
     collection, volume = xml.parts[:2]
     provenance = provenance_of(collection, task.xml)
     written = [
@@ -409,14 +437,14 @@ def page_files(gt_root: Path, collections: list[str], *, max_scans: int | None, 
     return files
 
 
-def scan_all(tasks: list[ScanTask], workers: int) -> Iterator[ScanResult]:
-    """Every task's result (:func:`scan_once`), in order, on ``workers`` processes (in this one for one)."""
+def in_processes[T, R](work: Callable[[T], R], tasks: list[T], workers: int) -> Iterator[R]:
+    """``work`` done on every task, its results in order, on ``workers`` processes (in this one for one)."""
     if workers == 1:
-        yield from map(scan_once, tasks)
+        yield from map(work, tasks)
         return
     # forkserver: a process holding threads (torch, the tokenizer) is not forked
     with ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("forkserver")) as pool:
-        yield from pool.map(scan_once, tasks, chunksize=4)
+        yield from pool.map(work, tasks, chunksize=4)
 
 
 def held_out_volumes(volumes: Iterable[str], share: float, seed: int) -> set[str]:
@@ -562,7 +590,7 @@ def build(out: Path, settings: BuildSettings, *, workers: int) -> BuildRecord:
     files = page_files(root, settings.collections, max_scans=settings.max_scans, seed=settings.seed)
     tasks = [ScanTask(xml=xml, out=out, settings=settings.scan) for xml in files]
     results: list[ScanResult] = []
-    for k, result in enumerate(scan_all(tasks, workers), start=1):
+    for k, result in enumerate(in_processes(scan_once, tasks, workers), start=1):
         results.append(result)
         if k % 500 == 0:
             console.print(f"{k} of {len(tasks)} scans read")
