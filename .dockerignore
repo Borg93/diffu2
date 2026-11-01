@@ -1,5 +1,5 @@
 # The one .dockerignore for every .docker/*.dockerfile build (the build context is the repo root). The images need
-# pyproject.toml, uv.lock, README.md, src/ and packages/*/ (sources and READMEs, not tests); everything else stays out.
+# pyproject.toml, uv.lock and packages/*/ (sources and READMEs, not tests); everything else stays out.
 
 # VCS
 .git

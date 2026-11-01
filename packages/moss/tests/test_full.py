@@ -22,7 +22,7 @@ from diffusers.utils import SAFETENSORS_WEIGHTS_NAME
 from safetensors.torch import load_file, save, save_file
 from torch import Tensor, nn
 
-from diffu.repo import ModelIndex
+from diffu_core.repo import ModelIndex
 from diffu_moss.init import write_moss_repo
 from diffu_moss.modular_pipelines.moss import MossModularPipeline
 from diffu_moss.train.full import AVERAGE, AVERAGE_WEIGHTS, DIT, STATE, FullOptimizer, FullSettings, MomentumDtype

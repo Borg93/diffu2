@@ -27,7 +27,7 @@ reference's).
 ## Training a LoRA (NeMo AutoModel)
 
 Training runs in NeMo AutoModel's environment (`~/Desktop/repos/Automodel/.venv-managed`), where
-`jobs/setup_nemo_env.sh` installs diffu, diffu-moss, diffu-page and diffu-train; NeMo's own
+`jobs/setup_nemo_env.sh` installs diffu-core, diffu-moss, diffu-page and diffu-train; NeMo's own
 `examples/diffusion/finetune/finetune.py` is the entry point, our dataloader configs its `_target_`s.
 
 1. **Crops** (CPU): `python -m diffu_page.data.build_crops` cuts the GT pages into training windows with layout

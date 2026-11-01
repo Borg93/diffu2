@@ -35,7 +35,7 @@ from torch.export.pt2_archive import PT2ArchiveReader
 from torch.export.pt2_archive.constants import AOTINDUCTOR_DIR
 from torch.func import functional_call
 
-from diffu.repo import ModelIndex
+from diffu_core.repo import ModelIndex
 from diffu_moss import mxfp8
 from diffu_moss.mxfp8 import JOINT_BLOCK_LINEARS, Precision, quantize_linears, supports_mxfp8
 from diffu_moss.transformer import MODULATIONS, JointBlock, MossTransformer

@@ -50,7 +50,7 @@ from safetensors import safe_open
 from safetensors.torch import load_file, save_file
 from torch import Tensor
 
-from diffu.modular_pipelines.loading import COMPONENT_DTYPES, require_loaded
+from diffu_core.loading import COMPONENT_DTYPES, require_loaded
 from diffu_moss.latents import encode_latents, image_pixels
 from diffu_moss.modular_pipelines.moss import MossModularPipeline
 from diffu_moss.modular_pipelines.moss.encoders import MossReferenceEncodeStep, MossTextEncoderStep, prompt_tokens

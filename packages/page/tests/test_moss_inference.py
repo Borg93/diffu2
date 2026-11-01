@@ -18,7 +18,7 @@ from pydantic import ValidationError
 from transformers import Qwen3_5Config, Qwen3_5Model
 from typer.testing import CliRunner
 
-from diffu.repo import ModelIndex
+from diffu_core.repo import ModelIndex
 from diffu_moss import aoti
 from diffu_moss.init import write_moss_repo
 from diffu_moss.modular_pipelines.moss import MossModularPipeline

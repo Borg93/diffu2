@@ -9,12 +9,12 @@ around its released weights, and our own training to teach it to draw from a sam
 
 ## The repo
 
-A uv workspace: the root project and five members under `packages/`. Everything that draws is a Modular Diffusers
-pipeline, our blocks around a model's own, the model chosen by its directory alone.
+A uv workspace of six members under `packages/`; the root is the workspace alone (no package of its own). Everything
+that draws is a Modular Diffusers pipeline, our blocks around a model's own, the model chosen by its directory alone.
 
-- **`src/diffu`** (diffu): what every member shares about a model directory: its `modular_model_index.json`
-  (`diffu.repo.ModelIndex`) and loading its components without letting a failed one through
-  (`diffu.modular_pipelines.loading`).
+- **`packages/core`** (diffu-core): what every member shares about a model directory: its `modular_model_index.json`
+  (`diffu_core.repo.ModelIndex`) and loading its components without letting a failed one through
+  (`diffu_core.loading`).
 - **`packages/moss`** (diffu-moss): MOSS-Image: our DiT, its blocks, `diffu-moss-init` (a model directory), and its
   reference training (`train/`: `diffu-moss-cache-pairs`, `diffu-moss-train-ref`, a LoRA or every weight, on one GPU
   or sharded over several, and `diffu-moss-export-ref`). [docs/MOSS.md](docs/MOSS.md)
@@ -45,7 +45,7 @@ Package names keep the `diffu-` prefix (imports `diffu_page`, ...) so they stay 
 - **This repo** (`uv sync`): drawing with MOSS-Image, MOSS's training, CPU checks and tests
   (`CUDA_VISIBLE_DEVICES="" uv run pytest -n 4`; the pipeline tests draw with tiny random models on CPU).
 - **NeMo AutoModel** (`~/Desktop/repos/Automodel/.venv-managed`): FLUX.3 LoRA training and FLUX.3's GPU jobs;
-  `jobs/setup_nemo_env.sh` installs diffu, diffu-moss, diffu-page and diffu-train into it.
+  `jobs/setup_nemo_env.sh` installs diffu-core, diffu-moss, diffu-page and diffu-train into it.
 - `FLUX3_MODEL`: the FLUX.3 Klein directory, from the environment or a `.env` file; there is no default, so a command
   that needs a model and is given no `--model` stops before loading anything. `DIFFU_HTR_MODEL` and
   `DIFFU_HTR_REVISION` choose the read-back model and pin its revision.

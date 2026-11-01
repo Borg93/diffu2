@@ -42,7 +42,7 @@ from rich.console import Console
 from torch import Tensor
 from torch.nn import functional as F
 
-from diffu.modular_pipelines.loading import COMPONENT_DTYPES, require_loaded
+from diffu_core.loading import COMPONENT_DTYPES, require_loaded
 from diffu_moss.aoti import device_arch
 from diffu_moss.inference import MossInference, prepare_inference
 from diffu_moss.layout_prompt import LAYOUT_META

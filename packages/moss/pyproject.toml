@@ -7,7 +7,7 @@ requires-python = ">=3.12,<3.14"
 license = "Apache-2.0"
 authors = [{ name = "Gabriel Borg" }]
 dependencies = [
-    "diffu",
+    "diffu-core",
     "diffusers",
     "peft>=0.17",  # the reference training's LoRA
     "pillow>=11",

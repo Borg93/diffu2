@@ -29,7 +29,7 @@ from diffusers import AutoencoderKLFlux2
 from rich.console import Console
 from transformers import AutoTokenizer, Qwen3_5Model
 
-from diffu.repo import INDEX, ModelIndex, index_entry
+from diffu_core.repo import INDEX, ModelIndex, index_entry
 from diffu_moss.modular_pipelines.moss import MossAutoBlocks, MossModularPipeline
 from diffu_moss.modular_pipelines.moss.denoise import DEMO_UNCOND_SKIP_LAYERS
 from diffu_moss.train.records import EXPORT_RECORD, ExportRecord

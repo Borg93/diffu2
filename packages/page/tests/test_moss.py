@@ -20,7 +20,7 @@ from diffusers import Flux3AutoBlocks, Flux3ModularPipeline
 from diffusers.modular_pipelines import ModularPipeline, SequentialPipelineBlocks
 from PIL import Image
 
-from diffu.modular_pipelines.loading import COMPONENT_DTYPES
+from diffu_core.loading import COMPONENT_DTYPES
 from diffu_moss.layout_prompt import caption_layout, caption_texts
 from diffu_moss.modular_pipelines.moss import MossAutoBlocks, MossModularPipeline
 from diffu_moss.sample_caption import PLAIN_PAPER_ROW, SAMPLE_PAPER_ROW, without_look, without_sample

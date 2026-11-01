@@ -44,6 +44,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    --mount=type=bind,source=packages/core/pyproject.toml,target=packages/core/pyproject.toml \
     --mount=type=bind,source=packages/moss/pyproject.toml,target=packages/moss/pyproject.toml \
     --mount=type=bind,source=packages/page/pyproject.toml,target=packages/page/pyproject.toml \
     --mount=type=bind,source=packages/runner/pyproject.toml,target=packages/runner/pyproject.toml \
@@ -52,8 +53,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-workspace --package diffu-runner --no-default-groups --no-editable
 # 2. the workspace's own packages that diffu-runner imports, built as wheels (no source tree in the image); studio and
 # train are workspace members uv must see, not installed
-COPY pyproject.toml uv.lock README.md ./
-COPY src src
+COPY pyproject.toml uv.lock ./
+COPY packages/core packages/core
 COPY packages/moss packages/moss
 COPY packages/page packages/page
 COPY packages/runner packages/runner

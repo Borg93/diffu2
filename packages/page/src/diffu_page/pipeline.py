@@ -34,8 +34,8 @@ from diffusers.modular_pipelines import ModularPipeline, OutputParam, PipelineSt
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from diffu.modular_pipelines.loading import COMPONENT_DTYPES, require_loaded
-from diffu.repo import ModelIndex
+from diffu_core.loading import COMPONENT_DTYPES, require_loaded
+from diffu_core.repo import ModelIndex
 from diffu_moss.inference import MossInference, check_inference, prepare_inference
 from diffu_moss.latents import encode_latents
 from diffu_moss.modular_pipelines.moss import MossAutoBlocks, MossModularPipeline

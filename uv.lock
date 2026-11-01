@@ -11,12 +11,23 @@ supported-markers = [
 
 [manifest]
 members = [
-    "diffu",
+    "diffu-core",
     "diffu-moss",
     "diffu-page",
     "diffu-runner",
     "diffu-studio",
     "diffu-train",
+]
+
+[manifest.dependency-groups]
+dev = [
+    { name = "pyrefly", specifier = ">=1.4" },
+    { name = "pytest", specifier = ">=9.1.1" },
+    { name = "pytest-cov", specifier = ">=7" },
+    { name = "pytest-timeout", specifier = ">=2.4.0" },
+    { name = "pytest-xdist", specifier = ">=3.8.0" },
+    { name = "ruff", specifier = ">=0.17.1" },
+    { name = "xmlschema", specifier = ">=4.3.2" },
 ]
 
 [[package]]
@@ -277,31 +288,13 @@ nvtx = [
 ]
 
 [[package]]
-name = "diffu"
+name = "diffu-core"
 version = "0.1.0"
-source = { editable = "." }
+source = { editable = "packages/core" }
 dependencies = [
     { name = "diffusers" },
     { name = "pydantic" },
     { name = "torch" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pyrefly" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-    { name = "pytest-timeout" },
-    { name = "pytest-xdist" },
-    { name = "ruff" },
-    { name = "xmlschema" },
-]
-workspace = [
-    { name = "diffu-moss" },
-    { name = "diffu-page" },
-    { name = "diffu-runner" },
-    { name = "diffu-studio" },
-    { name = "diffu-train" },
 ]
 
 [package.metadata]
@@ -311,30 +304,12 @@ requires-dist = [
     { name = "torch", specifier = ">=2.10", index = "https://download.pytorch.org/whl/cu130" },
 ]
 
-[package.metadata.requires-dev]
-dev = [
-    { name = "pyrefly", specifier = ">=1.4" },
-    { name = "pytest", specifier = ">=9.1.1" },
-    { name = "pytest-cov", specifier = ">=7" },
-    { name = "pytest-timeout", specifier = ">=2.4.0" },
-    { name = "pytest-xdist", specifier = ">=3.8.0" },
-    { name = "ruff", specifier = ">=0.17.1" },
-    { name = "xmlschema", specifier = ">=4.3.2" },
-]
-workspace = [
-    { name = "diffu-moss", editable = "packages/moss" },
-    { name = "diffu-page", editable = "packages/page" },
-    { name = "diffu-runner", editable = "packages/runner" },
-    { name = "diffu-studio", editable = "packages/studio" },
-    { name = "diffu-train", editable = "packages/train" },
-]
-
 [[package]]
 name = "diffu-moss"
 version = "0.1.0"
 source = { editable = "packages/moss" }
 dependencies = [
-    { name = "diffu" },
+    { name = "diffu-core" },
     { name = "diffusers" },
     { name = "peft" },
     { name = "pillow" },
@@ -348,7 +323,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "diffu", editable = "." },
+    { name = "diffu-core", editable = "packages/core" },
     { name = "diffusers", git = "https://github.com/huggingface/diffusers?rev=e04f0c5f24392fcd34b32d18d0ce03668f9bcd50" },
     { name = "peft", specifier = ">=0.17" },
     { name = "pillow", specifier = ">=11" },
@@ -365,7 +340,7 @@ name = "diffu-page"
 version = "0.1.0"
 source = { editable = "packages/page" }
 dependencies = [
-    { name = "diffu" },
+    { name = "diffu-core" },
     { name = "diffu-moss" },
     { name = "diffusers" },
     { name = "numpy" },
@@ -384,7 +359,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "diffu", editable = "." },
+    { name = "diffu-core", editable = "packages/core" },
     { name = "diffu-moss", editable = "packages/moss" },
     { name = "diffusers", git = "https://github.com/huggingface/diffusers?rev=e04f0c5f24392fcd34b32d18d0ce03668f9bcd50" },
     { name = "numpy", specifier = ">=1.26" },

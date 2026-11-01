@@ -1,4 +1,4 @@
-project-includes = ["src/**/*.py", "packages/*/src/**/*.py", "packages/*/tests/**/*.py", "conftest.py"]
+project-includes = ["packages/*/src/**/*.py", "packages/*/tests/**/*.py", "conftest.py"]
 project-excludes = ["**/.git/**", "**/__pycache__/**", "**/.venv/**"]
 # The repo root, so tests that type a fixture by the root conftest.py's protocols resolve `conftest`, as ty does.
 search-path = ["."]
