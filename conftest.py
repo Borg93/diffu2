@@ -1,10 +1,9 @@
 """Fixtures shared by every workspace member's tests: PAGE pages to plan and draw, a ground-truth form beside its scan
 and a stand-in print/hand classifier to mark it with, a crop and its training record, diffusers' tiny FLUX.3 test model
-(with a VAE that downsamples as FLUX.3's does), a tiny diffu model repo (a tiny Qwen3-VL (tiny FLUX.3's), a tiny
-Qwen-Image VAE and a tiny transformer, all random weights) and its glyph model, a tiny MOSS-Image repo (MOSS's own
-tokenizer, a tiny Qwen3.5, a tiny FLUX.2-class VAE and a tiny DiT, random weights), and a reference training on it: a
-tiny style-pair set in the described reference form, its caches (one with look changes for its sample form), a short
-training run and the MOSS repo of its merged export, which takes a reference image."""
+(with a VAE that downsamples as FLUX.3's does), a tiny MOSS-Image repo (MOSS's own tokenizer, a tiny Qwen3.5, a tiny
+FLUX.2-class VAE and a tiny DiT, random weights), and a reference training on it: a tiny style-pair set in the
+described reference form, its caches (one with look changes for its sample form), a short training run and the MOSS
+repo of its merged export, which takes a reference image."""
 
 from __future__ import annotations
 
@@ -17,15 +16,12 @@ import cv2
 import numpy as np
 import pytest
 import torch
-from diffusers import AutoencoderKLFlux2, AutoencoderKLQwenImage, Flux3Transformer2DModel
+from diffusers import AutoencoderKLFlux2
 from huggingface_hub import snapshot_download
 from PIL import Image
 from safetensors.torch import save_file
 from transformers import Qwen3_5Config, Qwen3_5Model
 
-from diffu.configs import DiffuConfig, DiffuSize, TextEncoder, Vae
-from diffu.init import write_model_repo
-from diffu.repo import ModelIndex
 from diffu_moss.init import write_moss_repo
 from diffu_moss.train.cache import CacheSettings, write_cache
 from diffu_moss.train.export import export_merged
@@ -406,72 +402,10 @@ def tiny_flux3(tiny_flux3_snapshot: Path, tmp_path_factory: pytest.TempPathFacto
     return repo
 
 
-# 8x downsampling like the real Qwen-Image VAE, so a token is 16 px as in diffu; latent statistics that are not the
-# identity, so normalization is exercised
-TINY_QWEN_IMAGE_VAE = {
-    "base_dim": 16,
-    "z_dim": 4,
-    "dim_mult": [1, 1, 1, 1],
-    "num_res_blocks": 1,
-    "temperal_downsample": [False, True, True],
-    "latents_mean": [0.5, -0.5, 0.25, 0.0],
-    "latents_std": [2.0, 1.0, 0.5, 1.5],
-}
-
-
 @pytest.fixture(scope="session")
 def tiny_flux3_snapshot() -> Path:
     """diffusers' tiny FLUX.3 test model as downloaded: its tiny Qwen3-VL text encoder and processor among it."""
     return Path(snapshot_download(TINY_FLUX3, revision=TINY_FLUX3_REVISION))
-
-
-@pytest.fixture(scope="session")
-def tiny_diffu_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    return tmp_path_factory.mktemp("diffu")
-
-
-@pytest.fixture(scope="session")
-def tiny_diffu_config(tiny_flux3_snapshot: Path, tiny_diffu_dir: Path) -> DiffuConfig:
-    """A tiny diffu: 2 heads of 8, one per-mode and one joint block, tiny FLUX.3's Qwen3-VL at its middle layer, a
-    4-channel VAE kept in the repo."""
-    text_encoder = TextEncoder(
-        repo=str(tiny_flux3_snapshot),
-        revision=None,
-        encoder_subfolder="text_encoder",
-        processor_subfolder="tokenizer",
-        layers=(1,),
-        hidden_size=16,
-    )
-    return DiffuConfig(
-        size=DiffuSize(num_attention_heads=2, attention_head_dim=8, mode_layers=1, joint_layers=1),
-        text_encoder=text_encoder,
-        vae=Vae(repo=str(tiny_diffu_dir), revision=None, subfolder="vae", latent_channels=4),
-    )
-
-
-@pytest.fixture(scope="session")
-def tiny_diffu(tiny_diffu_config: DiffuConfig, tiny_diffu_dir: Path) -> Path:
-    """The tiny diffu as a model repo. Its transformer keeps its random (not adaLN-Zero) weights, so a prompt or a
-    reference changes what it draws."""
-    torch.manual_seed(0)
-    AutoencoderKLQwenImage(**TINY_QWEN_IMAGE_VAE).save_pretrained(tiny_diffu_dir / "vae")
-    transformer = Flux3Transformer2DModel.from_config(tiny_diffu_config.transformer_config())
-    write_model_repo(transformer, tiny_diffu_config, tiny_diffu_dir)
-    return tiny_diffu_dir
-
-
-@pytest.fixture(scope="session")
-def tiny_diffu_glyph(
-    tiny_diffu_config: DiffuConfig, tiny_diffu: Path, tmp_path_factory: pytest.TempPathFactory
-) -> Path:
-    """The tiny diffu as a glyph model (``diffu-init --glyph``), with the tiny diffu's VAE: its 16 glyph channels
-    beside its 16 latent channels, its transformer's weights random (the glyph map's among them), so the map changes
-    what it draws."""
-    repo = tmp_path_factory.mktemp("diffu_glyph")
-    config = tiny_diffu_config.model_copy(update={"glyph": True})
-    torch.manual_seed(1)
-    write_model_repo(Flux3Transformer2DModel.from_config(config.transformer_config()), config, repo)
-    return repo
 
 
 MOSS_BASE = "OpenMOSS-Team/MOSS-Image-Base"
@@ -515,10 +449,10 @@ TINY_MOSS_DIT = {
 
 
 @pytest.fixture(scope="session")
-def tiny_moss(tiny_flux3_snapshot: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """A tiny MOSS-Image repo, diffu-moss-init's, on a tiny Base snapshot: MOSS's own tokenizer (downloaded once), a
-    tiny Qwen3.5 text encoder, a VAE of FLUX.2's class that downsamples 8x as MOSS's does (tiny FLUX.3's) and a tiny
-    DiT whose unconditional pass skips its middle block, all random weights, so a prompt changes what it draws."""
+def tiny_moss_base(tiny_flux3_snapshot: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A tiny MOSS-Image Base snapshot: MOSS's own tokenizer (downloaded once), a tiny Qwen3.5 text encoder, a VAE of
+    FLUX.2's class that downsamples 8x as MOSS's does (tiny FLUX.3's) and a tiny DiT, all random weights, so a prompt
+    changes what it draws."""
     base = tmp_path_factory.mktemp("moss_base")
     snapshot = Path(snapshot_download(MOSS_BASE, revision=MOSS_BASE_REVISION, allow_patterns=["tokenizer/*"]))
     shutil.copytree(snapshot / "tokenizer", base / "tokenizer")
@@ -527,8 +461,15 @@ def tiny_moss(tiny_flux3_snapshot: Path, tmp_path_factory: pytest.TempPathFactor
     vae_config = {**AutoencoderKLFlux2.load_config(tiny_flux3_snapshot, subfolder="vae"), **TINY_FLUX3_VAE}
     AutoencoderKLFlux2.from_config(vae_config).save_pretrained(base / "vae")
     MossTransformer(**TINY_MOSS_DIT).save_pretrained(base / "transformer")
+    return base
+
+
+@pytest.fixture(scope="session")
+def tiny_moss(tiny_moss_base: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A tiny MOSS-Image repo, diffu-moss-init's, on the tiny Base snapshot, its DiT's unconditional pass skipping its
+    middle block."""
     repo = tmp_path_factory.mktemp("moss")
-    write_moss_repo(repo, base=base, uncond_skip_layers=(1,))
+    write_moss_repo(repo, base=tiny_moss_base, uncond_skip_layers=(1,))
     return repo
 
 
@@ -623,9 +564,9 @@ def tiny_restyled_cache(tiny_moss: Path, tiny_pairs: Path, tmp_path_factory: pyt
 
 
 @pytest.fixture(scope="session")
-def tiny_moss_dit(tiny_moss: Path) -> Path:
+def tiny_moss_dit(tiny_moss_base: Path) -> Path:
     """The tiny MOSS's DiT folder (its Base snapshot's ``transformer/``)."""
-    return Path(ModelIndex.read(tiny_moss).source("transformer").repo)
+    return tiny_moss_base / "transformer"
 
 
 @pytest.fixture(scope="session")

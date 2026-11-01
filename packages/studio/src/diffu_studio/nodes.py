@@ -3,7 +3,7 @@
 - :func:`plan_node`: a template page, its new text and a style in; the page's crop plans out (``PagePlanBlocks``, CPU).
 - :class:`DrawNode`: the plans, a seed and the steps in; every crop drawn by one drawer's crop pipeline, out as a sheet
   of the crops and a zip of the crops with their labels. One per :class:`Drawer`, all fed by the same plan, so the
-  models (or LoRAs) draw the same page from the same noise, side by side.
+  MOSS-Image models draw the same page from the same noise, side by side.
 
 gr.Workflow calls a node with its input ports' values in order and passes media as file dicts.
 """
@@ -20,14 +20,15 @@ from urllib.parse import unquote
 from diffusers.modular_pipelines import ModularPipeline
 from gradio_client import utils as client_utils
 from PIL import Image, ImageDraw
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 
+from diffu_moss.modular_pipelines.moss import MossAutoBlocks
 from diffu_page.blocks import DrawnCrop, crop_identity
 from diffu_page.captions.prompt import PageStyle
 from diffu_page.crops.geometry import pixel_box
 from diffu_page.layout import load_xml_layout, running_text
 from diffu_page.output import JPEG_QUALITY, jpeg_bytes, plain_file_name, side_by_side
-from diffu_page.pipeline import DrawSettings, PagePlanBlocks, crop_blocks, draw_crop, load_pipeline
+from diffu_page.pipeline import DrawSettings, PagePlanBlocks, crop_blocks, draw_crop, load_pipeline, model_family
 from diffu_page.plan import CropPlan
 from diffu_studio.graph import draw_fn
 
@@ -37,13 +38,12 @@ _FILE_URL = "/gradio_api/file="
 
 
 class Drawer(BaseModel):
-    """One draw node: a model directory and the LoRAs (NeMo ``model/`` dirs by adapter name) active when it draws."""
+    """One draw node: a MOSS-Image model directory (``diffu-moss-init``'s) and the name of its node."""
 
     model_config = ConfigDict(frozen=True)
 
     name: str  # names the node and the dir its sheets go to
     model: Path
-    loras: dict[str, Path] = Field(default_factory=dict)
 
     @field_validator("name")
     @classmethod
@@ -118,13 +118,11 @@ def crop_sheet(crops: list[DrawnCrop]) -> Image.Image:
 
 class DrawNode:
     """A drawer's draw node: every planned crop drawn by its crop pipeline, written to ``<out>/<drawer>/`` as a sheet
-    of the crops and a zip of the crops with their labels.
-
-    Drawers that share a model share its pipeline (``pipe``) with every LoRA they use loaded as a named adapter; a
-    node activates its own adapters, and holds ``lock`` while it draws so one model runs on the device at a time.
+    of the crops and a zip of the crops with their labels. It holds ``lock`` while it draws, so one model runs on the
+    device at a time.
 
     Args:
-        drawer: The model and LoRAs this node draws with.
+        drawer: The drawer this node draws for: its name names the dir its sheets go to.
         pipe: Its model's crop pipeline (:func:`diffu_page.pipeline.crop_blocks`).
         settings: How every crop is drawn (the steps come from the node's input).
         out: Where the sheets and zips go.
@@ -140,26 +138,15 @@ class DrawNode:
         out: Path,
         lock: threading.Lock,
     ) -> None:
-        self._drawer = drawer
         self._pipe = pipe
         self._settings = settings
         self._out = out / drawer.name
         self._lock = lock
 
-    def _activate_loras(self) -> None:
-        if not self._pipe.get_list_adapters():  # the model has no LoRA loaded: nothing to switch
-            return
-        if self._drawer.loras:
-            self._pipe.enable_lora()
-            self._pipe.set_adapters(list(self._drawer.loras))
-        else:
-            self._pipe.disable_lora()
-
     def _draw(self, page: PlannedPage, seed: int, steps: int) -> list[DrawnCrop]:
         settings = self._settings.model_copy(update={"steps": steps})
         crops: list[DrawnCrop] = []
         with self._lock:
-            self._activate_loras()
             for k, plan in enumerate(page.plans):
                 name, crop_seed = crop_identity(page.page, seed, k)
                 crops.append(draw_crop(self._pipe, plan, name=name, seed=crop_seed, reference=None, settings=settings))
@@ -180,36 +167,28 @@ class DrawNode:
         return media(sheet), media(archive)
 
 
-def model_loras(drawers: list[Drawer], *, settings: DrawSettings) -> dict[Path, dict[str, Path]]:
-    """Each model the drawers draw with and every LoRA its drawers use, checked before any model loads.
+def check_drawers(drawers: list[Drawer]) -> None:
+    """Refuse drawers the studio could not tell apart or cannot draw with, before any model loads.
 
     Raises:
-        ValueError: If two drawers share a name (it names their node), two drawers name the same adapter of one model
-            with different LoRA dirs, or LoRAs are to be fused into a model whose drawers switch them per drawer.
+        ValueError: If two drawers share a name (it names their node), or a drawer's model is not a MOSS-Image model
+            directory.
     """
     shared_names = sorted(name for name, count in Counter(drawer.name for drawer in drawers).items() if count > 1)
     if shared_names:
         raise ValueError(f"two drawers share each of the names {shared_names}: a name is its draw node's")
-    loras_of: dict[Path, dict[str, Path]] = {}
     for drawer in drawers:
-        model_loras = loras_of.setdefault(drawer.model, {})
-        for adapter, lora_dir in drawer.loras.items():
-            if model_loras.setdefault(adapter, lora_dir) != lora_dir:
-                raise ValueError(
-                    f"adapter {adapter!r} of {drawer.model} names two LoRAs: {model_loras[adapter]}, {lora_dir}"
-                )
-    switched = [model for model in loras_of if len({frozenset(d.loras) for d in drawers if d.model == model}) > 1]
-    if settings.fuse_loras and switched:
-        raise ValueError(f"the drawers of {switched} switch LoRAs per drawer, which fused LoRAs cannot: draw unfused")
-    return loras_of
+        if model_family(drawer.model).blocks is not MossAutoBlocks:
+            raise ValueError(f"{drawer.name}: {drawer.model} is no MOSS-Image model directory (diffu-moss-init's)")
 
 
 def load_draw_nodes(drawers: list[Drawer], *, settings: DrawSettings, out: Path) -> dict[str, DrawNode]:
-    """A draw node per drawer, by its bound function's name (:func:`diffu_studio.graph.draw_fn`); each model is loaded
-    once, with every LoRA its drawers use (:func:`model_loras`, which checks them first)."""
-    loras_of = model_loras(drawers, settings=settings)
+    """A draw node per drawer, by its bound function's name (:func:`diffu_studio.graph.draw_fn`), the drawers checked
+    first (:func:`check_drawers`); each model is loaded once, so drawers of one model share it."""
+    check_drawers(drawers)
     pipes = {
-        model: load_pipeline(model, crop_blocks, loras=loras, settings=settings) for model, loras in loras_of.items()
+        model: load_pipeline(model, crop_blocks, loras={}, settings=settings)
+        for model in dict.fromkeys(drawer.model for drawer in drawers)
     }
     lock = threading.Lock()
     return {

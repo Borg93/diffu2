@@ -1,7 +1,7 @@
 [project]
 name = "diffu"
 version = "0.1.0"
-description = "diffu: our page model, FLUX.3's architecture (diffusers' Flux3Transformer2DModel and Modular Diffusers blocks) with our own weights, FLUX.3's text encoder (Qwen3-VL-4B-Instruct) and the Qwen-Image VAE."
+description = "Synthetic archive pages with ground truth: what every workspace member shares about a model directory (its Modular Diffusers model index, loading its components)."
 readme = "README.md"
 requires-python = ">=3.12,<3.14"  # 3.12: NeMo AutoModel's environment runs diffu-page and diffu-train; 3.14 breaks pydantic's `from __future__ import annotations` models
 license = "Apache-2.0"
@@ -9,17 +9,8 @@ authors = [{ name = "Gabriel Borg" }]
 dependencies = [
     "diffusers",
     "pydantic>=2",
-    "pyyaml>=6",
-    "rich>=13",
-    "safetensors>=0.4",
     "torch>=2.10",
-    "transformers>=5.18",
-    "typer>=0.20",
 ]
-
-[project.scripts]
-diffu-init = "diffu.init:app"  # a diffu model repo with freshly initialised weights
-diffu-export = "diffu.export:app"  # a trained checkpoint as a diffu model repo
 
 [build-system]
 requires = ["hatchling"]
@@ -28,7 +19,8 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/diffu"]
 
-# The repo's root project is the diffu model; the members under packages/ are the page pipeline and what runs it.
+# The root project is what the members share; the members under packages/ are MOSS-Image, the page pipeline, FLUX.3's
+# training glue and what runs them.
 [tool.uv]
 default-groups = ["workspace", "dev"]
 environments = ["sys_platform == 'linux'"]  # CUDA wheels are Linux-only
@@ -81,14 +73,14 @@ ignore = ["E501"]
 known-first-party = ["diffu", "diffu_moss", "diffu_page", "diffu_train", "diffu_runner", "diffu_studio"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "packages"]
+testpaths = ["packages"]
 addopts = "-q --import-mode=importlib"
 strict = true
 timeout = 3600  # pytest-timeout: a hung test fails; the slowest (the studio's draw test) takes 6.5 min, 25 under coverage
 
 [tool.coverage.run]  # per-test coverage when pruning: production lines only, never the tests'
 source = ["src", "packages/moss/src", "packages/page/src", "packages/runner/src", "packages/studio/src", "packages/train/src"]
-omit = ["tests/*", "packages/*/tests/*", "conftest.py"]
+omit = ["packages/*/tests/*", "conftest.py"]
 
 # ty, as pyrefly.toml: diffusers, transformers and safetensors are typed as Any (diffusers exports a torch-less dummy
 # for every class, so each use reads as "real class or dummy"), and NeMo AutoModel and its torchdata exist only in

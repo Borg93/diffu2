@@ -1,12 +1,13 @@
 [project]
 name = "diffu-studio"
 version = "0.1.0"
-description = "A Gradio app on the page pipeline: a template page, a text and a style in; every crop drawn, with its labels, out."
+description = "A Gradio app on the page pipeline: a template page, a text and a style in; every crop drawn by each MOSS-Image model, with its labels, out."
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 license = "Apache-2.0"
 authors = [{ name = "Gabriel Borg" }]
 dependencies = [
+    "diffu-moss",
     "diffu-page",
     "diffusers",
     "gradio>=6",
@@ -17,7 +18,7 @@ dependencies = [
 ]
 
 [project.scripts]
-diffu-studio = "diffu_studio.studio:app"  # the app, on a model directory and its LoRAs
+diffu-studio = "diffu_studio.studio:app"  # the app, on MOSS-Image model directories
 
 [build-system]
 requires = ["hatchling"]

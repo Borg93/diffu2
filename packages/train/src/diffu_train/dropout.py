@@ -1,14 +1,13 @@
 """Caption dropout: a share of the training items trained on the empty prompt in place of their caption, as diffusers'
-FLUX.3 Klein trainer does it (``--caption_dropout``, 0.1 recommended), for FLUX.3's image-edit pairs and diffu's
-text-to-image crops alike.
+FLUX.3 Klein trainer does it (``--caption_dropout``, 0.1 recommended), for FLUX.3's image-edit pairs and text-to-image
+crops alike.
 
 Classifier-free guidance at generation contrasts the caption with the empty prompt ``""``, encoded like any caption
-(diffusers' ``Flux3TextEncoderStep``, diffu's ``DiffuTextEncoderStep``). A model trained only on captioned items never
-sees that unconditional input, so guidance pushes against a prediction it never learned (diffu's first run drew noise
-at guidance 4 and a page without guidance). NeMo's own ``cfg_dropout`` zeroes the text embeddings instead, an input
-generation never makes; this swaps in the real encoding of ``""``, cached once beside the items
-(``diffu_train.cache_pairs`` for FLUX.3's pairs, ``diffu_train.cache_diffu`` for diffu's crops). No NeMo import, so it
-runs and tests off the NeMo environment; ``diffu_train.nemo`` wraps NeMo's datasets with it.
+(diffusers' ``Flux3TextEncoderStep``). A model trained only on captioned items never sees that unconditional input, so
+guidance pushes against a prediction it never learned. NeMo's own ``cfg_dropout`` zeroes the text embeddings instead,
+an input generation never makes; this swaps in the real encoding of ``""``, cached once beside the items
+(``diffu_train.cache_pairs``). No NeMo import, so it runs and tests off the NeMo environment; ``diffu_train.nemo``
+wraps NeMo's datasets with it.
 """
 
 from __future__ import annotations
@@ -60,9 +59,7 @@ class EmptyPrompt(BaseModel):
         """
         path = cache_dir / EMPTY_PROMPT_FILE
         if not path.exists():
-            raise FileNotFoundError(
-                f"{path} is missing: cache with diffu_train.cache_pairs (FLUX.3) or diffu_train.cache_diffu (diffu)"
-            )
+            raise FileNotFoundError(f"{path} is missing: cache with diffu_train.cache_pairs")
         data = torch.load(path, map_location="cpu", weights_only=True)
         return cls(embeddings=data["prompt_embeddings"], mask=data["prompt_attention_mask"])
 

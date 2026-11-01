@@ -2,9 +2,8 @@
 
 The tiny model draws noise, so every line reads back badly: what is checked is the wiring (a plan in, an image of the
 plan's size with one label per line out; a reference image drawn from as it was resized for training, and guided
-toward when asked; a glyph model's crop drawn from its plan's glyph map; diffu-generate drawing each planned crop
-on its own, so one that fails costs no other, and each hand's pages with its own pipeline) and that a NeMo LoRA
-loads at its trained strength.
+toward when asked; diffu-generate drawing each planned crop on its own, so one that fails costs no other, and each
+hand's pages with its own pipeline) and that a NeMo LoRA loads at its trained strength.
 """
 
 from __future__ import annotations
@@ -30,7 +29,6 @@ from diffu_page.captions.provenance import Provenance
 from diffu_page.cli.generate import PageGroup, Summary, draw_pages, plan_jobs
 from diffu_page.cli.generate import app as generate_app
 from diffu_page.crops.grid import as_reference
-from diffu_page.glyphs import glyph_map
 from diffu_page.jobs import PageJob, crop_jobs
 from diffu_page.judge import LineVerdict
 from diffu_page.labels import PageElements, to_grounded_markdown, to_markdown
@@ -144,15 +142,6 @@ def test_crop_pipeline_tags_a_line_unclear_above_the_settings_max_line_cer_or_wh
     assert crop.unclear_lines == 1
 
 
-def test_crop_pipeline_draws_a_plan_with_the_model_a_diffu_repo_names(tiny_diffu: Path) -> None:
-    pipe = load_pipeline(tiny_diffu, crop_blocks, loras={}, settings=TINY_SETTINGS)
-
-    crop = _draw(pipe)
-
-    assert crop.image.size == (64, 32)
-    assert _alto_lines(crop.labels_xml) == ["den 4 maj", "Göteborgs poliskammare"]  # in the plan's reading order
-
-
 def test_crop_pipeline_conditions_a_crop_on_its_reference_image(crop_pipe: ModularPipeline) -> None:
     plain = _draw(crop_pipe)
 
@@ -175,34 +164,20 @@ def test_crop_pipeline_draws_from_a_reference_as_resized_for_training(crop_pipe:
     assert crop.image.tobytes() == as_trained.image.tobytes()
 
 
-@pytest.mark.parametrize(
-    ("family", "glyph_steps", "loop"),
-    [
-        pytest.param("Flux3AutoBlocks", [], ["denoiser", "after_denoiser"], id="flux3"),
-        pytest.param(
-            "DiffuAutoBlocks",
-            ["prepare_glyph"],
-            ["glyph_concat", "denoiser", "glyph_split", "after_denoiser"],
-            id="diffu",
-        ),
-    ],
-)
-def test_crop_blocks_leave_the_model_familys_own_blocks_as_they_are(
-    family: str, glyph_steps: list[str], loop: list[str]
-) -> None:
-    crop_blocks(FAMILIES[family])
+def test_crop_blocks_leave_the_model_familys_own_blocks_as_they_are() -> None:
+    crop_blocks(FAMILIES["Flux3AutoBlocks"])
 
-    own = list(FAMILIES[family].blocks().sub_blocks["denoise"].sub_blocks.values())
+    own = list(FAMILIES["Flux3AutoBlocks"].blocks().sub_blocks["denoise"].sub_blocks.values())
     assert [list(branch.sub_blocks) for branch in own] == [
-        ["input", "cond_input", "prepare_latents", *glyph_steps, "prepare_image_cond_latents", "set_timesteps"]
+        ["input", "cond_input", "prepare_latents", "prepare_image_cond_latents", "set_timesteps"]
         + ["prepare_rope_inputs", "denoise", "after_denoise"],
-        ["input", "prepare_latents", *glyph_steps, "set_timesteps", "prepare_rope_inputs", "denoise", "after_denoise"],
+        ["input", "prepare_latents", "set_timesteps", "prepare_rope_inputs", "denoise", "after_denoise"],
     ]
-    assert [list(branch.sub_blocks["denoise"].sub_blocks) for branch in own] == [loop, loop]
+    assert [list(branch.sub_blocks["denoise"].sub_blocks) for branch in own] == [["denoiser", "after_denoiser"]] * 2
 
 
 def _model_blocks_only(family: ModelFamily) -> CropBlocks:
-    """Our crop steps before the model's own blocks, as they stand: no glyph map drawn, no line repair."""
+    """Our crop steps before the model's own blocks, as they stand: no line repair."""
     model = family.blocks().sub_blocks
     for name in family.unused:
         model.pop(name)
@@ -230,17 +205,6 @@ def _latents(pipe: ModularPipeline, seed: int, plan: CropPlan | None = None, **i
         **inputs,
         output="latents",
     )
-
-
-def test_crop_pipeline_draws_a_glyph_models_crop_from_the_glyph_map_of_its_plan(tiny_diffu_glyph: Path) -> None:
-    plan = _plan().model_copy(update={"rect": (0, 0, 128, 64), "width": 128, "height": 64})  # sides of 64 px or more
-    own = load_pipeline(tiny_diffu_glyph, _model_blocks_only, loras={}, settings=TINY_SETTINGS)
-    from_its_map = _latents(own, seed=0, plan=plan, glyph_image=glyph_map(plan.lines, (128, 64)))
-    pipe = load_pipeline(tiny_diffu_glyph, crop_blocks, loras={}, settings=TINY_SETTINGS)
-
-    drawn = _latents(pipe, seed=0, plan=plan)
-
-    assert torch.equal(drawn, from_its_map)
 
 
 def test_repair_ends_the_latents_outside_the_mask_on_the_drawn_crops_and_draws_inside_again(

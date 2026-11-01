@@ -19,8 +19,7 @@ Steps = Annotated[int, typer.Option(min=1, help="denoising steps per crop")]
 Guidance = Annotated[
     float | None,
     typer.Option(
-        help="how hard guidance pushes toward the caption (default: the model's own, 4 for FLUX.3 and diffu, 3 for "
-        "MOSS-Image)"
+        help="how hard guidance pushes toward the caption (default: the model's own, 3 for MOSS-Image, 4 for FLUX.3)"
     ),
 ]
 ReferenceGuidanceScale = Annotated[
@@ -90,7 +89,7 @@ def parse_lora(value: str) -> Lora:
 
 
 Model = Annotated[
-    Path | None, typer.Option(help="the model directory (FLUX.3 Klein, diffu or MOSS-Image); default $FLUX3_MODEL")
+    Path | None, typer.Option(help="the model directory (MOSS-Image or FLUX.3 Klein); default $FLUX3_MODEL")
 ]
 Loras = Annotated[list[Lora] | None, typer.Option(parser=parse_lora, help="name=<NeMo LoRA model dir>")]
 

@@ -42,7 +42,7 @@ def test_caption_dropout_trains_a_dropped_pair_on_the_empty_prompt_and_keeps_the
     assert kept == pairs[1]
 
 
-def test_caption_dropout_trains_a_dropped_crop_of_diffu_on_the_empty_prompt_and_keeps_the_rest() -> None:
+def test_caption_dropout_trains_a_dropped_text_to_image_crop_on_the_empty_prompt_and_keeps_the_rest() -> None:
     empty = EmptyPrompt(embeddings=torch.full((80, 8), 7.0), mask=torch.ones(80, dtype=torch.long))
     crops = [
         {

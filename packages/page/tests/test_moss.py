@@ -20,7 +20,6 @@ from diffusers import Flux3AutoBlocks, Flux3ModularPipeline
 from diffusers.modular_pipelines import ModularPipeline, SequentialPipelineBlocks
 from PIL import Image
 
-from diffu.modular_pipelines.diffu import DiffuAutoBlocks, DiffuModularPipeline
 from diffu.modular_pipelines.loading import COMPONENT_DTYPES
 from diffu_moss.layout_prompt import caption_layout, caption_texts
 from diffu_moss.modular_pipelines.moss import MossAutoBlocks, MossModularPipeline
@@ -366,7 +365,6 @@ def test_load_pipeline_refuses_a_lora_for_a_moss_repo(tiny_moss: Path, write_nem
     ("repo", "blocks", "pipeline"),
     [
         pytest.param("tiny_flux3", Flux3AutoBlocks, Flux3ModularPipeline, id="flux3"),
-        pytest.param("tiny_diffu", DiffuAutoBlocks, DiffuModularPipeline, id="diffu"),
         pytest.param("tiny_moss", MossAutoBlocks, MossModularPipeline, id="moss"),
     ],
 )

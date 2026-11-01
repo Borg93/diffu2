@@ -1,1 +1,1 @@
-"""diffu: FLUX.3's architecture and text encoder (Qwen3-VL-4B-Instruct) with our own weights, and the Qwen-Image VAE."""
+"""diffu: what every workspace member shares about a model directory: its model index and loading its components."""

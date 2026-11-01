@@ -1,5 +1,4 @@
-"""Interleaved aspect-ratio buckets and caption dropout for NeMo AutoModel's training (FLUX.3's LoRAs and diffu), and a
-glyph model's flow-matching adapter.
+"""Interleaved aspect-ratio buckets and caption dropout for NeMo AutoModel's training of FLUX.3 Klein's LoRAs.
 
 NeMo's ``SequentialBucketSampler`` walks the buckets one after another: every batch of one crop shape, then
 every batch of the next. A run shorter than an epoch (v2: 1,600 steps x 4 crops over 11,329 crops) therefore
@@ -15,14 +14,7 @@ Use it from a NeMo config with this folder on PYTHONPATH, for text-to-image or i
         _target_: diffu_train.nemo.InterleavedTextToImageDataloaderConfig  # or InterleavedImageEditDataloaderConfig
 
 Both configs also take ``caption_dropout``: that share of the items trains on the empty prompt
-(``diffu_train.dropout``), read from the ``empty_prompt.pt`` that ``diffu_train.cache_pairs`` (FLUX.3's pairs) or
-``diffu_train.cache_diffu`` (diffu's crops) writes into the cache. The image-edit config takes ``latents_of``, the diffu
-repo the run trains (``${DIFFU_INIT}``): the cache's latents come out normalized as that repo's VAE normalizes them
-(``diffu_train.latent_stats``), so a cache made with Qwen-Image's stats trains a repo with our pages' stats.
-
-A glyph model (``diffu-init --glyph``) trains on the same image-edit pairs, its glyph map the one context latents, with
-:class:`GlyphConcatAdapter` in place of NeMo's FLUX.3 adapter (:func:`adapter_for`, which ``diffu_train.finetune``
-swaps in: NeMo picks its adapters from a table of its own).
+(``diffu_train.dropout``), read from the ``empty_prompt.pt`` that ``diffu_train.cache_pairs`` writes into the cache.
 """
 
 from __future__ import annotations
@@ -32,22 +24,15 @@ from collections.abc import Callable
 from dataclasses import dataclass  # noqa: TID251 -- NeMo builds dataloaders only from dataclass configs
 from functools import partial
 from pathlib import Path
-from typing import Any, override
+from typing import override
 
-import torch
 from nemo_automodel.components.datasets.diffusion.collate_fns import TextToImageDataloaderConfig
 from nemo_automodel.components.datasets.diffusion.image_edit_dataset import ImageEditDataloaderConfig
 from nemo_automodel.components.datasets.diffusion.loader import DiffusionDataloaderBuild
 from nemo_automodel.components.datasets.diffusion.sampler import SequentialBucketSampler
-from nemo_automodel.components.flow_matching.adapters import FlowMatchingContext, Flux3Adapter
-from torch import nn
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from diffu.latents import vae_stats
-from diffu.repo import ModelIndex
-from diffu_train.cache import cache_model
 from diffu_train.dropout import EMPTY_PROMPT_FILE, CaptionDropout, EmptyPrompt, Item, Sample, SampleSource
-from diffu_train.latent_stats import RenormalizedLatents
 from diffu_train.sampler import InterleavedBucketSampler
 
 type DatasetWrap = Callable[[SampleSource], SampleSource]
@@ -104,20 +89,6 @@ def _dropout(cache_dir: str, *, share: float, blank: Callable[[EmptyPrompt, Samp
     return lambda dataset: CaptionDropout(dataset, partial(blank, empty), share=share)
 
 
-def _renormalized(cache_dir: str, latents_of: str | None) -> DatasetWrap:
-    """A dataset's latents normalized as the diffu repo ``latents_of`` normalizes them; as cached without one, or when
-    the repo normalizes as the cache's own model does."""
-    if latents_of is None:
-        return _as_built
-    model = cache_model(Path(cache_dir))
-    cached, wanted = vae_stats(model), vae_stats(Path(latents_of))
-    if cached == wanted:
-        logger.info("latents: as cached, %s normalizes as %s does", latents_of, model)
-        return _as_built
-    logger.info("latents: cached with %s's stats, normalized as %s's", model, latents_of)
-    return lambda dataset: RenormalizedLatents(dataset, cached=cached, wanted=wanted)
-
-
 # Dataclasses, not Pydantic models: NeMo accepts a dataloader _target_ outside its own builders only as a
 # dataclass with a build() (recipes/_typed_config.py, resolve_diffusion_dataloader).
 @dataclass
@@ -145,16 +116,14 @@ class InterleavedTextToImageDataloaderConfig(TextToImageDataloaderConfig):
 
 @dataclass
 class InterleavedImageEditDataloaderConfig(ImageEditDataloaderConfig):
-    """NeMo's image-edit (target + reference image) dataloader config, with the buckets interleaved,
-    ``caption_dropout`` of the pairs trained on the empty prompt (``diffu_train.dropout``; 0 trains every caption) and,
-    given ``latents_of`` (a diffu repo), the latents normalized as that repo's VAE normalizes them.
+    """NeMo's image-edit (target + reference image) dataloader config, with the buckets interleaved and
+    ``caption_dropout`` of the pairs trained on the empty prompt (``diffu_train.dropout``; 0 trains every caption).
 
     Raises:
         ValueError: If ``shuffle`` is off (interleaving is a shuffle), or ``caption_dropout`` is not in [0, 1).
     """
 
     caption_dropout: float = 0.0
-    latents_of: str | None = None
 
     def __post_init__(self) -> None:
         _require_shuffle(self.shuffle)
@@ -163,56 +132,6 @@ class InterleavedImageEditDataloaderConfig(ImageEditDataloaderConfig):
     @override
     def build(self, *, dp_rank: int, dp_world_size: int, batch_size: int) -> DiffusionDataloaderBuild:
         built = super().build(dp_rank=dp_rank, dp_world_size=dp_world_size, batch_size=batch_size)
-        renormalize = _renormalized(self.cache_dir, self.latents_of)
-        dropout = _dropout(self.cache_dir, share=self.caption_dropout, blank=EmptyPrompt.into_image_edit)
-        return interleaved(built, lambda dataset: dropout(renormalize(dataset)))
-
-
-LATENT_CHANNELS = "_latent_channels"  # how a glyph model's inputs carry the latents' width to its forward
-
-
-class GlyphConcatAdapter(Flux3Adapter):
-    """NeMo's FLUX.3 adapter for a glyph model (``diffu-init --glyph``): the pair's one context latents, its glyph map,
-    concatenated clean to the noisy latents on channels, token by token, instead of passed as the reference stream (as
-    diffusers' flux-control recipe trains FLUX.1 Canny); the prediction cut back to the latents' channels, which the
-    loss compares (FLUX.3's transformer predicts as many channels as it takes).
-
-    Raises:
-        ValueError: From ``prepare_inputs``: if a batch has no glyph map, or its map lies on another latent grid than
-            its target's (and, from NeMo's adapter, if it has more than one context latents).
-    """
-
-    @override
-    def prepare_inputs(self, context: FlowMatchingContext) -> dict[str, Any]:
-        glyph_maps = context.batch.get("context_latents")
-        if not glyph_maps:
-            raise ValueError("a glyph model trains on pairs whose one context latents is the glyph map: this has none")
-        grid, glyph_grid = tuple(context.noisy_latents.shape[-2:]), tuple(glyph_maps[0].shape[-2:])
-        if glyph_grid != grid:
-            raise ValueError(f"the glyph map's latents are on a {glyph_grid} grid, the target's on {grid}")
-        inputs = super().prepare_inputs(context)
-        glyphs = inputs.pop("image_cond_hidden_states")
-        del inputs["image_cond_ids"]
-        latents = inputs["hidden_states"]
-        inputs["hidden_states"] = torch.cat([latents, glyphs], dim=-1)
-        inputs[LATENT_CHANNELS] = latents.shape[-1]
-        return inputs
-
-    @override
-    def forward(self, model: nn.Module, inputs: dict[str, Any]) -> torch.Tensor:
-        channels = inputs.pop(LATENT_CHANNELS)
-        return super().forward(model, inputs)[:, :channels]
-
-
-def adapter_for(index: ModelIndex, adapter_type: str) -> GlyphConcatAdapter | None:
-    """The flow-matching adapter a run needs in place of NeMo's own (``adapter_type``) to train the diffu repo indexed
-    by ``index``: :class:`GlyphConcatAdapter` for a glyph model, None (NeMo's own) for any other.
-
-    Raises:
-        ValueError: If a glyph model is to train with another adapter than NeMo's FLUX.3 adapter, which it extends.
-    """
-    if not index.glyph_channels:
-        return None
-    if adapter_type != "flux3":
-        raise ValueError(f"a glyph model trains with flow_matching.adapter_type flux3, not {adapter_type!r}")
-    return GlyphConcatAdapter()
+        return interleaved(
+            built, _dropout(self.cache_dir, share=self.caption_dropout, blank=EmptyPrompt.into_image_edit)
+        )

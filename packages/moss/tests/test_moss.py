@@ -13,7 +13,6 @@ import torch
 from diffusers.modular_pipelines import ModularPipeline, SequentialPipelineBlocks
 from torch import nn
 
-from diffu.repo import ModelIndex
 from diffu_moss.init import write_moss_repo
 from diffu_moss.modular_pipelines.moss import MossModularPipeline
 from diffu_moss.modular_pipelines.moss.encoders import MossTextEncoderStep
@@ -154,13 +153,12 @@ def test_moss_text_encoder_refuses_a_prompt_one_token_past_4096(text_encoder_pip
         text_encoder_pipe(prompt=prompt, output="prompt_embeds")
 
 
-def test_moss_repo_draws_with_the_transformer_folder_it_names(tiny_moss: Path, tmp_path: Path) -> None:
-    base = Path(ModelIndex.read(tiny_moss).source("text_encoder").repo)
+def test_moss_repo_draws_with_the_transformer_folder_it_names(tiny_moss_base: Path, tmp_path: Path) -> None:
     torch.manual_seed(1)
-    trained = MossTransformer.from_config(MossTransformer.load_config(base / "transformer"))
+    trained = MossTransformer.from_config(MossTransformer.load_config(tiny_moss_base / "transformer"))
     trained.save_pretrained(tmp_path / "export")
 
-    write_moss_repo(tmp_path / "model", base=base, transformer=tmp_path / "export")
+    write_moss_repo(tmp_path / "model", base=tiny_moss_base, transformer=tmp_path / "export")
 
     pipe = MossModularPipeline.from_pretrained(str(tmp_path / "model"))
     pipe.load_components(names=["transformer"])

@@ -1,19 +1,18 @@
 """The page pipeline: our blocks around a model's own Modular Diffusers blocks.
 
-A model repo (FLUX.3 Klein for the reference runs; diffu, FLUX.3's architecture with our own weights; MOSS-Image,
-``diffu-moss-init``'s) names its blocks in ``modular_model_index.json``; :data:`FAMILIES` maps those to the model's
-blocks and pipeline class, so a model is chosen by its directory alone. Two sets of blocks are built:
+A model repo (MOSS-Image, ``diffu-moss-init``'s; FLUX.3 Klein for the reference runs) names its blocks in
+``modular_model_index.json``; :data:`FAMILIES` maps those to the model's blocks and pipeline class, so a model is
+chosen by its directory alone. Two sets of blocks are built:
 
 - :class:`PagePlanBlocks` (no model): ``LoadLayoutStep`` -> ``MarkFromScanStep`` -> ``OpeningPageStep`` ->
   ``RefillStep`` -> ``PlanCropsStep``. A template page (or one page of a two-page opening), a text, a style and
   optionally a reference crop and a print/hand classifier (to mark the template from its scan) in; the crops to draw
   out, captioned for the reference if there is one.
-- :func:`crop_blocks`: ``CropPromptStep`` -> ``GlyphMapStep`` -> ``ReferenceGridStep`` -> the model's text encoder,
-  VAE encoders, denoise and decode. A crop plan in; its image out. The model's auto blocks pick text-to-image or
-  reference-conditioned denoising from the inputs (``image``); a line repair sits in both
-  (:mod:`diffu_page.blocks.repair`). A glyph model (diffu's ``glyph_channels``) draws from its plan's glyph map;
-  MOSS-Image compiles the plan's caption and lines into its own Layout prompt first, and takes a reference only when
-  its DiT was trained to (``takes_reference`` in its model index: ``diffu_moss.train``).
+- :func:`crop_blocks`: ``CropPromptStep`` -> ``ReferenceGridStep`` -> the model's text encoder, VAE encoders, denoise
+  and decode. A crop plan in; its image out. The model's auto blocks pick text-to-image or reference-conditioned
+  denoising from the inputs (``image``); a line repair sits in both (:mod:`diffu_page.blocks.repair`). MOSS-Image
+  compiles the plan's caption and lines into its own Layout prompt first, and takes a reference only when its DiT was
+  trained to (``takes_reference`` in its model index: ``diffu_moss.train``).
 
 A page is planned with :class:`PagePlanBlocks`; each of its crops is drawn on its own with the crop pipeline, judged
 line by line (:mod:`diffu_page.judge`) and labelled (:func:`diffu_page.blocks.ground_truth.crop_labels`). Draw, judge
@@ -35,7 +34,6 @@ from diffusers.modular_pipelines import ModularPipeline, OutputParam, PipelineSt
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 
-from diffu.modular_pipelines.diffu import DiffuAutoBlocks, DiffuModularPipeline
 from diffu.modular_pipelines.loading import COMPONENT_DTYPES, require_loaded
 from diffu.repo import ModelIndex
 from diffu_moss.latents import encode_latents
@@ -44,7 +42,6 @@ from diffu_moss.modular_pipelines.moss.denoise import GUIDANCE_SCALE as MOSS_GUI
 from diffu_page.blocks import (
     CropPromptStep,
     DrawnCrop,
-    GlyphMapStep,
     LoadLayoutStep,
     MarkFromScanStep,
     OpeningPageStep,
@@ -84,7 +81,6 @@ class ModelFamily(BaseModel):
 FAMILIES: dict[str, ModelFamily] = {
     # FLUX.3's prompt upsampler rewrites a prompt as prose: it would rewrite the quoted lines of a layout caption
     "Flux3AutoBlocks": ModelFamily(blocks=Flux3AutoBlocks, pipeline=Flux3ModularPipeline, unused=("prompt_upsampler",)),
-    "DiffuAutoBlocks": ModelFamily(blocks=DiffuAutoBlocks, pipeline=DiffuModularPipeline),
     # a MOSS LoRA is merged into the DiT a MOSS repo names (diffu-moss-init --transformer)
     "MossAutoBlocks": ModelFamily(
         blocks=MossAutoBlocks, pipeline=MossModularPipeline, guidance_scale=MOSS_GUIDANCE_SCALE, takes_loras=False
@@ -124,10 +120,8 @@ class CropBlocks(SequentialPipelineBlocks):
 
 
 def crop_blocks(family: ModelFamily) -> CropBlocks:
-    """Our crop steps before ``family``'s own blocks (the crop prompt, a glyph model's glyph map and the reference
-    grid), and a line repair in each of its denoise branches (:mod:`diffu_page.blocks.repair`), idle unless a repair
-    mask is given. The glyph map is drawn for a glyph model only (``glyph_channels`` in its model index), so every
-    other model, FLUX.3's among them, draws as without it.
+    """Our crop steps before ``family``'s own blocks (the crop prompt and the reference grid), and a line repair in each
+    of its denoise branches (:mod:`diffu_page.blocks.repair`), idle unless a repair mask is given.
 
     Raises:
         TypeError: If a denoise branch of ``family`` has no scheduler step (``after_denoiser``) in its denoise loop.
@@ -147,7 +141,6 @@ def crop_blocks(family: ModelFamily) -> CropBlocks:
     return CropBlocks.from_blocks_dict(
         {
             "crop_prompt": CropPromptStep(),
-            "glyph_map": GlyphMapStep(),
             "reference_grid": ReferenceGridStep(),
             **model,
         }
@@ -181,7 +174,7 @@ class DrawSettings(BaseModel):
     Attributes:
         steps: Denoising steps per crop.
         guidance_scale: Classifier-free guidance scale; exactly 1 samples without guidance (one pass a step). ``None``
-            is the model's own (4 for FLUX.3 and diffu; 3 for MOSS-Image, its demo's).
+            is the model's own (4 for FLUX.3; 3 for MOSS-Image, its demo's).
         reference_guidance_scale: How hard guidance also pushes toward the reference image (:mod:`diffu_page.guidance`,
             a third pass per step); 1 guides the caption alone.
         guidance_stop: The fraction of the steps after which guidance stops: one pass a step after it; 1 guides every
@@ -192,7 +185,7 @@ class DrawSettings(BaseModel):
             choice (FLUX.3: every 4th of Qwen3-VL's).
         device: Where the components run.
         sampling_shift: The timestep shift the scheduler samples at; ``None`` is the model's own (FLUX.3's 6.93, which
-            its LoRAs trained at; a diffu export's, the shift it trained at; MOSS-Image's 5, its demo's).
+            its LoRAs trained at; MOSS-Image's 5, its demo's).
         lora_scale: How strongly every LoRA applies: 1 at its trained strength, 0 not at all (diffusers'
             ``set_adapters`` weights, which fusing keeps).
         fuse_loras: Fuse the LoRAs into the transformer's weights at load and drop their adapter layers: no LoRA

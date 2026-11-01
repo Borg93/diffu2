@@ -1,16 +1,14 @@
 [project]
 name = "diffu-train"
 version = "0.1.0"
-description = "NeMo AutoModel glue: the interleaved-bucket dataloaders and the pair and diffu caches. Its NeMo modules run only in NeMo AutoModel's environment."
+description = "FLUX.3 Klein LoRA training with NeMo AutoModel: the interleaved-bucket dataloaders, caption dropout and the style-pair cache. Its NeMo modules run only in NeMo AutoModel's environment."
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 license = "Apache-2.0"
 authors = [{ name = "Gabriel Borg" }]
 # NeMo AutoModel itself is not declared: it is installed from its own checkout (jobs/setup_nemo_env.sh).
 dependencies = [
-    "diffu",
     "diffu-page",
-    "pillow>=11",
     "pydantic>=2",
     "torch>=2.10",
     "typer>=0.20",
