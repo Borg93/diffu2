@@ -7,7 +7,7 @@ __pycache__/
 .ruff_cache/
 .pytest_cache/
 
-# data and run outputs: big, rebuilt by the page_synth.data builders and the jobs
+# data and run outputs: big, rebuilt by the diffu_page.data builders and the jobs
 data_flux3/
 data_iam/
 data_raw/

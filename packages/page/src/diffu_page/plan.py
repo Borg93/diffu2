@@ -1,13 +1,14 @@
-"""Plan a page layout as FLUX.3 crops: the windows, prompts and line boxes the LoRAs were trained on.
+"""Plan a page layout as crops: the windows, prompts and line boxes the models were trained on.
 
-A :class:`diffu_page.layout.Layout` (a real PAGE or ALTO page, refilled with new text) becomes the v2 crop builder's
-lines, so the crops come out of the same windowing (whole lines, about 1 megapixel at a 64 px line pitch, NeMo bucket
-sizes) and the same caption grammar as the training crops. A table is planned as one region, so its windows hold whole
-rows across it, and the page's ruled lines are kept in the windows they cross.
-The style is a ``PageStyle`` (the archive and its years; the scan, paper and ink), as in every v2 caption. A page
-drawn from a :class:`Reference` (style by example) is captioned as the reference pairs were (v3 on): its style's
-words give way to the reference, in the caption form the LoRA in use was trained on. A page can also be planned whole
-(:func:`plan_whole_page`): one crop of every line at a pixel budget, captioned as a window is. CPU only.
+A :class:`diffu_page.layout.Layout` (a real PAGE or ALTO page, refilled with new text) becomes the training-crop
+builder's lines, so the crops come out of the same windowing (whole lines, about 1 megapixel at a 64 px line pitch,
+NeMo bucket sizes) and the same caption grammar as the training crops. A table is planned as one region, so its windows
+hold whole rows across it, and the page's ruled lines are kept in the windows they cross.
+The style is a ``PageStyle`` (the archive and its years; the scan, paper and ink), as in every training caption. A page
+drawn from a :class:`Reference` (style by example) is captioned as the reference pairs were: its style's words give way
+to the reference, in the caption form the model in use was trained on. A page can also be planned whole
+(:func:`plan_whole_page`): one crop of every line at a pixel budget, captioned as a window is; MOSS-Image draws and
+trains on whole pages so. CPU only.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ from diffu_page.layout import Layout
 
 
 class Reference(BaseModel):
-    """A crop whose hand, ink and paper a page is drawn in (style by example), and the caption form the LoRA in use
+    """A crop whose hand, ink and paper a page is drawn in (style by example), and the caption form the model in use
     was trained on. A described caption states the reference's hand as measured inside its line boxes, so it needs
     them; :meth:`of_crop` reads them for a crop of ``diffu_page.data.build_crops``."""
 
@@ -102,7 +103,7 @@ def _plan(crop: Crop, caption: Caption, text: str, block_rank: dict[str, int]) -
 
 
 def _reference_captions(written: list[Caption], style: PageStyle, reference: Reference) -> list[str]:
-    """The v2 captions ``written`` in ``style``, as a crop drawn from ``reference`` is captioned (the reference
+    """The captions ``written`` in ``style``, as a crop drawn from ``reference`` is captioned (the reference
     measured once).
 
     Raises:
@@ -123,8 +124,8 @@ def _reference_captions(written: list[Caption], style: PageStyle, reference: Ref
 
 
 def plan_page(layout: Layout, style: PageStyle, *, reference: Reference | None = None) -> list[CropPlan]:
-    """The crops the v2 builder would cut from this page, each with its caption in ``style``, or drawn from a
-    ``reference``, in the form its LoRA was trained on."""
+    """The crops the training-crop builder would cut from this page, each with its caption in ``style``, or drawn from
+    a ``reference``, in the form the model was trained on."""
     crops = crops_for_page(
         regions_of(layout),
         (layout.width, layout.height),

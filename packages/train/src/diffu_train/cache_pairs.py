@@ -1,5 +1,5 @@
-"""Cache the v3 reference pairs (``diffu_page.data.style_pairs``' manifest) with NeMo AutoModel's FLUX.3 image-edit
-encoder.
+"""Cache the style pairs (``diffu_page.data.style_pairs``' manifest) with NeMo AutoModel's FLUX.3 image-edit encoder,
+for the style-reference LoRA.
 
 NeMo's ``image-edit`` preprocessing CLI reads a Hugging Face dataset and materializes it into a manifest; ours is
 already one, so this hands it straight to the encoder that CLI calls (``Flux3ImageEditCacheEncoder``). Targets keep
@@ -9,7 +9,8 @@ dropout (``diffu_train.dropout``).
 Runs in the NeMo AutoModel environment, on the GPU:
 
     cd ~/Desktop/repos/Automodel && python -m diffu_train.cache_pairs \
-        --manifest ~/Desktop/repos/diffu2/data_flux3/style_pairs_v3/train.jsonl --out ~/Desktop/repos/diffu2/data_flux3/cache_style_v3
+        --manifest ~/Desktop/repos/diffu2/data_flux3/style_pairs_v3d/train.jsonl \
+        --out ~/Desktop/repos/diffu2/data_flux3/cache_style_v3d
 """
 
 from __future__ import annotations
@@ -60,7 +61,7 @@ def main(
     limit: Annotated[int | None, typer.Option(min=1, help="cache only the first N pairs (a smoke test)")] = None,
     device: Annotated[str, typer.Option(help="where the text encoder runs")] = "cuda",
 ) -> None:
-    """Cache the v3 reference pairs with NeMo AutoModel's FLUX.3 image-edit encoder."""
+    """Cache the style pairs with NeMo AutoModel's FLUX.3 image-edit encoder."""
     model = required_model(model)
     rows = manifest if limit is None else write_first_rows(manifest, limit)
     out.mkdir(parents=True, exist_ok=True)

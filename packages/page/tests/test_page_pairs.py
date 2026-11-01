@@ -50,7 +50,6 @@ EARLY, LATE = "Arjeplogs tingslag (1690-1700)", "Arjeplogs tingslag (1701-1710)"
 DEPUTERADE, DEPUTERADE_VOLUME = "GT-SSA_deputerade_20260218", "SSA_Deputerade"
 PIXELS = 128 * 128  # small pages: each page's sides on the 16-px grid, its scan cut and prompted as a full one
 PAPER, INK = (222, 205, 170), (70, 50, 30)
-LONG_PAGE_LINES = 150  # lines of a page whose prompt passes the text encoder's 4,096 tokens
 
 
 def _line(line_id: str, box: tuple[int, int, int, int], text: str) -> str:

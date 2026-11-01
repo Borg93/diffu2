@@ -1,16 +1,15 @@
 #!/bin/bash
-# v3d: v3c's same-hand reference pairs, each caption describing the reference's measured hand, ink and paper in
-# words (diffu_page.data.style_pairs --caption described), from the crops rebuilt with today's archive names
-# (data_flux3/layout_crops_v2b); caption dropout 0.1 on the real empty prompt (diffu_train.dropout); a constant
-# learning rate; 3,000 steps; val_loss every 100 steps. Why: FLUX.3's guidance follows the caption, and v3 and v3b drew
-# black, bold ink whatever the reference's (diffu_page.cli.hands on their held-out runs). Everything is in
+# FLUX.3 Klein's style-reference LoRA (v3d): same-hand reference pairs (a crop of the target's own or facing page),
+# each caption describing the reference's measured hand, ink and paper in words (diffu_page.data.style_pairs), from
+# the crops of data_flux3/layout_crops_v2b; caption dropout 0.1 on the real empty prompt (diffu_train.dropout); a
+# constant learning rate; 3,000 steps; val_loss every 100 steps. Everything is in
 # packages/train/configs/flux3/flux3_style_ref_lora_v3d.yaml. One GPU job at a time through jobs/spark_guard.sh:
 #   1. build the pairs (CPU) if they are not built                      data_flux3/style_pairs_v3d
 #   2. cache the pairs, the validation pairs and the empty prompt        data_flux3/cache_style_v3d(_val)
 #   3. a 5-step smoke run that also scores val_loss once
 #   4. train the LoRA                                                   runs/flux3_style_ref_lora_v3d
-#   5. the final and middle checkpoints on the by-example set, the final on the held-out crops, each scored for CER
-#      and for how closely the drawn hands follow their references (results.json)  runs/flux3_style_v3d/eval_*
+#   5. the final and middle checkpoints on the held-out crops, each scored for CER and for how closely the drawn
+#      hands follow their references (results.json)                     runs/flux3_style_v3d/eval_*
 # Run detached:
 #
 #   mkdir -p runs/flux3_style_v3d && setsid nohup jobs/flux3/run_v3d.sh >> runs/flux3_style_v3d/run.log 2>&1 < /dev/null &
@@ -68,11 +67,11 @@ cache() {  # cache <manifest> <cache dir> <name>: the encoder writes the merged 
 }
 
 step "1/5 build the pairs"
-if [ -f "$PAIRS/stale.json" ]; then  # written last
+if [ -f "$PAIRS/build.json" ]; then  # written last
     echo "already built: $PAIRS"
 else
-    "$REPO/.venv/bin/python" -m diffu_page.data.style_pairs --reference page --caption described --val-pairs 64 \
-        --crops "$CROPS" --out "$PAIRS" > "$OUT/pairs.log" 2>&1
+    "$REPO/.venv/bin/python" -m diffu_page.data.style_pairs --val-pairs 64 --crops "$CROPS" --out "$PAIRS" \
+        > "$OUT/pairs.log" 2>&1
 fi
 tail -2 "$OUT/pairs.log" 2>/dev/null || true
 
@@ -94,11 +93,8 @@ step "5/5 evaluate the final and middle checkpoints"
 mapfile -t ckpts < <(ls -d "$CKPT"/epoch_*_step_* | sort -V)
 middle=${ckpts[$(( ${#ckpts[@]} / 2 ))]}
 final=${ckpts[-1]}
-evaluate "by_example_step_${final##*_}" "$PAIRS/by_example" "$final/model"
-"$REPO/.venv/bin/python" -m diffu_page.cli.sheets \
-    --steer "$PAIRS/by_example" --run "$OUT/eval_by_example_step_${final##*_}" || echo "contact sheets failed"
 evaluate "val_step_${final##*_}" "$PAIRS/val_eval" "$final/model"
-evaluate "by_example_step_${middle##*_}" "$PAIRS/by_example" "$middle/model"
+evaluate "val_step_${middle##*_}" "$PAIRS/val_eval" "$middle/model"
 
 step "done"
 touch "$OUT/DONE"

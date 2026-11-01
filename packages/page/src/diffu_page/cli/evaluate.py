@@ -1,16 +1,16 @@
-"""Evaluate a model (FLUX.3 + LoRAs, or diffu) on held-out crops: draw each from its stored caption with the crop
-pipeline (:func:`diffu_page.pipeline.crop_blocks`) and read every line back, beside the real crop's read-back.
+"""Evaluate a model (MOSS-Image, or FLUX.3 and its LoRAs) on held-out crops: draw each from its stored caption with the
+crop pipeline (:func:`diffu_page.pipeline.crop_blocks`), crop ``k`` from noise seed ``--seed + k``, and read every line
+back, beside the real crop's read-back.
 
-A crop that names a ``reference`` image is drawn conditioned on it (v3, style by example); with
-``--without-reference`` it is drawn from its caption alone, its reference still shown and measured beside it (a
-reference-trained MOSS-Image then drops the caption's citation): the same crops without the sample, to set beside a run
-with it. A crop's optional ``seed`` overrides ``--seed + index`` (the steering test draws every variant of a template
-from the same noise). Every drawn
-hand is measured beside the real crop's (``diffu_page.captions.hand``) and, when the crop lists its reference's line
-boxes (``reference_lines``), beside the reference's: the summary's medians show whether the drawings take their hand
-from the reference at all (``HandFidelity``). Writes contact sheets (``[reference,] real, generated``),
-``generated/NNN.png`` and ``results.json``; a crop that fails is recorded there and the rest still run.
+A crop that names a ``reference`` image is drawn conditioned on it (style by example); with ``--without-reference`` it
+is drawn from its caption alone, its reference still shown and measured beside it (a reference-trained MOSS-Image then
+drops the caption's citation): the same crops without the sample, to set beside a run with it. Every drawn hand is
+measured beside the real crop's (``diffu_page.captions.hand``) and, when the crop lists its reference's line boxes
+(``reference_lines``), beside the reference's: the summary's medians show whether the drawings take their hand from the
+reference at all (``HandFidelity``). Writes contact sheets (``[reference,] real, generated``), ``generated/NNN.png`` and
+``results.json``; a crop that fails is recorded there and the rest still run.
 
+    diffu-evaluate --crops data_flux3/style_pairs_v3d/val_eval --model runs/moss/ref_full --out <dir> -n 8
     diffu-evaluate --crops data_flux3/layout_crops_v2/val_eval --lora v2=<ckpt>/model --out <dir> -n 24
 """
 
@@ -75,7 +75,6 @@ class CropEvaluation(BaseModel):
 
     index: int
     file: str
-    variant: str | None = None
     gen_cer: float
     real_cer: float
     lines: list[LineResult]
@@ -146,7 +145,6 @@ def evaluate_crop(
     return CropEvaluation(
         index=index,
         file=crop.file_name,
-        variant=crop.variant,
         gen_cer=fmean(drawn.line_cers),
         real_cer=fmean(real_cers),
         lines=[LineResult(text=ln.text, gen=g, gen_cer=gc, real=r, real_cer=rc) for ln, g, gc, r, rc in lines],
@@ -165,19 +163,18 @@ def evaluate_crops(
     judge: Judge,
     draw_references: bool = True,
 ) -> tuple[list[CropEvaluation], dict[int, str]]:
-    """Every crop evaluated (:func:`evaluate_crop`, seeded by its own seed or ``seed`` + its index, drawn from its
-    reference unless ``draw_references`` is false); a crop that fails is recorded by its index with its error and the
-    rest still run, unless the device failed: then every crop after it is recorded as not run
+    """Every crop evaluated (:func:`evaluate_crop`, seeded by ``seed`` + its index, drawn from its reference unless
+    ``draw_references`` is false); a crop that fails is recorded by its index with its error and the rest still run,
+    unless the device failed: then every crop after it is recorded as not run
     (:func:`diffu_page.local_run.run_each`)."""
 
     def evaluate_one(indexed: tuple[int, EvalCrop]) -> CropEvaluation:
         k, crop = indexed
-        crop_seed = crop.seed if crop.seed is not None else seed + k
         sample = evaluate_crop(
             pipe,
             crop,
             index=k,
-            seed=crop_seed,
+            seed=seed + k,
             crops_dir=crops,
             out=out,
             settings=settings,
@@ -193,7 +190,7 @@ def evaluate_crops(
 @app.command()
 def evaluate(
     crops: Annotated[
-        Path, typer.Option(help="a split dir of diffu_page.data.build_crops (or steer_set / style_pairs)")
+        Path, typer.Option(help="an eval set: a val_eval dir of build_crops (pick_eval), style_pairs or page_pairs")
     ],
     out: Annotated[Path, typer.Option(help="where the sheets, generated/ and results.json go")],
     model: Model = settings.flux3_model,

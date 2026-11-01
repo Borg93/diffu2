@@ -1,5 +1,5 @@
-"""Restyling a crop's caption: another archive's style (the steering test), or a reference image's, named or described
-(v3, v3b, v3d)."""
+"""A crop's stored caption template rendered in other words: another style's (the same caption the crop gets in that
+style), or a reference image's, plain, named or described."""
 
 from __future__ import annotations
 
@@ -11,20 +11,20 @@ import pytest
 
 from diffu_page.captions.hand import HandLook, ReferenceLook
 from diffu_page.captions.look import ScanLook
-from diffu_page.captions.prompt import PageStyle, caption_for
+from diffu_page.captions.prompt import PageStyle, caption_for, caption_text, phrases_for
 from diffu_page.captions.provenance import Provenance
-from diffu_page.captions.restyle import (
-    CaptionParts,
-    described_edit_caption,
-    edit_caption,
-    named_edit_caption,
-    restyle,
-)
+from diffu_page.captions.records import CropRecord
+from diffu_page.captions.restyle import CaptionParts, described_edit_caption, edit_caption, named_edit_caption
 from diffu_page.crops.geometry import Crop, CropSettings, crops_for_page, regions_of
 from diffu_page.layout import load_xml_layout, refill
 
 if TYPE_CHECKING:
     from conftest import RecordMaker
+
+OTHER_STYLE = PageStyle(
+    provenance=Provenance(title="the court records of Jämtlands domsaga", years="1650"),
+    look=ScanLook(greyscale=True, paper="light grey", ink="black"),
+)
 
 CITED_LINES = (  # how the paragraph cites body_and_notes_crop's lines, after their ink
     ", including two marginal note lines; the main text runs from top to bottom: <Sv_Text_1> <Sv_Text_2> <Sv_Text_3> "
@@ -38,33 +38,31 @@ def _paragraph_and_rows(caption: str) -> tuple[str, list[dict[str, Any]]]:
     return caption[:split], json.loads(caption[split + 1 :])
 
 
-def test_restyle_writes_the_caption_the_crop_gets_in_the_target_style(
+def _in_style(record: CropRecord, style: PageStyle) -> str:
+    """The record's stored caption template rendered in ``style``'s phrases."""
+    parts = CaptionParts.of(record)
+    return caption_text(*parts.template.render(phrases_for(style, printed=parts.printed)))
+
+
+def test_a_records_template_renders_the_caption_the_crop_gets_in_another_style(
     body_and_notes_crop: Crop, make_record: RecordMaker
 ) -> None:
     record = make_record(body_and_notes_crop)
-    target = PageStyle(
-        provenance=Provenance(title="the court records of Jämtlands domsaga", years="1650"),
-        look=ScanLook(greyscale=True, paper="light grey", ink="black"),
-    )
 
-    restyled = restyle(CaptionParts.of(record), target)
+    rendered = _in_style(record, OTHER_STYLE)
 
-    assert restyled == caption_for(body_and_notes_crop, target).text
+    assert rendered == caption_for(body_and_notes_crop, OTHER_STYLE).text
 
 
-def test_restyle_quotes_a_line_with_a_dollar_sign_as_written(
+def test_a_records_template_quotes_a_line_with_a_dollar_sign_as_written(
     body_and_notes_page: Path, make_record: RecordMaker
 ) -> None:
     layout = refill(load_xml_layout(body_and_notes_page), "kostade $ 12 och $$ 3 " * 40)
     record = make_record(crops_for_page(regions_of(layout), (layout.width, layout.height), CropSettings())[0])
-    target = PageStyle(
-        provenance=Provenance(title="the court records of Jämtlands domsaga", years="1650"),
-        look=ScanLook(greyscale=True, paper="light grey", ink="black"),
-    )
 
-    restyled = restyle(CaptionParts.of(record), target)
+    rendered = _in_style(record, OTHER_STYLE)
 
-    rows = [row for row in _paragraph_and_rows(restyled)[1] if row["id"].startswith("Sv_Text_")]
+    rows = [row for row in _paragraph_and_rows(rendered)[1] if row["id"].startswith("Sv_Text_")]
     assert [row["desc"].split('reading "', 1)[1].rsplit('", ', 1)[0] for row in rows] == [
         line.text for line in record.lines
     ]
@@ -78,18 +76,14 @@ def certificate_crop(certificate_page: Path) -> Crop:
     return crops_for_page(regions_of(layout), (layout.width, layout.height), CropSettings(), rules=rules)[0]
 
 
-def test_restyle_writes_the_caption_a_form_crop_gets_in_the_target_style(
+def test_a_form_records_template_renders_the_caption_the_crop_gets_in_another_style(
     certificate_crop: Crop, make_record: RecordMaker
 ) -> None:
     record = make_record(certificate_crop)
-    target = PageStyle(
-        provenance=Provenance(title="the court records of Jämtlands domsaga", years="1650"),
-        look=ScanLook(greyscale=True, paper="light grey", ink="black"),
-    )
 
-    restyled = restyle(CaptionParts.of(record), target)
+    rendered = _in_style(record, OTHER_STYLE)
 
-    assert restyled == caption_for(certificate_crop, target).text
+    assert rendered == caption_for(certificate_crop, OTHER_STYLE).text
 
 
 def test_edit_caption_takes_only_the_paper_from_the_reference_and_names_no_style(

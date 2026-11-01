@@ -183,7 +183,7 @@ class PlanCropsStep(ModularPipelineBlocks):
             InputParam(
                 "reference",
                 type_hint=Reference,
-                description="A crop to draw the page in the hand of: the captions then take the form its LoRA was "
+                description="A crop to draw the page in the hand of: the captions then take the form the model was "
                 "trained on (diffu_page.plan.Reference).",
             ),
             InputParam(

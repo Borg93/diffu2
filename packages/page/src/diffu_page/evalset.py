@@ -1,6 +1,5 @@
 """The eval sets diffu-evaluate draws: one row model that every builder writes (build_crops' held-out splits,
-steer_set, style_pairs, probe_set) and every reader reads (evaluate, the hands CLI), and the JSON-lines files they
-live in."""
+style_pairs', page_pairs') and evaluate reads, and the JSON-lines files they live in."""
 
 from __future__ import annotations
 
@@ -18,18 +17,13 @@ from diffu_page.plan import CropPlan
 
 
 class CropRow(BaseModel):
-    """What every row of an eval set has: the real crop to compare with, its caption and line boxes, and optionally a
-    noise seed and how a steering sheet labels it."""
+    """What every row of an eval set has: the real crop to compare with, its caption and line boxes."""
 
     file_name: str  # the real crop, relative to the set's dir
     caption: str
     width: int
     height: int
     lines: list[LineRecord]
-    seed: int | None = None  # in place of evaluate's --seed + index (a steering template draws every variant alike)
-    template: int | None = None  # the steering template the row was made from
-    variant: str | None = None
-    example: str | None = None  # a real crop diffu_page.cli.sheets shows beside the drawing
 
     def plan(self) -> CropPlan:
         """The crop as a plan: its stored caption and boxes, lines read top to bottom as numbered."""
@@ -66,7 +60,7 @@ class EvalCrop(CropRow):
 
 
 class ReferencedCrop(CropRow):
-    """A crop of a set drawn from references (style_pairs' and probe_set's): its reference and the reference's line
+    """A crop of a set drawn from references (style_pairs' and page_pairs'): its reference and the reference's line
     boxes required, so such a set without them fails when it is read. Its rows read as ``EvalCrop`` too."""
 
     reference: str

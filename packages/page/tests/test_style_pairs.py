@@ -1,5 +1,5 @@
-"""The v3 reference pairs: the manifest and the eval rows name each pair's target and reference, a same-hand
-reference shares no line with its target, and a build never writes into a dir that holds an earlier one."""
+"""The style pairs: the manifest names each pair's target and reference and captions it describing the reference, a
+same-hand reference shares no line with its target, and a build never writes into a dir that holds an earlier one."""
 
 from __future__ import annotations
 
@@ -9,61 +9,22 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from PIL import Image
 from typer.testing import CliRunner
 
+from diffu_page.captions.hand import HandLook, ReferenceLook
+from diffu_page.captions.look import ScanLook
 from diffu_page.captions.prompt import LineRecord
-from diffu_page.captions.restyle import CaptionParts, edit_caption
+from diffu_page.captions.restyle import CaptionParts, described_edit_caption
 from diffu_page.crops.geometry import Crop
-from diffu_page.data.style_pairs import (
-    ExamplePair,
-    Pair,
-    Scan,
-    app,
-    by_example_picks,
-    by_volume,
-    eval_set,
-    pick_pairs,
-    pick_reference,
-    pick_same_hand,
-    training_pairs,
-)
+from diffu_page.data.style_pairs import Pair, Scan, app, by_volume, pick_pairs, pick_same_hand, training_pairs
 
 if TYPE_CHECKING:
     from conftest import RecordMaker
 
-
-def _scans(make_record: RecordMaker, crop: Crop, directory: Path) -> list[Scan]:
-    """Six crops on three pages of one volume, as build_crops writes them."""
-    directory.mkdir()
-    scans: list[Scan] = []
-    for k in range(6):
-        record = make_record(crop, f"{k}.jpg", page=f"{k // 2:04d}.xml")
-        Image.new("RGB", crop.size, "white").save(directory / record.file_name)
-        scans.append(Scan(record=record, path=directory / record.file_name))
-    return scans
-
-
-def _edit_caption(pair: Pair) -> str:
-    return edit_caption(CaptionParts.of(pair.target.record))
-
-
-def test_training_pairs_name_each_pairs_target_and_reference(
-    body_and_notes_crop: Crop, make_record: RecordMaker, tmp_path: Path
-) -> None:
-    scans = _scans(make_record, body_and_notes_crop, tmp_path / "crops")
-    pairs = pick_pairs(scans, by_volume(scans), rng=random.Random(0), pick=pick_reference)
-
-    built = training_pairs(pairs, _edit_caption)
-
-    assert [(row.media[0].file_name, row.media[1].file_name, row.metadata.reference) for row in built.rows] == [
-        (
-            f"targets/{pair.target.record.file_name}",
-            f"refs/{pair.reference.record.file_name}",
-            pair.reference.record.file_name,
-        )
-        for pair in pairs
-    ]
+LOOK = ReferenceLook(  # every reference's look as measured
+    scan=ScanLook(greyscale=False, paper="cream", ink="dark brown"),
+    hand=HandLook(slant=33.0, stroke=0.05, letters=0.3, density=0.2, paper="#D8C8A8", ink="#4A3828"),
+)
 
 
 @pytest.fixture
@@ -78,6 +39,33 @@ def make_scan(body_and_notes_crop: Crop, make_record: RecordMaker) -> Callable[[
         return Scan(record=record.model_copy(update={"lines": lines}), path=Path(record.file_name))
 
     return make
+
+
+def _pairs(make_scan: Callable[[int, list[str]], Scan]) -> list[Pair]:
+    """Six crops on three facing pages of one volume, each crop's lines its own, paired with same-hand references."""
+    scans = [make_scan(10 + k // 2, [f"line {k}"]) for k in range(6)]
+    return pick_pairs(scans, by_volume(scans), rng=random.Random(0))
+
+
+def test_training_pairs_name_each_pairs_target_and_reference_and_describe_the_reference(
+    make_scan: Callable[[int, list[str]], Scan],
+) -> None:
+    pairs = _pairs(make_scan)
+
+    built = training_pairs(pairs, {pair.reference.path: LOOK for pair in pairs})
+
+    assert len(pairs) == 6
+    assert [(row.media[0].file_name, row.media[1].file_name, row.metadata.reference) for row in built.rows] == [
+        (
+            f"targets/{pair.target.record.file_name}",
+            f"refs/{pair.reference.record.file_name}",
+            pair.reference.record.file_name,
+        )
+        for pair in pairs
+    ]
+    assert [row.prompt for row in built.rows] == [
+        described_edit_caption(CaptionParts.of(pair.target.record), LOOK) for pair in pairs
+    ]
 
 
 def test_same_hand_reference_is_a_crop_of_the_page_sharing_no_line(make_scan: Callable[[int, list[str]], Scan]) -> None:
@@ -112,12 +100,10 @@ def test_same_hand_reference_falls_back_to_a_facing_page_crop_sharing_no_line(
 
 
 def test_a_training_sets_spread_keeps_only_the_files_its_pairs_name(
-    body_and_notes_crop: Crop, make_record: RecordMaker, tmp_path: Path
+    make_scan: Callable[[int, list[str]], Scan],
 ) -> None:
-    scans = _scans(make_record, body_and_notes_crop, tmp_path / "crops")
-    built = training_pairs(
-        pick_pairs(scans, by_volume(scans), rng=random.Random(0), pick=pick_reference), _edit_caption
-    )
+    pairs = _pairs(make_scan)
+    built = training_pairs(pairs, {pair.reference.path: LOOK for pair in pairs})
 
     spread = built.spread(2)
 
@@ -125,23 +111,6 @@ def test_a_training_sets_spread_keeps_only_the_files_its_pairs_name(
     assert {p.destination.as_posix() for p in spread.placements} == {
         media.file_name for row in spread.rows for media in row.media
     }
-
-
-def test_by_example_rows_name_their_reference_and_template(
-    body_and_notes_crop: Crop, make_record: RecordMaker, tmp_path: Path
-) -> None:
-    scans = _scans(make_record, body_and_notes_crop, tmp_path / "crops")
-    picked = [
-        ExamplePair(pair=Pair(target=scans[3], reference=scans[0]), template=3, label="a"),
-        ExamplePair(pair=Pair(target=scans[1], reference=scans[4]), template=1, label="b"),
-    ]
-
-    built = eval_set(by_example_picks(picked), _edit_caption)
-
-    assert [(row.file_name, row.reference, row.template) for row in built.rows] == [
-        ("3.jpg", "refs/0.jpg", 3),
-        ("1.jpg", "refs/4.jpg", 1),
-    ]
 
 
 def test_style_pairs_refuses_to_build_into_a_dir_that_holds_an_earlier_build(tmp_path: Path) -> None:

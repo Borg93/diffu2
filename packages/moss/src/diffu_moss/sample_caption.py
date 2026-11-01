@@ -2,10 +2,11 @@
 
 The page pipeline captions a crop drawn from a reference image as FLUX.3 image-edit records are captioned
 (``diffu_page.captions.restyle``): the paragraph takes the hand, ink and paper "of <ref_image_0>" and every handwritten
-line row is written "in the reference's hand". In the plain form (v3, v3c) that is all the caption says of the look; in
-the described form (v3d) it also names the reference's measured hand, ink and paper: the opening's clause after the
-citation (slant, pen, letters and spacing, the ink and paper by name and hex), the scan's greyscale, the ink of the
-handwriting and of every line and fragment row, the paper row's colour and hex. MOSS's prompt has no image token, so:
+line row is written "in the reference's hand". In the plain form that is all the caption says of the look; in the
+described form (the style pairs') it also names the reference's measured hand, ink and paper: the opening's clause
+after the citation (slant, pen, letters and spacing, the ink and paper by name and hex), the scan's greyscale, the ink
+of the handwriting and of every line and fragment row, the paper row's colour and hex. MOSS's prompt has no image
+token, so:
 
 - :func:`with_sample`: the citations name "the sample image", for a drawing with the reference image beside the prompt;
 - :func:`without_sample`: the citations dropped and every other word kept, for a drawing from the prompt alone;
@@ -28,7 +29,7 @@ from collections.abc import Mapping
 from diffu_moss.layout_prompt import layout_prompt
 
 CITATIONS = (  # how a caption cites its reference image, and the words that name the sample image instead
-    # after the archive a named caption names (v3b, the page pairs): dropped with its comma
+    # after the archive a named caption names (the page pairs' look and plain forms): dropped with its comma
     (", in the hand, ink and paper of <ref_image_0>", ", in the hand, ink and paper of the sample image"),
     (" in the hand, ink and paper of <ref_image_0>", " in the hand, ink and paper of the sample image"),
     (" in the reference's hand", " in the sample image's hand"),
@@ -77,9 +78,9 @@ def sample_layout_prompt(caption: str, texts: Mapping[str, str], size: tuple[int
 
 
 def without_look(caption: str, *, paper_row: str = PLAIN_PAPER_ROW) -> str:
-    """A described reference caption (v3d's form) with its look words dropped: the plain caption (v3c's form) of the
-    same crop, its text, layout and citations unchanged; with ``paper_row`` its paper row's description that one (the
-    sample form's, :data:`SAMPLE_PAPER_ROW`).
+    """A described reference caption (the style pairs' form) with its look words dropped: the plain caption of the same
+    crop, its text, layout and citations unchanged; with ``paper_row`` its paper row's description that one (the sample
+    form's, :data:`SAMPLE_PAPER_ROW`).
 
     Raises:
         ValueError: If the caption is not a described reference caption: its opening describes no look, or its

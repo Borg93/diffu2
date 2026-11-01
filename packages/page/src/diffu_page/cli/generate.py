@@ -8,13 +8,14 @@ ground-truth template is first marked from the scan beside it (:func:`diffu_page
 file does not say are printed or handwritten read off the scan by ``--print-hand-model``, and its ruled lines found
 there if it has none, so its form's print is drawn as print and its grid as rules. A two-page opening (most scans) is
 planned as its single pages, never as a spread (:func:`diffu_page.jobs.single_pages`), and ``summary.json`` lists them.
-Each crop is then drawn on its own by the crop pipeline (FLUX.3 + LoRAs, or diffu), read back line by line, and labelled
-with badly read lines tagged ``unclear``, as diffu-runner's GPU actors draw it. The text comes from ``--text-from``: a
-PAGE/ALTO page's running text, or a plain text file as it stands (a blank line ends a paragraph). With ``--reference``
-(a crop to draw in the hand of, for the v3 LoRAs) every crop is drawn from it and captioned as the LoRA was trained
-(``--reference-caption``: ``described`` measures the crop's hand, so it needs the crop's ``metadata.jsonl`` from
-``diffu_page.data.build_crops`` beside it). ``--jobs`` gives each page its own template, text, style, seed, reference,
-size and side instead: one :class:`diffu_page.jobs.PageJob` per line, the run file diffu-runner reads. A style can be
+Each crop is then drawn on its own by the crop pipeline (MOSS-Image, or FLUX.3 and its LoRAs), read back line by line,
+and labelled with badly read lines tagged ``unclear``, as diffu-runner's GPU actors draw it. The text comes from
+``--text-from``: a PAGE/ALTO page's running text, or a plain text file as it stands (a blank line ends a paragraph).
+With ``--reference`` (a sample to draw in the hand of, for a model trained with references) every crop is drawn from it
+and captioned as the model was trained (``--reference-caption``: ``described`` measures the crop's hand, so it needs
+the crop's ``metadata.jsonl`` from ``diffu_page.data.build_crops`` beside it). ``--jobs`` gives each page its own
+template, text, style, seed, reference, size and side instead: one :class:`diffu_page.jobs.PageJob` per line, the run
+file diffu-runner reads. A style can be
 named instead of spelled out: ``--style`` (or a job line's ``style``) names a preset of ``--styles``
 (:mod:`diffu_page.styles`: the archive and years, the look, the hand's LoRA and a reference), and its page is drawn by
 the preset's hand alone; a style spelled out is drawn with ``--lora``. A run can so draw several hands: its pages are
@@ -424,14 +425,17 @@ def generate(
     paper: Annotated[Paper, typer.Option(help="the paper's colour, as the captions name it")] = Paper.CREAM,
     ink: Annotated[Ink, typer.Option(help="the ink's colour, as the captions name it")] = Ink.DARK_BROWN,
     reference: Annotated[
-        Path | None, typer.Option(help="a crop to draw every page in the hand, ink and paper of (the v3 LoRAs)")
+        Path | None,
+        typer.Option(
+            help="a sample to draw every page in the hand, ink and paper of (a model trained with references)"
+        ),
     ] = None,
     reference_caption: Annotated[
         ReferenceCaption,
         typer.Option(
-            help="the caption form the model was trained on: plain (v3, v3c), described (v3d), named (v3b), hand or "
-            "sample; MOSS-Image's page pairs (diffu_page.data.page_pairs) train named, hand and sample (their look, "
-            "plain and sample forms)"
+            help="the caption form the model was trained on: described (style pairs, as FLUX.3's style-reference LoRA "
+            "trains), plain (MOSS-Image's plain form of style pairs), named, hand or sample (MOSS-Image's look, plain "
+            "and sample forms of page pairs)"
         ),
     ] = ReferenceCaption.PLAIN,
     steps: Steps = DEFAULTS.steps,

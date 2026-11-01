@@ -15,7 +15,7 @@ from pydantic import ValidationError
 from diffu_page.captions.prompt import LineRecord, PageStyle
 from diffu_page.captions.restyle import ReferenceCaption
 from diffu_page.crops.geometry import CropSettings, crops_for_page, regions_of
-from diffu_page.data.style_pairs import Pair, Scan, captions, describe
+from diffu_page.data.style_pairs import Pair, Scan, describe, pair_caption
 from diffu_page.layout import Layout, TextLine, load_xml_layout
 from diffu_page.plan import CropPlan, Reference, plan_page, plan_whole_page
 
@@ -210,10 +210,10 @@ def test_plan_captions_a_page_drawn_from_a_reference_as_its_training_pairs_were_
 
     lines = [LineRecord(id=f"Sv_Text_{k}", text="", role="", bbox=box) for k, box in enumerate(REFERENCE_LINES, 1)]
     reference_crop = Scan(record=make_record(crops[0], "reference.png").model_copy(update={"lines": lines}), path=image)
-    training, _ = captions(
-        ReferenceCaption.DESCRIBED, named_fraction=0.0, seed=0, looks={image: describe(reference_crop)}
-    )
+    looks = {image: describe(reference_crop)}
     assert [plan.caption for plan in planned] == [
-        training(Pair(target=Scan(record=record, path=tmp_path / record.file_name), reference=reference_crop))
+        pair_caption(
+            Pair(target=Scan(record=record, path=tmp_path / record.file_name), reference=reference_crop), looks
+        )
         for record in records
     ]

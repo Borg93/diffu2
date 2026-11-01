@@ -1,43 +1,32 @@
-"""Reference pairs for the v3 LoRAs: draw a crop's text and layout in the hand of a reference crop.
+"""Style pairs: a crop's text and layout drawn in the hand of a reference crop of the same hand, for FLUX.3 Klein's
+style-reference LoRA (``configs/flux3/flux3_style_ref_lora_v3d.yaml``) and MOSS-Image's reference training
+(``diffu_moss.train``).
 
-Every v2 training crop becomes a target; its reference is another crop (``--reference``: from another page of the
-same volume, or from the same page or its facing page, the same scribe as far as the pages tell), shrunk to the
-reference size (``diffu_page.crops.grid.as_reference``). The caption is the target's v2 caption rewritten as a FLUX.3
-image-edit record (``diffu_page.captions.restyle``): it takes the hand, ink and paper from ``<ref_image_0>``.
-``--caption described`` also describes the reference's measured hand, ink and paper in words
-(``described_edit_caption``); the default names none of them, so the hand can only come from the reference.
+Every training crop of ``diffu_page.data.build_crops`` becomes a target; its reference is a crop of its own page sharing
+none of its lines, else of its facing page (the same scribe as far as the pages tell), shrunk to the reference size
+(``diffu_page.crops.grid.as_reference``). The caption is the target's caption rewritten as a FLUX.3 image-edit record
+that takes the hand, ink and paper from ``<ref_image_0>`` and describes the reference's measured hand, ink and paper
+in words (``diffu_page.captions.restyle``'s ``described`` form, as a crop drawn from a reference is captioned;
+MOSS-Image's training drops the words where a prompt form leaves the look to the image, ``diffu_moss.sample_caption``).
 Writes, under ``--out`` (a new or empty dir):
 
-- ``train.jsonl``: the manifest NeMo's FLUX.3 image-edit encoder caches (``diffu_train.cache_pairs``), its media under
-  ``targets/`` (hard links to the v2 crops: the encoder only reads files inside the manifest's dir) and ``refs/``;
-- ``val_eval/``: the 24 held-out v2 crops, each with a reference picked as the training ones are (a
-  ``diffu_page.cli.evaluate`` dir);
-- ``by_example/``: the steering test's templates drawn with each archive's example crop as the reference, the
-  v3 counterpart of ``diffu_page.data.steer_set`` (a ``diffu_page.cli.evaluate`` dir that ``diffu_page.cli.sheets`` lays
-  out).
+- ``train.jsonl``: the manifest NeMo's FLUX.3 image-edit encoder caches (``diffu_train.cache_pairs``) and
+  ``diffu-moss-cache-pairs`` reads, its media under ``targets/`` (hard links to the crops: the encoder only reads files
+  inside the manifest's dir) and ``refs/``;
+- ``val_eval/``: the held-out crops (the crops' ``val_eval`` split, ``diffu_page.data.pick_eval``), each with a
+  reference picked as the training ones are: a ``diffu_page.cli.evaluate`` dir whose rows carry their reference's line
+  boxes, so evaluate can measure how close a drawing's hand comes to its reference's;
+- with ``--val-pairs N``, ``val/val.jsonl``: N pairs from the val split's pages, captioned as the training pairs are,
+  the held-out set NeMo scores ``val_loss`` on during training;
+- ``build.json``, last: how the set was built (``BuildRecord``).
 
-Every eval row carries its reference's line boxes, so ``diffu_page.cli.evaluate`` can measure how close a drawing's
-hand comes to its reference's.
+The references are picked first (training, then held-out, from one seeded stream; the val pairs from their own), then
+measured (in parallel), then every set is captioned, and only then is any file written, so a caption that fails leaves
+no half-written set. A crop whose record keeps no caption template (built before records kept one) stops the build
+before any file is written.
 
-With ``--named-fraction`` (v3b), that share of the training captions also names the target's archive, years, scan,
-paper and ink (``named_edit_caption``), so the model gets the style in words and by example; the rest stay unnamed so
-the reference stays necessary. The held-out and by-example captions then all name the template's own archive: a
-by-example crop whose hand follows its reference shows the picture wins over the words.
-
-With ``--val-pairs N``, ``val/val.jsonl`` holds N pairs from the val split's pages, captioned as the training pairs
-are: the held-out set NeMo scores ``val_loss`` on during training.
-
-The references are picked first (training, then held-out, then by-example, from one seeded stream), then measured
-(``--caption described`` only, in parallel), then every set is captioned, and only then is any file written, so a
-caption that fails leaves no half-written set; the named captions draw from a stream of their own. So the references do
-not depend on the caption options. A crop whose record keeps no caption template (built before records kept one)
-stops the build before any file is written. ``build.json`` records how the set was built (``BuildRecord``).
-
-    python -m diffu_page.data.style_pairs --crops data_flux3/layout_crops_v2b --out data_flux3/style_pairs_v3
-    python -m diffu_page.data.style_pairs --named-fraction 0.5 --val-pairs 64 \
-        --crops data_flux3/layout_crops_v2b --out data_flux3/style_pairs_v3b
-    python -m diffu_page.data.style_pairs --reference page --caption described --val-pairs 64 \\
-        --crops data_flux3/layout_crops_v4 --out data_flux3/style_pairs_v3d
+    python -m diffu_page.data.style_pairs --val-pairs 64 --crops data_flux3/layout_crops_v2b \\
+        --out data_flux3/style_pairs_v3d
 """
 
 from __future__ import annotations
@@ -46,9 +35,8 @@ import os
 import random
 import re
 from collections import defaultdict
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from concurrent.futures import ProcessPoolExecutor
-from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
 
@@ -57,23 +45,15 @@ from PIL import Image
 from pydantic import BaseModel
 
 from diffu_page.captions.hand import ReferenceLook, measure_reference
-from diffu_page.captions.provenance import collection_key
 from diffu_page.captions.records import CropRecord, read_records
-from diffu_page.captions.restyle import (
-    CaptionParts,
-    ReferenceCaption,
-    named_edit_caption,
-    reference_caption,
-)
+from diffu_page.captions.restyle import CaptionParts, ReferenceCaption, reference_caption
 from diffu_page.crops.grid import as_reference
-from diffu_page.data.steer_set import ARCHIVES, DEFAULT_TEMPLATES, SEED, archive_style
 from diffu_page.evalset import ReferencedCrop, write_jsonl
 from diffu_page.output import JPEG_QUALITY, console
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 
 type Volume = tuple[str, str]  # (collection dir, volume dir)
-type Picker = Callable[[Scan, dict[Volume, list[Scan]], random.Random], Scan | None]
 
 
 class Scan(BaseModel):
@@ -88,9 +68,6 @@ class Pair(BaseModel):
 
     target: Scan
     reference: Scan
-
-
-type CaptionFor = Callable[[Pair], str]
 
 
 class Media(BaseModel):
@@ -151,30 +128,10 @@ class EvalSet(BaseModel):
     placements: list[Placement]
 
 
-class EvalPick(BaseModel):
-    """A pair to evaluate, and how its row is seeded and labelled (by-example rows; held-out rows take none)."""
-
-    pair: Pair
-    seed: int | None = None
-    template: int | None = None
-    variant: str | None = None
-
-
-class ReferenceSource(StrEnum):
-    """Where a pair's reference comes from: another page of the volume (v3), or the same page or its facing page."""
-
-    VOLUME = "volume"
-    PAGE = "page"
-
-
 class BuildRecord(BaseModel):
-    """``build.json``: what a set of pairs was built from and how. The caption form must be the one generation is told
-    the LoRA was trained on (``--reference-caption``)."""
+    """``build.json``: what a set of pairs was built from and how."""
 
     crops: str
-    caption: ReferenceCaption
-    reference: ReferenceSource
-    named_fraction: float
     val_pairs: int
     seed: int
 
@@ -215,12 +172,6 @@ def by_volume(scans: list[Scan]) -> dict[Volume, list[Scan]]:
     return volumes
 
 
-def pick_reference(scan: Scan, volumes: dict[Volume, list[Scan]], rng: random.Random) -> Scan | None:
-    """A crop from another page of ``scan``'s volume, or None when its volume has no other page."""
-    others = [other for other in volumes[volume_of(scan.record)] if other.record.page != scan.record.page]
-    return rng.choice(others) if others else None
-
-
 def page_number(record: CropRecord) -> int | None:
     """The scan number a page file ends in (``.../40004026_00128.xml`` -> 128), or None."""
     match = re.search(r"(\d+)$", Path(record.page).stem)
@@ -229,9 +180,9 @@ def page_number(record: CropRecord) -> int | None:
 
 def pick_same_hand(scan: Scan, volumes: dict[Volume, list[Scan]], rng: random.Random) -> Scan | None:
     """A crop of ``scan``'s own page, else of the facing page (scan number one off), that shares none of its lines;
-    else None. Another page of the volume may be another scribe or another kind of document (v3's pairs); the same
-    page or its facing page almost never is. Consecutive scans can overlap (one sheet photographed in two parts),
-    so a facing crop is checked for shared lines too: a reference holding the target's own lines teaches copying."""
+    else None. Another page of the volume may be another scribe or another kind of document; the same page or its
+    facing page almost never is. Consecutive scans can overlap (one sheet photographed in two parts), so a facing crop
+    is checked for shared lines too: a reference holding the target's own lines teaches copying."""
     volume = volumes[volume_of(scan.record)]
     texts = {line.text for line in scan.record.lines}
     apart = [other for other in volume if not texts & {line.text for line in other.record.lines}]
@@ -247,16 +198,12 @@ def pick_same_hand(scan: Scan, volumes: dict[Volume, list[Scan]], rng: random.Ra
     return rng.choice(facing) if facing else None
 
 
-PICKERS: dict[ReferenceSource, Picker] = {ReferenceSource.VOLUME: pick_reference, ReferenceSource.PAGE: pick_same_hand}
-
-
-def pick_pairs(
-    targets: list[Scan], volumes: dict[Volume, list[Scan]], *, rng: random.Random, pick: Picker
-) -> list[Pair]:
-    """Each target with the reference ``pick`` finds for it among ``volumes``; a target without one is left out."""
+def pick_pairs(targets: list[Scan], volumes: dict[Volume, list[Scan]], *, rng: random.Random) -> list[Pair]:
+    """Each target with the same-hand reference :func:`pick_same_hand` finds for it among ``volumes``; a target without
+    one is left out."""
     pairs: list[Pair] = []
     for target in targets:
-        reference = pick(target, volumes, rng)
+        reference = pick_same_hand(target, volumes, rng)
         if reference is not None:
             pairs.append(Pair(target=target, reference=reference))
     return pairs
@@ -275,21 +222,24 @@ def describe_all(scans: Iterable[Scan], workers: int) -> dict[Path, ReferenceLoo
     return {scan.path: look for scan, look in zip(unique, looks, strict=True)}
 
 
-def eval_row(pick: EvalPick, caption: CaptionFor) -> ReferencedCrop:
-    """An eval crop of the pick's target drawn in its reference's hand (its files: ``eval_placements``)."""
-    target, reference = pick.pair.target, pick.pair.reference
+def pair_caption(pair: Pair, looks: dict[Path, ReferenceLook]) -> str:
+    """The pair's caption: its target's caption drawn from its reference, the reference's measured look described, by
+    the call that captions a planned crop drawn from a reference (``reference_caption``, ``described``)."""
+    parts = CaptionParts.of(pair.target.record)
+    return reference_caption(parts, ReferenceCaption.DESCRIBED, looks[pair.reference.path])
+
+
+def eval_row(pair: Pair, caption: str) -> ReferencedCrop:
+    """An eval crop of the pair's target drawn in its reference's hand (its files: ``eval_placements``)."""
+    target, reference = pair.target, pair.reference
     return ReferencedCrop(
         file_name=target.record.file_name,
-        caption=caption(pick.pair),
+        caption=caption,
         lines=target.record.lines,
         width=target.record.width,
         height=target.record.height,
         reference=f"refs/{reference.path.name}",
         reference_lines=[line.bbox for line in reference.record.lines],
-        seed=pick.seed,
-        template=pick.template,
-        variant=pick.variant,
-        example=f"refs/{reference.path.name}" if pick.variant else None,
     )
 
 
@@ -306,13 +256,12 @@ def renumbered(row: ManifestRow, index: int) -> ManifestRow:
     return row.model_copy(update={"metadata": row.metadata.model_copy(update={"row_index": index})})
 
 
-def training_pairs(pairs: list[Pair], caption: CaptionFor) -> TrainingSet:
+def training_pairs(pairs: list[Pair], looks: dict[Path, ReferenceLook]) -> TrainingSet:
     """The manifest of ``pairs`` and the files it needs (targets linked, references shrunk)."""
     manifest: list[ManifestRow] = []
     placements: list[Placement] = []
     for pair in pairs:
         target, reference = pair.target, pair.reference
-        prompt = caption(pair)
         placements += [
             Placement(source=target.path, destination=Path("targets") / target.record.file_name, shrunk=False),
             Placement(source=reference.path, destination=Path("refs") / reference.record.file_name, shrunk=True),
@@ -320,7 +269,7 @@ def training_pairs(pairs: list[Pair], caption: CaptionFor) -> TrainingSet:
         manifest.append(
             ManifestRow(
                 id=Path(target.record.file_name).stem,
-                prompt=prompt,
+                prompt=pair_caption(pair, looks),
                 media=[
                     Media(role="target", file_name=f"targets/{target.record.file_name}"),
                     Media(role="context", file_name=f"refs/{reference.record.file_name}"),
@@ -331,55 +280,11 @@ def training_pairs(pairs: list[Pair], caption: CaptionFor) -> TrainingSet:
     return TrainingSet(rows=manifest, placements=placements)
 
 
-def eval_set(picks: list[EvalPick], caption: CaptionFor) -> EvalSet:
-    """Each pick as an eval crop, with the files the rows need."""
-    rows = [eval_row(pick, caption) for pick in picks]
-    placements = [placement for pick in picks for placement in eval_placements(pick.pair)]
+def eval_set(pairs: list[Pair], looks: dict[Path, ReferenceLook]) -> EvalSet:
+    """Each pair as an eval crop, with the files the rows need."""
+    rows = [eval_row(pair, pair_caption(pair, looks)) for pair in pairs]
+    placements = [placement for pair in pairs for placement in eval_placements(pair)]
     return EvalSet(rows=rows, placements=placements)
-
-
-class ExamplePair(BaseModel):
-    """A by-example crop: a steering template, the reference to draw it from, and its label."""
-
-    pair: Pair
-    template: int
-    label: str
-
-
-def pick_examples(
-    held_out: list[Scan],
-    templates: list[int],
-    examples: dict[str, Scan],
-    *,
-    volumes: dict[Volume, list[Scan]],
-    rng: random.Random,
-    pick: Picker,
-) -> list[ExamplePair]:
-    """The steering templates by example: in their own volume's hand, then in each steering archive's."""
-    picked: list[ExamplePair] = []
-    for t in templates:
-        template = held_out[t]
-        own = pick(template, volumes, rng)
-        references = [(f"own volume ({collection_key(template.record.collection)})", own)] if own else []
-        references += list(examples.items())
-        picked += [
-            ExamplePair(pair=Pair(target=template, reference=reference), template=t, label=label)
-            for label, reference in references
-        ]
-    return picked
-
-
-def by_example_picks(picked: list[ExamplePair]) -> list[EvalPick]:
-    """The by-example crops as eval picks, each seeded by its template as the v2 steering set is."""
-    return [
-        EvalPick(
-            pair=example.pair,
-            seed=SEED + example.template,
-            template=example.template,
-            variant=f"reference: {example.label}",
-        )
-        for example in picked
-    ]
 
 
 def write_set(directory: Path, built: TrainingSet | EvalSet, *, manifest: str) -> None:
@@ -389,106 +294,41 @@ def write_set(directory: Path, built: TrainingSet | EvalSet, *, manifest: str) -
     write_jsonl(directory / manifest, built.rows)
 
 
-def captions(
-    form: ReferenceCaption, *, named_fraction: float, seed: int, looks: dict[Path, ReferenceLook]
-) -> tuple[CaptionFor, CaptionFor]:
-    """The training and the eval caption of a pair in ``form`` (``reference_caption``, as a planned crop drawn from a
-    reference is captioned), the described form from the reference's ``looks``; with ``named_fraction`` (plain form
-    only) that share of the training captions, drawn from their own stream, and every eval caption name the archive
-    and look."""
-
-    def drawn_from_reference(pair: Pair) -> str:
-        return reference_caption(CaptionParts.of(pair.target.record), form, looks.get(pair.reference.path))
-
-    if not named_fraction:
-        return drawn_from_reference, drawn_from_reference
-    words = random.Random(seed + 1)  # its own stream, so the references are the ones v3 picked
-
-    def named(pair: Pair) -> str:
-        return named_edit_caption(CaptionParts.of(pair.target.record))
-
-    def training(pair: Pair) -> str:
-        return named(pair) if words.random() < named_fraction else drawn_from_reference(pair)
-
-    return training, named
-
-
 @app.command()
 def main(
-    crops: Annotated[Path, typer.Option(help="the v2 crops (diffu_page.data.build_crops output)")],
-    out: Annotated[Path, typer.Option(help="where the v3 pairs go: a new or empty dir")],
-    templates: Annotated[
-        list[int] | None, typer.Option("--template", help="a val_eval row for by_example/ (repeat it)")
-    ] = None,
-    named_fraction: Annotated[
-        float, typer.Option(min=0.0, max=1.0, help="share of training captions that also name the archive and look")
-    ] = 0.0,
+    crops: Annotated[Path, typer.Option(help="the crops (diffu_page.data.build_crops output, with its val_eval)")],
+    out: Annotated[Path, typer.Option(help="where the pairs go: a new or empty dir")],
     val_pairs: Annotated[int, typer.Option(min=0, help="pairs from the val split for NeMo's val_loss")] = 0,
-    reference: Annotated[
-        ReferenceSource, typer.Option(help="volume: another page of the volume; page: the same or the facing page")
-    ] = ReferenceSource.VOLUME,
-    caption: Annotated[
-        ReferenceCaption, typer.Option(help="plain: the reference only by <ref_image_0>; described: its look in words")
-    ] = ReferenceCaption.PLAIN,
     workers: Annotated[
-        int, typer.Option(min=1, help="processes measuring the references (described): fewer beside a training")
+        int, typer.Option(min=1, help="processes measuring the references: fewer beside a training")
     ] = max(1, (os.cpu_count() or 2) // 2),
     seed: int = 0,
 ) -> None:
-    """Build the v3 reference pairs, the held-out set and the by-example steering set."""
+    """Build the style pairs and the held-out set."""
     if out.exists() and any(out.iterdir()):
         raise typer.BadParameter(
             f"{out} is not empty: an earlier build's files would stay beside this one's", param_hint="--out"
         )
-    if named_fraction and caption is ReferenceCaption.DESCRIBED:
-        raise typer.BadParameter("--named-fraction names the archive in the plain captions; leave it 0 with described")
     train, val, held_out = (load_split(crops, split) for split in ("train", "val", "val_eval"))
-    if outside := [t for t in templates or [] if not 0 <= t < len(held_out)]:
-        raise typer.BadParameter(f"val_eval has {len(held_out)} rows, none at {outside}", param_hint="--template")
     rng = random.Random(seed)
-    pick = PICKERS[reference]
-    train_pairs = pick_pairs(train, by_volume(train), rng=rng, pick=pick)
-    val_set = pick_pairs(val, by_volume(val), rng=random.Random(seed + 2), pick=pick) if val_pairs else []
-    volumes = by_volume(val + train)
-    held_pairs = pick_pairs(held_out, volumes, rng=rng, pick=pick)
-    train_by_name = {scan.record.file_name: scan for scan in train}
-    examples = {
-        key: train_by_name[archive_style([s.record for s in train], key, crops).example.name] for key in ARCHIVES
-    }
-    example_pairs = pick_examples(
-        held_out, templates or list(DEFAULT_TEMPLATES), examples, volumes=volumes, rng=rng, pick=pick
-    )
+    train_pairs = pick_pairs(train, by_volume(train), rng=rng)
+    val_set = pick_pairs(val, by_volume(val), rng=random.Random(seed + 2)) if val_pairs else []
+    held_pairs = pick_pairs(held_out, by_volume(val + train), rng=rng)
+    looks = describe_all((pair.reference for pair in [*train_pairs, *val_set, *held_pairs]), workers)
 
-    every_pair = [*train_pairs, *val_set, *held_pairs, *(example.pair for example in example_pairs)]
-    described = caption is ReferenceCaption.DESCRIBED
-    looks = describe_all((pair.reference for pair in every_pair), workers) if described else {}
-    training_caption, eval_caption = captions(caption, named_fraction=named_fraction, seed=seed, looks=looks)
-
-    # every set is captioned, in this order (the named captions' stream), before any file is written
-    pairs = training_pairs(train_pairs, training_caption)
-    validation = training_pairs(val_set, training_caption)
-    held = eval_set([EvalPick(pair=pair) for pair in held_pairs], eval_caption)
-    examples = eval_set(by_example_picks(example_pairs), eval_caption)
+    # every set is captioned before any file is written
+    pairs = training_pairs(train_pairs, looks)
+    validation = training_pairs(val_set, looks)
+    held = eval_set(held_pairs, looks)
 
     write_set(out, pairs, manifest="train.jsonl")
     if val_pairs:
         write_set(out / "val", validation.spread(val_pairs), manifest="val.jsonl")
     write_set(out / "val_eval", held, manifest="metadata.jsonl")
-    write_set(out / "by_example", examples, manifest="metadata.jsonl")
-    build = BuildRecord(
-        crops=str(crops),
-        caption=caption,
-        reference=reference,
-        named_fraction=named_fraction,
-        val_pairs=val_pairs,
-        seed=seed,
-    )
+    build = BuildRecord(crops=str(crops), val_pairs=val_pairs, seed=seed)
     (out / "build.json").write_text(build.model_dump_json(indent=1), encoding="utf-8")
-    alone = len(train) - len(train_pairs)
-    console.print(
-        f"train: {len(pairs.rows)} pairs -> {out} ({alone} crops skipped: no reference to pick ({reference.value}))"
-    )
-    console.print(f"val_eval: {len(held.rows)} crops, by_example: {len(examples.rows)} prompts")
+    console.print(f"train: {len(pairs.rows)} pairs -> {out} ({len(train) - len(train_pairs)} crops with no reference)")
+    console.print(f"val_eval: {len(held.rows)} crops")
 
 
 if __name__ == "__main__":

@@ -1,21 +1,21 @@
-"""The style words of a v2 layout caption: swap in another archive's, or hand them to a reference image.
+"""The style words of a layout caption handed to a reference image, in each form a reference-trained model reads.
 
 A caption from ``diffu_page.captions.prompt.caption_for`` is its :class:`CaptionTemplate` rendered with the phrases of
 the crop's ``PageStyle``: the paragraph's opening sentence and its ink, the paper row, the ink of every handwritten
 line row and of every fragment row (``phrases_for``). A printed line's row (black printer's ink whatever the scan) and
 a ruled line's row hold no phrase. Each function here renders a :class:`CaptionParts`' template (a training record's,
-or a planned crop's) with other phrases:
+or a planned crop's) as a FLUX.3 image-edit record drawn from ``<ref_image_0>``:
 
-- ``restyle``: another style's archive and look (the v2 steering test: the same text and layout as another archive);
-- ``edit_caption``: a FLUX.3 image-edit record that takes the hand, ink and paper from ``<ref_image_0>`` and names
-  none of them (v3, v3c);
-- ``sample_edit_caption``: that record with its paper row citing ``<ref_image_0>``'s paper too, where
-  ``edit_caption``'s names an aged paper (the sample form of MOSS-Image's page pairs);
-- ``named_edit_caption``: that record naming the archive and look in words as well (v3b);
-- ``described_edit_caption``: that record describing the reference's measured hand, ink and paper (v3d): BFL's
-  captions state a style's visible features, and FLUX.3 takes its style from the caption more than from a reference;
-- ``hand_edit_caption``: that record naming the archive and years alone, whose hand it is, the look left to the
-  reference (the plain form of MOSS-Image's page pairs, ``diffu_page.data.page_pairs``).
+- ``edit_caption``: the hand, ink and paper taken from ``<ref_image_0>``, none of them named (the plain form of
+  MOSS-Image's style pairs);
+- ``described_edit_caption``: the reference's measured hand, ink and paper described in words as well (the style
+  pairs, ``diffu_page.data.style_pairs``: BFL's captions state a style's visible features, and FLUX.3 takes its style
+  from the caption more than from a reference);
+- ``named_edit_caption``: the archive and look named in words as well (the look form of MOSS-Image's page pairs);
+- ``hand_edit_caption``: the archive and years named alone, whose hand it is, the look left to the reference (the
+  plain form of MOSS-Image's page pairs, ``diffu_page.data.page_pairs``);
+- ``sample_edit_caption``: ``edit_caption`` with its paper row citing ``<ref_image_0>``'s paper too, where
+  ``edit_caption``'s names an aged paper (the sample form of MOSS-Image's page pairs).
 
 Training captions (from records) and generation captions (from crop plans) go through the same functions, and a
 record keeps the template its own caption was rendered from, so a crop is drawn from exactly the caption grammar it
@@ -50,15 +50,15 @@ class ReferenceCaption(StrEnum):
     """How a caption drawn from a reference image speaks of the reference's style; it must be the form the LoRA was
     trained on."""
 
-    PLAIN = "plain"  # only by <ref_image_0> (edit_caption: v3, v3c)
-    DESCRIBED = "described"  # the reference's measured hand, ink and paper in words too (described_edit_caption: v3d)
-    NAMED = "named"  # the archive, years and look named beside it (named_edit_caption: v3b, the page pairs' look form)
+    PLAIN = "plain"  # only by <ref_image_0> (edit_caption: the style pairs' plain form)
+    DESCRIBED = "described"  # the reference's measured hand, ink and paper in words too (the style pairs')
+    NAMED = "named"  # the archive, years and look named beside it (named_edit_caption: the page pairs' look form)
     HAND = "hand"  # the archive and years named as the hand, the look from it alone (the page pairs' plain form)
     SAMPLE = "sample"  # only by <ref_image_0>, its paper row too (sample_edit_caption: the page pairs' sample form)
 
 
 class CaptionParts(BaseModel):
-    """A v2 caption's template, its lines and the style its own caption names."""
+    """A layout caption's template, its lines and the style its own caption names."""
 
     name: str  # what an error names it by: a crop's file name, or a planned crop's
     template: CaptionTemplate
@@ -180,11 +180,6 @@ class EditRow(BaseModel):
     src_bbox: LayoutBox | None
     tgt_bbox: LayoutBox
     desc: str
-
-
-def restyle(parts: CaptionParts, target: PageStyle) -> str:
-    """The caption naming ``target``'s archive, years, scan, paper and ink instead of its own."""
-    return caption_text(*parts.template.render(_phrases(target, parts)))
 
 
 def edit_caption(parts: CaptionParts) -> str:

@@ -1,7 +1,6 @@
 """How closely drawn hands follow: a drawn crop's hand measured beside its real crop's and its reference's
 (``diffu_page.captions.hand``), and over a run, the medians of those distances and how much of the references'
-variation the drawings carry over. diffu-evaluate measures every drawing with it, and ``diffu_page.cli.hands``
-measures a finished run's saved drawings."""
+variation the drawings carry over. diffu-evaluate measures every drawing with it."""
 
 from __future__ import annotations
 

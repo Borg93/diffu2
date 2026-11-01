@@ -36,7 +36,7 @@ class PageJob(BaseModel):
     style and the noise seed.
 
     ``reference`` is a crop whose hand, ink and paper to draw in (style by example) instead of the style's archive;
-    the crops are then captioned as its LoRA was trained. ``page_pixels`` plans the page whole, as one crop of about
+    the crops are then captioned as the model was trained. ``page_pixels`` plans the page whole, as one crop of about
     that many pixels, instead of as training-scale windows. ``id``, a plain file name such as a content hash, names and
     seeds the page's crops in place of the page's place in the run, so adding or removing pages moves no other page.
     ``side`` draws one page of a two-page opening as a single page, in its own coordinates (:func:`single_pages`).
