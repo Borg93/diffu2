@@ -1,9 +1,14 @@
 # diffu-runner
 
 Generation at scale on a Ray cluster. A run is a JSON-lines file of `diffu_page.jobs.PageJob`s (a template page, the
-text to write into it, the style). Ray Data plans every page into crop jobs on CPU workers (`PagePlanBlocks`), GPU
-actors each holding one crop pipeline (`diffu_page.pipeline.crop_blocks`) draw them one crop per block (image,
-per-line read-back, labels), and the rows are written as Parquet with a `run_meta.json` beside them. A crop that fails
-is kept with its error, never dropped silently. Crops are named and seeded as `diffu-generate` names and seeds them.
+text to write into it, the style, a sample page to draw in the hand of, a seed and an id). Ray Data plans every page
+whole on CPU workers (an opening becomes its two pages), GPU actors each holding one pipeline (MOSS-Image's, or FLUX.3
+Klein's with its LoRAs) draw, judge and label them, and the driver commits them to a Lance table, `<out>/pages.lance`:
+one row per page, the image as a Blob v2 column, the labels as ALTO and PAGE XML. A page that fails is a row with its
+error. A run into an `--out` that holds a table resumes it: drawn pages are skipped, failed ones drawn again.
 
-    diffu-run --jobs run.jsonl --out runs/pages --lora v2=<ckpt>/model --drawers 4 --gpus-per-drawer 1
+    diffu-run --jobs run.jsonl --out /outputs/run --model /models/moss --gpus 8 --actors-per-gpu 1
+    diffu-run-export --out /outputs/run --to /outputs/run/files --limit 20
+
+The hand-off guide (models, image, KubeRay, outputs, resuming, throughput): docs/INFERENCE.md. How Ray Data runs,
+retries and fails the stages: docs/RAY.md.

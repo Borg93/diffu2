@@ -1,0 +1,45 @@
+# The three volumes a run uses (docs/INFERENCE.md, section 2). Every <...> is a value of your site.
+#
+#   models   the MOSS-Image-Base folders, the fine-tuned DiT, the judge and the model directory (~45 GB); written once
+#            by stage-models.yaml, read by every Ray pod
+#   data     templates (PAGE XML), sample images, run files and draw settings; filled by you, read by every Ray pod
+#   outputs  the runs' Lance tables; written by the Ray head pod alone (the driver commits the table)
+#
+# Every pod mounts them at the same paths (/models, /data, /outputs): a model directory and a run file name their files
+# by absolute path. The storage class must offer ReadWriteMany (or ReadOnlyMany for models and data) when the pods run
+# on several nodes; outputs needs only ReadWriteOnce, as only the head writes it.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: diffu-models
+  namespace: <namespace>
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: <storage-class>
+  resources:
+    requests:
+      storage: 60Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: diffu-data
+  namespace: <namespace>
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: <storage-class>
+  resources:
+    requests:
+      storage: <size of the templates, samples and run files>
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: diffu-outputs
+  namespace: <namespace>
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: <storage-class>
+  resources:
+    requests:
+      storage: <about 1 MB a page, plus room>

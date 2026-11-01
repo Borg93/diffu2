@@ -1,0 +1,88 @@
+# A Job that fills the models volume (docs/INFERENCE.md, section 3): MOSS-Image-Base's text encoder, tokenizer and
+# VAE and the TrOCR judge, each at the revision the code was tested with, the fine-tuned DiT from a private model
+# repository, and the model directory diffu-moss-init writes around them. It runs the inference image, needs network
+# access to huggingface.co (this Job only: a run never downloads), and can be run again (downloads resume; an existing
+# model directory is kept). Every <...> is a value of your site.
+#
+#   kubectl -n <namespace> apply -f deploy/kuberay/volumes.yaml
+#   kubectl -n <namespace> create secret generic diffu-hf-token --from-literal=token=<a read token>   # for the DiT
+#   kubectl -n <namespace> apply -f deploy/kuberay/stage-models.yaml
+#   kubectl -n <namespace> logs -f job/diffu-stage-models
+#
+# Without a private repository, copy the DiT folder (config.json, diffusion_pytorch_model.safetensors, export.json)
+# to /models/dit/<dit-name> yourself, readable by UID 10001, and set DIT_REPO to "" below.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: diffu-stage-models
+  namespace: <namespace>
+spec:
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: stage
+          image: <registry>/diffu-inference:<tag>
+          env:
+            - name: HF_HUB_OFFLINE  # the image sets 1; this Job is the one place that downloads
+              value: "0"
+            - name: HF_HOME
+              value: /tmp/hf
+            - name: HF_TOKEN  # read access to the private DiT repository
+              valueFrom:
+                secretKeyRef:
+                  name: diffu-hf-token
+                  key: token
+                  optional: true
+            - name: DIT_REPO  # "" when the DiT folder is copied in by hand
+              value: <org>/<dit-repo>
+            - name: DIT_REVISION
+              value: <commit of the DiT repository>
+            - name: DIT_NAME
+              value: <dit-name>
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              hf download OpenMOSS-Team/MOSS-Image-Base --revision 85975793d8b3d432f1b6e27f352abaa4c2a4c0d3 \
+                --include "text_encoder/*" --include "tokenizer/*" --include "vae/*" \
+                --local-dir /models/MOSS-Image-Base
+              hf download Riksarkivet/trocr-base-handwritten-hist-swe-2 --revision aa79fcb1850bf3155ebc442570d6c6bfc0ac8100 \
+                --include "*.json" --include "*.txt" --include "model.safetensors" \
+                --local-dir /models/trocr-base-handwritten-hist-swe-2
+              if [ -n "$DIT_REPO" ]; then
+                hf download "$DIT_REPO" --revision "$DIT_REVISION" --local-dir "/models/dit/$DIT_NAME"
+              fi
+              if [ ! -f "/models/moss-$DIT_NAME/modular_model_index.json" ]; then
+                diffu-moss-init --base /models/MOSS-Image-Base --transformer "/models/dit/$DIT_NAME" \
+                  --out "/models/moss-$DIT_NAME"
+              fi
+              ls -la /models /models/dit
+          resources:
+            requests:
+              cpu: "2"
+              memory: 8Gi
+            limits:
+              memory: 8Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: models
+              mountPath: /models
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: diffu-models
+        - name: tmp
+          emptyDir: {}

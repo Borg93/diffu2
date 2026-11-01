@@ -1,0 +1,168 @@
+# A RayJob that draws one run of synthetic archive pages with diffu-run (docs/INFERENCE.md, sections 7 and 8).
+# KubeRay starts a Ray cluster from rayClusterSpec (a CPU head and a group of GPU workers), runs the entrypoint on the
+# head once the cluster is up, and deletes the cluster when the run ends; the pages stay on the outputs volume.
+# Every <...> is a value of your site. Checked against the KubeRay 1.7.1 CRDs.
+#
+#   kubectl -n <namespace> apply -f deploy/kuberay/rayjob.yaml
+#   kubectl -n <namespace> get rayjob diffu-pages -w
+#   kubectl -n <namespace> logs -f job/diffu-pages
+#
+# To resume a run that stopped, delete the RayJob and apply it again with the same --out: the pages drawn are skipped.
+apiVersion: ray.io/v1
+kind: RayJob
+metadata:
+  name: diffu-pages
+  namespace: <namespace>
+spec:
+  # Ray Data reads the run file, CPU tasks plan the pages, an actor pool of --gpus x --actors-per-gpu actors (one
+  # MOSS-Image pipeline and one judge each) draws them, and the driver, on the head, commits them to
+  # /outputs/<run-name>/pages.lance every --commit-every pages.
+  entrypoint: >-
+    diffu-run
+    --jobs /data/runs/<run-name>.jsonl
+    --draw-settings /data/runs/draw.json
+    --model /models/moss-<dit-name>
+    --out /outputs/<run-name>
+    --htr-model /models/trocr-base-handwritten-hist-swe-2 --htr-revision ""
+    --gpus <total GPUs: worker replicas x GPUs per worker>
+    --actors-per-gpu 1
+    --commit-every 64
+  submissionMode: K8sJobMode  # a Kubernetes Job (named as the RayJob) submits the entrypoint and follows its logs
+  shutdownAfterJobFinishes: true  # delete the Ray cluster when the run ends
+  ttlSecondsAfterFinished: 600  # ... ten minutes after, so its pods' logs can still be read
+  backoffLimit: 0  # no automatic resubmission: a rerun is a deliberate resume
+  # activeDeadlineSeconds: <seconds>  # stop a run that takes longer than this
+  rayClusterSpec:
+    rayVersion: "2.59.0"  # the image's Ray: packages/runner/pyproject.toml pins it
+    # Ray's token authentication for the dashboard and the job API (KubeRay 1.6 or newer generates the token and hands
+    # it to every Ray container and the submitter):
+    # authOptions:
+    #   mode: token
+    headGroupSpec:
+      rayStartParams:
+        num-cpus: "0"  # the head runs the driver and Ray's control plane only; tasks and actors go to the workers
+      template:
+        spec:
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+          containers:
+            - name: ray-head
+              image: <registry>/diffu-inference:<tag>
+              ports:
+                - containerPort: 6379
+                  name: gcs-server
+                - containerPort: 8265
+                  name: dashboard
+                - containerPort: 10001
+                  name: client
+              resources:
+                requests:
+                  cpu: "4"
+                  memory: 16Gi  # the driver holds the run file, the ids already drawn and a commit's pages
+                limits:
+                  cpu: "4"
+                  memory: 16Gi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true  # Ray, Python and every cache write to /tmp (false if one cannot)
+                capabilities:
+                  drop: [ALL]
+              volumeMounts:
+                - name: models  # the head reads the model directory and checks the run's files before it starts
+                  mountPath: /models
+                  readOnly: true
+                - name: data
+                  mountPath: /data
+                  readOnly: true
+                - name: outputs  # the head alone writes the table
+                  mountPath: /outputs
+                - name: tmp
+                  mountPath: /tmp
+                - name: dshm
+                  mountPath: /dev/shm
+          volumes:
+            - name: models
+              persistentVolumeClaim:
+                claimName: diffu-models
+                readOnly: true
+            - name: data
+              persistentVolumeClaim:
+                claimName: diffu-data
+                readOnly: true
+            - name: outputs
+              persistentVolumeClaim:
+                claimName: diffu-outputs
+            - name: tmp
+              emptyDir: {}
+            - name: dshm  # Ray's object store
+              emptyDir:
+                medium: Memory
+                sizeLimit: 4Gi
+    workerGroupSpecs:
+      - groupName: gpu
+        replicas: <worker pods>
+        minReplicas: <worker pods>
+        maxReplicas: <worker pods>
+        rayStartParams: {}  # KubeRay gives Ray the container's nvidia.com/gpu and CPU limits as its GPUs and CPUs
+        template:
+          spec:
+            securityContext:
+              runAsNonRoot: true
+              runAsUser: 10001
+              runAsGroup: 10001
+              fsGroup: 10001
+            nodeSelector:
+              <gpu node label>: <value>  # e.g. the label your GPU nodes carry for the Blackwell cards
+            tolerations:
+              - key: nvidia.com/gpu
+                operator: Exists
+                effect: NoSchedule
+            containers:
+              - name: ray-worker
+                image: <registry>/diffu-inference:<tag>
+                resources:
+                  # Per actor: ~35 GB of GPU memory and, while it loads, ~28 GB of weights through host memory. Give
+                  # the pod at least 48 GiB per actor plus 16 GiB, and CPUs for the actors (--cpus-per-actor, 1 each)
+                  # and for planning pages.
+                  requests:
+                    cpu: "<CPUs per worker>"
+                    memory: <memory per worker>
+                    nvidia.com/gpu: "<GPUs per worker>"
+                  limits:
+                    cpu: "<CPUs per worker>"
+                    memory: <memory per worker>
+                    nvidia.com/gpu: "<GPUs per worker>"
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  readOnlyRootFilesystem: true
+                  capabilities:
+                    drop: [ALL]
+                volumeMounts:
+                  - name: models
+                    mountPath: /models
+                    readOnly: true
+                  - name: data  # templates and sample images, read where a page is planned and drawn
+                    mountPath: /data
+                    readOnly: true
+                  - name: tmp
+                    mountPath: /tmp
+                  - name: dshm
+                    mountPath: /dev/shm
+            volumes:
+              - name: models
+                persistentVolumeClaim:
+                  claimName: diffu-models
+                  readOnly: true
+              - name: data
+                persistentVolumeClaim:
+                  claimName: diffu-data
+                  readOnly: true
+              - name: tmp
+                emptyDir: {}
+              - name: dshm
+                emptyDir:
+                  medium: Memory
+                  sizeLimit: 16Gi

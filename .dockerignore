@@ -1,0 +1,78 @@
+# The one .dockerignore for every .docker/*.dockerfile build (the build context is the repo root). The images need
+# pyproject.toml, uv.lock, README.md, src/ and packages/*/ (sources and READMEs, not tests); everything else stays out.
+
+# VCS
+.git
+.gitignore
+.gitattributes
+
+# docker and build orchestration
+.docker/
+.dagger/
+Dockerfile
+*.dockerfile
+.dockerignore
+
+# Python venvs and caches
+.venv
+.venv*/
+**/__pycache__
+**/*.pyc
+**/*.pyo
+*.egg-info/
+*.dist-info/
+.mypy_cache
+.ruff_cache
+.pytest_cache
+.pyrefly_cache
+
+# tests, docs, job scripts and deployment manifests: not in any image
+tests/
+**/tests/
+conftest.py
+docs/
+jobs/
+deploy/
+TODO.md
+
+# data, run outputs and tables: large, and mounted at run time
+data*/
+runs/
+*.lance
+outputs/
+
+# test/coverage outputs
+coverage/
+htmlcov/
+.coverage
+.coverage.*
+
+# editor / IDE / OS junk
+.idea/
+.vscode/
+.cursor*
+.DS_Store
+*.swp
+*.swo
+
+# secrets and local config
+.env
+.env.*
+.secret
+.secret.*
+
+# Claude Code project state
+.claude/
+
+# logs
+*.log
+logs/
+
+# model weights: never in the build context; staged on a volume and mounted
+**/weights/
+**/*.pt
+**/*.pth
+**/*.bin
+**/*.ckpt
+**/*.safetensors
+**/*.gguf

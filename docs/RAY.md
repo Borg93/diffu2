@@ -108,8 +108,13 @@ on the Spark (TODO, "Inference at scale").
   `max_tasks_in_flight_per_actor` >= 2 overlaps input fetching with compute. `num_gpus` may be fractional (several
   actors per 96 GB card), but resources are logical: each actor must keep to its share of GPU memory itself.
 - Ray Data counts an actor's CPUs as 0 unless the stage sets `num_cpus`, and its own CPU tasks need free CPU slots: if
-  every slot is taken, "the experiment will appear to hang". Set `num_cpus` on GPU stages and leave headroom. Ray sets
-  `OMP_NUM_THREADS` to a task's CPUs; cap MKL and OpenBLAS threads the same way.
+  every slot is taken, "the experiment will appear to hang". Measured on Ray 2.59 (1 Nov, a local Ray of one CPU): an
+  actor stage that names no `num_cpus` still holds a whole CPU for its lifetime while Ray Data counts none, and the
+  upstream CPU tasks then never start. Set `num_cpus` on GPU stages (the runner's `--cpus-per-actor`) and leave
+  headroom. Ray sets `OMP_NUM_THREADS` to a task's CPUs; cap MKL and OpenBLAS threads the same way.
+- Keep a stage's arguments (`fn_constructor_kwargs`, `fn_kwargs`) to plain values and models. Ray Data reduces them to
+  strings for its stats actor but keeps a `str` subclass as it is, so a `StrEnum` of ours reached the stats actor by
+  reference and it imported the module it came from: the whole page pipeline, 0.7 GB more on the head (1 Nov).
 - Separate CPU and GPU work into separate stages so Ray pipelines them: plan (CPU) -> draw (GPU) -> judge (GPU, its
   own pool) -> labels (CPU) -> sink. Our draw, judge and labels are already separate (`diffu_page.judge`,
   `blocks.ground_truth.crop_labels`).
@@ -196,14 +201,23 @@ grows into nested metadata.
 
 ## What this means for our code
 
+How to run it on a cluster: [INFERENCE.md](INFERENCE.md). Where the runner (`packages/runner`, 1 Nov) stands:
+
 - `diffu_page.local_run.run_each` is the local commands' loop only. On Ray it isn't used: Ray Data iterates and
   retries; a stage handles one row's content errors itself.
-- The runner's `DrawActor` catches every exception as a failed crop, CUDA faults included (TODO): split content
-  errors (row error field) from device faults (exit the process).
-- A page stays one row through every stage. `PageJob.id` is optional today; a Ray run requires it, unique and stable,
-  checked when the jobs are read.
-- The runner writes Parquet (`diffu_runner/run.py`, `write_parquet`); our sink is Lance: `lance_ray.write_lance` with
-  the page schema above (TODO).
-- Choose per run: `max_errored_blocks` (a small backstop), `actor_task_retry_on_errors` (transient errors only),
-  `max_consecutive_actor_init_deaths` (a few), `memory=` and `num_cpus` per stage (measured), `min_rows_per_file`,
-  the spill directory and `/dev/shm` size. `checkpoint_config` stays off with a Lance sink.
+- The plan: `read_text(run file)` -> `flat_map(plan_rows)` (CPU: an opening split into its pages, the pages the table
+  holds drawn skipped, each planned whole) -> one page per block -> `map_batches(DrawActor)` (an actor pool, `num_gpus`
+  1 / actors per GPU) -> `lance_ray.write_lance(stream=True)`. A page is one row from planning to the sink.
+- `DrawActor` keeps a page's content error (and running out of GPU memory) as the page's row, and on a
+  `torch.AcceleratorError` exits its process, so Ray restarts the actor and retries the page (checked on a local Ray
+  with `os._exit` in an actor: the actor came back and every row came out once).
+- Every page job needs an `id`, unique in its run file, checked when the jobs are read, with the files each page
+  names, the model directory's component folders, the judge's model and whether the model takes a sample image.
+- The sink is Lance with the page schema above (the image a Blob v2 column, file format 2.2), but committed by
+  lance-ray's streaming write: the driver commits every `--commit-every` pages, so a crash loses at most those. A
+  failed page is a row with its `error`; the next run into the table deletes those rows and draws the pages again,
+  skipping the ids drawn, so each id is in the table once. Rows pass through the driver, which at seconds to minutes a
+  page is far within what it carries.
+- Still open: `max_errored_blocks` (a small backstop), `actor_task_retry_on_errors` (transient errors only),
+  `max_consecutive_actor_init_deaths` (a few), `memory=` per stage (measured), the spill directory and `/dev/shm`
+  size, all to set from a first run on the cluster. `checkpoint_config` stays off with a Lance sink.

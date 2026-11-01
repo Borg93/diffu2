@@ -1,0 +1,12 @@
+# hadolint's settings for .docker/*.dockerfile. A rule that must be ignored is ignored where it applies, with its
+# reason on the line under it:
+#   # hadolint ignore=DLxxxx
+#   # Reason: <why>
+ignored: []
+
+# DL3026 matches the registry part only: every FROM here is on docker.io or ghcr.io
+trustedRegistries:
+  - docker.io
+  - ghcr.io
+
+failure-threshold: warning

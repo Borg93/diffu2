@@ -1,21 +1,24 @@
 [project]
 name = "diffu-runner"
 version = "0.1.0"
-description = "Generation at scale on a Ray cluster: pages planned on CPU, crops drawn by GPU actors holding a CropGenerator, rows written to Parquet."
+description = "Generation at scale on a Ray cluster: whole pages planned on CPU, drawn by GPU actors holding a MOSS-Image pipeline, and committed to a resumable Lance table."
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 license = "Apache-2.0"
 authors = [{ name = "Gabriel Borg" }]
 dependencies = [
     "diffu-page",
+    "lance-ray==0.5.0",  # the sink: lance-ray's streaming write commits from the driver as pages are drawn
     "pydantic>=2",
+    "pylance==13.0.0",  # Lance itself: Blob v2 columns need file format 2.2
     "ray[data]==2.59.0",  # pinned: the actor API is version-sensitive; match the cluster's Ray
     "rich>=13",
     "typer>=0.20",
 ]
 
 [project.scripts]
-diffu-run = "diffu_runner.run:app"  # generate a run's pages across a Ray cluster
+diffu-run = "diffu_runner.run:app"  # draw a run's pages across a Ray cluster into a Lance table
+diffu-run-export = "diffu_runner.export:app"  # a run's drawn pages as image, ALTO and PAGE files
 
 [build-system]
 requires = ["hatchling"]
