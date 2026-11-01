@@ -185,7 +185,7 @@ class JointBlock(nn.Module):
         modulation: Tensor,
     ) -> Tensor:
         shift_a, scale_a, gate_a, shift_f, scale_f, gate_f = modulation_by_token(modulation)
-        dtype = self.proj["q"].weight.dtype
+        dtype = self.norm1.weight.dtype  # the block's own: an MXFP8 projection (diffu_moss.mxfp8) holds bytes
         y = (self.norm1(x) * (1 + scale_a) + shift_a).to(dtype)
         q = self.q_norm(self.proj["q"](y).unflatten(-1, (self.heads, -1))).flatten(2)
         k = self.k_norm(self.proj["k"](y).unflatten(-1, (self.heads, -1))).flatten(2)
@@ -215,6 +215,7 @@ class MossTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin):
 
     _keys_to_ignore_on_load_unexpected = [r"^rope\.bands$"]  # the rotary frequencies are recomputed in fp32
     _supports_gradient_checkpointing = True
+    _repeated_blocks = ["JointBlock"]  # what compile_repeated_blocks compiles (diffusers' regional compilation)
 
     @register_to_config
     def __init__(

@@ -26,19 +26,21 @@ import copy
 import math
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import override
+from typing import Self, override
 
 import torch
 from diffusers import FlowMatchEulerDiscreteScheduler, Flux3AutoBlocks, Flux3ModularPipeline
 from diffusers.modular_pipelines import ModularPipeline, OutputParam, PipelineState, SequentialPipelineBlocks
 from PIL import Image
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from diffu.modular_pipelines.loading import COMPONENT_DTYPES, require_loaded
 from diffu.repo import ModelIndex
+from diffu_moss.inference import MossInference, check_inference, prepare_inference
 from diffu_moss.latents import encode_latents
 from diffu_moss.modular_pipelines.moss import MossAutoBlocks, MossModularPipeline
 from diffu_moss.modular_pipelines.moss.denoise import GUIDANCE_SCALE as MOSS_GUIDANCE_SCALE
+from diffu_moss.mxfp8 import Precision
 from diffu_page.blocks import (
     CropPromptStep,
     DrawnCrop,
@@ -191,7 +193,17 @@ class DrawSettings(BaseModel):
         fuse_loras: Fuse the LoRAs into the transformer's weights at load and drop their adapter layers: no LoRA
             matmuls per step, and the transformer can be compiled; the LoRAs can't be switched or rescaled after.
         compile_blocks: Compile the transformer's repeated blocks (torch.compile, diffusers' regional compilation) at
-            load; the first crop pays for the compilation. A run with LoRAs must fuse them first.
+            load; the first crop pays for the compilation. A run with LoRAs must fuse them first. MOSS-Image's joint
+            blocks are compiled after any MXFP8 swap, so the quantization of their inputs fuses into them.
+        precision: MOSS-Image only: its DiT's joint-block projections in their own bfloat16, or in MXFP8: weights and
+            inputs in blocks of 32 FP8 values sharing a power-of-two scale, multiplied by a Blackwell GPU's tensor cores
+            (:mod:`diffu_moss.mxfp8`; emulated on the CPU). It pays off with ``compile_blocks`` or ``aoti_package``,
+            which fuse each layer's quantization of its input: run eagerly, that is some fifteen small kernels.
+        text_encoder_precision: MOSS-Image only: its text encoder's decoder-layer projections alike (half their
+            memory).
+        aoti_package: MOSS-Image only: run its joint blocks from this AOTInductor package (``diffu-moss-aoti``), built
+            for ``precision``, this GPU's architecture and this torch version (any other is refused); instead of
+            ``compile_blocks``.
         repair_passes: How many times a drawn crop's rejected lines are drawn again in place (:func:`repair_lines`),
             each pass from its own noise (:func:`repair_seed`); 0 keeps every crop as drawn.
     """
@@ -210,7 +222,36 @@ class DrawSettings(BaseModel):
     lora_scale: float = Field(default=1.0, ge=0.0)
     fuse_loras: bool = False
     compile_blocks: bool = False
+    precision: Precision = Precision.BF16
+    text_encoder_precision: Precision = Precision.BF16
+    aoti_package: Path | None = None
     repair_passes: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def _moss_inference_fits(self) -> Self:
+        _ = self.moss_inference  # MossInference validates itself: a package refuses compile_blocks
+        return self
+
+    @property
+    def moss_inference(self) -> MossInference:
+        """How a MOSS-Image model computes (:mod:`diffu_moss.inference`)."""
+        return MossInference(
+            precision=self.precision,
+            text_encoder_precision=self.text_encoder_precision,
+            compile_blocks=self.compile_blocks,
+            aoti_package=self.aoti_package,
+        )
+
+    @property
+    def moss_only(self) -> list[str]:
+        """The settings asked that only MOSS-Image takes, by name: MXFP8 for its DiT or text encoder, a package of its
+        joint blocks."""
+        asked = {
+            "precision": self.precision is not Precision.BF16,
+            "text_encoder_precision": self.text_encoder_precision is not Precision.BF16,
+            "aoti_package": self.aoti_package is not None,
+        }
+        return [name for name, is_asked in asked.items() if is_asked]
 
     @property
     def guides_reference(self) -> bool:
@@ -232,14 +273,18 @@ def load_pipeline(model: Path, blocks: BlocksFor, *, loras: dict[str, Path], set
     ``settings.device``, the guider at ``settings.guidance_scale`` (the model family's own when None, and
     ``settings.reference_guidance_scale``) until ``settings.guidance_stop``, and every
     LoRA of ``loras`` (NeMo ``model/`` dirs by adapter name) active, fused into the transformer when
-    ``settings.fuse_loras``, and the transformer's repeated blocks compiled when ``settings.compile_blocks``.
+    ``settings.fuse_loras``, and the transformer's repeated blocks compiled when ``settings.compile_blocks``. A
+    MOSS-Image model computes as ``settings.moss_inference`` asks (:func:`diffu_moss.inference.prepare_inference`: its
+    layers in MXFP8, its joint blocks from an AOTInductor package or compiled).
 
-    Everything that can be checked without the model is checked first: its family, the guider and every LoRA.
+    Everything that can be checked without the model is checked first: its family, the guider, every LoRA, and
+    MOSS-Image's precision and package against the device.
 
     Raises:
         ValueError: If the model's blocks have no family, the guidance settings do not go together, a LoRA would
-            load at the wrong strength or into a model that takes none at draw time (MOSS-Image), or the blocks are to
-            be compiled around LoRAs that are not fused.
+            load at the wrong strength or into a model that takes none at draw time (MOSS-Image), the blocks are to
+            be compiled around LoRAs that are not fused, a setting only MOSS-Image takes is asked of another model, or
+            MOSS-Image's precision or package does not fit the device, this process or the model.
         RuntimeError: If a component failed to load.
     """
     if settings.compile_blocks and loras and not settings.fuse_loras:
@@ -250,6 +295,11 @@ def load_pipeline(model: Path, blocks: BlocksFor, *, loras: dict[str, Path], set
             f"{model} takes no LoRAs at draw time: merge them into the transformer it draws with (diffu-moss-init "
             "--transformer)"
         )
+    moss = family.pipeline is MossModularPipeline
+    if settings.moss_only and not moss:
+        raise ValueError(f"{model} is not MOSS-Image, which alone takes {', '.join(settings.moss_only)}")
+    if moss:
+        check_inference(settings.moss_inference, torch.device(settings.device))
     guidance_scale = family.guidance_scale if settings.guidance_scale is None else settings.guidance_scale
     guider = ReferenceGuidance(
         guidance_scale=guidance_scale,
@@ -273,7 +323,9 @@ def load_pipeline(model: Path, blocks: BlocksFor, *, loras: dict[str, Path], set
     if loras and settings.fuse_loras:
         pipe.fuse_lora(adapter_names=list(loras))
         pipe.unload_lora_weights()
-    if settings.compile_blocks:  # dynamic: crop sizes and caption lengths vary, and each new shape would recompile
+    if moss:
+        prepare_inference(pipe, settings.moss_inference)
+    elif settings.compile_blocks:  # dynamic: crop sizes and caption lengths vary, and each new shape would recompile
         pipe.transformer.compile_repeated_blocks(fullgraph=True, dynamic=True)
     return pipe
 

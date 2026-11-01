@@ -17,3 +17,9 @@ published design, around the released weights, and our own reference training. H
   LoRA, or `--full` with `full.py` and `muon.py`), `sigmas.py`, `distributed.py` (FSDP2 over several GPUs),
   `export.py` (`diffu-moss-export-ref`, a LoRA merged into Base) and `records.py` (what caches, checkpoints and exports
   record).
+- `mxfp8.py`, `inference.py`: faster drawing on Blackwell GPUs, options of the page pipeline's `DrawSettings`, each
+  off by default: `precision` / `text_encoder_precision` `"mxfp8"` (the DiT's joint-block projections and the text
+  encoder's in MXFP8, OCP MX v1.0 on torch's own `scaled_mm`) and `compile_blocks` (the joint blocks compiled).
+- `aoti.py`: `diffu-moss-aoti`, the joint block packaged ahead of time with AOTInductor for one GPU kind and torch
+  version (`DrawSettings.aoti_package`), so a worker starts without compiling; `bench_inference.py`: the options'
+  speed, memory and agreement with bfloat16 on a GPU. How to use them: [docs/INFERENCE.md](../../docs/INFERENCE.md).

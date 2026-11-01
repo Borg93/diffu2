@@ -312,13 +312,46 @@ A yardstick: SGLang's MOSS-Image integration reports 0.296 images a second at 10
 on one H200 (BF16, eager). Our pages are not that workload: 50 steps by default, the sample page in every pass, and
 the judge after each page.
 
-## 12. Faster inference: MXFP8 and ahead-of-time compilation (settings and measured speeds to come)
+## 12. Faster inference: MXFP8, compiled blocks, AOTInductor packages
 
-> **To be written.** Draw settings for MXFP8 weights (`precision`, `text_encoder_precision`), compiled transformer
-> blocks (`compile_blocks`) and an AOTInductor package (`aoti_package`) are being added to the page pipeline. They will
-> be draw settings fields, so they go into `draw.json` (section 6) with no change to the runner or this deployment.
-> This section will give each setting, what it needs in the image and on the volume, and the speeds measured on the
-> cluster's cards.
+Three options of `DrawSettings` make a MOSS-Image worker draw faster (`diffu_moss.inference`, applied by
+`load_pipeline`). Each is off by default, and with all of them off a page is drawn byte for byte as before. A drawing
+script and the Ray runner's `RunConfig.settings` reach them by settings alone (diffu-generate and the runner's CLI have
+no flags for them yet); another model family refuses them.
+
+| Setting | What it changes | Needs |
+|---|---|---|
+| `precision="mxfp8"` | The DiT's joint-block projections (q, k, v, o, the gated feed-forward's two matrices: 4.76 B of 5.08 B weights) hold FP8 E4M3 values in blocks of 32, each block sharing one power-of-two scale (OCP MX v1.0), and multiply on the tensor cores through `torch.nn.functional.scaled_mm` (`BlockWise1x32`, `SWIZZLE_32_4_4`, fp32 accumulation). Their weights take ~5.5 GB instead of ~10.2. | A Blackwell GPU: compute capability 10.0 or later (B200 10.0, RTX PRO 6000 12.0, GB10 12.1); refused below that before the model loads |
+| `text_encoder_precision="mxfp8"` | The same for the text encoder's decoder-layer projections (6.9 B weights: ~10.1 GB instead of ~16.8; the delta rule's two 32-wide gates, the embeddings, norms and vision tower stay bfloat16) | As above |
+| `compile_blocks=True` | The 42 joint blocks compiled once at load (regional `torch.compile`, one full graph, dynamic token count), after any MXFP8 swap, so each layer's input quantization fuses in; the first page pays for the compiling | Any device |
+| `aoti_package=<path>.pt2` | The joint blocks run from a package built ahead of time with AOTInductor: nothing is compiled at load. Refused if it was built for another GPU architecture or torch version (before the model loads), or another precision, width or dtype | One package per GPU kind, torch version and precision (`diffu-moss-aoti`); not with `compile_blocks` |
+
+MXFP8 is meant to run with `compile_blocks` or an `aoti_package`: run eagerly, each layer's input quantization is some
+fifteen small kernels, which can cost more than the faster matmul saves. The text encoder is never compiled, so its
+MXFP8 mostly saves memory (it encodes two prompts a page, the DiT runs two passes a step).
+
+A package holds one compiled joint block and no weights (each block hands it its own at every call), so it serves all
+42 blocks and any DiT of MOSS-Image's widths, a fine-tune's too. For a Ray cluster: build one per GPU kind on a node of
+that kind, with the torch version the workers run, put it where every actor can read it, and give the actors
+`DrawSettings(..., precision="mxfp8", aoti_package=Path("<package>"))`.
+
+    python -m diffu_moss.aoti --model <MOSS model dir> --precision mxfp8 --out runs/aoti/moss_mxfp8_sm100.pt2
+
+`python -m diffu_moss.bench_inference` measures the nine configurations (bf16, MXFP8 in the DiT, MXFP8 in both; each
+eager, compiled and packaged) on a model directory at 1 MP: seconds per denoising step (CUDA events, warm), one
+prompt's encoding, peak memory, load and first step, and the cosine of the first velocity and of the final latents to
+bf16's at the same noise, one JSON line each (`--images` keeps every page to look at beside bf16's).
+
+    python -m diffu_moss.bench_inference --model <MOSS model dir> \
+        --package-bf16 runs/aoti/moss_bf16_sm100.pt2 --package-mxfp8 runs/aoti/moss_mxfp8_sm100.pt2 \
+        --out runs/bench/inference.jsonl --images runs/bench/pages
+
+Not yet run on a GPU. cuBLAS's MXFP8 GEMM, the compiled MXFP8 block and an MXFP8 package are tested only by tests that
+skip without a Blackwell GPU. Inside an AOTInductor package, `scaled_mm` (torch's `_scaled_mm_v2`) has no C shim and
+runs through AOTInductor's proxy executor; if that fails, `torch._scaled_mm` (v1, which has one) takes the same
+operands.
+> Measured speeds on Blackwell are not in yet: the options are tested on CPU, and the GPU benchmark runs next.
+> In a run's `draw.json` (section 6) they are fields like any other draw setting.
 
 ## 13. Why not SGLang, vLLM-Omni or Ray Serve
 

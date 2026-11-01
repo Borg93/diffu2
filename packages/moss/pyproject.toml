@@ -24,6 +24,7 @@ diffu-moss-init = "diffu_moss.init:app"  # a MOSS model repo: the Base snapshot'
 diffu-moss-cache-pairs = "diffu_moss.train.cache:app"  # style pairs' prompt embeddings and latents, for a reference training
 diffu-moss-train-ref = "diffu_moss.train.loop:app"  # a LoRA, or every weight (--full), teaching MOSS-Image to draw from a reference image
 diffu-moss-export-ref = "diffu_moss.train.export:app"  # that LoRA merged into the Base DiT, for diffu-moss-init
+diffu-moss-aoti = "diffu_moss.aoti:app"  # the joint block compiled ahead of time (AOTInductor), for aoti_package
 
 [build-system]
 requires = ["hatchling"]
