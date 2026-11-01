@@ -10,7 +10,9 @@ handwriting and of every line and fragment row, the paper row's colour and hex. 
 - :func:`with_sample`: the citations name "the sample image", for a drawing with the reference image beside the prompt;
 - :func:`without_sample`: the citations dropped and every other word kept, for a drawing from the prompt alone;
 - :func:`without_look`: a described caption's look words dropped: exactly the plain caption of the same crop, so the
-  look of a drawing from it must come from the sample image.
+  look of a drawing from it must come from the sample image; given the sample form's paper row
+  (:data:`SAMPLE_PAPER_ROW`), exactly its sample-form caption (``ReferenceCaption.SAMPLE``), whose paper row cites the
+  reference's paper too.
 
 A caption that cites no reference (a page drawn in a named style) is left as it is by the first two.
 :func:`sample_layout_prompt` compiles a caption in the form for a drawing with or without the sample image as MOSS's
@@ -30,6 +32,8 @@ CITATIONS = (  # how a caption cites its reference image, and the words that nam
     (", in the hand, ink and paper of <ref_image_0>", ", in the hand, ink and paper of the sample image"),
     (" in the hand, ink and paper of <ref_image_0>", " in the hand, ink and paper of the sample image"),
     (" in the reference's hand", " in the sample image's hand"),
+    # the sample form's paper row (SAMPLE_PAPER_ROW): last, once the openings that end alike are named
+    (" of <ref_image_0>", " of the sample image"),
 )
 DESCRIBED_OPENING = re.compile(
     r"^(?P<lead>Create a flat, evenly lit )(?:greyscale )?(?P<page>archival scan of a new [^<]+? in the hand, ink and "
@@ -42,6 +46,7 @@ DESCRIBED_PAPER_ROW = re.compile(
 DESCRIBED_INK_LINE = re.compile(r", [a-z -]*cursive in the reference's hand, in [a-z -]+ ink\.$")
 DESCRIBED_INK_FRAGMENT = re.compile(r"handwritten line in [a-z -]+ ink, cut off")
 PLAIN_PAPER_ROW = "Aged paper of a bound archival volume."
+SAMPLE_PAPER_ROW = "The paper of <ref_image_0>."  # the sample form's: no word of its look, its paper the reference's
 PLAIN_INK_LINE = ", cursive script in the reference's hand and ink."
 PLAIN_INK_FRAGMENT = "handwritten line, cut off"
 
@@ -71,9 +76,10 @@ def sample_layout_prompt(caption: str, texts: Mapping[str, str], size: tuple[int
     return layout_prompt(with_sample(caption) if sample else without_sample(caption), texts, size)
 
 
-def without_look(caption: str) -> str:
+def without_look(caption: str, *, paper_row: str = PLAIN_PAPER_ROW) -> str:
     """A described reference caption (v3d's form) with its look words dropped: the plain caption (v3c's form) of the
-    same crop, its text, layout and citations unchanged.
+    same crop, its text, layout and citations unchanged; with ``paper_row`` its paper row's description that one (the
+    sample form's, :data:`SAMPLE_PAPER_ROW`).
 
     Raises:
         ValueError: If the caption is not a described reference caption: its opening describes no look, or its
@@ -92,7 +98,7 @@ def without_look(caption: str) -> str:
         raise ValueError(f"the caption's handwriting ink or paper row is not described: {caption[:160]!r}")
     for row in rows:
         if row is papers[0]:
-            row["desc"] = PLAIN_PAPER_ROW
+            row["desc"] = paper_row
         else:
             row["desc"] = DESCRIBED_INK_FRAGMENT.sub(
                 PLAIN_INK_FRAGMENT, DESCRIBED_INK_LINE.sub(PLAIN_INK_LINE, row["desc"])

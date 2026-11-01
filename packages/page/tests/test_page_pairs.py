@@ -5,8 +5,9 @@ wider than tall that cannot be split gives no page), a stopped build resumes fro
 diffu-moss-cache-pairs caches the pairs as their rows give them. With windows, each page also gives windows of its
 lines, planned as diffu-generate plans its crops and prompted as drawing prompts them, each a pair with its page's
 sample in its volume's split, after page rows written as without windows. A manifest of a set built before a form gets
-that form for its rows exactly as a build gives it (diffu_page.data.page_pair_forms), which refuses a row planned
-otherwise now, a form past the text encoder's tokens, and a file to write over."""
+that form for its rows exactly as a build gives it (diffu_page.data.page_pair_forms), and a form it is told to replace
+planned again, which refuses a row planned otherwise now in a form it keeps, a form past the text encoder's tokens, and
+a file to write over."""
 
 from __future__ import annotations
 
@@ -190,7 +191,7 @@ def test_page_pairs_prompt_a_page_as_drawing_prompts_it_planned_whole_from_its_s
         Variant.NO_REFERENCE: drawn(None),
         Variant.LOOK: drawn(ReferenceCaption.NAMED),
         Variant.PLAIN: drawn(ReferenceCaption.HAND),
-        Variant.SAMPLE: drawn(ReferenceCaption.PLAIN),
+        Variant.SAMPLE: drawn(ReferenceCaption.SAMPLE),
     }
     assert row.prompts == expected
     assert [json.loads(row.prompts[variant])["summary"]["caption"] for variant in Variant] == [
@@ -206,12 +207,12 @@ def test_page_pairs_prompt_a_page_as_drawing_prompts_it_planned_whole_from_its_s
         "Create a flat, evenly lit archival scan of a new handwritten page in the hand, ink and paper of the sample "
         "image. The paper carries 3 lines of cursive handwriting.",
     ]
-    plain_lines = [item for item in json.loads(row.prompts[Variant.PLAIN])["items"] if item["label"] == "text"]
-    assert {item["caption"] for item in plain_lines} == {
-        "Handwritten line, cursive script in the sample image's hand and ink."
+    assert {item["caption"] for item in json.loads(row.prompts[Variant.PLAIN])["items"]} == {
+        "Aged paper of a bound archival volume.",  # its colour left to the sample image
+        "Handwritten line, cursive script in the sample image's hand and ink.",
     }
     assert {item["caption"] for item in json.loads(row.prompts[Variant.SAMPLE])["items"]} == {
-        "Aged paper of a bound archival volume.",  # its colour too left to the sample image
+        "The paper of the sample image.",  # no word of its look
         "Handwritten line, cursive script in the sample image's hand and ink.",
     }
 
@@ -428,7 +429,7 @@ def test_page_pairs_prompt_a_window_as_drawing_prompts_it_planned_as_a_crop_from
         Variant.NO_REFERENCE: drawn(None),
         Variant.LOOK: drawn(ReferenceCaption.NAMED),
         Variant.PLAIN: drawn(ReferenceCaption.HAND),
-        Variant.SAMPLE: drawn(ReferenceCaption.PLAIN),
+        Variant.SAMPLE: drawn(ReferenceCaption.SAMPLE),
     }
     assert [json.loads(row.prompts[variant])["summary"]["caption"] for variant in Variant] == [
         "Flat, evenly lit archival scan of a handwritten page from the court minutes of Arjeplogs tingslag, dated "
@@ -536,14 +537,46 @@ def test_page_pair_forms_give_rows_built_before_a_form_every_form_exactly_as_a_b
     assert read_jsonl(every, PagePairRow) == _repeated_rows(built_windows)
 
 
-def test_page_pair_forms_refuse_a_row_whose_form_is_planned_otherwise_now(built_before_sample: Path) -> None:
+def test_page_pair_forms_replace_a_form_they_are_given_with_the_one_planned_now(
+    built_windows: Path, built_before_sample: Path
+) -> None:
+    rows = _repeated_rows(built_windows)
+    stale = [  # the sample form as it was planned before (here the plain form's prompt), beside the set's records
+        row.model_copy(
+            update={
+                "prompts": {**row.prompts, Variant.SAMPLE: row.prompts[Variant.PLAIN]},
+                "tokens": {**row.tokens, Variant.SAMPLE: row.tokens[Variant.PLAIN]},
+            }
+        )
+        for row in rows
+    ]
+    write_jsonl(built_before_sample, stale)
+    every = built_before_sample.with_name("every.jsonl")
+
+    written = write_every_form(built_before_sample, every, workers=1, replace=frozenset({Variant.SAMPLE}))
+
+    assert read_jsonl(every, PagePairRow) == rows
+    assert (written.added, written.replaced) == ({}, {Variant.SAMPLE: len(rows)})
+
+
+@pytest.mark.parametrize(
+    "replace",
+    [
+        pytest.param(frozenset(), id="no-form-replaced"),
+        pytest.param(frozenset({Variant.SAMPLE}), id="another-form-replaced"),
+    ],
+)
+def test_page_pair_forms_refuse_a_row_whose_form_is_planned_otherwise_now(
+    built_before_sample: Path, replace: frozenset[Variant]
+) -> None:
     rows = read_jsonl(built_before_sample, PagePairRow)
     first = rows[0]
     tampered = first.model_copy(update={"prompts": {**first.prompts, Variant.PLAIN: first.prompts[Variant.LOOK]}})
     write_jsonl(built_before_sample, [tampered, *rows[1:]])
+    every = built_before_sample.with_name("every.jsonl")
 
     with pytest.raises(ValueError, match=f"row {first.id}: its plain prompt is planned otherwise now"):
-        write_every_form(built_before_sample, built_before_sample.with_name("every.jsonl"), workers=1)
+        write_every_form(built_before_sample, every, workers=1, replace=replace)
 
 
 def test_page_pair_forms_refuse_a_row_with_a_form_past_the_text_encoders_tokens(

@@ -17,9 +17,9 @@ carries the page's prompt in all four forms the training mixes (``diffu_moss.tra
 - no reference: the page's own caption (``plan_whole_page`` without a reference), hand and look in words;
 - look: the sample image, and hand and look in words (``ReferenceCaption.NAMED``: ``--reference-caption named``);
 - plain: the sample image, and the hand alone in words (``ReferenceCaption.HAND``: ``--reference-caption hand``);
-- sample: the sample image alone, naming neither the hand nor the look (``ReferenceCaption.PLAIN``:
-  ``--reference-caption plain``), so both must be read from it: where each archive has one look, its name gives the
-  hand and the look away and the sample need not be read.
+- sample: the sample image alone, naming neither the hand nor the look, its paper "the paper of the sample image"
+  (``ReferenceCaption.SAMPLE``: ``--reference-caption sample``), so both must be read from it: where each archive has
+  one look, its name gives the hand and the look away and the sample need not be read.
 
 A set built before a form was added gets it for the rows of its manifests from ``diffu_page.data.page_pair_forms``, in
 new manifests beside the old, its images as they are.
@@ -110,7 +110,7 @@ FORM_REFERENCES: dict[Variant, Reference | None] = {  # the sample is only named
     Variant.NO_REFERENCE: None,
     Variant.LOOK: Reference(image=Path("sample"), caption=ReferenceCaption.NAMED),
     Variant.PLAIN: Reference(image=Path("sample"), caption=ReferenceCaption.HAND),
-    Variant.SAMPLE: Reference(image=Path("sample"), caption=ReferenceCaption.PLAIN),
+    Variant.SAMPLE: Reference(image=Path("sample"), caption=ReferenceCaption.SAMPLE),
 }
 
 

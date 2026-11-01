@@ -29,9 +29,10 @@ implementation, written from the published design, around the released weights.
   of four prompt forms (`train/pairs.py`: `Variant`, `SHARES`): a fifth without the reference (no reference: its
   citation dropped, the look words kept), the rest with "the sample image": a fifth with the look words too (look), a
   fifth without them (plain: a page pair still names its hand) and two fifths naming nothing but the sample image
-  (sample: no hand, no look words; `sample_caption.py`), so the hand and the look must come from the image. A style
-  pair's caption names no hand, so its plain and sample forms are one prompt. MOSS's own noise levels (median 0.78)
-  and flow-matching loss over the drawn image; the joint blocks checkpointed.
+  (sample: no hand, no look words, its paper "the paper of the sample image"; `sample_caption.py`), so the hand and the
+  look must come from the image. A style pair's caption names no hand, so its plain and sample forms differ in the
+  paper alone. MOSS's own noise levels (median 0.78) and flow-matching loss over the drawn image; the joint blocks
+  checkpointed.
   `--sigma-shift k` (either kind of training; default 1, MOSS's own levels bit for bit) shifts each drawn level
   `sigma` to `k sigma / (1 + (k - 1) sigma)` (`train/sigmas.py`, the timestep shift of flow-matching samplers): under
   1 towards the clean end, where letter strokes are decided (`1/3` moves the quartiles 0.64, 0.78, 0.89 to 0.37,
@@ -71,7 +72,10 @@ implementation, written from the published design, around the released weights.
   state. A checkpoint's state keeps it in bfloat16, and a run resumed with the other dtype is refused; the default,
   float32, steps as before, bit for bit.
   `--limit-pairs N` trains on the cache's first N pairs drawn with their reference alone, and `diffu-draw-pairs`
-  (diffu-page) draws them back beside their real pages: an overfit test.
+  (diffu-page) draws them back beside their real pages: an overfit test. `--transformer` also takes a full fine-tune
+  checkpoint's `transformer/`: a new run that goes on from its weights (its optimizer, warmup and sample order start
+  afresh, so give it another `--seed` than the run it goes on from, or it draws that run's samples and noise again;
+  its checkpoints' `export.json` names the folder as their `base`), where `--resume` goes on from a saved state.
 
       diffu-moss-train-ref --full --transformer <snapshot>/transformer --cache data_flux3/cache_moss_ref_v3d \
           --val-cache data_flux3/cache_moss_ref_v3d_val --out runs/moss_ref_full/full --steps 500
@@ -122,25 +126,48 @@ implementation, written from the published design, around the released weights.
   0.5 MP. Three forms name the hand (the archive and the volume's years): no reference (the page's own caption, its
   look in words), look (the sample, and the look in words: `--reference-caption named`) and plain (the sample, the
   hand alone in words: `--reference-caption hand`); the fourth, sample, names nothing but the sample image
-  (`--reference-caption plain`), so the hand and the look must be read from it. Where each archive has one look (the
-  eight hands' set), the name gives both away: trained on the first three forms, the model ignored the sample (its
+  (`--reference-caption sample`), its paper item "The paper of the sample image." where the plain form's says "Aged
+  paper of a bound archival volume.", so the hand and the look must be read from it. Where each archive has one look
+  (the eight hands' set), the name gives both away: trained on the first three forms, the model ignored the sample (its
   validation losses the same with and without it). Each row of `train.jsonl` and `val.jsonl` (`train/pairs.py`:
   `PagePairRow`) carries the page's Layout prompt in all four forms with its length in the text encoder's tokens;
   `diffu-moss-cache-pairs` reads either kind of manifest and fixes each pair's form by its seed as before. A set built
   before a form gets it for its manifests' rows from `python -m diffu_page.data.page_pair_forms` (`--pairs
   <set>/train.jsonl --out <set>/train_sample.jsonl`): each row planned again from its PAGE file and scan as its build
   planned it, the forms it holds checked to come out as it holds them and the new ones added, in a new manifest
-  beside the old, the images as they are; a cache refuses a row lacking a form it draws. Pages past the encoder's
-  4,096 tokens are skipped and counted, never cut; whole volumes are held out (`val.jsonl`, and `val_eval/` for
-  `diffu-evaluate`). With `--windows-per-page N` each page also gives up to N windows (picked by a stream seeded with
-  its id): consecutive whole lines of one column, planned on the single page as `diffu-generate` plans its crops
-  (`plan_page`: a 64 px line pitch, 8-15 lines), cut from the scan at the pages' pixels, so their letters are larger,
-  and prompted as their page in all four forms (each its own Layout prompt). A window is a row like a page's, with its
-  page's sample and in its volume's split, marked by `window` (its page's id and its rectangle there, page px); a page
-  too long to be a pair still gives its windows a sample. The window rows follow the page rows, which are written
-  exactly as without windows (the default, 0).
+  beside the old, the images as they are; with `--replace sample` (any form, repeated) that form is planned again and
+  replaced, as when its caption changed (the sample form's paper item: `train_bal_sample2.jsonl` from
+  `train_bal_sample.jsonl`), every other form still checked; a cache refuses a row lacking a form it draws. Pages past
+  the encoder's 4,096 tokens are skipped and counted, never cut; whole volumes are held out (`val.jsonl`, and
+  `val_eval/` for `diffu-evaluate`). With `--windows-per-page N` each page also gives up to N windows (picked by a
+  stream seeded with its id): consecutive whole lines of one column, planned on the single page as `diffu-generate`
+  plans its crops (`plan_page`: a 64 px line pitch, 8-15 lines), cut from the scan at the pages' pixels, so their
+  letters are larger, and prompted as their page in all four forms (each its own Layout prompt). A window is a row like
+  a page's, with its page's sample and in its volume's split, marked by `window` (its page's id and its rectangle
+  there, page px); a page too long to be a pair still gives its windows a sample. The window rows follow the page
+  rows, which are written exactly as without windows (the default, 0).
 
       python -m diffu_page.data.page_pairs --gt-root ~/Desktop/data/GT-Lejonet_HTR_202602 --model runs/moss/base \
           --out data_flux3/page_pairs --workers 8 --windows-per-page 2
       diffu-moss-cache-pairs --model runs/moss/base --pairs data_flux3/page_pairs/train.jsonl \
           --out data_flux3/cache_moss_pages
+- **Look changes for the sample form** (`diffu-moss-cache-pairs --restyle-share s`, `train/restyle.py`): in the eight
+  hands' set each volume's pages and samples share one look and half the volumes are microfilm, so a model can draw a
+  page's look from its hand and leave the sample unread (full_r5: drawn in the sample form, a microfilm page with its
+  own greyscale sample came out cream). The cache gives the share `s` of its entries in the sample form (rounded;
+  picked by `--seed` on a stream of its own, so the cache holds the same pairs in the same forms as without) one look
+  change, drawn per entry and applied alike to the target and its sample before both are encoded: microfilm (each
+  image's ink black, its paper a grey of 0.70-0.94, the darkest 0-22 % of the range between them crushed to black,
+  gamma 0.8-1.25), colourise (that range laid from an ink tone, black, dark brown, brown or grey, scaled 0.85-1.15, to
+  a paper tone, cream, yellowed, off-white or white, scaled 0.96-1.03; 0-10 % crushed, gamma 0.85-1.2) or tint (red
+  and blue scaled by 1 ± 0.03, contrast 0.88-1.12 about mid-grey, brightness ± 0.04, gamma 0.87-1.15), a third of
+  the changed entries each, placed by a shuffle.
+  Each reads its image's own ink and paper (the median luminance of its darkest 2 % and lightest 40 %), so a page and
+  its sample land on the drawn tones whatever their exposure; none moves a pixel, so every line keeps its box. The
+  sample form names no look, so its prompt stays true. An entry records its change (`restyle`: its kind and
+  parameters) and `cache.json` the share and the count of each kind; the default, 0, writes every file as before, byte
+  for byte. A restyled image is an 8-bit RGB image, as a drawing is given a sample, and `diffu-draw-pairs` draws a
+  restyled pair back from its sample in that look.
+
+      diffu-moss-cache-pairs --model runs/moss/base --pairs data_flux3/page_pairs_eight/train_bal_sample2.jsonl \
+          --out data_flux3/cache_moss_eight_bal_restyle --restyle-share 0.5

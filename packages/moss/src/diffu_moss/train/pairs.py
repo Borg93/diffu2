@@ -9,10 +9,11 @@ Each pair is drawn into one of four prompt forms, its :class:`Variant`, the mix 
 (:func:`assign_variants`, :data:`SHARES`): a fifth without the reference (the caption's citation dropped, its look
 words kept: plain text-to-image, as MOSS-Image was trained), a fifth with the sample image and the look words, a fifth
 with the sample image and no look words (a page pair's prompt still names its hand), and two fifths with the sample
-image alone, naming no hand and no look, so the hand and the look must come from the image. A style pair's caption
-names no hand, so its plain and sample forms are one prompt. Each form is compiled as MOSS's Layout prompt of the target
-(:mod:`diffu_moss.layout_prompt`), as the page pipeline compiles a crop drawn with or without its reference
-(``MossLayoutPromptStep``); a page pair's rows carry theirs compiled.
+image alone, naming no hand and no look, its paper "the paper of the sample image", so the hand and the look must come
+from the image. A style pair's caption names no hand, so its plain and sample forms differ in the paper alone. Each
+form is compiled as MOSS's Layout prompt of the target (:mod:`diffu_moss.layout_prompt`), as the page pipeline
+compiles a crop drawn with or without its reference (``MossLayoutPromptStep``); a page pair's rows carry theirs
+compiled.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field
 
 from diffu_moss.layout_prompt import caption_texts, layout_prompt
-from diffu_moss.sample_caption import with_sample, without_look, without_sample
+from diffu_moss.sample_caption import SAMPLE_PAPER_ROW, with_sample, without_look, without_sample
 
 
 class Variant(StrEnum):
@@ -34,7 +35,7 @@ class Variant(StrEnum):
     NO_REFERENCE = "no_reference"  # no reference image: the citation dropped, the look words kept
     LOOK = "look"  # the sample image, and the look in words too
     PLAIN = "plain"  # the sample image, the look words dropped (a page pair's prompt still names its hand)
-    SAMPLE = "sample"  # the sample image alone: no hand named, no look words
+    SAMPLE = "sample"  # the sample image alone: no hand named, no look words, the paper the sample image's
 
     @property
     def takes_reference(self) -> bool:
@@ -72,7 +73,8 @@ class Pair(BaseModel):
 
     def prompt(self, variant: Variant, size: tuple[int, int]) -> str:
         """The target's MOSS Layout prompt in ``variant``'s form, on its canvas of ``size`` (width, height) px. The
-        caption names no hand, so its plain and sample forms are the same prompt.
+        caption names no hand, so its plain and sample forms differ in the paper row alone: the sample form's cites
+        the sample image's paper.
 
         Raises:
             ValueError: If the caption has no layout list, does not quote a line's text, or (for the plain and the
@@ -83,8 +85,10 @@ class Pair(BaseModel):
                 caption = without_sample(self.caption)
             case Variant.LOOK:
                 caption = with_sample(self.caption)
-            case Variant.PLAIN | Variant.SAMPLE:
+            case Variant.PLAIN:
                 caption = with_sample(without_look(self.caption))
+            case Variant.SAMPLE:
+                caption = with_sample(without_look(self.caption, paper_row=SAMPLE_PAPER_ROW))
         return layout_prompt(caption, caption_texts(self.caption), size)
 
     def texts(self) -> set[str]:

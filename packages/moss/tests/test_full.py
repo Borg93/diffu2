@@ -3,8 +3,8 @@ joint blocks' matrices, AdamW on the rest, no weight decay on biases, norms and 
 weights decayed towards one), Muon's momentum kept in bfloat16 when asked, a step that trains every weight in float32,
 a checkpoint that diffu-moss-init draws with, its files byte for byte safetensors' own, the memory of its copies of the
 weights given back to the system once each file is written and CUDA's cache emptied after, the average of the weights
-by its formula, and a run resumed from a checkpoint's state going on exactly as it would have, and refused one it was
-not trained with."""
+by its formula, a run started from a checkpoint's DiT (a warm start, its record naming the folder it went on from), and
+a run resumed from a checkpoint's state going on exactly as it would have, and refused one it was not trained with."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ from diffu_moss.modular_pipelines.moss import MossModularPipeline
 from diffu_moss.train.full import AVERAGE, AVERAGE_WEIGHTS, DIT, STATE, FullOptimizer, FullSettings, MomentumDtype
 from diffu_moss.train.loop import LOG, TrainSettings, train
 from diffu_moss.train.muon import Muon, orthogonalised, rms_matched_rate
-from diffu_moss.train.records import PROGRESS_RECORD
+from diffu_moss.train.records import EXPORT_RECORD, PROGRESS_RECORD, ExportRecord
 from diffu_moss.transformer import MossTransformer
 
 JOINT_MATRICES = [
@@ -222,6 +222,23 @@ def test_full_checkpoint_is_a_bfloat16_dit_folder_diffu_moss_init_draws_with_its
     assert {weight.dtype for weight in _weights(checkpoint / DIT).values()} == {torch.bfloat16}
     assert sorted(drawn) == sorted(trained)
     assert [name for name in trained if not torch.equal(drawn[name], trained[name].to(torch.bfloat16))] == []
+
+
+def test_full_fine_tune_starts_from_a_full_checkpoints_dit_folder_given_as_its_dit(
+    full_run: Path, tiny_pair_cache: Path, tmp_path: Path
+) -> None:
+    folder = _checkpoint(full_run, 3) / DIT  # in bfloat16, its export.json saying it takes a reference
+    # a step at learning rate 0 moves no weight; its samples drawn with their reference
+    still = TrainSettings(steps=1, save_every=1, limit_pairs=2, full=FullSettings(learning_rate=0.0), device="cpu")
+
+    train(folder, tiny_pair_cache, tmp_path, still)
+
+    went_on = _checkpoint(tmp_path, 1)
+    started, weights = _weights(folder), _weights(went_on / DIT)
+    assert [name for name in started if not torch.equal(weights[name], started[name])] == []
+    assert ExportRecord.read(went_on / DIT / EXPORT_RECORD) == ExportRecord(
+        takes_reference=True, base=str(folder.resolve()), checkpoint=str(went_on.resolve())
+    )
 
 
 def test_full_checkpoint_writes_each_weights_file_byte_for_byte_as_safetensors_writes_its_weights(

@@ -8,7 +8,9 @@ or a planned crop's) with other phrases:
 
 - ``restyle``: another style's archive and look (the v2 steering test: the same text and layout as another archive);
 - ``edit_caption``: a FLUX.3 image-edit record that takes the hand, ink and paper from ``<ref_image_0>`` and names
-  none of them (v3, v3c; the sample form of MOSS-Image's page pairs);
+  none of them (v3, v3c);
+- ``sample_edit_caption``: that record with its paper row citing ``<ref_image_0>``'s paper too, where
+  ``edit_caption``'s names an aged paper (the sample form of MOSS-Image's page pairs);
 - ``named_edit_caption``: that record naming the archive and look in words as well (v3b);
 - ``described_edit_caption``: that record describing the reference's measured hand, ink and paper (v3d): BFL's
   captions state a style's visible features, and FLUX.3 takes its style from the caption more than from a reference;
@@ -48,10 +50,11 @@ class ReferenceCaption(StrEnum):
     """How a caption drawn from a reference image speaks of the reference's style; it must be the form the LoRA was
     trained on."""
 
-    PLAIN = "plain"  # only by <ref_image_0> (edit_caption: v3, v3c, the page pairs' sample form)
+    PLAIN = "plain"  # only by <ref_image_0> (edit_caption: v3, v3c)
     DESCRIBED = "described"  # the reference's measured hand, ink and paper in words too (described_edit_caption: v3d)
     NAMED = "named"  # the archive, years and look named beside it (named_edit_caption: v3b, the page pairs' look form)
     HAND = "hand"  # the archive and years named as the hand, the look from it alone (the page pairs' plain form)
+    SAMPLE = "sample"  # only by <ref_image_0>, its paper row too (sample_edit_caption: the page pairs' sample form)
 
 
 class CaptionParts(BaseModel):
@@ -102,6 +105,11 @@ def _from_reference(parts: CaptionParts) -> StylePhrases:
         ink_line="cursive script in the reference's hand and ink.",
         ink_fragment="handwritten line, cut off",
     )
+
+
+def _from_sample(parts: CaptionParts) -> StylePhrases:
+    """The image-edit phrases that name nothing but the reference, its paper row citing the reference's paper too."""
+    return _from_reference(parts).model_copy(update={"paper_row": "The paper of <ref_image_0>."})
 
 
 _WHOLE_IMAGE: LayoutBox = (0, 0, 1000, 1000)
@@ -188,6 +196,13 @@ def edit_caption(parts: CaptionParts) -> str:
     return _edit(parts, _from_reference(parts))
 
 
+def sample_edit_caption(parts: CaptionParts) -> str:
+    """``edit_caption`` whose paper row cites the reference's paper ("The paper of <ref_image_0>.") where
+    ``edit_caption``'s names an aged paper, which pulled a drawing from a greyscale reference towards colour paper: no
+    word of the look, all of it from the reference."""
+    return _edit(parts, _from_sample(parts))
+
+
 def named_edit_caption(parts: CaptionParts) -> str:
     """``edit_caption`` that also names the caption's archive, years, scan, paper and ink: the style in words and by
     example at once."""
@@ -224,6 +239,8 @@ def reference_caption(parts: CaptionParts, form: ReferenceCaption, reference: Re
             return named_edit_caption(parts)
         case ReferenceCaption.HAND:
             return hand_edit_caption(parts)
+        case ReferenceCaption.SAMPLE:
+            return sample_edit_caption(parts)
 
 
 def _edit(parts: CaptionParts, phrases: StylePhrases) -> str:

@@ -572,7 +572,11 @@ def train(
 @app.command()
 def main(
     transformer: Annotated[
-        Path, typer.Option(help="the Base DiT's folder (diffusers format), the snapshot's transformer/")
+        Path,
+        typer.Option(
+            help="the DiT's folder to train from (diffusers format): the Base snapshot's transformer/, or a full "
+            "fine-tune checkpoint's transformer/ to go on from (a new run: its optimizer and warmup start afresh)"
+        ),
     ],
     cache: Annotated[Path, typer.Option(help="a finished diffu-moss-cache-pairs cache")],
     out: Annotated[Path, typer.Option(help="the run's directory: its log and checkpoints")],

@@ -10,10 +10,14 @@ at its whole-page size, captioned in its archive's name and the look measured on
 counted (``diffu_page.data.page_pairs.page_record``); no image is written. A form the row holds must come out as it
 holds it, prompt and tokens, or the row is refused: its set was planned otherwise than a build plans it now. The forms
 it lacks are added; a row with a form past the text encoder's 4,096 tokens is refused, as a build would skip it. The
-rows are written to ``--out``, a new file, in their order, each as it was but for the forms added.
+forms named by ``--replace`` (repeat it) are replaced by the ones planned now, where a form's caption changed after its
+set was built (the sample form, its paper row citing the sample's paper): every other form is still checked. The rows
+are written to ``--out``, a new file, in their order, each as it was but for the forms added and replaced.
 
     python -m diffu_page.data.page_pair_forms --pairs data_flux3/page_pairs_eight/train_bal.jsonl \\
         --out data_flux3/page_pairs_eight/train_bal_sample.jsonl --workers 4
+    python -m diffu_page.data.page_pair_forms --pairs data_flux3/page_pairs_eight/train_bal_sample.jsonl \\
+        --out data_flux3/page_pairs_eight/train_bal_sample2.jsonl --replace sample --workers 4
 """
 
 from __future__ import annotations
@@ -68,11 +72,12 @@ class ScanTargets(BaseModel):
 
 
 class FormsAdded(BaseModel):
-    """What a manifest given every form holds: its rows, how many of them each form was added to, and its longest
-    prompt in the text encoder's tokens."""
+    """What a manifest given every form holds: its rows, how many of them each form was added to and how many it was
+    replaced in (planned otherwise now), and its longest prompt in the text encoder's tokens."""
 
     rows: int
     added: dict[Variant, int]
+    replaced: dict[Variant, int]
     longest: int
 
 
@@ -107,18 +112,24 @@ def planned_forms(task: ScanTargets) -> dict[str, Forms]:
     return {target: planned[target] for target in targets}
 
 
-def with_every_form(row: PagePairRow, forms: Forms) -> PagePairRow:
-    """``row`` with its target's prompt in every form, as ``forms`` (its target planned now) give them.
-
-    Raises:
-        ValueError: If a form the row holds is planned otherwise now, its prompt or its tokens, or a form passes the
-            text encoder's tokens.
-    """
-    otherwise = [
+def planned_otherwise(row: PagePairRow, forms: Forms) -> list[Variant]:
+    """The forms ``row`` holds that ``forms`` (its target planned now) give otherwise, their prompt or their tokens."""
+    return [
         variant
         for variant, prompt in row.prompts.items()
         if (prompt, row.tokens.get(variant)) != (forms.prompts[variant], forms.tokens[variant])
     ]
+
+
+def with_every_form(row: PagePairRow, forms: Forms, *, replace: frozenset[Variant] = frozenset()) -> PagePairRow:
+    """``row`` with its target's prompt in every form, as ``forms`` (its target planned now) give them: the forms it
+    lacks added, the forms of ``replace`` replaced.
+
+    Raises:
+        ValueError: If a form the row holds, not one of ``replace``, is planned otherwise now, its prompt or its
+            tokens, or a form passes the text encoder's tokens.
+    """
+    otherwise = [variant for variant in planned_otherwise(row, forms) if variant not in replace]
     if otherwise:
         raise ValueError(
             f"row {row.id}: its {', '.join(otherwise)} prompt is planned otherwise now than its set was built"
@@ -141,9 +152,11 @@ def scan_xml(directory: Path, digest: str) -> str:
     return ScanResult.model_validate_json(record.read_text(encoding="utf-8")).xml
 
 
-def write_every_form(manifest: Path, out: Path, *, workers: int) -> FormsAdded:
-    """The rows of ``manifest``, a manifest in a page-pair set's dir, in every form (the module's docstring), written
-    to ``out`` on ``workers`` processes.
+def write_every_form(
+    manifest: Path, out: Path, *, workers: int, replace: frozenset[Variant] = frozenset()
+) -> FormsAdded:
+    """The rows of ``manifest``, a manifest in a page-pair set's dir, in every form, the forms of ``replace`` planned
+    again (the module's docstring), written to ``out`` on ``workers`` processes.
 
     Raises:
         ValueError: If ``out`` exists (the manifest itself among others), ``manifest`` is in no page-pair set's dir,
@@ -173,16 +186,21 @@ def write_every_form(manifest: Path, out: Path, *, workers: int) -> FormsAdded:
         forms |= planned
         if k % 100 == 0:
             console.print(f"{k} of {len(tasks)} scans planned")
-    written = [with_every_form(row, forms[Path(row.target).stem]) for row in rows]
+    planned = [forms[Path(row.target).stem] for row in rows]
+    written = [with_every_form(row, row_forms, replace=replace) for row, row_forms in zip(rows, planned, strict=True)]
     partial = out.with_name(f"{out.name}.partial")
     write_jsonl(partial, written)
     partial.rename(out)
     added = Counter(
         variant for old, new in zip(rows, written, strict=True) for variant in new.prompts.keys() - old.prompts.keys()
     )
+    replaced = Counter(
+        variant for row, row_forms in zip(rows, planned, strict=True) for variant in planned_otherwise(row, row_forms)
+    )
     return FormsAdded(
         rows=len(written),
         added={variant: added[variant] for variant in Variant if added[variant]},
+        replaced={variant: replaced[variant] for variant in Variant if replaced[variant]},
         longest=max((max(row.tokens.values()) for row in written), default=0),
     )
 
@@ -199,10 +217,18 @@ def main(
     workers: Annotated[int, typer.Option(min=1, help="processes planning the scans: fewer beside a training")] = max(
         1, (os.cpu_count() or 2) // 2
     ),
+    replace: Annotated[
+        list[Variant] | None,
+        typer.Option(
+            "--replace",
+            help="a form to plan again and replace in every row (repeat it), as a caption changed since the set was "
+            "built; every other form must still come out as the row holds it",
+        ),
+    ] = None,
 ) -> None:
     """Give the rows of a page-pair manifest every prompt form, planned as their set was built: a new manifest."""
     try:
-        added = write_every_form(pairs, out, workers=workers)
+        added = write_every_form(pairs, out, workers=workers, replace=frozenset(replace or ()))
     except ValueError as error:  # a used --out, a manifest of no set, or a row planned otherwise: the arguments'
         raise typer.BadParameter(str(error)) from error
     console.print(f"{added.model_dump_json()} -> {out}")

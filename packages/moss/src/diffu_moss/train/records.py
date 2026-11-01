@@ -8,7 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Self
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 CACHE_RECORD = "cache.json"
 ADAPTER_RECORD = "adapter.json"
@@ -51,7 +51,9 @@ class AdapterRecord(JsonRecord):
 class CacheRecord(JsonRecord):
     """How a cache was made: from which pairs and model, how many pairs it holds and how they were drawn into the mix
     of prompt forms (``diffu_moss.train.pairs.Variant``), how many pairs were left out for sharing a line with their
-    reference, and whether it holds the latents alone (no prompt embeddings: a training encodes them)."""
+    reference, whether it holds the latents alone (no prompt embeddings: a training encodes them), and the share of
+    its entries in the sample form asked to take a look change and how many took each kind
+    (``diffu_moss.train.restyle``; both left out of a cache without, which is written as before)."""
 
     pairs: str
     model: str
@@ -60,12 +62,15 @@ class CacheRecord(JsonRecord):
     pairs_sharing_lines: int
     entries: dict[str, int]
     latents_only: bool = False
+    restyle_share: float = Field(default=0.0, exclude_if=lambda share: share == 0)
+    restyled: dict[str, int] = Field(default_factory=dict, exclude_if=lambda kinds: not kinds)
 
 
 class ExportRecord(JsonRecord):
-    """A trained DiT's provenance: the Base DiT it was trained from, the checkpoint it is (or whose LoRA was merged
-    into Base; ``adapter`` is None for a full fine-tune, whose own weights are the DiT), and whether it was trained to
-    take a reference image (``diffu-moss-init`` writes that into the model index's ``takes_reference``)."""
+    """A trained DiT's provenance: the DiT it was trained from (``base``: the Base DiT, or a full fine-tune's checkpoint
+    it went on from, whose own record names its), the checkpoint it is (or whose LoRA was merged into Base;
+    ``adapter`` is None for a full fine-tune, whose own weights are the DiT), and whether it was trained to take a
+    reference image (``diffu-moss-init`` writes that into the model index's ``takes_reference``)."""
 
     takes_reference: bool
     base: str

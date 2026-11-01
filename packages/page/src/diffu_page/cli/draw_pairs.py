@@ -3,9 +3,10 @@ test of ``jobs/moss/run_ref_full.sh``, where a DiT trained on a handful of pairs
 
 The pairs are the cache's first ``--limit-pairs`` drawn with their reference, the handful ``diffu-moss-train-ref
 --limit-pairs`` trains on (:func:`diffu_moss.train.cache.with_reference`). Each is drawn as it was trained: from its
-cached Layout prompt (kept as it is, not compiled again) and its reference image, at its target's size, by the model's
-own blocks at its own guidance and sampling shift, from seed ``--seed`` + its place. Writes ``generated/NNN.png`` and
-a contact sheet a pair (``NNN_<pair>.jpg``: the reference, the real page, the drawing).
+cached Layout prompt (kept as it is, not compiled again) and its reference image (in the look change its entry
+records, if the cache gave it one: ``--restyle-share``), at its target's size, by the model's own blocks at its own
+guidance and sampling shift, from seed ``--seed`` + its place. Writes ``generated/NNN.png`` and a contact sheet a pair
+(``NNN_<pair>.jpg``: the reference, the real page, in that look too, the drawing).
 
     python -m diffu_page.cli.draw_pairs --model runs/moss/ref_full_overfit --cache data_flux3/cache_moss_ref_v3d \\
         --limit-pairs 8 --out runs/moss_ref_full/overfit_drawn
@@ -24,6 +25,7 @@ from diffu_moss.modular_pipelines.moss import MossModularPipeline
 from diffu_moss.train.cache import read_entries, with_reference
 from diffu_moss.train.pairs import read_manifest
 from diffu_moss.train.records import CACHE_RECORD, CacheRecord
+from diffu_moss.train.restyle import restyled
 from diffu_page.cli.options import DEFAULTS, Device, Steps
 from diffu_page.output import JPEG_QUALITY, console, load_rgb, side_by_side
 from diffu_page.pipeline import DrawSettings, load_pipeline, model_family
@@ -55,7 +57,9 @@ def draw_pairs(model: Path, cache: Path, out: Path, *, count: int, seed: int, se
     sheets = []
     for index, entry in enumerate(entries):
         pair = pairs[entry.pair]
-        reference = load_rgb(pair.reference)
+        reference, target = load_rgb(pair.reference), load_rgb(pair.target)
+        if entry.restyle is not None:  # trained on its sample and page in that look
+            reference, target = restyled(reference, entry.restyle), restyled(target, entry.restyle)
         width, height = entry.target_size
         pipe.guider.set_state(step=0, num_inference_steps=settings.steps, timestep=None)  # as diffu_page.pipeline draws
         drawn: Image.Image = pipe(
@@ -69,9 +73,7 @@ def draw_pairs(model: Path, cache: Path, out: Path, *, count: int, seed: int, se
         )[0]
         drawn.save(out / "generated" / f"{index:03d}.png")
         sheet = out / f"{index:03d}_{entry.pair}.jpg"
-        side_by_side([reference, load_rgb(pair.target), drawn], height=height, gap=SHEET_GAP).save(
-            sheet, quality=JPEG_QUALITY
-        )
+        side_by_side([reference, target, drawn], height=height, gap=SHEET_GAP).save(sheet, quality=JPEG_QUALITY)
         sheets.append(sheet)
         console.print(f"{index:3d} {entry.pair} ({entry.variant}) -> {sheet}")
     return sheets

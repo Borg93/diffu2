@@ -23,12 +23,20 @@ then ``entries.jsonl`` and ``cache.json``, last.
 With ``--latents-only`` the text encoder is not loaded and no entry holds ``prompt_embeds``: a training that encodes
 each prompt in its step (``diffu-moss-train-ref --encode-text``, :class:`PromptEncoder`) reads such a cache; the
 entries still give their prompts and token counts (by the tokenizer, as the encoder reads them).
+
+With ``--restyle-share s`` the share ``s`` of the entries in the sample form (rounded), picked by a stream seeded by
+``--seed`` apart from the one that picks the pairs and forms (so the cache holds the same entries as without), each
+take one look change drawn from that stream (:mod:`diffu_moss.train.restyle`: microfilm, colourised or tinted), the
+same for the target and its sample, before both are encoded: the sample form names no look, so its prompt stays true
+and the look can only come from the sample. Each such entry records its change (``restyle``, its kind and parameters),
+the record how many took each kind; the default, 0, caches the images as scanned, every file as before.
 """
 
 from __future__ import annotations
 
 import json
 import random
+from collections import Counter
 from pathlib import Path
 from typing import Annotated
 
@@ -36,7 +44,7 @@ import torch
 import typer
 from diffusers.modular_pipelines import ModularPipeline, SequentialPipelineBlocks
 from PIL import Image
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from rich.console import Console
 from safetensors import safe_open
 from safetensors.torch import load_file, save_file
@@ -48,6 +56,7 @@ from diffu_moss.modular_pipelines.moss import MossModularPipeline
 from diffu_moss.modular_pipelines.moss.encoders import MossReferenceEncodeStep, MossTextEncoderStep, prompt_tokens
 from diffu_moss.train.pairs import TrainingPair, Variant, apart, assign_variants, read_manifest
 from diffu_moss.train.records import CACHE_RECORD, CacheRecord
+from diffu_moss.train.restyle import Restyle, draw_restyles, restyled
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 console = Console()
@@ -60,7 +69,9 @@ TEXT_ENCODERS = ("text_encoder", "tokenizer")
 
 
 class CacheEntry(BaseModel):
-    """One cached training sample: a pair in one prompt form, its tensors in ``file``."""
+    """One cached training sample: a pair in one prompt form, its tensors in ``file``, and the look change its target
+    and sample took (``restyle``; left out of the entry's JSON when they are as scanned, so such an entry is written as
+    before)."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -71,6 +82,17 @@ class CacheEntry(BaseModel):
     tokens: int
     target_size: tuple[int, int]  # (width, height) px
     reference_size: tuple[int, int] | None
+    restyle: Restyle | None = Field(default=None, exclude_if=lambda restyle: restyle is None)
+
+
+class PlannedEntry(BaseModel):
+    """A pair to cache, the prompt form it is cached in and the look change its images take (None: as scanned)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    pair: TrainingPair
+    variant: Variant
+    restyle: Restyle | None = None
 
 
 class CachedSample(BaseModel):
@@ -125,22 +147,25 @@ class PromptEncoder:
         return embeds.clone()
 
 
-def image_latents(pipe: ModularPipeline, path: Path) -> tuple[Tensor, tuple[int, int]]:
-    """The image at ``path`` as the DiT's latents, as the reference encode step encodes a reference, and its size."""
+def image_latents(pipe: ModularPipeline, path: Path, restyle: Restyle | None = None) -> tuple[Tensor, tuple[int, int]]:
+    """The image at ``path`` as the DiT's latents, as the reference encode step encodes a reference (in ``restyle``'s
+    look when one is given: :func:`diffu_moss.train.restyle.restyled`), and its size."""
     with Image.open(path) as image:
-        return encode_latents(pipe.vae, image_pixels(image)), image.size
+        drawn = image if restyle is None else restyled(image, restyle)
+        return encode_latents(pipe.vae, image_pixels(drawn)), image.size
 
 
 def cache_entry(
-    pipe: ModularPipeline, pair: TrainingPair, variant: Variant, file: str, *, latents_only: bool = False
+    pipe: ModularPipeline, planned: PlannedEntry, file: str, *, latents_only: bool = False
 ) -> tuple[CacheEntry, dict[str, Tensor]]:
-    """``pair`` in ``variant``'s prompt form, encoded: its entry and its tensors (in :data:`CACHE_DTYPE`, on the CPU;
-    with ``latents_only`` no ``prompt_embeds``).
+    """``planned``'s pair in its prompt form, its images in its look, encoded: its entry and its tensors (in
+    :data:`CACHE_DTYPE`, on the CPU; with ``latents_only`` no ``prompt_embeds``).
 
     Raises:
         ValueError: If the pair's caption cannot be compiled in that form, or an image is off the latent grid.
     """
-    target, target_size = image_latents(pipe, pair.target)
+    pair, variant = planned.pair, planned.variant
+    target, target_size = image_latents(pipe, pair.target, planned.restyle)
     prompt = pair.prompt(variant, target_size)
     tensors = {"target": target}
     if latents_only:
@@ -150,7 +175,7 @@ def cache_entry(
         tokens = tensors["prompt_embeds"].shape[1]
     reference_size = None
     if variant.takes_reference:
-        tensors["reference"], reference_size = image_latents(pipe, pair.reference)
+        tensors["reference"], reference_size = image_latents(pipe, pair.reference, planned.restyle)
     entry = CacheEntry(
         file=file,
         pair=pair.id,
@@ -159,33 +184,51 @@ def cache_entry(
         tokens=tokens,
         target_size=target_size,
         reference_size=reference_size,
+        restyle=planned.restyle,
     )
     return entry, {name: tensor.to("cpu", CACHE_DTYPE).contiguous() for name, tensor in tensors.items()}
 
 
-def planned_entries(
-    pairs: list[TrainingPair], *, limit: int | None, seed: int, every_form: bool
-) -> list[tuple[TrainingPair, Variant]]:
-    """The pairs to cache, each with the prompt form it is cached in: the pairs shuffled by ``seed``, the first
-    ``limit`` of them (all when None), each in the form the mix gives it, or in every form."""
-    chosen = list(pairs)
-    random.Random(seed).shuffle(chosen)
-    chosen = chosen[:limit]
-    if every_form:
-        return [(pair, variant) for pair in chosen for variant in Variant]
-    return list(zip(chosen, assign_variants(len(chosen), seed), strict=True))
-
-
 class CacheSettings(BaseModel):
-    """Which pairs a cache holds, in which prompt forms, and where it is encoded."""
+    """Which pairs a cache holds, in which prompt forms, which share of the entries in the sample form take a look
+    change, and where it is encoded."""
 
     model_config = ConfigDict(frozen=True)
 
     limit: int | None = None
     seed: int = 0
     every_form: bool = False
+    restyle_share: float = Field(default=0.0, ge=0, le=1)
     latents_only: bool = False
     device: str = "cuda"
+
+
+def planned_restyles(variants: list[Variant], share: float, seed: int) -> dict[int, Restyle]:
+    """The look changes of a cache's entries, by their place, given their prompt forms ``variants`` in order: of the
+    entries in the sample form exactly ``share`` (rounded), picked by a stream seeded by ``seed``, given restyles drawn
+    from that stream, a third of each kind (:func:`diffu_moss.train.restyle.draw_restyles`), in place order."""
+    places = [index for index, variant in enumerate(variants) if variant is Variant.SAMPLE]
+    stream = random.Random(f"restyle/{seed}")  # apart from the stream that picks the pairs and their forms
+    picked = sorted(stream.sample(places, round(len(places) * share)))
+    return dict(zip(picked, draw_restyles(len(picked), stream), strict=True))
+
+
+def planned_entries(pairs: list[TrainingPair], settings: CacheSettings) -> list[PlannedEntry]:
+    """The entries to cache, in order: the pairs shuffled by ``settings.seed``, the first ``settings.limit`` of them
+    (all when None), each in the prompt form the mix gives it, or in every form, and the share
+    ``settings.restyle_share`` of those in the sample form with a look change (:func:`planned_restyles`)."""
+    chosen = list(pairs)
+    random.Random(settings.seed).shuffle(chosen)
+    chosen = chosen[: settings.limit]
+    if settings.every_form:
+        forms = [(pair, variant) for pair in chosen for variant in Variant]
+    else:
+        forms = list(zip(chosen, assign_variants(len(chosen), settings.seed), strict=True))
+    restyles = planned_restyles([variant for _, variant in forms], settings.restyle_share, settings.seed)
+    return [
+        PlannedEntry(pair=pair, variant=variant, restyle=restyles.get(index))
+        for index, (pair, variant) in enumerate(forms)
+    ]
 
 
 def write_cache(model: Path, manifest: Path, out: Path, settings: CacheSettings) -> CacheRecord:
@@ -203,17 +246,17 @@ def write_cache(model: Path, manifest: Path, out: Path, settings: CacheSettings)
         raise ValueError(f"{out} holds a finished cache already; give a new directory")
     pairs = read_manifest(manifest)
     kept = apart(pairs)
-    planned = planned_entries(kept, limit=settings.limit, seed=settings.seed, every_form=settings.every_form)
+    planned = planned_entries(kept, settings)
     pipe = encoder_pipeline(model, settings.device, LATENT_ENCODERS if settings.latents_only else ENCODERS)
     out.mkdir(parents=True, exist_ok=True)
     entries = []
-    for index, (pair, variant) in enumerate(planned):
-        file = f"{index:06d}_{variant}.safetensors"
+    for index, plan in enumerate(planned):
+        file = f"{index:06d}_{plan.variant}.safetensors"
         if (out / file).exists():
             with safe_open(str(out / file), framework="pt") as written:
                 entries.append(CacheEntry.model_validate_json(written.metadata()["entry"]))
             continue
-        entry, tensors = cache_entry(pipe, pair, variant, file, latents_only=settings.latents_only)
+        entry, tensors = cache_entry(pipe, plan, file, latents_only=settings.latents_only)
         partial = out / f"{file}.partial"
         save_file(tensors, str(partial), metadata={"entry": entry.model_dump_json()})
         partial.rename(out / file)
@@ -222,6 +265,7 @@ def write_cache(model: Path, manifest: Path, out: Path, settings: CacheSettings)
             console.print(f"{index + 1} of {len(planned)} entries cached")
     (out / ENTRIES).write_text("".join(f"{entry.model_dump_json()}\n" for entry in entries), encoding="utf-8")
     counts = {variant.value: sum(entry.variant is variant for entry in entries) for variant in Variant}
+    restyled_kinds = Counter(entry.restyle.kind for entry in entries if entry.restyle is not None)
     record = CacheRecord(
         pairs=str(manifest.resolve()),
         model=str(model.resolve()),
@@ -230,6 +274,8 @@ def write_cache(model: Path, manifest: Path, out: Path, settings: CacheSettings)
         pairs_sharing_lines=len(pairs) - len(kept),
         entries=counts,
         latents_only=settings.latents_only,
+        restyle_share=settings.restyle_share,
+        restyled=dict(sorted(restyled_kinds.items())),
     )
     record.write(out / CACHE_RECORD)
     return record
@@ -308,6 +354,15 @@ def main(
     every_form: Annotated[
         bool, typer.Option("--every-form", help="cache every pair in every prompt form (a validation set)")
     ] = False,
+    restyle_share: Annotated[
+        float,
+        typer.Option(
+            min=0.0,
+            max=1.0,
+            help="give this share of the entries in the sample form, picked by --seed, one look change for the page "
+            "and its sample alike: microfilm, colourised or tinted (diffu_moss.train.restyle); 0: as scanned",
+        ),
+    ] = 0.0,
     latents_only: Annotated[
         bool,
         typer.Option(
@@ -318,7 +373,14 @@ def main(
     device: Annotated[str, typer.Option(help="where the encoders run")] = "cuda",
 ) -> None:
     """Cache style pairs for a reference training: each pair's prompt embeddings and latents."""
-    settings = CacheSettings(limit=limit, seed=seed, every_form=every_form, latents_only=latents_only, device=device)
+    settings = CacheSettings(
+        limit=limit,
+        seed=seed,
+        every_form=every_form,
+        restyle_share=restyle_share,
+        latents_only=latents_only,
+        device=device,
+    )
     try:
         record = write_cache(model, pairs, out, settings)
     except ValueError as error:  # the arguments' fault: a finished cache, or a manifest that is not a described set

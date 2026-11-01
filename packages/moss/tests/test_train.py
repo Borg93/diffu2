@@ -1,9 +1,11 @@
 """MOSS-Image's reference training on CPU (conftest's tiny MOSS and tiny style pairs): the caption forms, the mix of
-prompt forms in the cache (the pairs that share a line with their reference left out, page pairs too) and over a run, a
-page pair that refuses a prompt its row was not compiled for (another size, a form built after its set), MOSS's noise
-levels, the flow-matching loss over the drawn image alone, a LoRA that learns at the recipe's learning rate, the
-validation's paired noise, a training that lowers the loss of what it trains on, one that refuses an empty cache, and
-prompts encoded in the step as the cache encodes them, by a frozen encoder, from a cache of latents alone."""
+prompt forms in the cache (the pairs that share a line with their reference left out, page pairs too) and over a run,
+the look changes of the cache's sample form (exactly the share asked, the target and its sample alike, by transforms
+that move no pixel; a cache without them written as before), a page pair that refuses a prompt its row was not
+compiled for (another size, a form built after its set), MOSS's noise levels, the flow-matching loss over the drawn
+image alone, a LoRA that learns at the recipe's learning rate, the validation's paired noise, a training that lowers
+the loss of what it trains on, one that refuses an empty cache, and prompts encoded in the step as the cache encodes
+them, by a frozen encoder, from a cache of latents alone."""
 
 from __future__ import annotations
 
@@ -14,16 +16,23 @@ from pathlib import Path
 import pytest
 import torch
 from peft import get_peft_model_state_dict
+from PIL import Image
+from safetensors import safe_open
 from safetensors.torch import load_file
 
+from diffu_moss.latents import encode_latents, image_pixels
 from diffu_moss.sample_caption import with_sample, without_sample
 from diffu_moss.train.cache import (
+    CACHE_DTYPE,
+    ENTRIES,
     CachedSample,
     CacheEntry,
     CacheSettings,
     PromptEncoder,
+    encoder_pipeline,
     load_sample,
     read_entries,
+    read_record,
     write_cache,
 )
 from diffu_moss.train.export import export_merged
@@ -36,11 +45,15 @@ from diffu_moss.train.loop import (
     validation_losses,
 )
 from diffu_moss.train.pairs import PagePair, TrainingPair, Variant, apart, read_pairs
-from diffu_moss.train.records import ADAPTER_WEIGHTS
+from diffu_moss.train.records import ADAPTER_WEIGHTS, CACHE_RECORD
+from diffu_moss.train.restyle import Colourise, Microfilm, Restyle, Tint, restyled
 from diffu_moss.train.sigmas import draw_sigmas, sigma_grid, sigma_weights
 from diffu_moss.transformer import MossTransformer
 
 INK_HEX = "#5A4632"  # the described caption's ink, one of its look words
+# an entry's and a cache record's keys as written before look changes
+ENTRY_KEYS = ["file", "pair", "variant", "prompt", "tokens", "target_size", "reference_size"]
+RECORD_KEYS = ["pairs", "model", "seed", "pairs_read", "pairs_sharing_lines", "entries", "latents_only"]
 
 
 @pytest.fixture(scope="module")
@@ -197,17 +210,110 @@ def test_cache_holds_a_fifth_of_the_pairs_in_each_form_but_two_fifths_with_the_s
             load_sample(tiny_pair_cache, entry, "cpu").reference is not None,
             "the sample image" in entry.prompt,
             INK_HEX in entry.prompt,
+            json.loads(entry.prompt)["items"][0]["caption"],  # the paper's
         )
         for entry in entries
     }
     # 10 of the 11 pairs: vol_03's reference (vol_04's crop) holds its first line, so it is left out
     assert counts == {Variant.NO_REFERENCE: 2, Variant.LOOK: 2, Variant.PLAIN: 2, Variant.SAMPLE: 4}
+    described_paper = "Aged cream paper (#D8C8A8) of a bound archival volume."
     assert forms == {
-        (Variant.NO_REFERENCE, False, False, True),  # no image, no citation, the look in words
-        (Variant.LOOK, True, True, True),
-        (Variant.PLAIN, True, True, False),  # the look from the image alone
-        (Variant.SAMPLE, True, True, False),  # a style pair's caption names no hand: its plain form
+        (Variant.NO_REFERENCE, False, False, True, described_paper),  # no image, no citation, the look in words
+        (Variant.LOOK, True, True, True, described_paper),
+        (Variant.PLAIN, True, True, False, "Aged paper of a bound archival volume."),  # the look from the image alone
+        # a style pair's caption names no hand: its plain form, but for its paper, the sample image's
+        (Variant.SAMPLE, True, True, False, "The paper of the sample image."),
     }
+
+
+def test_cache_without_look_changes_writes_its_entries_and_record_as_before(tiny_pair_cache: Path) -> None:
+    lines = (tiny_pair_cache / ENTRIES).read_text(encoding="utf-8").splitlines()
+
+    metadata = []
+    for entry in read_entries(tiny_pair_cache):
+        with safe_open(str(tiny_pair_cache / entry.file), framework="pt") as written:
+            metadata.append(written.metadata()["entry"])
+
+    assert [list(json.loads(line)) for line in lines] == [ENTRY_KEYS] * len(lines)
+    assert metadata == lines  # each file's entry as entries.jsonl lists it
+    assert list(json.loads((tiny_pair_cache / CACHE_RECORD).read_text(encoding="utf-8"))) == RECORD_KEYS
+
+
+def test_cache_gives_exactly_its_share_of_the_sample_forms_entries_a_look_change_and_the_rest_none(
+    tiny_pair_cache: Path, tiny_restyled_cache: Path
+) -> None:
+    plain = read_entries(tiny_pair_cache)
+
+    entries = read_entries(tiny_restyled_cache)
+
+    changed = [entry for entry in entries if entry.restyle is not None]
+    # the entries without: the same pairs in the same forms and prompts, and of the 4 in the sample form 2 changed
+    assert [entry.model_copy(update={"restyle": None}) for entry in entries] == plain
+    assert [(entry.pair, entry.variant, entry.restyle.kind) for entry in changed if entry.restyle] == [
+        ("vol_08", Variant.SAMPLE, "microfilm"),
+        ("vol_06", Variant.SAMPLE, "colourise"),
+    ]
+    record = read_record(tiny_restyled_cache)
+    assert (record.restyle_share, record.restyled) == (0.4, {"colourise": 1, "microfilm": 1})
+    unchanged = [entry.file for entry in entries if entry.restyle is None]
+    differ = [
+        file for file in unchanged if (tiny_restyled_cache / file).read_bytes() != (tiny_pair_cache / file).read_bytes()
+    ]
+    assert differ == []
+
+
+def test_cache_gives_a_pairs_target_and_sample_the_look_change_its_entry_records(
+    tiny_moss: Path, tiny_pairs: Path, tiny_restyled_cache: Path
+) -> None:
+    pairs = {pair.id: pair for pair in read_pairs(tiny_pairs / "train.jsonl")}
+    vae = encoder_pipeline(tiny_moss, "cpu", ("vae",)).vae
+
+    def encoded(path: Path, restyle: Restyle) -> torch.Tensor:
+        with Image.open(path) as image:
+            return encode_latents(vae, image_pixels(restyled(image, restyle))).to(CACHE_DTYPE)
+
+    changed = [
+        (pairs[entry.pair], entry.restyle, load_sample(tiny_restyled_cache, entry, "cpu"))
+        for entry in read_entries(tiny_restyled_cache)
+        if entry.restyle is not None
+    ]
+
+    targets = [
+        pair.id for pair, restyle, sample in changed if not torch.equal(sample.target, encoded(pair.target, restyle))
+    ]
+    references = [
+        pair.id
+        for pair, restyle, sample in changed
+        if sample.reference is None or not torch.equal(sample.reference, encoded(pair.reference, restyle))
+    ]
+    assert (targets, references) == ([], [])
+
+
+def _shuffled(image: Image.Image, order: list[int]) -> Image.Image:
+    """An RGB image's pixels in ``order``, row by row."""
+    data = image.tobytes()
+    return Image.frombytes("RGB", image.size, b"".join(data[3 * k : 3 * k + 3] for k in order))
+
+
+@pytest.mark.parametrize(
+    "restyle",
+    [
+        pytest.param(Microfilm(crush=0.2, paper=0.8, gamma=1.2), id="microfilm"),
+        pytest.param(Colourise(crush=0.05, gamma=1.1, paper=(229, 207, 165), ink=(62, 45, 33)), id="colourise"),
+        pytest.param(Tint(warmth=0.03, contrast=1.1, brightness=-0.03, gamma=1.1), id="tint"),
+    ],
+)
+def test_restyle_moves_no_pixel_and_keeps_the_images_size(restyle: Restyle) -> None:
+    generator = torch.Generator().manual_seed(0)
+    noise = torch.randint(0, 256, (48 * 32 * 3,), generator=generator, dtype=torch.uint8)
+    image = Image.frombytes("RGB", (48, 32), bytes(noise.tolist()))
+    order = torch.randperm(48 * 32, generator=generator).tolist()
+
+    changed = restyled(image, restyle)
+
+    assert (changed.mode, changed.size) == ("RGB", image.size)
+    # each pixel's new colour, wherever it is
+    assert restyled(_shuffled(image, order), restyle).tobytes() == _shuffled(changed, order).tobytes()
 
 
 def test_training_draws_every_entry_once_a_pass_so_a_run_keeps_the_caches_mix(

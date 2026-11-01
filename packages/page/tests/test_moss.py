@@ -3,13 +3,14 @@ a crop plan's caption compiled as MOSS's Layout prompt exactly as the verified s
 end to end from its seed, the line repair in MOSS's denoise loop, MOSS's own guidance and sampling shift, what MOSS
 refuses, and each repo drawn by its own family. A MOSS trained to take a reference (conftest's tiny reference training,
 exported and initialised): its training cache holds what drawing encodes, it draws a crop from a reference and guides
-toward it, its own training pairs drawn back (diffu_page.cli.draw_pairs) are the crops the page pipeline draws, a
-described caption's look words drop to exactly the plain caption the page captions would write, and a named caption's
+toward it, its own training pairs drawn back (diffu_page.cli.draw_pairs) are the crops the page pipeline draws (a pair
+the cache restyled, from its sample in that look), a described caption's look words drop to exactly the plain caption
+the page captions would write (or, given the sample form's paper row, its sample-form caption), and a named caption's
 citation drops with the comma after its archive."""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -23,13 +24,20 @@ from diffu.modular_pipelines.diffu import DiffuAutoBlocks, DiffuModularPipeline
 from diffu.modular_pipelines.loading import COMPONENT_DTYPES
 from diffu_moss.layout_prompt import caption_layout, caption_texts
 from diffu_moss.modular_pipelines.moss import MossAutoBlocks, MossModularPipeline
-from diffu_moss.sample_caption import without_look, without_sample
+from diffu_moss.sample_caption import PLAIN_PAPER_ROW, SAMPLE_PAPER_ROW, without_look, without_sample
 from diffu_moss.train.cache import load_sample, read_entries
 from diffu_moss.train.pairs import Pair, Variant, read_pairs
+from diffu_moss.train.restyle import restyled
 from diffu_page.captions.hand import HandLook, ReferenceLook
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.prompt import LineRecord, PageStyle
-from diffu_page.captions.restyle import CaptionParts, described_edit_caption, edit_caption, named_edit_caption
+from diffu_page.captions.restyle import (
+    CaptionParts,
+    described_edit_caption,
+    edit_caption,
+    named_edit_caption,
+    sample_edit_caption,
+)
 from diffu_page.cli.draw_pairs import draw_pairs
 from diffu_page.crops.geometry import Crop, CropSettings, crops_for_page, regions_of
 from diffu_page.evalset import EvalCrop
@@ -248,6 +256,24 @@ def test_draw_pairs_draws_a_trained_pair_back_as_the_page_pipeline_draws_its_cro
         assert drawn.tobytes() == crop.tobytes()
 
 
+def test_draw_pairs_draws_a_restyled_pair_back_from_its_sample_in_the_look_it_was_trained_in(
+    tiny_pairs: Path, tiny_restyled_cache: Path, tiny_reference_moss: Path, tmp_path: Path
+) -> None:
+    entry = next(entry for entry in read_entries(tiny_restyled_cache) if entry.pair == "vol_08")  # first, microfilm
+    assert entry.restyle is not None
+    pair = next(pair for pair in read_pairs(tiny_pairs / "train.jsonl") if pair.id == "vol_08")
+    sample_form = _pair_plan(pair).model_copy(
+        update={"caption": without_look(pair.caption, paper_row=SAMPLE_PAPER_ROW)}  # as it was cached
+    )
+    pipe = load_pipeline(tiny_reference_moss, crop_blocks, loras={}, settings=MOSS_SETTINGS)
+    crop = _draw(pipe, sample_form, seed=0, reference=restyled(Image.open(pair.reference), entry.restyle))
+
+    draw_pairs(tiny_reference_moss, tiny_restyled_cache, tmp_path, count=1, seed=0, settings=MOSS_SETTINGS)
+
+    with Image.open(tmp_path / "generated" / "000.png") as drawn:
+        assert drawn.tobytes() == crop.tobytes()
+
+
 def test_reference_trained_moss_guides_toward_its_reference_with_a_pass_without_it(
     tiny_reference_moss: Path, first_pair: Pair
 ) -> None:
@@ -274,16 +300,17 @@ def certificate_crop(certificate_page: Path) -> Crop:
     return crops_for_page(regions_of(layout), (layout.width, layout.height), CropSettings(), rules=rules)[0]
 
 
+COLOUR_REFERENCE = ReferenceLook(
+    scan=ScanLook(greyscale=False, paper="cream", ink="dark brown"),
+    hand=HandLook(slant=33.0, stroke=0.05, letters=0.3, density=0.2, paper="#D8C8A8", ink="#4A3828"),
+)
+
+
 @pytest.mark.parametrize(
-    ("crop", "reference"),
+    ("crop", "reference", "paper_row", "caption_in_form"),
     [
         pytest.param(
-            "body_and_notes_crop",
-            ReferenceLook(
-                scan=ScanLook(greyscale=False, paper="cream", ink="dark brown"),
-                hand=HandLook(slant=33.0, stroke=0.05, letters=0.3, density=0.2, paper="#D8C8A8", ink="#4A3828"),
-            ),
-            id="colour-scan-margin-notes",
+            "body_and_notes_crop", COLOUR_REFERENCE, PLAIN_PAPER_ROW, edit_caption, id="colour-scan-margin-notes"
         ),
         pytest.param(
             "certificate_crop",
@@ -291,18 +318,28 @@ def certificate_crop(certificate_page: Path) -> Crop:
                 scan=ScanLook(greyscale=True, paper="light grey", ink="black"),
                 hand=HandLook(slant=None, stroke=0.09, letters=0.4, density=0.15, paper="#C8C8C8", ink="#202020"),
             ),
+            PLAIN_PAPER_ROW,
+            edit_caption,
             id="greyscale-scan-unmeasured-slant-printed-lines-and-rules",
+        ),
+        pytest.param(
+            "body_and_notes_crop", COLOUR_REFERENCE, SAMPLE_PAPER_ROW, sample_edit_caption, id="sample-form-paper"
         ),
     ],
 )
-def test_without_look_turns_a_described_reference_caption_into_the_plain_caption_of_the_same_crop(
-    crop: str, reference: ReferenceLook, make_record: RecordMaker, request: pytest.FixtureRequest
+def test_without_look_turns_a_described_reference_caption_into_the_plain_or_sample_caption_of_the_same_crop(
+    crop: str,
+    reference: ReferenceLook,
+    paper_row: str,
+    caption_in_form: Callable[[CaptionParts], str],
+    make_record: RecordMaker,
+    request: pytest.FixtureRequest,
 ) -> None:
     parts = CaptionParts.of(make_record(request.getfixturevalue(crop)))
 
-    plain = without_look(described_edit_caption(parts, reference))
+    dropped = without_look(described_edit_caption(parts, reference), paper_row=paper_row)
 
-    assert plain == edit_caption(parts)
+    assert dropped == caption_in_form(parts)
 
 
 def test_without_sample_drops_a_named_reference_captions_citation_with_the_comma_after_its_archive(
