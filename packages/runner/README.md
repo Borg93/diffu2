@@ -1,7 +1,7 @@
 # diffu-runner
 
-Generation at scale on a Ray cluster. A run is a JSON-lines file of `diffu_page.jobs.PageJob`s (a template page, the
-text to write into it, the style, a sample page to draw in the hand of, a seed and an id). Ray Data plans every page
+Generation at scale on a Ray cluster. A run is a JSON-lines file of `diffu_page.draw.jobs.PageJob`s (a template page,
+the text to write into it, the style, a sample page to draw in the hand of, a seed and an id). Ray Data plans every page
 whole on CPU workers (an opening becomes its two pages), GPU actors each holding one pipeline (MOSS-Image's, or FLUX.3
 Klein's with its LoRAs) draw, judge and label them, and the driver commits them to a Lance table, `<out>/pages.lance`:
 one row per page, the image as a Blob v2 column, the labels as ALTO and PAGE XML. A page that fails is a row with its

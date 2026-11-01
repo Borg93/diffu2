@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from PIL import Image
 
-from diffu_page.crops.grid import REF_PIXELS, as_reference
+from diffu_page.page.crops.grid import REF_PIXELS, as_reference
 
 
 def test_as_reference_squashes_a_small_reference_onto_the_16_px_grid() -> None:

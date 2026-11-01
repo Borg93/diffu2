@@ -35,10 +35,10 @@ from pathlib import Path
 from diffu_page.captions.look import scan_look
 from diffu_page.captions.provenance import provenance_of
 from diffu_page.captions.restyle import ReferenceCaption
-from diffu_page.jobs import PageJob
-from diffu_page.layout import load_xml_layout, running_text, scan_pages
+from diffu_page.draw.jobs import PageJob
+from diffu_page.draw.plan import PageStyle, Reference
 from diffu_page.output import load_rgb
-from diffu_page.plan import PageStyle, Reference
+from diffu_page.page.layout import load_xml_layout, running_text, scan_pages
 
 pairs, out, page_ids = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3:]
 gt_root = Path(json.loads((pairs / "build.json").read_text())["scan"]["gt_root"])

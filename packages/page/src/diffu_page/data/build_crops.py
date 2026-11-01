@@ -33,11 +33,11 @@ from pydantic import BaseModel
 
 from diffu_page.captions.look import scan_look
 from diffu_page.captions.records import CropRecord, crop_record
-from diffu_page.crops.geometry import CropSettings, Region, crops_for_page, regions_of
-from diffu_page.layout import load_xml_layout
-from diffu_page.layout.page_xml import find_scan
 from diffu_page.local_run import describe
 from diffu_page.output import console, err_console, load_rgb
+from diffu_page.page.crops.geometry import CropSettings, Region, crops_for_page, regions_of
+from diffu_page.page.layout import load_xml_layout
+from diffu_page.page.layout.page_xml import find_scan
 
 TILE_QUALITY = 95  # the training tiles: what the LoRAs learn from, a step above the drawn crops
 

@@ -22,22 +22,15 @@ from PIL import Image
 from safetensors.torch import load_file, save_file
 from typer.testing import CliRunner
 
-from diffu_page.blocks import CropPromptStep, DrawnCrop, ReferenceGridStep
 from diffu_page.captions.look import Ink, Paper, ScanLook
 from diffu_page.captions.prompt import LineRecord, PageStyle
 from diffu_page.captions.provenance import Provenance
 from diffu_page.cli.generate import PageGroup, Summary, draw_pages, plan_jobs
 from diffu_page.cli.generate import app as generate_app
-from diffu_page.crops.grid import as_reference
-from diffu_page.jobs import PageJob, crop_jobs
-from diffu_page.judge import LineVerdict
-from diffu_page.labels import PageElements, to_grounded_markdown, to_markdown
-from diffu_page.layout import PageSide
-from diffu_page.local_run import NOT_RUN
-from diffu_page.lora import ADAPTER_CONFIG, ADAPTER_WEIGHTS, nemo_lora_state_dict
-from diffu_page.marking import PrintHandClassifier
-from diffu_page.output import jpeg_bytes
-from diffu_page.pipeline import (
+from diffu_page.draw.blocks import CropPromptStep, DrawnCrop, ReferenceGridStep
+from diffu_page.draw.jobs import PageJob, crop_jobs
+from diffu_page.draw.lora import ADAPTER_CONFIG, ADAPTER_WEIGHTS, nemo_lora_state_dict
+from diffu_page.draw.pipeline import (
     FAMILIES,
     BlocksFor,
     CropBlocks,
@@ -49,7 +42,14 @@ from diffu_page.pipeline import (
     model_family,
     repair_lines,
 )
-from diffu_page.plan import CropPlan, Reference
+from diffu_page.draw.plan import CropPlan, Reference
+from diffu_page.local_run import NOT_RUN
+from diffu_page.output import jpeg_bytes
+from diffu_page.page.crops.grid import as_reference
+from diffu_page.page.labels import PageElements, to_grounded_markdown, to_markdown
+from diffu_page.page.layout import PageSide
+from diffu_page.page.marking import PrintHandClassifier
+from diffu_page.quality.judge import LineVerdict
 
 if TYPE_CHECKING:
     from conftest import NemoLoraWriter, ScannedFormMaker

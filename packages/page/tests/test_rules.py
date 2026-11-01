@@ -1,5 +1,5 @@
-"""Ruled lines found on a scan (diffu_page.marking.rules): a form's rules found where they run among its writing, and
-handwriting strokes, a page's edge and an opening's fold not taken for rules."""
+"""Ruled lines found on a scan (diffu_page.page.marking.rules): a form's rules found where they run among its writing,
+and handwriting strokes, a page's edge and an opening's fold not taken for rules."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ import cv2
 import numpy as np
 import pytest
 
-from diffu_page.layout import Layout, PageBox, TextLine
-from diffu_page.marking.rules import find_rules
+from diffu_page.page.layout import Layout, PageBox, TextLine
+from diffu_page.page.marking.rules import find_rules
 
 type Point = tuple[int, int]
 type Segment = tuple[Point, Point]

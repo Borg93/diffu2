@@ -27,7 +27,7 @@ from diffu_page.captions.prompt import PageStyle
 from diffu_page.captions.provenance import provenance_of
 from diffu_page.captions.restyle import ReferenceCaption
 from diffu_page.cli.generate import page_reference
-from diffu_page.crops.grid import as_reference
+from diffu_page.data.evalset import read_crops, read_jsonl, write_jsonl
 from diffu_page.data.page_pair_forms import write_every_form
 from diffu_page.data.page_pairs import (
     BuildCounts,
@@ -40,10 +40,10 @@ from diffu_page.data.page_pairs import (
     digest,
     page_id,
 )
-from diffu_page.evalset import read_crops, read_jsonl, write_jsonl
-from diffu_page.layout import PageSide, ScanPage, load_xml_layout, scan_pages
-from diffu_page.pipeline import FAMILIES, crop_blocks
-from diffu_page.plan import CropPlan, plan_page, plan_whole_page, whole_page_size
+from diffu_page.draw.pipeline import FAMILIES, crop_blocks
+from diffu_page.draw.plan import CropPlan, plan_page, plan_whole_page, whole_page_size
+from diffu_page.page.crops.grid import as_reference
+from diffu_page.page.layout import PageSide, ScanPage, load_xml_layout, scan_pages
 
 ARJEPLOG = "GT-RA_arjeplogs_tingslag_20260220"
 EARLY, LATE = "Arjeplogs tingslag (1690-1700)", "Arjeplogs tingslag (1701-1710)"

@@ -22,9 +22,9 @@ from typer.testing import CliRunner
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.provenance import Provenance
 from diffu_page.captions.restyle import ReferenceCaption
-from diffu_page.jobs import PageJob, crop_jobs, single_pages
-from diffu_page.pipeline import DrawSettings
-from diffu_page.plan import PageStyle, Reference
+from diffu_page.draw.jobs import PageJob, crop_jobs, single_pages
+from diffu_page.draw.pipeline import DrawSettings
+from diffu_page.draw.plan import PageStyle, Reference
 from diffu_runner.export import export_pages
 from diffu_runner.run import RUNS, RunConfig, RunMeta, RunRefused, app, read_draw_settings, read_pages, run
 from diffu_runner.stages import DEVICE_FAULT_EXIT, Attention, DrawActor, DrawConfig, JudgeModel

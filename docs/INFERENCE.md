@@ -134,7 +134,7 @@ To try it on one machine with a GPU: `docker run --rm --gpus all <registry>/diff
 
 ## 5. Writing a run file
 
-A run file has one page job per line (JSON Lines), the input of `diffu_page.jobs.PageJob`:
+A run file has one page job per line (JSON Lines), the input of `diffu_page.draw.jobs.PageJob`:
 
 | Field | Required | Meaning |
 |---|---|---|
@@ -164,8 +164,9 @@ thousands of lines: the head reads the whole file once to check it.
 
 ## 6. Draw settings
 
-The draw settings are one JSON object, `--draw-settings /data/runs/draw.json`, of `diffu_page.pipeline.DrawSettings`
-fields; a field it leaves out keeps its default, and without the option every default holds. For example:
+The draw settings are one JSON object, `--draw-settings /data/runs/draw.json`, of
+`diffu_page.draw.pipeline.DrawSettings` fields; a field it leaves out keeps its default, and without the option every
+default holds. For example:
 
 ```json
 {"steps": 50, "guidance_scale": 3.0, "device": "cuda"}

@@ -2,7 +2,7 @@
 running statistics.
 
 The one place an image becomes the DiT's latents and back: the decode step decodes with :func:`decode_latents`, a
-drawn crop is encoded with :func:`encode_latents` for a line repair (``diffu_page.pipeline.page_latents``), and a
+drawn crop is encoded with :func:`encode_latents` for a line repair (``diffu_page.draw.pipeline.page_latents``), and a
 reference image is read by :func:`image_pixels` and encoded by :func:`encode_latents` alike in drawing (the reference
 encode step) and in training (``diffu_moss.train.cache``).
 """

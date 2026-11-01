@@ -2,27 +2,28 @@
 style.
 
 Each template (a real PAGE/ALTO page, or one written for the purpose) is planned on CPU
-(:func:`diffu_page.jobs.crop_jobs`): its running text is replaced by the new text and it is cut into training-scale
-crops, or with ``--whole-page`` kept whole as one crop of ``--page-megapixels``. With ``--mark-from-scan`` a
-ground-truth template is first marked from the scan beside it (:func:`diffu_page.marking.marked`): the lines its PAGE
-file does not say are printed or handwritten read off the scan by ``--print-hand-model``, and its ruled lines found
-there if it has none, so its form's print is drawn as print and its grid as rules. A two-page opening (most scans) is
-planned as its single pages, never as a spread (:func:`diffu_page.jobs.single_pages`), and ``summary.json`` lists them.
+(:func:`diffu_page.draw.jobs.crop_jobs`): its running text is replaced by the new text and it is cut into
+training-scale crops, or with ``--whole-page`` kept whole as one crop of ``--page-megapixels``. With
+``--mark-from-scan`` a ground-truth template is first marked from the scan beside it
+(:func:`diffu_page.page.marking.marked`): the lines its PAGE file does not say are printed or handwritten read off the
+scan by ``--print-hand-model``, and its ruled lines found there if it has none, so its form's print is drawn as print
+and its grid as rules. A two-page opening (most scans) is planned as its single pages, never as a spread
+(:func:`diffu_page.draw.jobs.single_pages`), and ``summary.json`` lists them.
 Each crop is then drawn on its own by the crop pipeline (MOSS-Image, or FLUX.3 and its LoRAs), read back line by line,
 and labelled with badly read lines tagged ``unclear``, as diffu-runner's GPU actors draw it. The text comes from
 ``--text-from``: a PAGE/ALTO page's running text, or a plain text file as it stands (a blank line ends a paragraph).
 With ``--reference`` (a sample to draw in the hand of, for a model trained with references) every crop is drawn from it
 and captioned as the model was trained (``--reference-caption``: ``described`` measures the crop's hand, so it needs
 the crop's ``metadata.jsonl`` from ``diffu_page.data.build_crops`` beside it). ``--jobs`` gives each page its own
-template, text, style, seed, reference, size and side instead: one :class:`diffu_page.jobs.PageJob` per line, the run
-file diffu-runner reads. A style can be
+template, text, style, seed, reference, size and side instead: one :class:`diffu_page.draw.jobs.PageJob` per line,
+the run file diffu-runner reads. A style can be
 named instead of spelled out: ``--style`` (or a job line's ``style``) names a preset of ``--styles``
-(:mod:`diffu_page.styles`: the archive and years, the look, the hand's LoRA and a reference), and its page is drawn by
-the preset's hand alone; a style spelled out is drawn with ``--lora``. A run can so draw several hands: its pages are
+(:mod:`diffu_page.draw.styles`: the archive and years, the look, the hand's LoRA and a reference), and its page is drawn
+by the preset's hand alone; a style spelled out is drawn with ``--lora``. A run can so draw several hands: its pages are
 drawn group by group, one group per set of LoRAs, each group's pipeline loaded once and released before the next loads.
 Writes ``<out>/<page>_<k>.jpg`` + ``.xml`` per crop and ``<out>/summary.json``; a page that cannot be planned and a crop
 that cannot be drawn are recorded there by name and the run goes on. ``--reader-labels`` also writes each crop's labels
-for page readers beside it (:data:`diffu_page.labels.READER_FILES`: ``.md``, ``.grounded.md`` for DeepSeek-OCR 2,
+for page readers beside it (:data:`diffu_page.page.labels.READER_FILES`: ``.md``, ``.grounded.md`` for DeepSeek-OCR 2,
 ``.elements.json`` for PaddleOCR-VL), which ``diffu-reader-set`` turns into their fine-tuning sets. ``--profile <dir>``
 also records a torch profiler trace (Perfetto) of crops 2-3 after a warm-up crop. One GPU job, through
 jobs/spark_guard.sh:
@@ -51,7 +52,6 @@ from diffusers.modular_pipelines import ModularPipeline
 from pydantic import BaseModel
 from torch.profiler import ProfilerActivity, profile, schedule
 
-from diffu_page.blocks import DrawnCrop
 from diffu_page.captions.look import Ink, Paper, ScanLook
 from diffu_page.captions.prompt import PageStyle
 from diffu_page.captions.provenance import Provenance
@@ -77,14 +77,9 @@ from diffu_page.cli.options import (
     required_model,
     settings_from_options,
 )
-from diffu_page.jobs import CropJob, PageJob, PageRequest, ResolvedPage, crop_jobs, read_page_jobs, single_pages
-from diffu_page.judge import Judge, TrOCRJudge
-from diffu_page.labels import READER_FILES, PageElements, page_elements
-from diffu_page.layout import load_xml_layout, running_text
-from diffu_page.local_run import run_each
-from diffu_page.marking import PrintHandClassifier
-from diffu_page.output import JPEG_QUALITY, console
-from diffu_page.pipeline import (
+from diffu_page.draw.blocks import DrawnCrop
+from diffu_page.draw.jobs import CropJob, PageJob, PageRequest, ResolvedPage, crop_jobs, read_page_jobs, single_pages
+from diffu_page.draw.pipeline import (
     DEVICE_ERRORS,
     DrawSettings,
     crop_blocks,
@@ -93,9 +88,15 @@ from diffu_page.pipeline import (
     repair_lines,
     repair_seed,
 )
-from diffu_page.plan import Reference
+from diffu_page.draw.plan import Reference
+from diffu_page.draw.styles import StylePreset, read_style_presets
+from diffu_page.local_run import run_each
+from diffu_page.output import JPEG_QUALITY, console
+from diffu_page.page.labels import READER_FILES, PageElements, page_elements
+from diffu_page.page.layout import load_xml_layout, running_text
+from diffu_page.page.marking import PrintHandClassifier
+from diffu_page.quality.judge import Judge, TrOCRJudge
 from diffu_page.settings import settings
-from diffu_page.styles import StylePreset, read_style_presets
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 
@@ -226,7 +227,7 @@ def draw_pages(
 ) -> tuple[list[CropSummary], dict[str, str]]:
     """Every planned crop drawn, in the order given, by the crop pipeline ``load`` gives for its LoRAs, judged by
     ``judge`` (the default TrOCR judge if none) and saved: its image, its XML labels and each of ``label_files``
-    (:data:`diffu_page.labels.READER_FILES`) beside them. One pipeline is held at a time: loaded for the first crop
+    (:data:`diffu_page.page.labels.READER_FILES`) beside them. One pipeline is held at a time: loaded for the first crop
     and again for each crop whose LoRAs differ from the crop's before, the previous one released first, so give the
     crops grouped by their LoRAs. A crop that cannot be drawn, or whose pipeline cannot be loaded, is recorded by name
     with its error and the rest still run, unless the device failed: then every crop after it is recorded as not run
@@ -289,7 +290,7 @@ def print_hand_classifier(weights: Path) -> PrintHandClassifier:
     """
     if not weights.is_file():
         raise typer.BadParameter(
-            f"no print/hand classifier at {weights}: train one with python -m diffu_page.marking.train",
+            f"no print/hand classifier at {weights}: train one with python -m diffu_page.page.marking.train",
             param_hint="--print-hand-model",
         )
     return PrintHandClassifier.load(weights)
@@ -390,8 +391,8 @@ def generate(
             "--jobs",
             exists=True,
             dir_okay=False,
-            help="the pages to draw, one diffu_page.jobs.PageJob per line (diffu-run's run file); a line's style may "
-            "name a preset of --styles",
+            help="the pages to draw, one diffu_page.draw.jobs.PageJob per line (diffu-run's run file); a line's style "
+            "may name a preset of --styles",
         ),
     ] = None,
     styles: Annotated[
@@ -400,7 +401,7 @@ def generate(
             exists=True,
             dir_okay=False,
             help="the style presets --style and a job file's named styles come from: a JSON object of "
-            "diffu_page.styles.StylePreset by name, such as the repo's styles.json",
+            "diffu_page.draw.styles.StylePreset by name, such as the repo's styles.json",
         ),
     ] = None,
     templates: Annotated[

@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from diffu_page.captions.look import Ink, Paper, ScanLook
 from diffu_page.captions.prompt import CaptionTemplate, LineRecord, PageStyle, caption_for
 from diffu_page.captions.provenance import Provenance, provenance_of
-from diffu_page.crops.geometry import Crop
+from diffu_page.page.crops.geometry import Crop
 
 
 class CropRecord(BaseModel):

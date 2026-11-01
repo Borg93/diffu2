@@ -38,11 +38,8 @@ from diffu_page.captions.restyle import (
     sample_edit_caption,
 )
 from diffu_page.cli.draw_pairs import draw_pairs
-from diffu_page.crops.geometry import Crop, CropSettings, crops_for_page, regions_of
-from diffu_page.evalset import EvalCrop
-from diffu_page.judge import LineVerdict
-from diffu_page.layout import load_xml_layout
-from diffu_page.pipeline import (
+from diffu_page.data.evalset import EvalCrop
+from diffu_page.draw.pipeline import (
     FAMILIES,
     DrawSettings,
     crop_blocks,
@@ -51,7 +48,10 @@ from diffu_page.pipeline import (
     model_family,
     repair_lines,
 )
-from diffu_page.plan import CropPlan, plan_page, plan_whole_page
+from diffu_page.draw.plan import CropPlan, plan_page, plan_whole_page
+from diffu_page.page.crops.geometry import Crop, CropSettings, crops_for_page, regions_of
+from diffu_page.page.layout import load_xml_layout
+from diffu_page.quality.judge import LineVerdict
 
 if TYPE_CHECKING:
     from conftest import NemoLoraWriter, RecordMaker

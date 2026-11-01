@@ -3,10 +3,10 @@ committed to the run's Lance table as they are drawn.
 
     diffu-run --jobs run.jsonl --out /outputs/run --model /models/moss --draw-settings draw.json --gpus 8
 
-``run.jsonl`` holds one :class:`diffu_page.jobs.PageJob` per line, each with its own ``id``; ``draw.json`` the
-:class:`diffu_page.pipeline.DrawSettings` the pages are drawn with, whole (a field it leaves out keeps its default).
-Ray Data reads the run file, plans each page on CPU workers (an opening becomes its two pages), draws the pages with
-``--gpus`` times ``--actors-per-gpu`` actors (a ``map_batches`` actor pool) and the driver writes them to
+``run.jsonl`` holds one :class:`diffu_page.draw.jobs.PageJob` per line, each with its own ``id``; ``draw.json`` the
+:class:`diffu_page.draw.pipeline.DrawSettings` the pages are drawn with, whole (a field it leaves out keeps its
+default). Ray Data reads the run file, plans each page on CPU workers (an opening becomes its two pages), draws the
+pages with ``--gpus`` times ``--actors-per-gpu`` actors (a ``map_batches`` actor pool) and the driver writes them to
 ``<out>/pages.lance`` (:mod:`diffu_runner.table`) every ``--commit-every`` pages; ``<out>/runs/`` keeps each run's
 settings and counts. A run into an ``--out`` that holds a table resumes it: the pages drawn are skipped and those that
 failed are drawn again. A page is named and seeded by its id, as ``diffu-generate`` names and seeds it, so a page comes
@@ -31,9 +31,9 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from ray.data import Dataset
 
 from diffu_page.cli.options import Loras, lora_dirs
-from diffu_page.jobs import PageJob
+from diffu_page.draw.jobs import PageJob
+from diffu_page.draw.pipeline import DrawSettings, model_family
 from diffu_page.output import console, validation_problems
-from diffu_page.pipeline import DrawSettings, model_family
 from diffu_page.settings import settings
 from diffu_runner.stages import Attention, DrawActor, DrawConfig, JudgeModel, plan_rows
 from diffu_runner.table import FILE_FORMAT, PAGES, SCHEMA, drawn_ids, drop_failed, run_counts
@@ -409,7 +409,9 @@ def main(
     jobs: Annotated[
         Path,
         typer.Option(
-            exists=True, dir_okay=False, help="the run's pages: one diffu_page.jobs.PageJob per line, each with its id"
+            exists=True,
+            dir_okay=False,
+            help="the run's pages: one diffu_page.draw.jobs.PageJob per line, each with its id",
         ),
     ],
     out: Annotated[
@@ -424,8 +426,8 @@ def main(
         typer.Option(
             exists=True,
             dir_okay=False,
-            help="a JSON object of diffu_page.pipeline.DrawSettings fields (steps, guidance_scale, device, ...); a "
-            "field it leaves out keeps its default, and none at all draws with the defaults",
+            help="a JSON object of diffu_page.draw.pipeline.DrawSettings fields (steps, guidance_scale, device, ...); "
+            "a field it leaves out keeps its default, and none at all draws with the defaults",
         ),
     ] = None,
     gpus: Annotated[

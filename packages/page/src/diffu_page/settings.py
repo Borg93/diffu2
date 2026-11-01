@@ -19,7 +19,7 @@ class Settings(BaseSettings):
         htr_revision: Its pinned Hub revision, so every CER and unclear tag is read by the same weights; env
             ``DIFFU_HTR_REVISION``, empty for a local copy.
         print_hand_model: The print/hand classifier ``diffu-generate --mark-from-scan`` reads a template's lines with
-            (``python -m diffu_page.marking.train``'s ``print_hand.pt``), env ``DIFFU_PRINT_HAND_MODEL``.
+            (``python -m diffu_page.page.marking.train``'s ``print_hand.pt``), env ``DIFFU_PRINT_HAND_MODEL``.
     """
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")

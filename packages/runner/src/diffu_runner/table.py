@@ -74,7 +74,8 @@ class PageRow(BaseModel):
         unclear_lines: How many lines the labels tag ``unclear``: the judge could not confirm them.
         seed: The noise seed it was drawn from (None if it never reached drawing).
         template: Its template's path.
-        job: The page job as drawn, as JSON (:class:`diffu_page.jobs.PageJob`, planned whole): it draws the page again.
+        job: The page job as drawn, as JSON (:class:`diffu_page.draw.jobs.PageJob`, planned whole): it draws the page
+            again.
         model: The model directory that drew it.
         run: The run that drew it (``<out>/runs/<run>.json``).
         seconds: How long drawing, judging and labelling it took on its actor.

@@ -1,15 +1,15 @@
 """A page reader's fine-tuning set from a diffu-generate run drawn with ``--reader-labels``: each image of the run and its
-``<name>.elements.json`` (:class:`diffu_page.labels.PageElements`) written as JSON lines in the reader's own
+``<name>.elements.json`` (:class:`diffu_page.page.labels.PageElements`) written as JSON lines in the reader's own
 conversation format, image paths absolute. By default each reader is taught a page whole, as pages will be sent to it.
 
 - ``deepseek-ocr-2``: a sample per image, as DeepSeek-OCR 2 is fine-tuned (Unsloth's ``<|User|>`` and ``<|Assistant|>``
   turns, the user's naming the image). ``--task grounded`` (the default) asks with its prompt for a document and
-  answers with the grounded Markdown (:func:`diffu_page.labels.to_grounded_markdown`); ``--task markdown`` asks with
-  its prompt for a document without layouts (Free OCR) and answers with the Markdown.
+  answers with the grounded Markdown (:func:`diffu_page.page.labels.to_grounded_markdown`); ``--task markdown`` asks
+  with its prompt for a document without layouts (Free OCR) and answers with the Markdown.
 - ``paddleocr-vl``: as PaddleFormers fine-tunes PaddleOCR-VL (``messages`` and ``images``). ``--task page`` (the
   default) a sample per image, asked ``OCR:`` and answered with the Markdown, as DeepSeek-OCR 2's Free OCR is;
   ``--task spotting`` a sample per image, asked ``Spotting:`` and answered with each line's text and box
-  (:func:`diffu_page.labels.to_spotting`); ``--task elements`` a sample per layout element, for its recogniser: the
+  (:func:`diffu_page.page.labels.to_spotting`); ``--task elements`` a sample per layout element, for its recogniser: the
   element's crop, cut from its image into ``<out stem>_crops/``, its recognition prompt (``OCR:`` or
   ``Table Recognition:``) and the text it reads there (a table as OTSL).
 
@@ -28,7 +28,8 @@ import typer
 from PIL import Image
 from pydantic import BaseModel
 
-from diffu_page.labels import (
+from diffu_page.output import console
+from diffu_page.page.labels import (
     ELEMENTS_FILE,
     OCR_PROMPT,
     SPOTTING_PROMPT,
@@ -37,7 +38,6 @@ from diffu_page.labels import (
     to_markdown,
     to_spotting,
 )
-from diffu_page.output import console
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 

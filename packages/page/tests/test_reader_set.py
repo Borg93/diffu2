@@ -12,9 +12,9 @@ from PIL import Image
 from typer.testing import CliRunner
 
 from diffu_page.cli.reader_set import app
-from diffu_page.labels import ElementLine, PageElement, PageElements, to_elements_json
-from diffu_page.layout import CellRef, LineKind, Production
 from diffu_page.output import load_rgb
+from diffu_page.page.labels import ElementLine, PageElement, PageElements, to_elements_json
+from diffu_page.page.layout import CellRef, LineKind, Production
 
 IMAGE = "000_page_0.jpg"
 HEADING = PageElement(

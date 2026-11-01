@@ -5,7 +5,7 @@ The denoise step is laid out as FLUX.3's (``Flux3AutoCoreDenoiseStep``): an auto
 ``prepare_latents``, ``set_timesteps``, the loop of ``denoiser`` and ``after_denoiser`` and ``after_denoise`` (FLUX.3's
 own step, back from tokens to the latent grid). MOSS-Image's denoising is the same with a reference image or without:
 a reference (only for a DiT trained to take one) is encoded before it and read by the DiT in every pass. The page
-pipeline (``diffu_page.pipeline.crop_blocks``) inserts its line repair by those names, as it does into FLUX.3's.
+pipeline (``diffu_page.draw.pipeline.crop_blocks``) inserts its line repair by those names, as it does into FLUX.3's.
 """
 
 from __future__ import annotations

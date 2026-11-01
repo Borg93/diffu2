@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from diffu_page.crops.geometry import regions_of
-from diffu_page.layout import CellRef, LineKind, Production, Rule, TextLine, load_xml_layout
+from diffu_page.page.crops.geometry import regions_of
+from diffu_page.page.layout import CellRef, LineKind, Production, Rule, TextLine, load_xml_layout
 
 _NS = "http://schema.primaresearch.org/PAGE/gts/pagecontent/2013-07-15"
 

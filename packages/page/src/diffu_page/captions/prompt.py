@@ -17,8 +17,8 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.provenance import Provenance
-from diffu_page.crops.geometry import Crop, LayoutBox
-from diffu_page.layout.model import ROLE_NAMES, CellRef, LineKind, PageBox, Production, TextLine
+from diffu_page.page.crops.geometry import Crop, LayoutBox
+from diffu_page.page.layout.model import ROLE_NAMES, CellRef, LineKind, PageBox, Production, TextLine
 
 NUMBER_WORDS = ("no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten")
 

@@ -4,7 +4,7 @@ cannot outlive itself."""
 import pytest
 import torch
 
-from diffu_page.guidance import ReferenceGuidance
+from diffu_page.draw.guidance import ReferenceGuidance
 
 CAPTIONS = {"encoder_hidden_states": (torch.tensor([1.0]), torch.tensor([0.0]))}  # the caption, the negative caption
 

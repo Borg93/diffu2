@@ -17,4 +17,4 @@ PY="$AUTOMODEL/.venv-managed/bin/python"
 for project in "$REPO/packages/core" "$REPO/packages/moss" "$REPO/packages/page" "$REPO/packages/flux3"; do
     uv pip install --python "$PY" --no-deps -e "$project"
 done
-"$PY" -c "import diffu_core.repo, diffu_moss.init, diffu_page.pipeline, diffu_flux3.nemo; print('diffu-core, diffu-moss, diffu-page, diffu-flux3 installed')"
+"$PY" -c "import diffu_core.repo, diffu_moss.init, diffu_page.draw.pipeline, diffu_flux3.nemo; print('diffu-core, diffu-moss, diffu-page, diffu-flux3 installed')"

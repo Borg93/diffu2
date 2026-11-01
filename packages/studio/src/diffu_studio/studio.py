@@ -21,8 +21,8 @@ from diffu_page.captions.look import ScanLook
 from diffu_page.captions.prompt import PageStyle
 from diffu_page.captions.provenance import Provenance
 from diffu_page.cli.options import DEFAULTS, Device, Guidance, named_path
+from diffu_page.draw.pipeline import DrawSettings
 from diffu_page.output import console
-from diffu_page.pipeline import DrawSettings
 from diffu_studio.graph import PLAN, studio_graph
 from diffu_studio.nodes import Drawer, check_drawers, load_draw_nodes, plan_node
 

@@ -9,9 +9,9 @@ import cv2
 import numpy as np
 import torch
 
-from diffu_page.data.print_hand_set import GroundTruth, Sample, build, read_line_set
-from diffu_page.marking import PrintHandClassifier, PrintHandNet
-from diffu_page.marking.train import collection_groups, deal_folds
+from diffu_page.page.marking import PrintHandClassifier, PrintHandNet
+from diffu_page.page.marking.print_hand_set import GroundTruth, Sample, build, read_line_set
+from diffu_page.page.marking.train import collection_groups, deal_folds
 
 
 def _ground_truth(root: Path, collection: str, texts: list[str]) -> None:

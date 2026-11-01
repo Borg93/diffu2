@@ -13,7 +13,7 @@ import pytest
 import torch
 
 from diffu_page.captions.prompt import PageStyle
-from diffu_page.styles import read_style_presets
+from diffu_page.draw.styles import read_style_presets
 
 if TYPE_CHECKING:
     from conftest import NemoLoraWriter

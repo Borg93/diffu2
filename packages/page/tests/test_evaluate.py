@@ -15,9 +15,9 @@ from typer.testing import CliRunner, Result
 from diffu_page.captions.hand import HandDistance, HandLook, hand_distance, hand_look
 from diffu_page.captions.prompt import LineRecord
 from diffu_page.cli.evaluate import Results, Summary, app
-from diffu_page.evalset import EvalCrop, read_crops
-from diffu_page.fidelity import Hands, carry_over
-from diffu_page.pipeline import DrawSettings
+from diffu_page.data.evalset import EvalCrop, read_crops
+from diffu_page.draw.pipeline import DrawSettings
+from diffu_page.quality.fidelity import Hands, carry_over
 
 LINES = [
     LineRecord(id="Sv_Text_1", text="Göteborgs poliskammare", role="", bbox=[0, 0, 500, 1000]),

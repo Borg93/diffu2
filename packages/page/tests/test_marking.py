@@ -1,5 +1,6 @@
-"""A ground-truth template marked from its scan (diffu_page.marking): the lines its PAGE file says nothing of read as
-printed or handwritten, its own ruled lines kept, and a page planned from it captioned with its print and its rules."""
+"""A ground-truth template marked from its scan (diffu_page.page.marking): the lines its PAGE file says nothing of read
+as printed or handwritten, its own ruled lines kept, and a page planned from it captioned with its print and its
+rules."""
 
 from __future__ import annotations
 
@@ -7,9 +8,9 @@ import json
 from typing import TYPE_CHECKING
 
 from diffu_page.captions.prompt import PageStyle
-from diffu_page.jobs import PageJob, crop_jobs
-from diffu_page.layout import Production, Rule, load_xml_layout
-from diffu_page.marking import PrintHandClassifier, marked, template_scan
+from diffu_page.draw.jobs import PageJob, crop_jobs
+from diffu_page.page.layout import Production, Rule, load_xml_layout
+from diffu_page.page.marking import PrintHandClassifier, marked, template_scan
 
 if TYPE_CHECKING:
     from conftest import ScannedFormMaker

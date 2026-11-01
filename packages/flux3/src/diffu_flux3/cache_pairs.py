@@ -29,8 +29,8 @@ from nemo_automodel.components.models.flux3.text_encoding import encode_text_qwe
 
 from diffu_flux3.dropout import EmptyPrompt
 from diffu_page.cli.options import required_model
-from diffu_page.crops.grid import LARGEST_BUCKET_PIXELS
 from diffu_page.output import console
+from diffu_page.page.crops.grid import LARGEST_BUCKET_PIXELS
 from diffu_page.settings import settings
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")

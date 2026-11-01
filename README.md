@@ -18,9 +18,10 @@ that draws is a Modular Diffusers pipeline, our blocks around a model's own, the
 - **`packages/moss`** (diffu-moss): MOSS-Image: our DiT, its blocks, `diffu-moss-init` (a model directory), and its
   reference training (`train/`: `diffu-moss-cache-pairs`, `diffu-moss-train-ref`, a LoRA or every weight, on one GPU
   or sharded over several, and `diffu-moss-export-ref`). [docs/MOSS.md](docs/MOSS.md)
-- **`packages/page`** (diffu-page): pages as data (layouts, crops, captions, labels, the training-set builders in
-  `data/`), a template marked from its scan, our blocks and the page and crop pipelines; `diffu-generate`,
-  `diffu-evaluate`, `diffu-draw-pairs`, `diffu-reader-set`. [docs/PIPELINE.md](docs/PIPELINE.md)
+- **`packages/page`** (diffu-page), in layers: `page/` (a page as data: layouts, crops, labels, a template marked from
+  its scan), `captions/`, `quality/` (read-back, the judge, hand fidelity), `draw/` (planning, our blocks, the page and
+  crop pipelines) and `data/` (the training- and eval-set builders); `diffu-generate`, `diffu-evaluate`,
+  `diffu-draw-pairs`, `diffu-reader-set` (`cli/`). [docs/PIPELINE.md](docs/PIPELINE.md)
 - **`packages/flux3`** (diffu-flux3): FLUX.3 LoRA training with NeMo AutoModel: the configs, our dataloaders and the
   style-pair cache (NeMo's environment). [docs/FLUX3.md](docs/FLUX3.md)
 - **`packages/runner`** (diffu-runner): generation at scale on a Ray cluster. [docs/RAY.md](docs/RAY.md),

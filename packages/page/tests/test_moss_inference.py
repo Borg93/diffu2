@@ -25,9 +25,9 @@ from diffu_moss.modular_pipelines.moss import MossModularPipeline
 from diffu_moss.mxfp8 import Precision
 from diffu_moss.transformer import JointBlock, MossTransformer
 from diffu_page.captions.prompt import PageStyle
-from diffu_page.layout import load_xml_layout
-from diffu_page.pipeline import DrawSettings, crop_blocks, load_pipeline
-from diffu_page.plan import CropPlan, plan_whole_page
+from diffu_page.draw.pipeline import DrawSettings, crop_blocks, load_pipeline
+from diffu_page.draw.plan import CropPlan, plan_whole_page
+from diffu_page.page.layout import load_xml_layout
 
 SETTINGS = DrawSettings(steps=2, device="cpu")
 # The tiny MOSS's crop of small_plan from seed 0 as main drew it before these options (27c9fc9, on the CPU): the

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from diffu_page.readback import cer, numbers_differ
+from diffu_page.quality.readback import cer, numbers_differ
 
 
 @pytest.mark.parametrize(

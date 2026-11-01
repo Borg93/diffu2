@@ -10,8 +10,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from diffu_page.crops.geometry import CropSettings
 from diffu_page.data.build_crops import build
+from diffu_page.page.crops.geometry import CropSettings
 
 COLLECTION = "GT-RA_arjeplogs_tingslag_20260220"
 VOLUME = "Arjeplogs tingslag (1690-1700)"

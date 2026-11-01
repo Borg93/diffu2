@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 
 from diffu_page.captions.prompt import PageStyle
-from diffu_page.jobs import PageJob, crop_jobs
-from diffu_page.layout import Layout, Production, TextLine, load_xml_layout, refill, running_text
+from diffu_page.draw.jobs import PageJob, crop_jobs
+from diffu_page.page.layout import Layout, Production, TextLine, load_xml_layout, refill, running_text
 
 _BODY_TEXTS = [  # 40 characters on each 680 px line: every refilled line gets a 40-character budget
     "den fjarde maj artonhundra attiotva fors",

@@ -13,8 +13,8 @@ from typer.testing import CliRunner
 from diffu_page.cli.generate import Summary
 from diffu_page.cli.generate import app as generate_app
 from diffu_page.cli.options import Lora, lora_dirs, parse_lora, required_model
-from diffu_page.labels import LabelFormat
-from diffu_page.pipeline import DrawSettings
+from diffu_page.draw.pipeline import DrawSettings
+from diffu_page.page.labels import LabelFormat
 from diffu_page.settings import Settings
 
 

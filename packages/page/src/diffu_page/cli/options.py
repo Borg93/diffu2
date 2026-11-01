@@ -9,9 +9,9 @@ from typing import Annotated
 import typer
 from pydantic import BaseModel
 
-from diffu_page.labels import LabelFormat
-from diffu_page.lora import lora_model_dir
-from diffu_page.pipeline import DrawSettings
+from diffu_page.draw.lora import lora_model_dir
+from diffu_page.draw.pipeline import DrawSettings
+from diffu_page.page.labels import LabelFormat
 
 DEFAULTS = DrawSettings()  # every draw option's default comes from here
 

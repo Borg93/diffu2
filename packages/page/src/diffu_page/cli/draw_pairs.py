@@ -27,8 +27,8 @@ from diffu_moss.train.pairs import read_manifest
 from diffu_moss.train.records import CACHE_RECORD, CacheRecord
 from diffu_moss.train.restyle import restyled
 from diffu_page.cli.options import DEFAULTS, Device, Steps
+from diffu_page.draw.pipeline import DrawSettings, load_pipeline, model_family
 from diffu_page.output import JPEG_QUALITY, console, load_rgb, side_by_side
-from diffu_page.pipeline import DrawSettings, load_pipeline, model_family
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 
@@ -61,7 +61,8 @@ def draw_pairs(model: Path, cache: Path, out: Path, *, count: int, seed: int, se
         if entry.restyle is not None:  # trained on its sample and page in that look
             reference, target = restyled(reference, entry.restyle), restyled(target, entry.restyle)
         width, height = entry.target_size
-        pipe.guider.set_state(step=0, num_inference_steps=settings.steps, timestep=None)  # as diffu_page.pipeline draws
+        # as diffu_page.draw.pipeline draws
+        pipe.guider.set_state(step=0, num_inference_steps=settings.steps, timestep=None)
         drawn: Image.Image = pipe(
             prompt=entry.prompt,
             image=reference,

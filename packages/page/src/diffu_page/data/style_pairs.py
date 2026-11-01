@@ -4,9 +4,9 @@ style-reference LoRA (``packages/flux3/configs/flux3_style_ref_lora_v3d.yaml``) 
 
 Every training crop of ``diffu_page.data.build_crops`` becomes a target; its reference is a crop of its own page sharing
 none of its lines, else of its facing page (the same scribe as far as the pages tell), shrunk to the reference size
-(``diffu_page.crops.grid.as_reference``). The caption is the target's caption rewritten as a FLUX.3 image-edit record
-that takes the hand, ink and paper from ``<ref_image_0>`` and describes the reference's measured hand, ink and paper
-in words (``diffu_page.captions.restyle``'s ``described`` form, as a crop drawn from a reference is captioned;
+(``diffu_page.page.crops.grid.as_reference``). The caption is the target's caption rewritten as a FLUX.3 image-edit
+record that takes the hand, ink and paper from ``<ref_image_0>`` and describes the reference's measured hand, ink and
+paper in words (``diffu_page.captions.restyle``'s ``described`` form, as a crop drawn from a reference is captioned;
 MOSS-Image's training drops the words where a prompt form leaves the look to the image, ``diffu_moss.sample_caption``).
 Writes, under ``--out`` (a new or empty dir):
 
@@ -47,9 +47,9 @@ from pydantic import BaseModel
 from diffu_page.captions.hand import ReferenceLook, measure_reference
 from diffu_page.captions.records import CropRecord, read_records
 from diffu_page.captions.restyle import CaptionParts, ReferenceCaption, reference_caption
-from diffu_page.crops.grid import as_reference
-from diffu_page.evalset import ReferencedCrop, write_jsonl
+from diffu_page.data.evalset import ReferencedCrop, write_jsonl
 from diffu_page.output import JPEG_QUALITY, console
+from diffu_page.page.crops.grid import as_reference
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 

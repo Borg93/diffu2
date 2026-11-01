@@ -33,6 +33,7 @@ from pydantic import BaseModel, ConfigDict
 from diffu_moss.modular_pipelines.moss.encoders import MAX_PROMPT_TOKENS
 from diffu_moss.train.pairs import PagePairRow, Variant
 from diffu_page.captions.provenance import provenance_of
+from diffu_page.data.evalset import read_jsonl, write_jsonl
 from diffu_page.data.page_pairs import (
     SCAN_RECORD,
     SCANNED,
@@ -45,10 +46,9 @@ from diffu_page.data.page_pairs import (
     recorded_settings,
     whole_page,
 )
-from diffu_page.evalset import read_jsonl, write_jsonl
-from diffu_page.layout import load_xml_layout, scan_pages
-from diffu_page.layout.page_xml import find_scan
 from diffu_page.output import console
+from diffu_page.page.layout import load_xml_layout, scan_pages
+from diffu_page.page.layout.page_xml import find_scan
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from diffu_page.layout import (
+from diffu_page.page.layout import (
     CellRef,
     Layout,
     LineKind,

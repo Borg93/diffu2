@@ -24,8 +24,8 @@ from PIL import Image
 from pydantic import BaseModel
 
 from diffu_page.captions.look import ScanLook, band_name, scan_look
-from diffu_page.crops.geometry import pixel_box
-from diffu_page.crops.grid import as_reference
+from diffu_page.page.crops.geometry import pixel_box
+from diffu_page.page.crops.grid import as_reference
 
 LINE_HEIGHT = 80  # px a line is scaled to before it is measured: its strokes then span about 4-12 px
 COARSE_SLANTS = range(-30, 64, 4)  # degrees searched first; then +-3 around the best, in 1 degree steps

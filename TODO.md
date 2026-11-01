@@ -137,8 +137,8 @@ The runner and the KubeRay hand-off: [docs/RAY.md](docs/RAY.md), [docs/INFERENCE
       stages with their own resources (read and encode, denoise, read-back, labels and sink).
 - [ ] The driver reads every job into a list and seeds crops by position: read jobs with `ray.data.read_json`, a
       content-based page id naming and seeding its crops.
-- [ ] The runner plans each job as it stands: give each page of an opening its own job (`diffu_page.jobs.single_pages`),
-      as diffu-generate does.
+- [ ] The runner plans each job as it stands: give each page of an opening its own job
+      (`diffu_page.draw.jobs.single_pages`), as diffu-generate does.
 - [ ] `DrawActor` catches every exception as a failed crop, CUDA faults included: error rows for content errors only,
       the actor's process ended on a device fault so Ray restarts it.
 - [ ] The sink is Lance (`lance_ray.write_lance`, the image as a Blob v2 column), one row per page keyed by its id; a

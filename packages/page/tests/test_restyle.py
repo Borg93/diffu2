@@ -15,8 +15,8 @@ from diffu_page.captions.prompt import PageStyle, caption_for, caption_text, phr
 from diffu_page.captions.provenance import Provenance
 from diffu_page.captions.records import CropRecord
 from diffu_page.captions.restyle import CaptionParts, described_edit_caption, edit_caption, named_edit_caption
-from diffu_page.crops.geometry import Crop, CropSettings, crops_for_page, regions_of
-from diffu_page.layout import load_xml_layout, refill
+from diffu_page.page.crops.geometry import Crop, CropSettings, crops_for_page, regions_of
+from diffu_page.page.layout import load_xml_layout, refill
 
 if TYPE_CHECKING:
     from conftest import RecordMaker

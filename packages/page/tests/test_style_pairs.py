@@ -15,8 +15,8 @@ from typer.testing import CliRunner
 from diffu_page.captions.hand import HandLook, ReferenceLook
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.prompt import LineRecord
-from diffu_page.crops.geometry import Crop
 from diffu_page.data.style_pairs import Pair, Scan, app, by_volume, pick_pairs, pick_same_hand, training_pairs
+from diffu_page.page.crops.geometry import Crop
 
 if TYPE_CHECKING:
     from conftest import RecordMaker

@@ -9,7 +9,7 @@ and trains its LoRAs with NeMo AutoModel.
 
 A FLUX.3 Klein directory (diffusers' `Flux3AutoBlocks`, its prompt upsampler left out: it would rewrite the quoted
 lines) is `--model`, or `FLUX3_MODEL` from the environment or a `.env` file. LoRAs are NeMo checkpoints' `model/`
-dirs, loaded by the model's own LoRA loader as named adapters (`diffu_page.lora`: alpha/r folded into `lora_B`);
+dirs, loaded by the model's own LoRA loader as named adapters (`diffu_page.draw.lora`: alpha/r folded into `lora_B`);
 `--fuse-loras` fuses them into the transformer at load and `--compile-blocks` then compiles its repeated blocks.
 Guidance is FLUX.3's 4 and the sampling shift 6.93 unless `--guidance` or `--sampling-shift` name others.
 

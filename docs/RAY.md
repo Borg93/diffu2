@@ -116,7 +116,7 @@ on the Spark (TODO, "Inference at scale").
   strings for its stats actor but keeps a `str` subclass as it is, so a `StrEnum` of ours reached the stats actor by
   reference and it imported the module it came from: the whole page pipeline, 0.7 GB more on the head (1 Nov).
 - Separate CPU and GPU work into separate stages so Ray pipelines them: plan (CPU) -> draw (GPU) -> judge (GPU, its
-  own pool) -> labels (CPU) -> sink. Our draw, judge and labels are already separate (`diffu_page.judge`,
+  own pool) -> labels (CPU) -> sink. Our draw, judge and labels are already separate (`diffu_page.quality.judge`,
   `blocks.ground_truth.crop_labels`).
 - An actor's process lives as long as the pool: GPU memory hygiene (fragmentation, caches) is ours; Ray recycles
   workers only for GPU *tasks* (`max_calls=1`).

@@ -31,9 +31,9 @@ from diffu_page.captions.look import ScanLook
 from diffu_page.captions.prompt import PageStyle
 from diffu_page.captions.provenance import Provenance
 from diffu_page.captions.records import CropRecord, crop_record
-from diffu_page.crops.geometry import Crop, CropSettings, crops_for_page, regions_of
-from diffu_page.layout import PageBox, load_xml_layout
-from diffu_page.marking import PrintHandClassifier
+from diffu_page.page.crops.geometry import Crop, CropSettings, crops_for_page, regions_of
+from diffu_page.page.layout import PageBox, load_xml_layout
+from diffu_page.page.marking import PrintHandClassifier
 
 
 def _line(line_id: str, x0: int, x1: int, baseline: int, text: str) -> str:

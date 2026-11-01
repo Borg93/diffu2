@@ -2,7 +2,7 @@
 
 Rows are dicts of plain values. A run file's row is one of its lines, a :class:`PageJob` as JSON (Ray Data's
 ``read_text``); :func:`plan_rows` turns it into a row for each single page it draws (a two-page opening is two pages:
-:func:`diffu_page.jobs.single_pages`) that the run's table does not hold yet, each planned whole as one crop (its
+:func:`diffu_page.draw.jobs.single_pages`) that the run's table does not hold yet, each planned whole as one crop (its
 :class:`CropJob` as JSON) or carrying the error that stopped it. A :class:`DrawActor` draws, judges and labels each
 planned page and returns it as the page table's rows (:mod:`diffu_runner.table`).
 """
@@ -21,12 +21,12 @@ import torch
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from torch.nn.attention import SDPBackend, sdpa_kernel
 
-from diffu_page.jobs import CropJob, PageJob, crop_jobs, single_pages
-from diffu_page.judge import TrOCRJudge
-from diffu_page.labels import LabelFormat, export
+from diffu_page.draw.jobs import CropJob, PageJob, crop_jobs, single_pages
+from diffu_page.draw.pipeline import DrawSettings, crop_blocks, draw_crop, load_pipeline
 from diffu_page.local_run import describe
 from diffu_page.output import err_console, jpeg_bytes
-from diffu_page.pipeline import DrawSettings, crop_blocks, draw_crop, load_pipeline
+from diffu_page.page.labels import LabelFormat, export
+from diffu_page.quality.judge import TrOCRJudge
 from diffu_page.settings import settings
 from diffu_runner.table import LineRow, PageRow, page_table
 
@@ -132,9 +132,9 @@ def quiet_progress(blocks: object) -> None:
 
 
 class DrawActor:
-    """A Ray Data actor holding the judge and one crop pipeline (:func:`diffu_page.pipeline.crop_blocks`), each loaded
-    once, then drawing each planned page whole, judging it line by line and labelling it (ALTO and PAGE), as the page
-    table's rows.
+    """A Ray Data actor holding the judge and one crop pipeline (:func:`diffu_page.draw.pipeline.crop_blocks`), each
+    loaded once, then drawing each planned page whole, judging it line by line and labelling it (ALTO and PAGE), as the
+    page table's rows.
 
     A page that cannot be drawn becomes a row with its error. A CUDA fault ends the actor's process instead: the device
     can no longer be trusted, so Ray restarts the actor (``max_restarts``) and draws the page again. Running out of

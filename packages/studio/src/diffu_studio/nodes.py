@@ -23,13 +23,13 @@ from PIL import Image, ImageDraw
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from diffu_moss.modular_pipelines.moss import MossAutoBlocks
-from diffu_page.blocks import DrawnCrop, crop_identity
 from diffu_page.captions.prompt import PageStyle
-from diffu_page.crops.geometry import pixel_box
-from diffu_page.layout import load_xml_layout, running_text
+from diffu_page.draw.blocks import DrawnCrop, crop_identity
+from diffu_page.draw.pipeline import DrawSettings, PagePlanBlocks, crop_blocks, draw_crop, load_pipeline, model_family
+from diffu_page.draw.plan import CropPlan
 from diffu_page.output import JPEG_QUALITY, jpeg_bytes, plain_file_name, side_by_side
-from diffu_page.pipeline import DrawSettings, PagePlanBlocks, crop_blocks, draw_crop, load_pipeline, model_family
-from diffu_page.plan import CropPlan
+from diffu_page.page.crops.geometry import pixel_box
+from diffu_page.page.layout import load_xml_layout, running_text
 from diffu_studio.graph import draw_fn
 
 SHEET_HEIGHT = 512  # px: every crop of a sheet is scaled to it
@@ -123,7 +123,7 @@ class DrawNode:
 
     Args:
         drawer: The drawer this node draws for: its name names the dir its sheets go to.
-        pipe: Its model's crop pipeline (:func:`diffu_page.pipeline.crop_blocks`).
+        pipe: Its model's crop pipeline (:func:`diffu_page.draw.pipeline.crop_blocks`).
         settings: How every crop is drawn (the steps come from the node's input).
         out: Where the sheets and zips go.
         lock: Held while drawing, shared by every node of a studio.

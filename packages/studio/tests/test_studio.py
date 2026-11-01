@@ -16,9 +16,9 @@ from PIL import Image
 from pydantic import ValidationError
 
 from diffu_page.captions.prompt import PageStyle
-from diffu_page.layout import load_xml_layout, refill, running_text
-from diffu_page.pipeline import DrawSettings
-from diffu_page.plan import plan_page
+from diffu_page.draw.pipeline import DrawSettings
+from diffu_page.draw.plan import plan_page
+from diffu_page.page.layout import load_xml_layout, refill, running_text
 from diffu_studio.graph import edge, studio_graph
 from diffu_studio.nodes import SHEET_GAP, SHEET_HEIGHT, Drawer, PlannedPage, load_draw_nodes
 from diffu_studio.studio import build_studio

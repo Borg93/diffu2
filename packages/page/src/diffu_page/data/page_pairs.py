@@ -86,16 +86,16 @@ from diffu_page.captions.look import scan_look
 from diffu_page.captions.prompt import LineRecord, PageStyle
 from diffu_page.captions.provenance import Provenance, provenance_of
 from diffu_page.captions.restyle import ReferenceCaption
-from diffu_page.crops.geometry import regions_of
-from diffu_page.crops.grid import as_reference
 from diffu_page.data.build_crops import TILE_QUALITY
+from diffu_page.data.evalset import ReferencedCrop, write_jsonl
 from diffu_page.data.style_pairs import link
-from diffu_page.evalset import ReferencedCrop, write_jsonl
-from diffu_page.layout import Layout, PageBox, ScanPage, is_unsplit_spread, load_xml_layout, scan_pages
-from diffu_page.layout.page_xml import find_scan
+from diffu_page.draw.plan import CropPlan, Reference, plan_page, plan_whole_page, whole_page_size
 from diffu_page.local_run import describe
 from diffu_page.output import JPEG_QUALITY, console, load_rgb, validation_problems
-from diffu_page.plan import CropPlan, Reference, plan_page, plan_whole_page, whole_page_size
+from diffu_page.page.crops.geometry import regions_of
+from diffu_page.page.crops.grid import as_reference
+from diffu_page.page.layout import Layout, PageBox, ScanPage, is_unsplit_spread, load_xml_layout, scan_pages
+from diffu_page.page.layout.page_xml import find_scan
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 

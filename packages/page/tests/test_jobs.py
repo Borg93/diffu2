@@ -11,9 +11,9 @@ from pathlib import Path
 import pytest
 
 from diffu_page.captions.prompt import PageStyle
-from diffu_page.jobs import PageJob, crop_jobs, read_page_jobs, single_pages
-from diffu_page.layout import PageSide, load_xml_layout, refill
-from diffu_page.plan import Reference, plan_page
+from diffu_page.draw.jobs import PageJob, crop_jobs, read_page_jobs, single_pages
+from diffu_page.draw.plan import Reference, plan_page
+from diffu_page.page.layout import PageSide, load_xml_layout, refill
 
 
 @pytest.mark.parametrize(

@@ -43,7 +43,7 @@ from diffu_page.captions.prompt import (
     scan_words,
 )
 from diffu_page.captions.records import CropRecord
-from diffu_page.crops.geometry import LayoutBox
+from diffu_page.page.crops.geometry import LayoutBox
 
 
 class ReferenceCaption(StrEnum):
@@ -217,8 +217,8 @@ def described_edit_caption(parts: CaptionParts, reference: ReferenceLook) -> str
 
 def reference_caption(parts: CaptionParts, form: ReferenceCaption, reference: ReferenceLook | None) -> str:
     """The caption drawn from a reference image in ``form``, the form the model in use was trained on: training pairs
-    (``diffu_page.data.style_pairs``, ``diffu_page.data.page_pairs``) and planned crops (``diffu_page.plan``) are both
-    captioned here.
+    (``diffu_page.data.style_pairs``, ``diffu_page.data.page_pairs``) and planned crops (``diffu_page.draw.plan``) are
+    both captioned here.
 
     Raises:
         ValueError: If ``form`` describes the reference and its measured look (``reference``) is missing.

@@ -6,7 +6,7 @@ labels out. The repo map is in the [README](../README.md); how the models are tr
 
 ## From a page to labelled crops
 
-Every step is a Modular Diffusers block; `diffu_page.pipeline` assembles our blocks around a model's own.
+Every step is a Modular Diffusers block; `diffu_page.draw.pipeline` assembles our blocks around a model's own.
 
 ```
 PAGE/ALTO page ──► LoadLayout ──► MarkFromScan ──► OpeningPage ──► Refill ──► PlanCrops ──► per crop: CropPrompt ──► model's blocks ──► judge ──► repair ──► labels
@@ -16,7 +16,7 @@ PAGE/ALTO page ──► LoadLayout ──► MarkFromScan ──► OpeningPage
                                                                               or whole)
 ```
 
-1. **Layout** (`LoadLayoutStep`, `diffu_page.layout`): a real PAGE or ALTO page read as its lines
+1. **Layout** (`LoadLayoutStep`, `diffu_page.page.layout`): a real PAGE or ALTO page read as its lines
    (`load_xml_layout`): each line's text, outline, baseline, region role and source block, regions in Transkribus
    reading order; an element without an id is keyed by its place, so it stays a region of its own. The training-crop
    builder cuts its crops from this same layout (`crops.regions_of`, at the scan's size), so a page is planned for
@@ -24,7 +24,7 @@ PAGE/ALTO page ──► LoadLayout ──► MarkFromScan ──► OpeningPage
    rest uses. A line's PAGE `@production` (printed or handwritten) is kept when the file states it and is None when
    it does not (drawn as handwriting); `SeparatorRegion`s are the page's ruled lines. Most GT PAGE files state
    neither, so with a print/hand classifier (`diffu-generate --mark-from-scan`) `MarkFromScanStep` marks the template
-   from the scan beside it first (`diffu_page.marking.marked`): each line it says nothing of is read as printed or
+   from the scan beside it first (`diffu_page.page.marking.marked`): each line it says nothing of is read as printed or
    handwritten by a small CNN (`marking.print_hand`, 64 px high line images reduced to their ink, read window by
    window; less than 90 % sure stays handwritten), lines it states keep theirs, and when it has no ruled lines they are
    found on the scan (`marking.rules`, OpenCV: long thin straight runs of ink, told apart from handwriting, page edges,
@@ -35,16 +35,16 @@ PAGE/ALTO page ──► LoadLayout ──► MarkFromScan ──► OpeningPage
    leave no gutter (`layout.is_unsplit_spread`: on the GT 1,176 of 30,983 scans, about 880 openings whose pages' lines
    overlap side to side, the rest mostly single wide sheets, which the lines cannot tell apart) is refused here, with a
    side or without, and a run records it as failed: a spread is never drawn, and the page-pair builder skips it too.
-   The classifier is trained on CPU (`python -m diffu_page.data.print_hand_set`, then
-   `python -m diffu_page.marking.train`): printed lines from the OCR ground truth, handwritten ones from the HTR ground
-   truth, validated on held-out collections.
+   The classifier is trained on CPU (`python -m diffu_page.page.marking.print_hand_set`, then
+   `python -m diffu_page.page.marking.train`): printed lines from the OCR ground truth, handwritten ones from the HTR
+   ground truth, validated on held-out collections.
 2. **Refill** (`RefillStep`, `layout.refill`): the running-text lines get new text at the page's own writing density;
    a blank line in the text ends a paragraph and the next starts on a fresh line; margin notes, headings and page
    numbers keep theirs. On a page whose running text is handwritten, a form's printed lines keep theirs too, and the
    density is the handwriting's; a page whose running text is all printed, a printed book's, has its print rewritten.
-3. **Crops** (`PlanCropsStep`, `diffu_page.crops`, `diffu_page.plan`): the page is cut into the windows the models
-   were trained on (whole lines, about 1 megapixel at a 64 px line pitch, NeMo bucket sizes, margin notes joined to
-   the column beside them), or planned whole as one crop at a pixel budget (`plan_whole_page`, `--whole-page`). Each
+3. **Crops** (`PlanCropsStep`, `diffu_page.page.crops`, `diffu_page.draw.plan`): the page is cut into the windows the
+   models were trained on (whole lines, about 1 megapixel at a 64 px line pitch, NeMo bucket sizes, margin notes joined
+   to the column beside them), or planned whole as one crop at a pixel budget (`plan_whole_page`, `--whole-page`). Each
    is a `CropPlan`: its size, its caption and its lines with boxes (0–1000, y first) and reading order. Windows
    overlap by design (training windows share lines), so a page's windows are not a tiling of the page.
 4. **Caption** (`diffu_page.captions`): FLUX.3's layout prompt. A paragraph names the archive, years, scan, paper and
@@ -56,7 +56,7 @@ PAGE/ALTO page ──► LoadLayout ──► MarkFromScan ──► OpeningPage
    (`described`: `captions.hand`, slant, pen width, letter size, spacing, colours as hex), or in one of MOSS-Image's
    prompt forms (`plain`, `named`, `hand`, `sample`: [MOSS.md](MOSS.md)). The form must be the one the model was
    trained on (`--reference-caption`). MOSS-Image compiles the caption into its own Layout prompt.
-5. **Drawing** (`diffu_page.pipeline`): a model directory names its blocks in `modular_model_index.json`, and
+5. **Drawing** (`diffu_page.draw.pipeline`): a model directory names its blocks in `modular_model_index.json`, and
    `FAMILIES` maps those to the model's blocks and pipeline class (FLUX.3 Klein: `Flux3AutoBlocks` without its prompt
    upsampler, which would rewrite the quoted lines; MOSS-Image: `MossAutoBlocks`, a `diffu-moss-init` directory), the
    guidance scale it draws at unless `--guidance` names one (FLUX.3's 4, MOSS's 3) and whether LoRAs load into it at
@@ -66,12 +66,12 @@ PAGE/ALTO page ──► LoadLayout ──► MarkFromScan ──► OpeningPage
      model's auto blocks choose plain or reference-conditioned denoising from the inputs. Both denoise branches carry
      a line repair (`blocks.repair`), idle without a mask; `crop_blocks` puts it into a copy of the model's denoise
      blocks, because diffusers shares block instances across every pipeline in a process.
-   - `diffu_page.guidance.ReferenceGuidance`: diffusers' classifier-free guidance with a third pass without the
+   - `diffu_page.draw.guidance.ReferenceGuidance`: diffusers' classifier-free guidance with a third pass without the
      reference, so guidance can push toward the reference as well as the caption (`--reference-guidance`).
-   - The judge (`diffu_page.judge`: a `Judge`, by default `TrOCRJudge`) reads every line box of the drawn crop, and the
-     labels (`blocks.ground_truth.crop_labels`, written as ALTO or PAGE) tag a line it rejects `unclear`: a read-back
-     CER above `max_line_cer`, or any number read otherwise. Drawing, judging and labelling are separate stages
-     (`pipeline.draw_crop` runs the three in one process).
+   - The judge (`diffu_page.quality.judge`: a `Judge`, by default `TrOCRJudge`) reads every line box of the drawn crop,
+     and the labels (`blocks.ground_truth.crop_labels`, written as ALTO or PAGE) tag a line it rejects `unclear`: a
+     read-back CER above `max_line_cer`, or any number read otherwise. Drawing, judging and labelling are separate
+     stages (`pipeline.draw_crop` runs the three in one process).
    - `pipeline.repair_lines` draws a crop's rejected lines again in place: the crop is drawn from new noise while
      after every step the latents outside the lines' boxes are set back to the drawn crop's own at that noise level
      (`(1 - sigma) * drawn + sigma * noise`), so the lines are redrawn in the context of the page and every other
@@ -79,7 +79,7 @@ PAGE/ALTO page ──► LoadLayout ──► MarkFromScan ──► OpeningPage
      follow the judge's verdicts on the result.
    - `PagePlanBlocks`: the plan steps alone, no model. `jobs.crop_jobs` turns a page's plans into crop jobs, crop k
      named `<page>_<k>` and drawn from noise seed `seed + k`, each with the page's reference image if it has one.
-   LoRAs load through the model's own LoRA loader as named adapters (`diffu_page.lora`); with
+   LoRAs load through the model's own LoRA loader as named adapters (`diffu_page.draw.lora`); with
    `DrawSettings.fuse_loras` (`--fuse-loras`) they are fused into the transformer's weights at load, and
    `DrawSettings.compile_blocks` (`--compile-blocks`) then compiles the transformer's repeated blocks (diffusers'
    regional compilation), refused around unfused LoRAs.
@@ -107,14 +107,14 @@ jobs/spark_guard.sh --need-gb 50 --name pages -- uv run diffu-generate --model r
 - `--mark-from-scan` marks each template from the scan beside it before planning (`--print-hand-model`, by default
   `runs/print_hand/print_hand.pt`); `summary.json` names the classifier.
 - `--jobs run.jsonl` gives every page its own template, text, style, seed, reference and size: one
-  `diffu_page.jobs.PageJob` per line, the run file diffu-runner reads:
+  `diffu_page.draw.jobs.PageJob` per line, the run file diffu-runner reads:
 
   ```json
   {"template": "page_a.xml", "text": "Anno 1720 den 5 maj ...", "style": {"provenance": {"title": "the court records of Jämtlands domsaga", "years": "1720"}, "look": {"greyscale": false, "paper": "cream", "ink": "dark brown"}}, "page_pixels": 2000000, "id": "jamt_1720_p1"}
   ```
 
 - `--styles styles.json --style NAME` (or a job line's `"style": NAME`) draws in a named preset
-  (`diffu_page.styles.StylePreset`: the archive and years, the look, a LoRA and a reference, paths relative to the
+  (`diffu_page.draw.styles.StylePreset`: the archive and years, the look, a LoRA and a reference, paths relative to the
   file); a run with several presets draws one pipeline per set of LoRAs in turn (`summary.json`: `groups`).
 - `--repair N` draws the lines the read-back rejects again in place, up to N times, each pass from its own noise and
   kept only where it reads back; `summary.json` gives each crop's lines repaired.
@@ -124,8 +124,8 @@ jobs/spark_guard.sh --need-gb 50 --name pages -- uv run diffu-generate --model r
 ## Labels for page readers
 
 `--reader-labels` also writes each crop's labels in the formats page readers train on, beside its image and from the
-same regions as its XML (`diffu_page.labels`): `<name>.md`, the page as Markdown (its regions in reading order, a blank
-line between two, each line of the page on a line of its own, a heading after `## `, a table as HTML);
+same regions as its XML (`diffu_page.page.labels`): `<name>.md`, the page as Markdown (its regions in reading order, a
+blank line between two, each line of the page on a line of its own, a heading after `## `, a table as HTML);
 `<name>.grounded.md`, DeepSeek-OCR 2's grounded form of it (each region under
 `<|ref|>text<|/ref|><|det|>[[x0, y0, x1, y1]]<|/det|>`, on 0-999 of the page); and `<name>.elements.json`, the
 regions as PaddleOCR-VL's layout elements (each one's PP-DocLayoutV3 category, box in pixels, recognition prompt and
@@ -158,8 +158,8 @@ from pathlib import Path
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.prompt import PageStyle
 from diffu_page.captions.provenance import Provenance
-from diffu_page.jobs import PageJob, crop_jobs
-from diffu_page.pipeline import DrawSettings, crop_blocks, draw_crop, load_pipeline
+from diffu_page.draw.jobs import PageJob, crop_jobs
+from diffu_page.draw.pipeline import DrawSettings, crop_blocks, draw_crop, load_pipeline
 
 style = PageStyle(
     provenance=Provenance(title="the court records of Jämtlands domsaga", years="1690–1700"),
@@ -172,6 +172,6 @@ crops = [
     draw_crop(pipe, job.plan, name=job.name, seed=job.seed, reference=job.reference_image(), settings=settings)
     for job in crop_jobs(page, 0)
 ]
-# each crop: .image, .labels (the label data; diffu_page.labels.page_elements(crop.labels) for the page readers'),
+# each crop: .image, .labels (the label data; diffu_page.page.labels.page_elements(crop.labels) for the page readers'),
 # .labels_xml (ALTO), .line_reads, .line_cers, .unclear_lines
 ```

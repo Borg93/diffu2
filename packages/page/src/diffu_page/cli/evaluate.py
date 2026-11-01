@@ -1,6 +1,6 @@
 """Evaluate a model (MOSS-Image, or FLUX.3 and its LoRAs) on held-out crops: draw each from its stored caption with the
-crop pipeline (:func:`diffu_page.pipeline.crop_blocks`), crop ``k`` from noise seed ``--seed + k``, and read every line
-back, beside the real crop's read-back.
+crop pipeline (:func:`diffu_page.draw.pipeline.crop_blocks`), crop ``k`` from noise seed ``--seed + k``, and read every
+line back, beside the real crop's read-back.
 
 A crop that names a ``reference`` image is drawn conditioned on it (style by example); with ``--without-reference`` it
 is drawn from its caption alone, its reference still shown and measured beside it (a reference-trained MOSS-Image then
@@ -45,13 +45,13 @@ from diffu_page.cli.options import (
     required_model,
     settings_from_options,
 )
-from diffu_page.crops.geometry import pixel_box
-from diffu_page.evalset import EvalCrop, generated_path, read_crops
-from diffu_page.fidelity import HandFidelity, Hands, crop_hands, hand_fidelity
-from diffu_page.judge import Judge, TrOCRJudge
+from diffu_page.data.evalset import EvalCrop, generated_path, read_crops
+from diffu_page.draw.pipeline import DEVICE_ERRORS, DrawSettings, crop_blocks, draw_crop, load_pipeline
 from diffu_page.local_run import run_each
 from diffu_page.output import JPEG_QUALITY, console, err_console, side_by_side
-from diffu_page.pipeline import DEVICE_ERRORS, DrawSettings, crop_blocks, draw_crop, load_pipeline
+from diffu_page.page.crops.geometry import pixel_box
+from diffu_page.quality.fidelity import HandFidelity, Hands, crop_hands, hand_fidelity
+from diffu_page.quality.judge import Judge, TrOCRJudge
 from diffu_page.settings import settings
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")

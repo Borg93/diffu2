@@ -4,8 +4,8 @@ fp32 and the scheduler steps the latents with it (FLUX.3's own scheduler step). 
 trained to take them, go into every pass: the reference conditions the look, guidance pushes toward the prompt.
 
 The latents stay tokens through the loop, as FLUX.3's do, and the loop's steps carry FLUX.3's names (``denoiser``,
-``after_denoiser``), so the page pipeline's line repair (``diffu_page.blocks.repair``) runs in it as in FLUX.3's. The
-DiT itself takes the latents on their grid.
+``after_denoiser``), so the page pipeline's line repair (``diffu_page.draw.blocks.repair``) runs in it as in FLUX.3's.
+The DiT itself takes the latents on their grid.
 """
 
 from __future__ import annotations

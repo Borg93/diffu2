@@ -14,12 +14,12 @@ import pytest
 import xmlschema
 from pydantic import ValidationError
 
-from diffu_page.blocks.ground_truth import crop_labels, line_labels, rule_rects
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.prompt import LineRecord, PageStyle
 from diffu_page.captions.provenance import Provenance
-from diffu_page.judge import LineVerdict
-from diffu_page.labels import (
+from diffu_page.draw.blocks.ground_truth import crop_labels, line_labels, rule_rects
+from diffu_page.draw.plan import CropPlan, plan_page, plan_whole_page
+from diffu_page.page.labels import (
     LineLabel,
     PageLabels,
     Point,
@@ -31,8 +31,8 @@ from diffu_page.labels import (
     to_page_xml,
     to_spotting,
 )
-from diffu_page.layout import CellRef, Production, load_xml_layout
-from diffu_page.plan import CropPlan, plan_page, plan_whole_page
+from diffu_page.page.layout import CellRef, Production, load_xml_layout
+from diffu_page.quality.judge import LineVerdict
 
 # PRImA's PAGE 2019-07-15 schema (Apache-2.0, github.com/PRImA-Research-Lab/PAGE-XML,
 # PAGE-release/gts/pagecontent/2019-07-15/pagecontent.xsd): the version the exports declare

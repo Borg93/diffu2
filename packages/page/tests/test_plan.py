@@ -14,10 +14,10 @@ from pydantic import ValidationError
 
 from diffu_page.captions.prompt import LineRecord, PageStyle
 from diffu_page.captions.restyle import ReferenceCaption
-from diffu_page.crops.geometry import CropSettings, crops_for_page, regions_of
 from diffu_page.data.style_pairs import Pair, Scan, describe, pair_caption
-from diffu_page.layout import Layout, TextLine, load_xml_layout
-from diffu_page.plan import CropPlan, Reference, plan_page, plan_whole_page
+from diffu_page.draw.plan import CropPlan, Reference, plan_page, plan_whole_page
+from diffu_page.page.crops.geometry import CropSettings, crops_for_page, regions_of
+from diffu_page.page.layout import Layout, TextLine, load_xml_layout
 
 if TYPE_CHECKING:
     from conftest import RecordMaker
