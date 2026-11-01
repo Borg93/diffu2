@@ -76,7 +76,7 @@ known-first-party = ["diffu", "diffu_moss", "diffu_page", "diffu_train", "diffu_
 testpaths = ["packages"]
 addopts = "-q --import-mode=importlib"
 strict = true
-timeout = 3600  # pytest-timeout: a hung test fails; the slowest (the studio's draw test) takes 6.5 min, 25 under coverage
+timeout = 3600  # pytest-timeout: a hung test fails; the slowest (the studio's draw test) takes about a minute on CPU
 
 [tool.coverage.run]  # per-test coverage when pruning: production lines only, never the tests'
 source = ["src", "packages/moss/src", "packages/page/src", "packages/runner/src", "packages/studio/src", "packages/train/src"]

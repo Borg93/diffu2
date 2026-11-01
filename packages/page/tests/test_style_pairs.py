@@ -1,5 +1,6 @@
-"""The style pairs: the manifest names each pair's target and reference and captions it describing the reference, a
-same-hand reference shares no line with its target, and a build never writes into a dir that holds an earlier one."""
+"""The style pairs: the manifest names each pair's target and reference, a same-hand reference shares no line with its
+target, and a build never writes into a dir that holds an earlier one. (A pair's caption is the one a crop drawn from
+its reference gets: test_plan.)"""
 
 from __future__ import annotations
 
@@ -14,7 +15,6 @@ from typer.testing import CliRunner
 from diffu_page.captions.hand import HandLook, ReferenceLook
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.prompt import LineRecord
-from diffu_page.captions.restyle import CaptionParts, described_edit_caption
 from diffu_page.crops.geometry import Crop
 from diffu_page.data.style_pairs import Pair, Scan, app, by_volume, pick_pairs, pick_same_hand, training_pairs
 
@@ -47,9 +47,7 @@ def _pairs(make_scan: Callable[[int, list[str]], Scan]) -> list[Pair]:
     return pick_pairs(scans, by_volume(scans), rng=random.Random(0))
 
 
-def test_training_pairs_name_each_pairs_target_and_reference_and_describe_the_reference(
-    make_scan: Callable[[int, list[str]], Scan],
-) -> None:
+def test_training_pairs_name_each_pairs_target_and_reference(make_scan: Callable[[int, list[str]], Scan]) -> None:
     pairs = _pairs(make_scan)
 
     built = training_pairs(pairs, {pair.reference.path: LOOK for pair in pairs})
@@ -62,9 +60,6 @@ def test_training_pairs_name_each_pairs_target_and_reference_and_describe_the_re
             pair.reference.record.file_name,
         )
         for pair in pairs
-    ]
-    assert [row.prompt for row in built.rows] == [
-        described_edit_caption(CaptionParts.of(pair.target.record), LOOK) for pair in pairs
     ]
 
 
