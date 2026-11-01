@@ -8,7 +8,7 @@ from typing import Any
 
 import torch
 
-from diffu_train.dropout import CaptionDropout, EmptyPrompt
+from diffu_flux3.dropout import CaptionDropout, EmptyPrompt
 
 
 def _sample(k: int) -> dict[str, Any]:

@@ -11,10 +11,10 @@ Use it from a NeMo config with this folder on PYTHONPATH, for text-to-image or i
 
     data:
       dataloader:
-        _target_: diffu_train.nemo.InterleavedTextToImageDataloaderConfig  # or InterleavedImageEditDataloaderConfig
+        _target_: diffu_flux3.nemo.InterleavedTextToImageDataloaderConfig  # or InterleavedImageEditDataloaderConfig
 
 Both configs also take ``caption_dropout``: that share of the items trains on the empty prompt
-(``diffu_train.dropout``), read from the ``empty_prompt.pt`` that ``diffu_train.cache_pairs`` writes into the cache.
+(``diffu_flux3.dropout``), read from the ``empty_prompt.pt`` that ``diffu_flux3.cache_pairs`` writes into the cache.
 """
 
 from __future__ import annotations
@@ -32,8 +32,8 @@ from nemo_automodel.components.datasets.diffusion.loader import DiffusionDataloa
 from nemo_automodel.components.datasets.diffusion.sampler import SequentialBucketSampler
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from diffu_train.dropout import EMPTY_PROMPT_FILE, CaptionDropout, EmptyPrompt, Item, Sample, SampleSource
-from diffu_train.sampler import InterleavedBucketSampler
+from diffu_flux3.dropout import EMPTY_PROMPT_FILE, CaptionDropout, EmptyPrompt, Item, Sample, SampleSource
+from diffu_flux3.sampler import InterleavedBucketSampler
 
 type DatasetWrap = Callable[[SampleSource], SampleSource]
 
@@ -94,7 +94,7 @@ def _dropout(cache_dir: str, *, share: float, blank: Callable[[EmptyPrompt, Samp
 @dataclass
 class InterleavedTextToImageDataloaderConfig(TextToImageDataloaderConfig):
     """NeMo's text-to-image dataloader config, with the aspect buckets interleaved and ``caption_dropout`` of the crops
-    trained on the empty prompt (``diffu_train.dropout``; 0 trains every caption).
+    trained on the empty prompt (``diffu_flux3.dropout``; 0 trains every caption).
 
     Raises:
         ValueError: If ``shuffle`` is off (interleaving is a shuffle), or ``caption_dropout`` is not in [0, 1).
@@ -117,7 +117,7 @@ class InterleavedTextToImageDataloaderConfig(TextToImageDataloaderConfig):
 @dataclass
 class InterleavedImageEditDataloaderConfig(ImageEditDataloaderConfig):
     """NeMo's image-edit (target + reference image) dataloader config, with the buckets interleaved and
-    ``caption_dropout`` of the pairs trained on the empty prompt (``diffu_train.dropout``; 0 trains every caption).
+    ``caption_dropout`` of the pairs trained on the empty prompt (``diffu_flux3.dropout``; 0 trains every caption).
 
     Raises:
         ValueError: If ``shuffle`` is off (interleaving is a shuffle), or ``caption_dropout`` is not in [0, 1).

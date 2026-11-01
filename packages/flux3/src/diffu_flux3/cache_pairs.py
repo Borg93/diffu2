@@ -5,10 +5,10 @@ NeMo's ``image-edit`` preprocessing CLI reads a Hugging Face dataset and materia
 already one, so this hands it straight to the encoder that CLI calls (``Flux3ImageEditCacheEncoder``). Targets keep
 their exact bucket size (none is over ``LARGEST_BUCKET_PIXELS``); the references were shrunk by
 ``diffu_page.data.style_pairs``. Beside the pairs it writes the empty prompt, encoded as the captions are, for caption
-dropout (``diffu_train.dropout``).
+dropout (``diffu_flux3.dropout``).
 Runs in the NeMo AutoModel environment, on the GPU:
 
-    cd ~/Desktop/repos/Automodel && python -m diffu_train.cache_pairs \
+    cd ~/Desktop/repos/Automodel && python -m diffu_flux3.cache_pairs \
         --manifest ~/Desktop/repos/diffu2/data_flux3/style_pairs_v3d/train.jsonl \
         --out ~/Desktop/repos/diffu2/data_flux3/cache_style_v3d
 """
@@ -27,11 +27,11 @@ from nemo_automodel.components.models.flux3.preprocessing import (
 )
 from nemo_automodel.components.models.flux3.text_encoding import encode_text_qwen3vl, load_qwen3vl_text_stack
 
+from diffu_flux3.dropout import EmptyPrompt
 from diffu_page.cli.options import required_model
 from diffu_page.crops.grid import LARGEST_BUCKET_PIXELS
 from diffu_page.output import console
 from diffu_page.settings import settings
-from diffu_train.dropout import EmptyPrompt
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 

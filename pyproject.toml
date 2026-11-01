@@ -11,7 +11,7 @@ members = ["packages/*"]
 diffu-core = { workspace = true }
 diffu-moss = { workspace = true }
 diffu-page = { workspace = true }
-diffu-train = { workspace = true }
+diffu-flux3 = { workspace = true }
 diffu-runner = { workspace = true }
 diffu-studio = { workspace = true }
 torch = { index = "pytorch-cu130" }
@@ -48,7 +48,7 @@ ignore = ["E501"]
 "dataclasses.dataclass".msg = "Structured values are pydantic BaseModel (NeMo dataloader configs are the exception)."
 
 [tool.ruff.lint.isort]
-known-first-party = ["diffu_core", "diffu_moss", "diffu_page", "diffu_train", "diffu_runner", "diffu_studio"]
+known-first-party = ["diffu_core", "diffu_moss", "diffu_page", "diffu_flux3", "diffu_runner", "diffu_studio"]
 
 [tool.pytest.ini_options]
 testpaths = ["packages"]
@@ -57,7 +57,7 @@ strict = true
 timeout = 3600  # pytest-timeout: a hung test fails; the slowest (the studio's draw test) takes about a minute on CPU
 
 [tool.coverage.run]  # per-test coverage when pruning: production lines only, never the tests'
-source = ["packages/core/src", "packages/moss/src", "packages/page/src", "packages/runner/src", "packages/studio/src", "packages/train/src"]
+source = ["packages/core/src", "packages/moss/src", "packages/page/src", "packages/runner/src", "packages/studio/src", "packages/flux3/src"]
 omit = ["packages/*/tests/*", "conftest.py"]
 
 # ty, as pyrefly.toml: diffusers, transformers and safetensors are typed as Any (diffusers exports a torch-less dummy

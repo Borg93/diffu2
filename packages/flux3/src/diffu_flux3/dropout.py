@@ -6,7 +6,7 @@ Classifier-free guidance at generation contrasts the caption with the empty prom
 (diffusers' ``Flux3TextEncoderStep``). A model trained only on captioned items never sees that unconditional input, so
 guidance pushes against a prediction it never learned. NeMo's own ``cfg_dropout`` zeroes the text embeddings instead,
 an input generation never makes; this swaps in the real encoding of ``""``, cached once beside the items
-(``diffu_train.cache_pairs``). No NeMo import, so it runs and tests off the NeMo environment; ``diffu_train.nemo``
+(``diffu_flux3.cache_pairs``). No NeMo import, so it runs and tests off the NeMo environment; ``diffu_flux3.nemo``
 wraps NeMo's datasets with it.
 """
 
@@ -59,7 +59,7 @@ class EmptyPrompt(BaseModel):
         """
         path = cache_dir / EMPTY_PROMPT_FILE
         if not path.exists():
-            raise FileNotFoundError(f"{path} is missing: cache with diffu_train.cache_pairs")
+            raise FileNotFoundError(f"{path} is missing: cache with diffu_flux3.cache_pairs")
         data = torch.load(path, map_location="cpu", weights_only=True)
         return cls(embeddings=data["prompt_embeddings"], mask=data["prompt_attention_mask"])
 

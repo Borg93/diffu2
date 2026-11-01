@@ -1,5 +1,5 @@
 """Style pairs: a crop's text and layout drawn in the hand of a reference crop of the same hand, for FLUX.3 Klein's
-style-reference LoRA (``configs/flux3/flux3_style_ref_lora_v3d.yaml``) and MOSS-Image's reference training
+style-reference LoRA (``packages/flux3/configs/flux3_style_ref_lora_v3d.yaml``) and MOSS-Image's reference training
 (``diffu_moss.train``).
 
 Every training crop of ``diffu_page.data.build_crops`` becomes a target; its reference is a crop of its own page sharing
@@ -10,7 +10,7 @@ in words (``diffu_page.captions.restyle``'s ``described`` form, as a crop drawn 
 MOSS-Image's training drops the words where a prompt form leaves the look to the image, ``diffu_moss.sample_caption``).
 Writes, under ``--out`` (a new or empty dir):
 
-- ``train.jsonl``: the manifest NeMo's FLUX.3 image-edit encoder caches (``diffu_train.cache_pairs``) and
+- ``train.jsonl``: the manifest NeMo's FLUX.3 image-edit encoder caches (``diffu_flux3.cache_pairs``) and
   ``diffu-moss-cache-pairs`` reads, its media under ``targets/`` (hard links to the crops: the encoder only reads files
   inside the manifest's dir) and ``refs/``;
 - ``val_eval/``: the held-out crops (the crops' ``val_eval`` split, ``diffu_page.data.pick_eval``), each with a

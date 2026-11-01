@@ -12,11 +12,11 @@ supported-markers = [
 [manifest]
 members = [
     "diffu-core",
+    "diffu-flux3",
     "diffu-moss",
     "diffu-page",
     "diffu-runner",
     "diffu-studio",
-    "diffu-train",
 ]
 
 [manifest.dependency-groups]
@@ -305,6 +305,25 @@ requires-dist = [
 ]
 
 [[package]]
+name = "diffu-flux3"
+version = "0.1.0"
+source = { editable = "packages/flux3" }
+dependencies = [
+    { name = "diffu-page" },
+    { name = "pydantic" },
+    { name = "torch" },
+    { name = "typer" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "diffu-page", editable = "packages/page" },
+    { name = "pydantic", specifier = ">=2" },
+    { name = "torch", specifier = ">=2.10", index = "https://download.pytorch.org/whl/cu130" },
+    { name = "typer", specifier = ">=0.20" },
+]
+
+[[package]]
 name = "diffu-moss"
 version = "0.1.0"
 source = { editable = "packages/moss" }
@@ -425,25 +444,6 @@ requires-dist = [
     { name = "gradio-client", specifier = ">=2" },
     { name = "pillow", specifier = ">=11" },
     { name = "pydantic", specifier = ">=2" },
-    { name = "typer", specifier = ">=0.20" },
-]
-
-[[package]]
-name = "diffu-train"
-version = "0.1.0"
-source = { editable = "packages/train" }
-dependencies = [
-    { name = "diffu-page" },
-    { name = "pydantic" },
-    { name = "torch" },
-    { name = "typer" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "diffu-page", editable = "packages/page" },
-    { name = "pydantic", specifier = ">=2" },
-    { name = "torch", specifier = ">=2.10", index = "https://download.pytorch.org/whl/cu130" },
     { name = "typer", specifier = ">=0.20" },
 ]
 

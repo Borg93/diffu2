@@ -5,7 +5,7 @@
 # the empty prompt; the reference is in both branches), and BFL's guidance is to state a style's visible properties in
 # the caption (hand, stroke, hex colours) rather than leave them to the reference; captions that named nothing drew
 # black, bold ink whatever the reference's. Also:
-#   - caption dropout 0.1 (diffu_train.dropout): a tenth of the pairs train on the real empty prompt, the one
+#   - caption dropout 0.1 (diffu_flux3.dropout): a tenth of the pairs train on the real empty prompt, the one
 #     guidance contrasts with at generation (diffusers' FLUX.3 Klein trainer: --caption_dropout, 0.1 recommended);
 #   - a constant learning rate after 100 warmup steps: a cosine decay stopped the LoRA learning at ~800 steps;
 #   - 3,000 steps, a checkpoint every 500, val_loss every 100 steps on 64 val-split pairs (NeMo's validation).
@@ -15,7 +15,7 @@
 # directory, required). jobs/flux3/run_v3d.sh sets both and runs it; by hand, from the NeMo AutoModel repo root:
 #
 #   DIFFU_REPO=~/Desktop/repos/diffu2 uv run --no-sync torchrun --nproc-per-node=1 \
-#       examples/diffusion/finetune/finetune.py -c $DIFFU_REPO/packages/train/configs/flux3/flux3_style_ref_lora_v3d.yaml
+#       examples/diffusion/finetune/finetune.py -c $DIFFU_REPO/packages/flux3/configs/flux3_style_ref_lora_v3d.yaml
 
 seed: 42
 
@@ -120,10 +120,10 @@ step_scheduler:
 
 data:
   dataloader:
-    # diffu_train.nemo: NeMo's image-edit loader with the (target, reference) shape buckets interleaved, so every
+    # diffu_flux3.nemo: NeMo's image-edit loader with the (target, reference) shape buckets interleaved, so every
     # stretch of training sees every crop shape; a tenth of the pairs on the empty prompt (empty_prompt.pt, written
-    # into the cache by diffu_train.cache_pairs)
-    _target_: diffu_train.nemo.InterleavedImageEditDataloaderConfig
+    # into the cache by diffu_flux3.cache_pairs)
+    _target_: diffu_flux3.nemo.InterleavedImageEditDataloaderConfig
     cache_dir: ${DIFFU_REPO}/data_flux3/cache_style_v3d
     caption_dropout: 0.1
     quantization: 16

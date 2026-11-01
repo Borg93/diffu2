@@ -7,7 +7,7 @@ import random
 from collections.abc import Iterator
 from itertools import islice
 
-from diffu_train.sampler import InterleavedBucketSampler
+from diffu_flux3.sampler import InterleavedBucketSampler
 
 
 class _Buckets:

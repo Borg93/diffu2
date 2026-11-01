@@ -1,5 +1,5 @@
 """A bucket sampler's batches interleaved across buckets, resumable mid-epoch. No NeMo import, so it runs and tests off
-the NeMo environment; ``diffu_train.nemo`` puts it around NeMo's ``SequentialBucketSampler``."""
+the NeMo environment; ``diffu_flux3.nemo`` puts it around NeMo's ``SequentialBucketSampler``."""
 
 from __future__ import annotations
 

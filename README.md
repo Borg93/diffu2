@@ -21,7 +21,7 @@ that draws is a Modular Diffusers pipeline, our blocks around a model's own, the
 - **`packages/page`** (diffu-page): pages as data (layouts, crops, captions, labels, the training-set builders in
   `data/`), a template marked from its scan, our blocks and the page and crop pipelines; `diffu-generate`,
   `diffu-evaluate`, `diffu-draw-pairs`, `diffu-reader-set`. [docs/PIPELINE.md](docs/PIPELINE.md)
-- **`packages/train`** (diffu-train): FLUX.3 LoRA training with NeMo AutoModel: the configs, our dataloaders and the
+- **`packages/flux3`** (diffu-flux3): FLUX.3 LoRA training with NeMo AutoModel: the configs, our dataloaders and the
   style-pair cache (NeMo's environment). [docs/FLUX3.md](docs/FLUX3.md)
 - **`packages/runner`** (diffu-runner): generation at scale on a Ray cluster. [docs/RAY.md](docs/RAY.md),
   [docs/INFERENCE.md](docs/INFERENCE.md) (KubeRay inference)
@@ -45,7 +45,7 @@ Package names keep the `diffu-` prefix (imports `diffu_page`, ...) so they stay 
 - **This repo** (`uv sync`): drawing with MOSS-Image, MOSS's training, CPU checks and tests
   (`CUDA_VISIBLE_DEVICES="" uv run pytest -n 4`; the pipeline tests draw with tiny random models on CPU).
 - **NeMo AutoModel** (`~/Desktop/repos/Automodel/.venv-managed`): FLUX.3 LoRA training and FLUX.3's GPU jobs;
-  `jobs/setup_nemo_env.sh` installs diffu-core, diffu-moss, diffu-page and diffu-train into it.
+  `jobs/setup_nemo_env.sh` installs diffu-core, diffu-moss, diffu-page and diffu-flux3 into it.
 - `FLUX3_MODEL`: the FLUX.3 Klein directory, from the environment or a `.env` file; there is no default, so a command
   that needs a model and is given no `--model` stops before loading anything. `DIFFU_HTR_MODEL` and
   `DIFFU_HTR_REVISION` choose the read-back model and pin its revision.

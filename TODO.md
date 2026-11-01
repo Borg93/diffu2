@@ -110,8 +110,8 @@ own FLUX.3-architecture model), is in git history (`git log -p -- TODO.md`).
 
 ## FLUX.3 Klein (the reference)
 
-- [ ] The style-reference LoRA (`configs/flux3/flux3_style_ref_lora_v3d.yaml`, `jobs/flux3/run_v3d.sh`) has never
-      trained; whether to, now that four pages of a volume give a hand LoRA, is the user's call. Before it trains:
+- [ ] The style-reference LoRA (`packages/flux3/configs/flux3_style_ref_lora_v3d.yaml`, `jobs/flux3/run_v3d.sh`) has
+      never trained; whether to, now that four pages of a volume give a hand LoRA, is the user's call. Before it trains:
       rebuild `data_flux3/style_pairs_v3d` with the overlap fix (3d4b0c6: 85 references change; the set predates
       `build.json`, so move it aside first), and hold out whole volumes for its eval (23 of 24 `val_eval` volumes are
       also in training).

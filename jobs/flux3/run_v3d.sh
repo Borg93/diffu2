@@ -1,9 +1,9 @@
 #!/bin/bash
 # FLUX.3 Klein's style-reference LoRA (v3d): same-hand reference pairs (a crop of the target's own or facing page),
 # each caption describing the reference's measured hand, ink and paper in words (diffu_page.data.style_pairs), from
-# the crops of data_flux3/layout_crops_v2b; caption dropout 0.1 on the real empty prompt (diffu_train.dropout); a
+# the crops of data_flux3/layout_crops_v2b; caption dropout 0.1 on the real empty prompt (diffu_flux3.dropout); a
 # constant learning rate; 3,000 steps; val_loss every 100 steps. Everything is in
-# packages/train/configs/flux3/flux3_style_ref_lora_v3d.yaml. One GPU job at a time through jobs/spark_guard.sh:
+# packages/flux3/configs/flux3_style_ref_lora_v3d.yaml. One GPU job at a time through jobs/spark_guard.sh:
 #   1. build the pairs (CPU) if they are not built                      data_flux3/style_pairs_v3d
 #   2. cache the pairs, the validation pairs and the empty prompt        data_flux3/cache_style_v3d(_val)
 #   3. a 5-step smoke run that also scores val_loss once
@@ -26,7 +26,7 @@ CROPS="$REPO/data_flux3/layout_crops_v2b"
 PAIRS="$REPO/data_flux3/style_pairs_v3d"
 CACHE="$REPO/data_flux3/cache_style_v3d"
 VAL_CACHE="$REPO/data_flux3/cache_style_v3d_val"
-CONFIG="$REPO/packages/train/configs/flux3/flux3_style_ref_lora_v3d.yaml"
+CONFIG="$REPO/packages/flux3/configs/flux3_style_ref_lora_v3d.yaml"
 OUT="$REPO/runs/flux3_style_v3d"
 CKPT="$REPO/runs/flux3_style_ref_lora_v3d"
 export CUDA_VISIBLE_DEVICES=0
@@ -63,7 +63,7 @@ cache() {  # cache <manifest> <cache dir> <name>: the encoder writes the merged 
     fi
     rm -rf "$dir"
     "$GUARD" --need-gb 30 --name "flux-v3d-$name" --log "$OUT/guard.log" -- \
-        "$PY" -m diffu_train.cache_pairs --manifest "$manifest" --out "$dir" --model "$MODEL" > "$OUT/$name.log" 2>&1
+        "$PY" -m diffu_flux3.cache_pairs --manifest "$manifest" --out "$dir" --model "$MODEL" > "$OUT/$name.log" 2>&1
 }
 
 step "1/5 build the pairs"

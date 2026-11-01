@@ -27,7 +27,7 @@ reference's).
 ## Training a LoRA (NeMo AutoModel)
 
 Training runs in NeMo AutoModel's environment (`~/Desktop/repos/Automodel/.venv-managed`), where
-`jobs/setup_nemo_env.sh` installs diffu-core, diffu-moss, diffu-page and diffu-train; NeMo's own
+`jobs/setup_nemo_env.sh` installs diffu-core, diffu-moss, diffu-page and diffu-flux3; NeMo's own
 `examples/diffusion/finetune/finetune.py` is the entry point, our dataloader configs its `_target_`s.
 
 1. **Crops** (CPU): `python -m diffu_page.data.build_crops` cuts the GT pages into training windows with layout
@@ -37,9 +37,9 @@ Training runs in NeMo AutoModel's environment (`~/Desktop/repos/Automodel/.venv-
    with a crop of its own or facing page sharing none of its lines, its caption describing the reference's measured
    hand, ink and paper (`--val-pairs 64` for NeMo's `val_loss`); MOSS-Image trains on the same pairs.
 3. **Caches** (GPU): a text-to-image set by NeMo's own FLUX.3 preprocessing; style pairs by
-   `python -m diffu_train.cache_pairs` (NeMo's FLUX.3 image-edit encoder on our manifest), which writes the empty prompt
+   `python -m diffu_flux3.cache_pairs` (NeMo's FLUX.3 image-edit encoder on our manifest), which writes the empty prompt
    beside them (`empty_prompt.pt`) for caption dropout.
-4. **Train** with a config of `packages/train/configs/flux3/`:
+4. **Train** with a config of `packages/flux3/configs/`:
    - `flux3_layout_lora_v2.yaml`: the text-to-image LoRA (style by name: the caption names the archive, years and
      look), rank 32 on attention and feed-forward; the per-hand LoRAs of `styles.json` are this recipe on one volume's
      crops, 700 steps of 2 at a constant learning rate.
@@ -48,8 +48,8 @@ Training runs in NeMo AutoModel's environment (`~/Desktop/repos/Automodel/.venv-
      every 100. `jobs/flux3/run_v3d.sh` runs its whole chain through the guard: the pairs, the caches, a 5-step smoke
      run, the training and the held-out evaluation.
 
-   Our dataloaders (`diffu_train.nemo`) interleave NeMo's aspect buckets, so any stretch of training sees every crop
-   shape, and train a share of the items on the empty prompt (`caption_dropout`, `diffu_train.dropout`). A smoke run
+   Our dataloaders (`diffu_flux3.nemo`) interleave NeMo's aspect buckets, so any stretch of training sees every crop
+   shape, and train a share of the items on the empty prompt (`caption_dropout`, `diffu_flux3.dropout`). A smoke run
    needs `--lr_scheduler.lr_warmup_steps 1` and an empty checkpoint dir (NeMo resumes from one it finds).
 
 Every config logs to the local trackio project `diffu` (`~/.cache/huggingface/trackio`, no Space), the job scripts
@@ -69,4 +69,4 @@ Checked 2026-10-21 (reference rows 2026-10-23); each would silently cost quality
 | Reference image | shrunk to 0.5 MP on the 16 px grid (`crops.grid.as_reference`) | `ReferenceGridStep`, the same function |
 | Reference look (described captions) | measured at the reference size (`captions.hand.measure_reference`) | the same function |
 | Position ids | image (0, h·0.5, w·0.5, 0), reference l = −1, text (0, 0, 0, i) | the same |
-| No-prompt input | v3d: a tenth of the pairs on the empty prompt as NeMo encodes a caption (`diffu_train.dropout`), bit-identical to diffusers' unconditional input; earlier runs none (`cfg_dropout_prob: 0`; NeMo's own would use zeros) | the empty prompt |
+| No-prompt input | v3d: a tenth of the pairs on the empty prompt as NeMo encodes a caption (`diffu_flux3.dropout`), bit-identical to diffusers' unconditional input; earlier runs none (`cfg_dropout_prob: 0`; NeMo's own would use zeros) | the empty prompt |
