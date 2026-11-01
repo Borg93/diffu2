@@ -1,173 +1,19 @@
 # diffu-moss
 
-MOSS-Image (OpenMOSS, Apache-2.0) as the page pipeline's third model family, beside FLUX.3 Klein and diffu: our own
-implementation, written from the published design, around the released weights.
+MOSS-Image (OpenMOSS, Apache-2.0) as a model family of the page pipeline: our own implementation, written from the
+published design, around the released weights, and our own reference training. How it draws and trains:
+[docs/MOSS.md](../../docs/MOSS.md).
 
-- **The DiT** (`transformer.py`): `MossTransformer`, 42 single-stream blocks over the image's and the prompt's tokens;
-  the released Base transformer (or a merged LoRA or full fine-tune exported in diffusers format) loads into it by name.
-- **The blocks** (`modular_pipelines/moss/`): `MossAutoBlocks` and `MossModularPipeline`. A crop plan's layout caption
-  compiled as MOSS's Layout prompt (`layout_prompt.py`: a summary and one text item per line, its exact text in its
-  pixel box), encoded by the frozen Qwen3.5-9B text encoder, denoised with classifier-free guidance whose
-  unconditional pass skips a block, decoded by the FLUX.2 VAE (`latents.py`). The denoise loop has FLUX.3's step
-  names, so the page pipeline's line repair runs in it.
-- **A model repo** (`diffu-moss-init`): a `modular_model_index.json` naming `MossAutoBlocks`, the components loading
-  from the Base snapshot's folders, the DiT from the snapshot or a trained export, and whether it takes a reference
-  image (`takes_reference`: only for a DiT of a reference training, a merged LoRA or a full fine-tune's checkpoint,
-  read from its `export.json`).
-
-      diffu-moss-init --base <MOSS-Image-Base snapshot> --out runs/moss/base
-      diffu-moss-init --base <MOSS-Image-Base snapshot> --transformer <merged export> --out runs/moss/hand_1715
-
-- **Reference images** (sample pages): the DiT reads a reference's clean latents as tokens after the prompt's, on the
-  reference axis (reference `k` at `k + 1`), its grid centred, modulated as at timestep 0 (FLUX.3 Klein's design);
-  without one it is the released model bit for bit. The released models were not trained with references, so a model
-  directory takes one only when its DiT was (`diffu_moss.train`, below); the page pipeline's `ReferenceGridStep` puts a
-  reference on the grid it trained at (0.5 MP).
-- **Reference training** (`train/`, our own loop): a LoRA (rank 32, alpha 32, the 1715 hand LoRA's modules and
-  optimizer) on v3d's described style pairs (`data_flux3/style_pairs_v3d`: a target and a crop of its own or facing
-  page, sharing none of its lines; the pairs whose reference repeats a line are left out). Each pair is cached in one
-  of four prompt forms (`train/pairs.py`: `Variant`, `SHARES`): a fifth without the reference (no reference: its
-  citation dropped, the look words kept), the rest with "the sample image": a fifth with the look words too (look), a
-  fifth without them (plain: a page pair still names its hand) and two fifths naming nothing but the sample image
-  (sample: no hand, no look words, its paper "the paper of the sample image"; `sample_caption.py`), so the hand and the
-  look must come from the image. A style pair's caption names no hand, so its plain and sample forms differ in the
-  paper alone. MOSS's own noise levels (median 0.78) and flow-matching loss over the drawn image; the joint blocks
-  checkpointed.
-  `--sigma-shift k` (either kind of training; default 1, MOSS's own levels bit for bit) shifts each drawn level
-  `sigma` to `k sigma / (1 + (k - 1) sigma)` (`train/sigmas.py`, the timestep shift of flow-matching samplers): under
-  1 towards the clean end, where letter strokes are decided (`1/3` moves the quartiles 0.64, 0.78, 0.89 to 0.37,
-  0.54, 0.72), to test whether the sample page's hand then carries; the validation stays at MOSS's levels, so runs
-  compare.
-
-      diffu-moss-cache-pairs --model runs/moss/base --pairs data_flux3/style_pairs_v3d/train.jsonl \
-          --out data_flux3/cache_moss_ref_v3d --limit 4000
-      diffu-moss-train-ref --transformer <snapshot>/transformer --cache data_flux3/cache_moss_ref_v3d \
-          --val-cache data_flux3/cache_moss_ref_v3d_val --out runs/moss_ref_pilot/lora --steps 1500
-      diffu-moss-export-ref --transformer <snapshot>/transformer \
-          --checkpoint runs/moss_ref_pilot/lora/checkpoints/step_001500 --out runs/moss_ref_pilot/export_step_001500
-
-  `jobs/moss/run_ref_pilot.sh` runs the pilot through `jobs/spark_guard.sh`: the caches, a smoke run, the training,
-  the export and model directory, and 8 held-out crops drawn with and without their reference.
-- **Full fine-tune** (`diffu-moss-train-ref --full`, `train/full.py`): every weight of the DiT on the same pairs and
-  caches, by MOSS-Image's own recipe (its technical report, Appendix A.2 and Table 7): Muon on the joint blocks'
-  weight matrices (`train/muon.py`: Nesterov momentum 0.95, 5 Newton-Schulz steps, matched to AdamW's RMS; exactly
-  torch's Muon, but the fused gated feed-forward `ffn_up_gate` is orthogonalised and RMS-scaled half by half, as the
-  report steps fused matrices, its weights' names unchanged) and AdamW on the rest (betas 0.9, 0.95), both at 5e-5;
-  weight decay 0.01 but none on biases, norms and the embedders; the last block's q/k norm weights decayed towards
-  one; gradients clipped at 1. The weights stay in float32 and the forward runs in bfloat16 autocast, the joint blocks
-  checkpointed: the layout FSDP2 wraps, with no master copy of our own.
-  On one GB10 that is about 73 GB at the peak (20.3 GB of weights, 20.3 of gradients, 19.0 of Muon momentum, 2.6 of
-  AdamW moments, ~8 of activations at a 1 MP target and a 0.5 MP reference, ~3 for CUDA and the process). A
-  checkpoint is the DiT itself, in bfloat16 (`checkpoints/step_NNNNNN/transformer/`, which `diffu-moss-init
-  --transformer` draws with, no merge); `--ema 0.9999` keeps an average of the weights beside it (`ema/`, 20 GB more
-  in float32) and `--save-state` the float32 weights and optimizer state a run resumes from (`state/`, ~42 GB;
-  `--resume <checkpoint>` goes on exactly as the run would have), both off by default: the Spark holds neither.
-  A checkpoint's files are written one at a time, each one's weights copied to the CPU tensor by tensor into an
-  anonymous memory map of their own, given back to the system once the file is written (the files' bytes unchanged).
-  Copies made by torch's own CPU allocator stayed with the process after they were freed (mimalloc, in aarch64
-  torch): 10 GB of bfloat16 copies, most of them still held 50 minutes later, which the GB10's GPU lacked.
-  `--muon-momentum-dtype bfloat16` keeps Muon's momentum in bfloat16 (`train/muon.py`: read in float32 and moved
-  towards the gradient there, the update taken from that float32 momentum, the momentum stored back rounded; the
-  update reaches the Newton-Schulz steps in bfloat16 either way): about 9.5 GB less, ~64 GB at the peak and ~32 GB of
-  state. A checkpoint's state keeps it in bfloat16, and a run resumed with the other dtype is refused; the default,
-  float32, steps as before, bit for bit.
-  `--limit-pairs N` trains on the cache's first N pairs drawn with their reference alone, and `diffu-draw-pairs`
-  (diffu-page) draws them back beside their real pages: an overfit test. `--transformer` also takes a full fine-tune
-  checkpoint's `transformer/`: a new run that goes on from its weights (its optimizer, warmup and sample order start
-  afresh, so give it another `--seed` than the run it goes on from, or it draws that run's samples and noise again;
-  its checkpoints' `export.json` names the folder as their `base`), where `--resume` goes on from a saved state.
-
-      diffu-moss-train-ref --full --transformer <snapshot>/transformer --cache data_flux3/cache_moss_ref_v3d \
-          --val-cache data_flux3/cache_moss_ref_v3d_val --out runs/moss_ref_full/full --steps 500
-      diffu-moss-init --base <snapshot> --transformer runs/moss_ref_full/full/checkpoints/step_000500/transformer \
-          --out runs/moss/ref_full
-
-  `jobs/moss/run_ref_full.sh` tests it on the Spark through `jobs/spark_guard.sh`: a smoke run, the overfit test (300
-  steps on 8 pairs, its loss and drawings read against stated pass criteria), the training, its model directory, and
-  8 held-out crops drawn with and without their reference.
-- **Prompts encoded in the step** (`--encode-text`, either kind of training): the frozen Qwen3.5-9B text encoder,
-  loaded as the cache loads it (bfloat16, `train/cache.py`: `PromptEncoder`) from `--model` (by default the model
-  directory the cache was made with), encodes each sample's prompt in inference mode in its step, the same embeddings
-  the cache holds, bit for bit; a cache then needs its latents alone (`diffu-moss-cache-pairs --latents-only`: no text
-  encoder loaded, the prompts and their token counts kept), and a training without `--encode-text` refuses one. It
-  costs the encoder's 16.8 GB of bfloat16 weights (its vision tower included, as the cache loads it) and its forward
-  per sample (in inference mode, under 0.5 GB of activations at 4,096 tokens, freed before the DiT runs). Estimated
-  for the full fine-tune at 2 samples of a 1 MP target and a 0.5 MP reference: on one GB10, ~73 GB + 17 GB = ~90 GB
-  (69 GB measured without it, so ~86 GB; the 128 GB of unified memory holds it, the guard must ask for 92); on one
-  80 GB A100, the ~73 GB without it already leaves no room, so with it the full fine-tune needs FSDP2 over several
-  GPUs (below).
-
-      diffu-moss-cache-pairs --model runs/moss/base --pairs data_flux3/page_pairs/train.jsonl \
-          --out data_flux3/cache_moss_pages_latents --latents-only
-      diffu-moss-train-ref --full --encode-text --model runs/moss/base --transformer <snapshot>/transformer \
-          --cache data_flux3/cache_moss_pages_latents --out runs/moss_pages_full/full --steps 500
-- **Several GPUs** (`train/distributed.py`, the full fine-tune launched by `torchrun`, one node or several): each
-  joint block an FSDP2 unit (`fully_shard`) and the rest of the DiT the root's, every float32 weight, gradient and
-  optimizer state sharded by rows over the ranks, the weights gathered in bfloat16 for the forward and backward and
-  the gradients reduced in float32 (a `MixedPrecisionPolicy`; the inputs not cast, the forward in bfloat16 autocast as
-  on one GPU). A step's `--samples-per-step` samples (a multiple of the ranks) are shared out among the ranks, every
-  rank drawing every sample's noise level and noise as one process does; Muon gathers each sharded matrix's update
-  whole (in bfloat16, which its Newton-Schulz steps read) and orthogonalises it on every rank, each keeping its own
-  rows; the gradient norm is summed row by row in one order on every rank, so the clip is the same bits on any number
-  of ranks. The validation is shared out among the ranks and its losses summed. The main rank writes the log and
-  each checkpoint, gathered whole: the same bfloat16 DiT folder and state as one process writes, and a state resumes
-  on any number of ranks. At world size 2 the tiny models train, score, checkpoint and resume exactly as at world
-  size 1 (`tests/test_distributed.py`, gloo on the CPU). Estimated per 80 GB A100 (the template's header has the
-  sums): ~30 GB on 4 GPUs (47 with `--encode-text`, 52 with `--ema` too), ~22 GB on 8 (39, 42); on 3 GPUs ~35 GB
-  (52 with `--encode-text`). `jobs/moss/hpc_full.sbatch.example` is a Slurm template (no site names) with the
-  torchrun command; not yet run on GPUs.
-
-      torchrun --standalone --nproc-per-node 4 -m diffu_moss.train.loop --full --transformer <snapshot>/transformer \
-          --cache data_flux3/cache_moss_pages --out runs/moss_pages_full/full --steps 500 --samples-per-step 8
-- **Page pairs** (`diffu_page.data.page_pairs`, diffu-page; the big full fine-tune's data): whole single pages of the
-  handwritten GT (openings split into their pages; a scan wider than tall that its lines cannot split is skipped and
-  counted, never a page), each cut at about 1 MP exactly as `diffu-generate --whole-page`
-  plans a page and prompted as drawing prompts it, with a sample page of its own volume sharing none of its lines at
-  0.5 MP. Three forms name the hand (the archive and the volume's years): no reference (the page's own caption, its
-  look in words), look (the sample, and the look in words: `--reference-caption named`) and plain (the sample, the
-  hand alone in words: `--reference-caption hand`); the fourth, sample, names nothing but the sample image
-  (`--reference-caption sample`), its paper item "The paper of the sample image." where the plain form's says "Aged
-  paper of a bound archival volume.", so the hand and the look must be read from it. Where each archive has one look
-  (the eight hands' set), the name gives both away: trained on the first three forms, the model ignored the sample (its
-  validation losses the same with and without it). Each row of `train.jsonl` and `val.jsonl` (`train/pairs.py`:
-  `PagePairRow`) carries the page's Layout prompt in all four forms with its length in the text encoder's tokens;
-  `diffu-moss-cache-pairs` reads either kind of manifest and fixes each pair's form by its seed as before. A set built
-  before a form gets it for its manifests' rows from `python -m diffu_page.data.page_pair_forms` (`--pairs
-  <set>/train.jsonl --out <set>/train_sample.jsonl`): each row planned again from its PAGE file and scan as its build
-  planned it, the forms it holds checked to come out as it holds them and the new ones added, in a new manifest
-  beside the old, the images as they are; with `--replace sample` (any form, repeated) that form is planned again and
-  replaced, as when its caption changed (the sample form's paper item: `train_bal_sample2.jsonl` from
-  `train_bal_sample.jsonl`), every other form still checked; a cache refuses a row lacking a form it draws. Pages past
-  the encoder's 4,096 tokens are skipped and counted, never cut; whole volumes are held out (`val.jsonl`, and
-  `val_eval/` for `diffu-evaluate`). With `--windows-per-page N` each page also gives up to N windows (picked by a
-  stream seeded with its id): consecutive whole lines of one column, planned on the single page as `diffu-generate`
-  plans its crops (`plan_page`: a 64 px line pitch, 8-15 lines), cut from the scan at the pages' pixels, so their
-  letters are larger, and prompted as their page in all four forms (each its own Layout prompt). A window is a row like
-  a page's, with its page's sample and in its volume's split, marked by `window` (its page's id and its rectangle
-  there, page px); a page too long to be a pair still gives its windows a sample. The window rows follow the page
-  rows, which are written exactly as without windows (the default, 0).
-
-      python -m diffu_page.data.page_pairs --gt-root ~/Desktop/data/GT-Lejonet_HTR_202602 --model runs/moss/base \
-          --out data_flux3/page_pairs --workers 8 --windows-per-page 2
-      diffu-moss-cache-pairs --model runs/moss/base --pairs data_flux3/page_pairs/train.jsonl \
-          --out data_flux3/cache_moss_pages
-- **Look changes for the sample form** (`diffu-moss-cache-pairs --restyle-share s`, `train/restyle.py`): in the eight
-  hands' set each volume's pages and samples share one look and half the volumes are microfilm, so a model can draw a
-  page's look from its hand and leave the sample unread (full_r5: drawn in the sample form, a microfilm page with its
-  own greyscale sample came out cream). The cache gives the share `s` of its entries in the sample form (rounded;
-  picked by `--seed` on a stream of its own, so the cache holds the same pairs in the same forms as without) one look
-  change, drawn per entry and applied alike to the target and its sample before both are encoded: microfilm (each
-  image's ink black, its paper a grey of 0.70-0.94, the darkest 0-22 % of the range between them crushed to black,
-  gamma 0.8-1.25), colourise (that range laid from an ink tone, black, dark brown, brown or grey, scaled 0.85-1.15, to
-  a paper tone, cream, yellowed, off-white or white, scaled 0.96-1.03; 0-10 % crushed, gamma 0.85-1.2) or tint (red
-  and blue scaled by 1 ± 0.03, contrast 0.88-1.12 about mid-grey, brightness ± 0.04, gamma 0.87-1.15), a third of
-  the changed entries each, placed by a shuffle.
-  Each reads its image's own ink and paper (the median luminance of its darkest 2 % and lightest 40 %), so a page and
-  its sample land on the drawn tones whatever their exposure; none moves a pixel, so every line keeps its box. The
-  sample form names no look, so its prompt stays true. An entry records its change (`restyle`: its kind and
-  parameters) and `cache.json` the share and the count of each kind; the default, 0, writes every file as before, byte
-  for byte. A restyled image is an 8-bit RGB image, as a drawing is given a sample, and `diffu-draw-pairs` draws a
-  restyled pair back from its sample in that look.
-
-      diffu-moss-cache-pairs --model runs/moss/base --pairs data_flux3/page_pairs_eight/train_bal_sample2.jsonl \
-          --out data_flux3/cache_moss_eight_bal_restyle --restyle-share 0.5
+- `transformer.py`: `MossTransformer`, the DiT; the released Base transformer, a merged LoRA or a full fine-tune's
+  checkpoint loads into it by name. It also reads reference images (sample pages) once trained to.
+- `modular_pipelines/moss/`: `MossAutoBlocks` and `MossModularPipeline`: the Layout prompt (`layout_prompt.py`,
+  compiled from a crop plan's caption), the Qwen3.5-9B text encoder, the reference encoder, the denoise loop (laid out
+  as FLUX.3's, so the page pipeline's line repair runs in it) and the FLUX.2 VAE (`latents.py`).
+- `sample_caption.py`: a reference-drawn caption in the forms MOSS draws from and trains on (the sample image named,
+  dropped, or its look words dropped).
+- `init.py`: `diffu-moss-init`, a model directory of the Base snapshot's components around its own or a trained DiT.
+- `train/`: the reference training: `pairs.py` (style and page pairs, the prompt forms), `cache.py`
+  (`diffu-moss-cache-pairs`), `restyle.py` (look changes for the sample form), `loop.py` (`diffu-moss-train-ref`: a
+  LoRA, or `--full` with `full.py` and `muon.py`), `sigmas.py`, `distributed.py` (FSDP2 over several GPUs),
+  `export.py` (`diffu-moss-export-ref`, a LoRA merged into Base) and `records.py` (what caches, checkpoints and exports
+  record).
