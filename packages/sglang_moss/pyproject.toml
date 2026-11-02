@@ -1,0 +1,19 @@
+[project]
+name = "diffu-sglang-moss"
+version = "0.1.0"
+description = "SGLang Diffusion's MOSS-Image, extended to draw from a reference image (a sample page) as diffu_moss does: an out-of-tree plugin, loaded by SGLANG_EXTERNAL_MODEL_PACKAGE=diffu_sglang_moss."
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+license = "Apache-2.0"
+authors = [{ name = "Gabriel Borg" }]
+# Its own environment, not the workspace's: SGLang pins diffusers 0.37 and transformers 5.19, the workspace runs
+# diffusers' main and transformers 5.20. 0.5.23 is the first release with MOSS-Image (sgl-project/sglang#44325);
+# the plugin reaches into its MOSS modules, so it is pinned exactly.
+dependencies = ["sglang[diffusion]==0.5.23"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/diffu_sglang_moss"]

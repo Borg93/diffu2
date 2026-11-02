@@ -354,16 +354,175 @@ operands.
 > Measured speeds on Blackwell are not in yet: the options are tested on CPU, and the GPU benchmark runs next.
 > In a run's `draw.json` (section 6) they are fields like any other draw setting.
 
-## 13. Why not SGLang, vLLM-Omni or Ray Serve
+## 13. The SGLang Diffusion route, and SGLang inside Ray Data
 
-- **SGLang Diffusion and vLLM-Omni** serve MOSS-Image as text-to-image only: SGLang's integration says "image editing is
-  not implemented", so neither takes a sample page. The sample-page input is our own addition to MOSS-Image, so drawing
-  in the hand of a sample runs on this runner. A fine-tuned DiT keeps the official layer names, so text-only drawing
-  with it might load in those engines, but that is not validated, and their quantization, LoRA, compilation and tensor
-  parallel paths have no validated recipes for MOSS-Image either (SGLang's integration is an unmerged pull request,
-  sgl-project/sglang#44325). Their H200 figure (section 11) is a yardstick for your own benchmark.
-- **Ray Serve LLM's SGLang server** serves chat and completion models over an OpenAI-compatible API, not image
-  generation: it is no route for MOSS-Image. It is the route if a reading model (section 14) is ever served online.
+In plain words: SGLang Diffusion is another engine that can run MOSS-Image, as a scribe can work at another
+workshop's desk. Out of the box that desk has no stand for the sample page: SGLang's MOSS-Image (sglang 0.5.23,
+sgl-project/sglang#44325) draws from a prompt alone. Our plugin, `diffu_sglang_moss` (`packages/sglang_moss`), is
+that stand. It adds the sample-page input exactly as our own pipeline reads it, so the fine-tuned scribe copies the
+sample's hand at SGLang's desk too. On CPU with a tiny model, SGLang with the plugin draws the same pixels, bit for
+bit, as our pipeline from the same prompt, sample and noise, with a sample page and without one
+(`packages/sglang_moss/tests`).
+
+What SGLang does **not** do is the rest of the page pipeline (sections 1 and 5): it does not plan pages, does not
+compile a crop plan's caption into MOSS's Layout prompt, does not put the sample on the 16-px grid, does not repair
+lines, and does not read lines back or write ALTO/PAGE. A request to SGLang carries a finished prompt and a sample page
+already on the grid (both sides multiples of 16 px; an off-grid sample is refused, never resized). Use this route
+when you want SGLang's serving and scheduling for the drawing itself; use `diffu-run` (sections 5 to 11) for whole
+labelled pages.
+
+### What the plugin changes
+
+Three pieces, loaded into SGLang by `SGLANG_EXTERNAL_MODEL_PACKAGE=diffu_sglang_moss` (SGLang imports the package in
+every process it starts; nothing of SGLang is patched or copied):
+
+- **The sample page is a request field.** It is SGLang's usual image input: `image_path` (a path, a URL, or several
+  paths) offline, the `image` upload of `POST /v1/images/edits` online. A request with one runs as SGLang's TI2I task,
+  one without as T2I.
+- **A stage encodes it** after the text encoder: the FLUX.2 VAE's mode, patched 2x2 and normalised by the VAE's
+  batch-norm statistics, as `diffu_moss.latents` does. A model whose `transformer/export.json` does not say
+  `takes_reference` is refused a sample ("this MOSS-Image model takes no reference image").
+- **The DiT reads it** (`DiffuMOSSImageTransformer`, which SGLang loads in place of its own): the sample's tokens
+  follow the prompt's, on the rotary reference axis at 1, modulated as at timestep 0, in both passes of guidance.
+  Without a sample it runs SGLang's own forward.
+
+Its sampling defaults are ours: the official demo's negative prompt (SGLang's default is empty) and the unconditional
+pass skipping block 22 from the first step (SGLang's default starts at 1% of the steps). Not supported with a sample:
+sequence parallelism (refused), and SGLang's MOSS-Image paths that its integration itself has not validated
+(quantization, LoRA, torch.compile, Cache-DiT). CFG parallelism hands the sample to both branches, untested.
+
+### Setting it up
+
+SGLang runs in its own environment, not the workspace's (it pins diffusers 0.37 and transformers 5.19):
+
+```bash
+uv venv --python 3.12 <sglang-env>
+printf 'kernels ; sys_platform == "never"\n' > <sglang-env>/overrides.txt   # leave out Hub kernel downloads
+uv pip install --python <sglang-env>/bin/python "sglang[diffusion]==0.5.23" "torch==2.14.1" torchvision \
+    --extra-index-url https://download.pytorch.org/whl/cu130 --index-strategy unsafe-best-match \
+    --overrides <sglang-env>/overrides.txt
+uv pip install --python <sglang-env>/bin/python --no-deps -e packages/sglang_moss
+```
+
+`kernels` is a dependency of sglang that downloads compute kernels from the Hub at run time; SGLang imports it only
+for an FA3 path, Cosmos 3 and a vision helper, none of which MOSS-Image uses, so the override leaves it out. Nothing
+here needs `trust_remote_code`: the model folder below names every component by its library class, so the Hub's
+`pipeline_moss_image.py` is never fetched or run. Set `HF_HUB_OFFLINE=1` and SGLang reads the folder alone.
+
+### The model folder
+
+SGLang loads a model in the Hub's layout (`model_index.json` and one folder per component). Write one from a MOSS
+model directory or straight from a checkpoint:
+
+```bash
+diffu-moss-export-hf /models/moss-<dit-name> --out /models/hf-<dit-name> --copy
+diffu-moss-export-hf <run>/checkpoints/step_000750 --base /models/MOSS-Image-Base --out /models/hf-<dit-name> --copy
+```
+
+The Base snapshot must hold `scheduler/` besides `text_encoder/`, `tokenizer/` and `vae/` (stage it with
+`hf download OpenMOSS-Team/MOSS-Image-Base scheduler/scheduler_config.json --revision 85975793...`). The DiT's
+`config.json` is rewritten to name `MOSSImageTransformer`, the rotary frequencies `rope.bands` the official
+checkpoint stores are added in a 64-byte shard of their own, and `export.json` is kept beside the weights. Without
+`--copy` the components and weights are symbolic links to where they are (on one disk, 27 GB not written twice);
+with it the folder is whole, to move to object storage or another volume.
+
+### Drawing offline, and serving
+
+```python
+from sglang.multimodal_gen import DiffGenerator  # in the SGLang environment, SGLANG_EXTERNAL_MODEL_PACKAGE set
+
+generator = DiffGenerator.from_pretrained(model_path="/models/hf-<dit-name>", num_gpus=1)
+result = generator.generate(
+    sampling_params_kwargs={
+        "prompt": "<the page's prompt>",
+        "image_path": "<sample page on the 16-px grid>.png",
+        "width": 1024,
+        "height": 1024,
+        "num_inference_steps": 50,
+        "seed": 0,
+        "save_output": False,
+    }
+)
+pixels = result.samples  # [3, H, W] in [0, 1]
+generator.shutdown()
+```
+
+```bash
+SGLANG_EXTERNAL_MODEL_PACKAGE=diffu_sglang_moss HF_HUB_OFFLINE=1 \
+    sglang serve --model-path /models/hf-<dit-name> --port 30000
+curl -s http://localhost:30000/v1/images/edits -F prompt="<the page's prompt>" -F image=@<sample>.png \
+    -F size=1024x1024 -F num_inference_steps=50 -F seed=0
+```
+
+`sglang generate --model-path ... --prompt ... --image-path ...` draws one image from the command line. SGLang's
+MOSS-Image runs its flash-attention backend by default; `--attention-backend torch_sdpa` runs PyTorch's
+`scaled_dot_product_attention`, as our pipeline does, which is how to compare the two.
+
+### SGLang inside Ray Data
+
+Ray Data's built-in SGLang processor (`ray.data.llm`'s `SGLangEngineProcessorConfig`) drives SGLang's language-model
+engine with chat prompts: it is not a route for an image model. For MOSS-Image, the Ray Data stage is a `map_batches`
+callable class that holds SGLang's diffusion engine, one per actor, built once when the actor starts. `DiffGenerator`
+starts SGLang's worker process on the actor's GPU (Ray sets `CUDA_VISIBLE_DEVICES` for the actor, and the worker
+inherits it), so give the plugin's variable to the actors' environment:
+
+```python
+import io
+
+import numpy as np
+import ray
+from PIL import Image
+
+
+class SGLangMossDraw:
+    """One SGLang MOSS-Image engine per actor; each row a prompt, a sample page and a seed in, a PNG out."""
+
+    def __init__(self, model: str) -> None:
+        from sglang.multimodal_gen import DiffGenerator
+
+        self.generator = DiffGenerator.from_pretrained(model_path=model, num_gpus=1)
+
+    def __call__(self, batch: dict[str, np.ndarray]) -> dict[str, list]:
+        images = []
+        for prompt, sample, seed, width, height in zip(
+            batch["prompt"], batch["sample"], batch["seed"], batch["width"], batch["height"], strict=True
+        ):
+            result = self.generator.generate(sampling_params_kwargs={
+                "prompt": str(prompt), "image_path": str(sample), "seed": int(seed),
+                "width": int(width), "height": int(height), "num_inference_steps": 50, "save_output": False,
+            })
+            pixels = (np.asarray(result.samples).transpose(1, 2, 0) * 255).round().astype(np.uint8)
+            buffer = io.BytesIO()
+            Image.fromarray(pixels).save(buffer, format="PNG")
+            images.append(buffer.getvalue())
+        return {"id": list(batch["id"]), "image": images}
+
+
+ray.init(runtime_env={"env_vars": {"SGLANG_EXTERNAL_MODEL_PACKAGE": "diffu_sglang_moss", "HF_HUB_OFFLINE": "1"}})
+pages = ray.data.read_json("<rows>.jsonl")  # id, prompt, sample (a path every node can read), seed, width, height
+drawn = pages.map_batches(
+    SGLangMossDraw, fn_constructor_kwargs={"model": "/models/hf-<dit-name>"},
+    batch_size=4, num_gpus=1, concurrency=<GPUs>,
+)
+drawn.write_parquet("<out>")  # or lance_ray.write_lance, as diffu-run's sink does
+```
+
+The workers' image is the SGLang environment above (with the plugin installed), not diffu-run's: the two pin
+different diffusers and transformers. Each actor draws its rows one `generate` call at a time, so throughput comes
+from the number of actors. The pages it draws carry no labels and no read-back: the
+planning before it and the judging after it stay with `packages/page`.
+
+### Comparing SGLang with our pipeline on a GPU
+
+`packages/sglang_moss/tests/compare_draw.py` draws one page with both from the same model, prompt, sample and noise,
+one after the other (the two models are never in memory together), with PyTorch's attention in both, and writes
+`compare.json` (identical or not, largest pixel error, PSNR) and the two images side by side to look at. On a GPU the
+two need not be bit for bit: on a GPU SGLang loads its own Qwen3.5 text encoder (on CPU it falls back to
+transformers', which ours runs), and its fused kernels take over some of the DiT's elementwise operations.
+
+**Ray Serve and vLLM-Omni.** Ray Serve LLM's SGLang server serves chat and completion models over an OpenAI-compatible
+API, not image generation; it is the route if a reading model (section 14) is ever served online. vLLM-Omni serves
+MOSS-Image text-to-image only.
 
 ## 14. Next step: a reading model as a judge in the same pipeline
 

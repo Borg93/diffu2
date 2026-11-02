@@ -6,6 +6,8 @@ environments = ["sys_platform == 'linux'"]  # CUDA wheels are Linux-only
 
 [tool.uv.workspace]
 members = ["packages/*"]
+# SGLang's MOSS plugin runs in its own environment (SGLang pins diffusers 0.37 and transformers 5.19)
+exclude = ["packages/sglang_moss"]
 
 [tool.uv.sources]
 diffu-core = { workspace = true }
@@ -48,7 +50,7 @@ ignore = ["E501"]
 "dataclasses.dataclass".msg = "Structured values are pydantic BaseModel (NeMo dataloader configs are the exception)."
 
 [tool.ruff.lint.isort]
-known-first-party = ["diffu_core", "diffu_moss", "diffu_page", "diffu_flux3", "diffu_runner", "diffu_studio"]
+known-first-party = ["diffu_core", "diffu_moss", "diffu_page", "diffu_flux3", "diffu_runner", "diffu_studio", "diffu_sglang_moss"]
 
 [tool.pytest.ini_options]
 testpaths = ["packages"]
@@ -61,8 +63,9 @@ source = ["packages/core/src", "packages/moss/src", "packages/page/src", "packag
 omit = ["packages/*/tests/*", "conftest.py"]
 
 # ty, as pyrefly.toml: diffusers, transformers and safetensors are typed as Any (diffusers exports a torch-less dummy
-# for every class, so each use reads as "real class or dummy"), and NeMo AutoModel and its torchdata exist only in
-# NeMo's own environment. torch, numpy and PIL ship their own types and are checked.
+# for every class, so each use reads as "real class or dummy"), NeMo AutoModel and its torchdata exist only in NeMo's
+# own environment and SGLang only in its own (packages/sglang_moss). torch, numpy and PIL ship their own types and are
+# checked.
 [tool.ty.analysis]
 replace-imports-with-any = [
     "diffusers.**", "diffusers",
@@ -70,6 +73,7 @@ replace-imports-with-any = [
     "safetensors.**", "safetensors",
     "nemo_automodel.**", "nemo_automodel",
     "torchdata.**", "torchdata",
+    "sglang.**", "sglang",
 ]
 
 [tool.ty.terminal]

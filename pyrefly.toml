@@ -1,17 +1,19 @@
 project-includes = ["packages/*/src/**/*.py", "packages/*/tests/**/*.py", "conftest.py"]
 project-excludes = ["**/.git/**", "**/__pycache__/**", "**/.venv/**"]
-# The repo root, so tests that type a fixture by the root conftest.py's protocols resolve `conftest`, as ty does.
-search-path = ["."]
+# The repo root, so tests that type a fixture by the root conftest.py's protocols resolve `conftest`, as ty does; and
+# the SGLang plugin, not installed in the workspace's environment (it runs in its own).
+search-path = [".", "packages/sglang_moss/src"]
 
 # diffusers' and transformers' stubs don't model their dynamic attributes (block state, configs), so they are typed as
 # Any: we check our own logic, not theirs. NeMo AutoModel and the torchdata it brings exist only in NeMo's own
-# environment. torch, numpy and PIL ship their own types and are checked, as ty checks them (pyproject.toml).
+# environment, SGLang only in its own (packages/sglang_moss). torch, numpy and PIL ship their own types and are checked, as ty checks them (pyproject.toml).
 replace-imports-with-any = [
     "diffusers", "diffusers.*",
     "transformers", "transformers.*",
     "safetensors", "safetensors.*",
     "nemo_automodel", "nemo_automodel.*",
     "torchdata", "torchdata.*",
+    "sglang", "sglang.*",
 ]
 
 [errors]
