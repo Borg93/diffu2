@@ -122,13 +122,19 @@ Built on CPU by diffu-page's builders, cached once on the GPU by `diffu-moss-cac
   from its hand, or a hand change for both alike (`HandRestyle`): the strokes half a pixel thinner to a pixel thicker
   (the ink coverage above the paper's grain spread or shrunk by that fraction of a pixel and laid on in the strokes'
   own colour; a whole pixel or two thinner broke 1 MP pages' 1-2 px strokes up or erased them), the page sheared about
-  its middle row by up to 10 degrees, and scaled across by 0.85-1.15 and fitted back to its pixel count on the grid,
-  the target's Layout prompt moved with it (each box the bounding box of its sheared and scaled corners). A hand change
-  that would move a line's box off its page or onto another line's is refused: the entry is cached without it, its
-  reason recorded (on 3,000 rows of the many-volumes set, 55 % are, most of them sheared over 5 degrees: half its
-  pages can be sheared 3 degrees at most before a line leaves them). Each entry records its changes, the cache's record
-  the mix, how its samples were sized (`sample_size`, one rule for every pair), the changes made and the refusals; a
-  cache without them is written as before. `diffu-draw-pairs` draws an entry back from its sample in its hand and look.
+  its middle row, and scaled across by 0.85-1.15 and fitted back to its pixel count on the grid, the target's Layout
+  prompt moved with it (each box the bounding box of its sheared and scaled corners). A shear moves the lines near a
+  page's top and bottom furthest, so the slant is drawn within the room each page's lines leave: the largest slant,
+  up to 10 degrees, at which every moved box stays on the page and no two lines run into each other (`slant_bound`),
+  the drawn slant's share of 10 degrees taken of it, and none on a page with under a degree of room, whose stroke and
+  width still change; scaling across moves the page's edges with its lines and never moves one off. Drawn so, none of
+  3,000 rows of the many-volumes set is refused (55 % were with a slant drawn up to 10 degrees on every page): 16 % have
+  no room for a slant, the room is 2.7 degrees on the median page and 3.5 on the median window, and the slants taken
+  are 1.8 degrees on average. A change that would still move a line's box off its page or onto another's is refused,
+  the entry cached without it and the reason recorded. Each entry records its changes (a hand change its slant and
+  its page's room), the cache's record the mix, how its samples were sized (`sample_size`, one rule for every pair),
+  the changes made, the pages with no room for a slant and the refusals; a cache without them is written as before.
+  `diffu-draw-pairs` draws an entry back from its sample in its hand and look.
 
       diffu-moss-cache-pairs --model runs/moss/base --pairs data_flux3/style_pairs_v3d/train.jsonl \
           --out data_flux3/cache_moss_ref_v3d --limit 4000

@@ -63,8 +63,9 @@ class CacheRecord(JsonRecord):
     their reference, whether it holds the latents alone (no prompt embeddings: a training encodes them), how its
     samples were sized (``sample_size``), the share of its entries in the sample form asked to take a look change and
     how many took each kind (``diffu_moss.train.restyle``), and the share asked to take a hand change, how many took
-    one and why the others were refused. Each is left out of a cache without it (the named mix, the samples shrunk, no
-    change), which is written as before."""
+    one, how many of those pages left no room for a slant (their changes of stroke and width alone) and why any others
+    were refused. Each is left out of a cache without it (the named mix, the samples shrunk, no change), which is
+    written as before."""
 
     pairs: str
     model: str
@@ -79,6 +80,7 @@ class CacheRecord(JsonRecord):
     sample_size: SampleSize = Field(default=SampleSize.HALF, exclude_if=_half)
     hand_restyle_share: float = Field(default=0.0, exclude_if=lambda share: share == 0)
     hand_restyled: int = Field(default=0, exclude_if=lambda count: count == 0)
+    hand_no_slant_room: int = Field(default=0, exclude_if=lambda count: count == 0)
     hand_refused: dict[str, int] = Field(default_factory=dict, exclude_if=lambda reasons: not reasons)
 
 

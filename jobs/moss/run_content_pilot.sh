@@ -14,8 +14,9 @@
 #     from its sample page at the window's line pitch and size, the rule recorded by the cache, the checkpoints'
 #     export.json and the model index (sample_size legible), so drawing sizes a sample the same way;
 #   - look and hand changes for half the sample-form entries each (--restyle-share 0.5 --hand-restyle-share 0.5, drawn
-#     apart: about a quarter take both and a quarter neither). A hand change is refused for an entry it would move a
-#     line off its page or onto another; measured on 3,000 of these rows, 55 % are (most at slants over 5 degrees).
+#     apart: about a quarter take both and a quarter neither). A hand change's slant is drawn within the room each
+#     page's lines leave (none under a degree: its stroke and width changes alone); measured on 3,000 of these rows,
+#     none is refused, 16 % have no room for a slant, and the slants taken are 1.8 degrees on average.
 # CPU steps are capped (no GPU, 4 threads, 16 GB, no swap); GPU steps run one at a time through jobs/spark_guard.sh:
 #   1. CPU, seconds: the set's train and val rows without the duplicate collection's, each kept row as it is
 #                                                                     data_flux3/page_pairs_many_1mp/*_dedup.jsonl
@@ -148,7 +149,7 @@ VAL_ROWS="$SET/val_dedup_content_legible.jsonl"
 cache train "$TRAIN_ROWS" "$CACHE" --limit 12000 --restyle-share 0.5 --hand-restyle-share 0.5
 cache val "$VAL_ROWS" "$VAL_CACHE" --every-form --limit 30
 cache heldout "$VAL_ROWS" "$HELDOUT_CACHE" --every-form --limit 120 --seed 1
-jq -c '{entries, sample_size, mix, restyled, hand_restyled, hand_refused}' "$CACHE/cache.json"
+jq -c '{entries, sample_size, mix, restyled, hand_restyled, hand_no_slant_room, hand_refused}' "$CACHE/cache.json"
 
 step "4/5 the full fine-tune from Base: $STEPS steps of one sample"
 if [ -f "$FINAL/transformer/export.json" ]; then

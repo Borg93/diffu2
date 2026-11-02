@@ -33,9 +33,11 @@ the record how many took each kind; the default, 0, caches the images as scanned
 ``--hand-restyle-share s`` gives the share ``s`` of the entries in the sample form, picked by a stream of its own
 (so the look changes fall where they would without it, and an entry may take both), one hand change each
 (:class:`diffu_moss.train.restyle.HandRestyle`: its strokes, slant and width), the same for the target and its sample,
-before any look change; the target's prompt moves with its lines (``HandRestyle.moved_prompt``) and its size is the
-changed page's. An entry whose change would move a line off its page or onto another is cached as planned without it,
-its reason recorded (``hand_refused``); the record counts the changes made and the refusals by reason.
+before any look change; its slant is drawn within the room the target's lines leave (``HandRestyle.within``: none on a
+page with under a degree of room, the room recorded in the entry), the target's prompt moves with its lines
+(``HandRestyle.moved_prompt``) and its size is the changed page's. An entry whose change would still move a line off
+its page or onto another is cached as planned without it, its reason recorded (``hand_refused``); the record counts
+the changes made, the pages that left no room for a slant and the refusals by reason.
 
 ``--mix content`` draws the entries' forms from the content mix (:data:`diffu_moss.train.pairs.MIXES`: no form names
 an archive, years or hand), which a page-pair manifest's rows must hold (``diffu_page.data.page_pair_forms`` adds
@@ -78,6 +80,7 @@ from diffu_moss.train.pairs import (
 )
 from diffu_moss.train.records import CACHE_RECORD, CacheRecord
 from diffu_moss.train.restyle import (
+    SLANT_ROOM,
     HandRefused,
     HandRestyle,
     Restyle,
@@ -201,8 +204,9 @@ def cache_entry(
     pipe: ModularPipeline, planned: PlannedEntry, file: str, *, latents_only: bool = False
 ) -> tuple[CacheEntry, dict[str, Tensor]]:
     """``planned``'s pair in its prompt form, its images in its hand and look, encoded: its entry and its tensors (in
-    :data:`CACHE_DTYPE`, on the CPU; with ``latents_only`` no ``prompt_embeds``). A hand change moves the target's
-    prompt with its lines (:meth:`HandRestyle.moved_prompt`); one it refuses is left out, its reason recorded.
+    :data:`CACHE_DTYPE`, on the CPU; with ``latents_only`` no ``prompt_embeds``). A hand change takes its slant within
+    the room the target's lines leave (:meth:`HandRestyle.within`) and moves the target's prompt with its lines
+    (:meth:`HandRestyle.moved_prompt`); one it still refuses is left out, its reason recorded.
 
     Raises:
         ValueError: If the pair's caption cannot be compiled in that form, or an image is off the latent grid.
@@ -213,6 +217,7 @@ def cache_entry(
         size = image.size
     refused = None
     if hand is not None:
+        hand = hand.within(prompt, size)
         try:
             prompt, _ = hand.moved_prompt(prompt, size)
         except HandRefused as refusal:
@@ -384,6 +389,9 @@ def write_cache(model: Path, manifest: Path, out: Path, settings: CacheSettings)
         sample_size=sample_size,
         hand_restyle_share=settings.hand_restyle_share,
         hand_restyled=sum(entry.hand is not None for entry in entries),
+        hand_no_slant_room=sum(
+            entry.hand is not None and (entry.hand.slant_bound or 0) < SLANT_ROOM for entry in entries
+        ),
         hand_refused=dict(sorted(refused.items())),
     )
     record.write(out / CACHE_RECORD)

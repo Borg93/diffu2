@@ -26,10 +26,13 @@ parameters drawn once, applied alike to the target and its sample, so each volum
 spaced otherwise and the hand too can only come from the sample: the ink's strokes thinned by up to half a pixel or
 thickened by up to one on each side (each image's ink coverage, read from its ink and paper as above, its paper's grain
 left out, dilated or eroded by that fraction of a pixel and laid on in its strokes' own colour), the page sheared
-across about its middle row by up to ten degrees, and scaled across by 0.85 to 1.15 and fitted back onto the latent
-grid at its pixel count. The target's Layout prompt moves with it
-(:meth:`HandRestyle.moved_prompt`): each box the bounding box of where its ink goes, on the changed page's canvas; a
-change that would move a line off its page or onto another line is refused (:class:`HandRefused`).
+across about its middle row, and scaled across by 0.85 to 1.15 and fitted back onto the latent grid at its pixel
+count. The target's Layout prompt moves with it (:meth:`HandRestyle.moved_prompt`): each box the bounding box of where
+its ink goes, on the changed page's canvas. A shear moves the lines near a page's top and bottom furthest, so the slant
+is drawn within the room each page's lines leave (:func:`slant_bound`, up to ten degrees either way): its drawn share
+of ten degrees taken of the page's bound, none on a page with less than a degree of room
+(:meth:`HandRestyle.within`). Scaling across moves the page's edges with its lines, so it never moves a line off its
+page. A change that would still move a line off its page or onto another line is refused (:class:`HandRefused`).
 """
 
 from __future__ import annotations
@@ -83,6 +86,7 @@ TINT_BRIGHTNESS = (-0.04, 0.04)
 TINT_GAMMA = (0.87, 1.15)
 
 SLANTS = (-10.0, 10.0)  # degrees the letters lean further right (left below 0): the page sheared by its tangent
+SLANT_ROOM = 1.0  # degrees: a page whose lines leave it less room than this either way is not sheared at all
 # px the ink's strokes grow by on each side (shrink, below 0). A 1 MP page's pen strokes are 1-2 px wide: thinned by
 # a whole px or two they broke up or were gone, thickened by two its letters filled in
 STROKES = (-0.5, 1.0)
@@ -307,11 +311,44 @@ def _overlap(a: Sequence[float], b: Sequence[float]) -> bool:
     return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
 
 
+def slant_bound(prompt: str, size: tuple[int, int]) -> float:
+    """The largest slant, degrees, that a shear either way can give the page of ``size`` (width, height) px whose
+    compiled Layout prompt is ``prompt``, up to the largest drawn (:data:`SLANTS`'): every item's box but the paper's
+    still on the page, and no two lines' boxes onto each other that were not (what :meth:`HandRestyle.moved_prompt`
+    refuses). A row ``d`` px from the middle row moves ``d`` times the shear, so a box stays on the page while its
+    narrower margin holds its farthest row's move, and two lines side by side stay apart while their gap holds the
+    moves of the two rows that close it. Rounded down to a thousandth of a degree, below the bound itself."""
+    width, height = size
+    half = width / 2
+    canvas = [-height / 2, -half, height / 2, half]
+    items = json.loads(prompt)["items"]
+    boxes = [item["bbox"] for item in items if item["bbox"] != canvas]
+    lines = [item["bbox"] for item in items if item["label"] == "text"]
+    largest = math.tan(math.radians(SLANTS[1]))
+    room = [largest]
+    for y0, x0, y1, x1 in boxes:
+        reach = max(-y0, y1)  # how far its farthest row lies from the middle row
+        if reach > 0:
+            room.append(min(half - x1, x0 + half) / reach)
+    for a, b in combinations(lines, 2):
+        left, right = (a, b) if a[3] <= b[1] else (b, a)
+        if a[0] < b[2] and b[0] < a[2] and left[3] <= right[1]:  # side by side, apart
+            gap = right[1] - left[3]
+            # leaning right, the left line's top row and the right line's bottom row close the gap; leaning left, the
+            # left line's bottom row and the right line's top row
+            room += [gap / (right[2] - left[0]), gap / (left[2] - right[0])]
+    shear = max(0.0, min(room))
+    if shear >= largest:
+        return SLANTS[1]
+    return max(0.0, math.floor((math.degrees(math.atan(shear)) - 1e-9) * 1000) / 1000)
+
+
 class HandRestyle(BaseModel):
     """A change of hand: the ink's strokes ``stroke`` px wider on each side (narrower below 0; :func:`_stroked`), the
     page sheared across about its middle row so that its letters lean ``slant`` degrees further right (left below 0),
     then scaled across by ``width`` and fitted back onto the latent grid at its pixel count (:meth:`size`): wider or
-    narrower letters at the page's own writing scale."""
+    narrower letters at the page's own writing scale. Drawn within a page's room (:meth:`within`), it records that
+    room (``slant_bound``, degrees)."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -319,6 +356,16 @@ class HandRestyle(BaseModel):
     slant: float = Field(gt=-45, lt=45)
     stroke: float = Field(ge=-1, le=1)
     width: float = Field(gt=0)
+    slant_bound: float | None = Field(default=None, exclude_if=lambda bound: bound is None)
+
+    def within(self, prompt: str, size: tuple[int, int]) -> HandRestyle:
+        """This change on the page of ``size`` (width, height) px whose compiled Layout prompt is ``prompt``: its
+        slant's share of the largest drawn (:data:`SLANTS`') taken of the page's room (:func:`slant_bound`, recorded),
+        rounded towards no slant, so a slant drawn evenly is even within the room; on a page with less room than
+        :data:`SLANT_ROOM` no slant, its stroke and width kept."""
+        bound = slant_bound(prompt, size)
+        slant = math.trunc(self.slant / SLANTS[1] * bound * 1000) / 1000 if bound >= SLANT_ROOM else 0.0
+        return self.model_copy(update={"slant": slant, "slant_bound": bound})
 
     @property
     def shear(self) -> float:

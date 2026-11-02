@@ -2,8 +2,9 @@
 prompt forms in the cache (the pairs that share a line with their reference left out, page pairs too; a mix whose
 forms the pairs lack refused) and over a run, the look changes of the cache's sample form (exactly the share asked,
 the target and its sample alike, by transforms that move no pixel; a cache without them written as before), its hand
-changes (each box moved exactly as the shear and the width move it, every line's ink inside its moved box, the target
-and its sample changed alike, a change that would move a line off its page or onto another refused), a page pair that
+changes (each box moved exactly as the shear and the width move it, each slant drawn within the largest slant the
+page's lines leave room for, every line's ink inside its moved box, the target and its sample changed alike, a change
+that would move a line off its page or onto another refused), a page pair that
 refuses a prompt its row was not compiled for (another size, a form built after its set), how a cache's samples were
 sized recorded from its pairs to the model index (and a validation cache sized otherwise refused), MOSS's noise levels,
 the flow-matching loss over the drawn image alone, a LoRA that learns at the recipe's learning rate, the validation's
@@ -70,6 +71,7 @@ from diffu_moss.train.records import ADAPTER_WEIGHTS, CACHE_RECORD
 from diffu_moss.train.restyle import (
     OFF_PAGE,
     OVERLAP,
+    SLANTS,
     Colourise,
     HandRefused,
     HandRestyle,
@@ -421,6 +423,50 @@ def test_hand_change_refuses_to_move_a_line_off_its_page_or_onto_another(boxes: 
         leaning_right.moved_prompt(_prompt(boxes, PAGE), PAGE)
 
 
+def _largest_slant_kept(boxes: list[list[int]], size: tuple[int, int]) -> float:
+    """The largest slant, degrees (to within a ten-thousandth, up to the largest drawn), that a page of ``size`` with
+    lines in ``boxes`` can be sheared by either way without ``moved_prompt`` refusing it: found by halving."""
+    prompt = _prompt(boxes, size)
+
+    def kept(slant: float) -> bool:
+        try:
+            for sign in (1, -1):
+                HandRestyle(slant=sign * slant, stroke=0.0, width=1.0).moved_prompt(prompt, size)
+        except HandRefused:
+            return False
+        return True
+
+    low, high = 0.0, SLANTS[1]
+    if kept(high):
+        return high
+    while high - low > 1e-4:
+        middle = (low + high) / 2
+        low, high = (middle, high) if kept(middle) else (low, middle)
+    return low
+
+
+@pytest.mark.parametrize(
+    ("boxes", "room", "slant"),
+    [
+        pytest.param([[300, -310, 350, 0]], 1.636, -0.818, id="a-line-near-the-bottom-left-corner"),
+        pytest.param([[-60, -300, 0, -4], [-60, 0, 0, 300]], 3.814, -1.907, id="two-lines-side-by-side"),
+        pytest.param([[-10, -50, 10, 50]], 10.0, -5.0, id="more-room-than-the-largest-slant"),
+        pytest.param([[300, -317, 350, 0]], 0.491, 0.0, id="under-a-degree-of-room-no-slant"),
+        pytest.param([[-400, -250, -350, 320]], 0.0, 0.0, id="a-line-at-the-edge-no-room"),
+    ],
+)
+def test_hand_change_slants_a_page_within_the_largest_slant_its_lines_leave_room_for(
+    boxes: list[list[int]], room: float, slant: float
+) -> None:
+    drawn = HandRestyle(slant=-5.0, stroke=0.5, width=1.1)  # half the largest slant drawn, leaning left
+
+    within = drawn.within(_prompt(boxes, PAGE), PAGE)
+
+    assert (within.slant_bound, within.slant, within.stroke, within.width) == (room, slant, 0.5, 1.1)
+    assert within.slant_bound == pytest.approx(_largest_slant_kept(boxes, PAGE), abs=1e-3)  # as moved_prompt keeps
+    within.moved_prompt(_prompt(boxes, PAGE), PAGE)  # and keeps this one
+
+
 @pytest.mark.parametrize(
     ("stroke", "ink_gained"),
     [pytest.param(1.0, 1.0, id="a-pixel-thicker"), pytest.param(-0.5, -1.0, id="half-a-pixel-thinner")],
@@ -483,6 +529,7 @@ def test_cache_gives_a_pairs_target_and_sample_the_hand_change_its_entry_records
     ]
     for entry, hand in changed:
         sample, size = load_sample(tiny_hand_cache, entry, "cpu"), unchanged[entry.file].target_size
+        assert hand.slant_bound == SLANTS[1]  # a tiny pair's two lines leave room for the largest slant
         assert (entry.prompt, entry.target_size) == hand.moved_prompt(unchanged[entry.file].prompt, size)
         assert torch.equal(sample.target, encoded(pairs[entry.pair].target, hand))
         assert sample.reference is not None
@@ -495,7 +542,12 @@ def test_cache_gives_a_pairs_target_and_sample_the_hand_change_its_entry_records
     ]
     assert differ == []
     record = read_record(tiny_hand_cache)
-    assert (record.hand_restyle_share, record.hand_restyled, record.hand_refused) == (0.5, 2, {})
+    assert (record.hand_restyle_share, record.hand_restyled, record.hand_no_slant_room, record.hand_refused) == (
+        0.5,
+        2,
+        0,
+        {},
+    )
 
 
 def test_content_mix_draws_the_sample_alone_for_three_fifths_and_the_sample_with_the_look_or_nothing_for_a_fifth() -> (

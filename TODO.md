@@ -36,11 +36,6 @@ own FLUX.3-architecture model), is in git history (`git log -p -- TODO.md`).
       (`page_pair_samples`, `sample_size: legible` through to the model index) and look and hand changes for half the
       sample-form entries each. It passes when the sample form's validation loss falls below the generic form's and
       the swap test's pages (page rows: a window's legible sample is cut for its own window) follow their samples.
-- [ ] Hand changes: a shear of the whole page moves the lines near its top and bottom furthest, and is refused for
-      55 % of the many-volumes rows (half their pages allow 3 degrees at most before a line leaves them; 10 % have a
-      box at an edge), most refusals over 5 degrees. Decide: keep the refusals, draw each page's slant within what its
-      margins allow, or slant each line about its own baseline (lines stay put). Thinning strokes by a whole pixel or
-      two erased 1 MP pages' 1-2 px strokes, so strokes change from half a pixel thinner to a pixel thicker.
 - [ ] A content-mix model drawn without a sample should be prompted in its generic form (nothing named); diffu-generate
       captions a page drawn without a sample in its named style, and has no option for the generic form yet.
 - [ ] A legible model draws a window only from a sample given with its line boxes (a job's `reference.lines`,
