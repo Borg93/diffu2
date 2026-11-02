@@ -49,7 +49,7 @@ console = Console()
 
 LYCORIS_PREFIX = "lora_unet_"  # kohya's prefix of the denoiser's modules, which KohakuMossTrainer keeps
 DOWN, UP, ALPHA = "lora_down.weight", "lora_up.weight", "alpha"  # a plain LoRA's tensors of a module
-PROVENANCE = {"format": "peft", "converted_from": "lycoris (kohakumoss)", "algo": "lora"}  # the weights' metadata
+PROVENANCE = {"format": "pt", "converted_from": "lycoris (kohakumoss)", "algo": "lora"}  # "pt": as PEFT writes it
 
 
 class BaseModelRef(BaseModel):

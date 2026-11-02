@@ -124,7 +124,7 @@ def test_diffu_moss_convert_lora_writes_a_peft_lora_config_of_the_dits_module_na
     with safe_open(str(tmp_path / "adapter" / ADAPTER_WEIGHTS), "pt") as weights:
         metadata = weights.metadata()
         stored = {key: weights.get_tensor(key) for key in weights.keys()}  # noqa: SIM118
-    assert metadata == {"format": "peft", "converted_from": "lycoris (kohakumoss)", "algo": "lora", "step": "700"}
+    assert metadata == {"format": "pt", "converted_from": "lycoris (kohakumoss)", "algo": "lora", "step": "700"}
     assert stored.keys() == {f"base_model.model.{name}.lora_{part}.weight" for name in lora for part in "AB"}
     assert {tensor.dtype for tensor in stored.values()} == {torch.bfloat16}  # as the file stores them
     assert all(

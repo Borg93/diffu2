@@ -180,7 +180,7 @@ The page schema, written with file format `data_storage_version="2.2"` (Blob v2 
 | `text` | `large_utf8` | what was written; an INVERTED (full-text) index if we want to search it |
 | `width`, `height` | `int32` | |
 | `seed` | `int64` | redraws the page |
-| `template`, `style`, `model`, `lora` | `utf8` | provenance |
+| `template`, `model`, `run` | `utf8` | provenance; the page job as drawn, its style included, is `job` (`large_utf8`), and a run's LoRAs are in `<out>/runs/<run>.json` |
 | `lines` | `list<struct<read: utf8, cer: float32, numbers_differ: bool>>` | the judge's verdict per line (`LineVerdict`) |
 | `unclear_lines` | `int32` | |
 | `error` | `utf8`, nullable | a row that failed, with why |
