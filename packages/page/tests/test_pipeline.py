@@ -47,7 +47,7 @@ from diffu_page.local_run import NOT_RUN
 from diffu_page.output import jpeg_bytes
 from diffu_page.page.crops.grid import as_reference
 from diffu_page.page.labels import PageElements, to_grounded_markdown, to_markdown
-from diffu_page.page.layout import PageSide
+from diffu_page.page.layout import Layout, PageSide, TextLine
 from diffu_page.page.marking import PrintHandClassifier
 from diffu_page.quality.judge import LineVerdict
 
@@ -423,7 +423,7 @@ def test_generate_records_each_page_it_cannot_plan_without_loading_the_model(
     }
 
 
-def test_generate_takes_each_page_of_a_job_file_with_its_own_text_name_and_style_spelled_out_or_named(
+def test_generate_takes_each_page_of_a_job_file_with_its_own_layout_text_name_and_style_spelled_out_or_named(
     one_line_page: Path, tmp_path: Path, page_style: PageStyle, page_text: str, write_nemo_lora: NemoLoraWriter
 ) -> None:
     run_lora, hand = _zero_lora(write_nemo_lora), _zero_lora(write_nemo_lora)
@@ -435,6 +435,10 @@ def test_generate_takes_each_page_of_a_job_file_with_its_own_text_name_and_style
     named = [
         {"template": str(one_line_page), "text": "den 5 maj", "style": "a"},
         {"template": str(one_line_page), "text": "den 6 maj", "style": "a", "reference": {"image": "/scans/own.jpg"}},
+        {
+            "layout": {"width": 1000, "height": 1000, "lines": [{"box": [100, 440, 900, 520], "text": "den 7"}]},
+            "style": "a",
+        },
     ]
     job_file = tmp_path / "run.jsonl"
     job_file.write_text(
@@ -453,13 +457,23 @@ def test_generate_takes_each_page_of_a_job_file_with_its_own_text_name_and_style
         *pages,
         PageJob(template=one_line_page, text="den 5 maj", style=PRESET_STYLE, reference=presets_reference),
         PageJob(template=one_line_page, text="den 6 maj", style=PRESET_STYLE, reference=own),
+        PageJob(
+            layout=Layout(
+                width=1000, height=1000, lines=[TextLine(text="den 7", box=(100, 440, 900, 520), baseline_y=520)]
+            ),
+            style=PRESET_STYLE,
+            reference=presets_reference,
+        ),
     ]
     assert summary.groups == [
         PageGroup(loras={"v2": run_lora}, pages=[0, 1]),
-        PageGroup(loras={"hand": hand}, pages=[2, 3]),
+        PageGroup(loras={"hand": hand}, pages=[2, 3, 4]),
     ]
     no_crops = f"ValueError: {one_line_page} plans to no crops: no window of it holds enough whole lines"
-    assert summary.failed == dict.fromkeys(["vol7_p12", "001_one_line", "002_one_line", "003_one_line"], no_crops)
+    assert summary.failed == {
+        **dict.fromkeys(["vol7_p12", "001_one_line", "002_one_line", "003_one_line"], no_crops),
+        "004_layout": "ValueError: 004_layout plans to no crops: no window of it holds enough whole lines",
+    }
 
 
 def test_generate_draws_the_templates_in_the_style_preset_style_names_by_its_hand(

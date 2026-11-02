@@ -116,10 +116,13 @@ def test_refill_keeps_the_other_regions_text(page: Layout):
     assert others == {"page-number": "61.", "marginalia": "No 12"}
 
 
-def test_refill_refuses_a_page_without_a_line_to_measure(page: Layout):
+def test_refill_writes_a_page_without_a_line_to_measure_at_the_characters_its_lines_aspect_holds(page: Layout):
     short = page.model_copy(update={"lines": [line.model_copy(update={"text": "kort"}) for line in page.lines]})
-    with pytest.raises(ValueError, match="writing density"):
-        refill(short, "Ny text.")
+    ten_words = " ".join(["ordet"] * 10)  # 59 characters: an eleventh word overruns the 63 a 680 x 40 px line holds
+
+    refilled = refill(short, " ".join(["ordet"] * 25))
+
+    assert _body_texts(refilled) == [ten_words, ten_words, " ".join(["ordet"] * 5)]
 
 
 def test_running_text_joins_the_words_a_transcription_breaks_across_lines():

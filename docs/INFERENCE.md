@@ -8,20 +8,21 @@ and fails the stages, and why the code is built the way it is, is in [RAY.md](RA
 ## 1. What it does
 
 A run turns a file of page jobs into synthetic archive pages: each job names a real page layout (a PAGE XML file, the
-template), the text to write into its lines, the style (archive, years, paper, ink) and a sample page whose hand,
-ink and paper to copy. A fine-tuned MOSS-Image model draws the page whole; a handwriting reader (TrOCR) reads every
-line back; the page's exact ALTO and PAGE XML labels are written from the plan, with every line the reader could not
-confirm tagged `unclear`. Ray Data does the scheduling: it reads the run file, plans pages on CPU workers, and hands
-them to a pool of GPU actors, each holding one copy of the model, the same batch pattern as Ray Data LLM's batch
-inference (a dataset of rows, a `map_batches` stage of a callable class with `concurrency` actors, then a sink). The
-driver commits the drawn pages to a Lance table as they arrive, so a stopped run resumes where it stopped.
+template) or gives one inline, the text to write into its lines (or none: its lines keep their own), the style (archive,
+years, paper, ink) and a sample page whose hand, ink and paper to copy. A fine-tuned MOSS-Image model draws the page
+whole; a handwriting reader (TrOCR) reads every line back; the page's exact ALTO and PAGE XML labels are written from
+the plan, with every line the reader could not confirm tagged `unclear`. Ray Data does the scheduling: it reads the run
+file, plans pages on CPU workers, and hands them to a pool of GPU actors, each holding one copy of the model, the same
+batch pattern as Ray Data LLM's batch inference (a dataset of rows, a `map_batches` stage of a callable class with
+`concurrency` actors, then a sink). The driver commits the drawn pages to a Lance table as they arrive, so a stopped run
+resumes where it stopped.
 
 ```
-run.jsonl  one page job per line (template, text, style, sample page, seed, id)
+run.jsonl  one page job per line (template or layout, text, style, sample page, seed, id)
    |
    |  ray.data.read_text(run.jsonl)        Ray Data reads the run file, a line a row
    v
-   flat_map(plan_rows)                     CPU tasks: refill the template with the text and plan it as one whole page;
+   flat_map(plan_rows)                     CPU tasks: write the text, if any, into the page and plan it whole;
    |                                       an opening becomes its two pages; pages already in the table are skipped
    v
    map_batches(DrawActor,                  GPU actor pool, one MOSS-Image pipeline and one TrOCR judge per actor:
@@ -139,28 +140,42 @@ A run file has one page job per line (JSON Lines), the input of `diffu_page.draw
 | Field | Required | Meaning |
 |---|---|---|
 | `id` | yes | the page's name: unique in the run file and across everything written into one `--out`. It names the image (`<id>.jpg` in the labels), seeds the noise, and is what a resumed run skips by. A plain file name (no `/`). |
-| `template` | yes | a PAGE XML file whose layout to draw (its lines, regions and ruled lines are kept; its running text is replaced) |
-| `text` | yes | the text to write into the template's running-text lines, in order; a blank line ends a paragraph. Lines beyond the end of the text are left out. |
+| `template` | one of `template` and `layout` | a PAGE or ALTO file whose layout to draw (its lines, regions and ruled lines are kept) |
+| `layout` | one of `template` and `layout` | the page's layout inline: `{"width": ..., "height": ..., "lines": [...]}` in pixels. A line needs only its `box`, `[x0, y0, x1, y1]`; it may also give `text`, `kind` (default `body`, running text; or `heading`, `marginalia`, `page-number`, ...), `production` (`printed` or `handwritten`; default: drawn as handwriting), `baseline_y` (default the box's bottom) and `block` (lines of one block are read together, top to bottom; default one block). Optional `rules`, its ruled lines: `{"x0": ..., "y0": ..., "x1": ..., "y1": ...}`. A layout is one page: it takes no `side` and is never split. |
+| `text` | no | the text to write into the running-text (`body`) lines, in order (a form's printed lines among its handwriting keep theirs); a blank line ends a paragraph. Lines beyond the end of the text are left out; other lines keep their own text. Without it every line keeps its own text, so each line of a `layout` must then hold one. |
 | `style` | yes | `{"provenance": {"title": ..., "years": ...}, "look": {"greyscale": ..., "paper": ..., "ink": ...}}`: paper is one of grey, light grey, white, off-white, cream, yellowed; ink one of black, dark grey, faded grey, dark brown, brown, faded brown |
 | `reference` | for a model that takes a sample image | `{"image": <a sample page of the hand>, "caption": "sample"}`. `caption` must be a form the DiT was trained on; the eight-hands fine-tunes know `named`, `hand` and `sample`. |
-| `side` | no | `left` or `right` to draw one page of a two-page opening; without it an opening is drawn as both its pages, as `<id>_left` and `<id>_right` |
+| `side` | no | `left` or `right` to draw one page of a template's two-page opening; without it an opening is drawn as both its pages, as `<id>_left` and `<id>_right` |
 | `page_pixels` | no | the page's size in pixels (default: `--page-megapixels`, 1.0 MP, the eight-hands fine-tunes' training size) |
 | `seed` | no | added to the id's own seed (default 0) |
 
-A worked example, `/data/runs/example.jsonl` (two lines; the first draws the right page of an opening, the second,
-with no side, draws both pages if its template is an opening, as `pahlman-0001_left` and `pahlman-0001_right`):
+The layout and the text are two separate choices. Text written into a template, or into a layout whose lines hold text,
+takes as many characters a line as the page's own lines do (their median characters per pixel of line width, over the
+lines of 10 characters or more). Text written into lines with no text to measure, a layout of boxes alone, takes about
+3.7 characters per unit of a line's width over its height (`CHARS_PER_LINE_ASPECT`, the median over 24,807 handwritten
+GT lines; half of them hold 2.8 to 4.8), so a 1600 x 80 px box takes about 74.
+
+A worked example, `/data/runs/example.jsonl`, one line of each combination (the first draws the right page of an
+opening; the second, with no side, both pages if its template is an opening, as `pahlman-0001_left` and
+`pahlman-0001_right`):
 
 ```json
 {"id": "jamtland-0001", "template": "/data/templates/jamtland/0105.xml", "side": "right", "text": "Anno 1649 den 6 Aprilis Tå laga tingh höltz medh Allmogen uthi Räfsundh ...", "style": {"provenance": {"title": "the court records of Jämtlands domsaga", "years": "1649"}, "look": {"greyscale": false, "paper": "cream", "ink": "black"}}, "reference": {"image": "/data/samples/jamtland/sample-01.jpg", "caption": "sample"}}
-{"id": "pahlman-0001", "template": "/data/templates/pahlman/0015.xml", "text": "för en folkfest, det war som om Sommaren utskickadt en af sina härolder ...", "style": {"provenance": {"title": "Carl Fredrik Påhlman's travel journals", "years": "1826"}, "look": {"greyscale": false, "paper": "off-white", "ink": "dark grey"}}, "reference": {"image": "/data/samples/pahlman/sample-03.jpg", "caption": "sample"}, "seed": 7}
+{"id": "pahlman-0001", "template": "/data/templates/pahlman/0015.xml", "style": {"provenance": {"title": "Carl Fredrik Påhlman's travel journals", "years": "1826"}, "look": {"greyscale": false, "paper": "off-white", "ink": "dark grey"}}, "reference": {"image": "/data/samples/pahlman/sample-03.jpg", "caption": "sample"}, "seed": 7}
+{"id": "boxes-0001", "layout": {"width": 1400, "height": 2000, "lines": [{"box": [150, 200, 1250, 270], "kind": "heading", "text": "Anno 1650"}, {"box": [150, 320, 1250, 390]}, {"box": [150, 410, 1250, 480]}, {"box": [150, 500, 1250, 570]}]}, "text": "Tå laga tingh höltz medh Allmogen uthi Räfsundh ...", "style": {"provenance": {"title": "the court records of Jämtlands domsaga", "years": "1650"}, "look": {"greyscale": false, "paper": "cream", "ink": "black"}}, "reference": {"image": "/data/samples/jamtland/sample-01.jpg", "caption": "sample"}}
+{"id": "boxes-0002", "layout": {"width": 1400, "height": 2000, "lines": [{"box": [150, 200, 1250, 270], "text": "Anno 1650 den 3 Maij"}, {"box": [150, 290, 1250, 360], "text": "kom för Rätten Olof Jonsson"}]}, "style": {"provenance": {"title": "the court records of Jämtlands domsaga", "years": "1650"}, "look": {"greyscale": false, "paper": "cream", "ink": "black"}}, "reference": {"image": "/data/samples/jamtland/sample-01.jpg", "caption": "sample"}}
 ```
 
-A run file is usually written by a script from a list of templates, texts and samples; build each line with
-`PageJob(...).model_dump_json()` and it is valid by construction. Name every template and sample by its absolute path
-on the volumes (pages are planned and drawn on other nodes, in working directories of their own). A run is refused
-before any model loads if a line is not a page job, an id is missing or repeated, a template or sample image is named
-by a relative path or is not on the volume, or a sample is given to a model that takes none. Keep run files to tens of
-thousands of lines: the head reads the whole file once to check it.
+They are, in order: a template with new text; a template keeping its own text; a layout of boxes with new text (its
+heading keeps its own); a layout keeping its lines' own text.
+
+A run file is usually written by a script from a list of templates or layouts, texts and samples; build each line
+with `PageJob(...).model_dump_json()` and it is valid by construction. Name every template and sample by its absolute
+path on the volumes (pages are planned and drawn on other nodes, in working directories of their own). A run is
+refused before any model loads if a line is not a page job (both or neither of `template` and `layout`; a layout with
+a `side`, no lines, a box off its page or a line left without text), an id is missing or repeated, a template or
+sample image is named by a relative path or is not on the volume, or a sample is given to a model that takes none.
+Keep run files to tens of thousands of lines: the head reads the whole file once to check it.
 
 ## 6. Draw settings
 
@@ -244,7 +259,7 @@ least 48 GiB per actor plus 16 GiB, and a `/dev/shm` of about 16 GiB for Ray's o
 | `lines` | list of {text, read, cer, numbers_differ} | each line's text and what the judge read in its box |
 | `unclear_lines` | int32 | lines the labels tag `unclear` |
 | `seed` | int64 | the noise seed it was drawn from |
-| `template` | string | its template |
+| `template` | string | its template; null for a page given as a layout |
 | `job` | large string | the page job as drawn (JSON): it draws the page again |
 | `model` | string | the model directory that drew it |
 | `run` | string | the run that drew it (`<out>/runs/<run>.json`) |

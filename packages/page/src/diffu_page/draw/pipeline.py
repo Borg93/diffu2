@@ -5,9 +5,10 @@ A model repo (MOSS-Image, ``diffu-moss-init``'s; FLUX.3 Klein for the reference 
 chosen by its directory alone. Two sets of blocks are built:
 
 - :class:`PagePlanBlocks` (no model): ``LoadLayoutStep`` -> ``MarkFromScanStep`` -> ``OpeningPageStep`` ->
-  ``RefillStep`` -> ``PlanCropsStep``. A template page (or one page of a two-page opening), a text, a style and
-  optionally a reference crop and a print/hand classifier (to mark the template from its scan) in; the crops to draw
-  out, captioned for the reference if there is one.
+  ``RefillStep`` -> ``PlanCropsStep``. A template page (or one page of a two-page opening) or a layout given in its
+  place, a text (or none: the lines keep their own), a style and optionally a reference crop and a print/hand
+  classifier (to mark the template from its scan) in; the crops to draw out, captioned for the reference if there is
+  one.
 - :func:`crop_blocks`: ``CropPromptStep`` -> ``ReferenceGridStep`` -> the model's text encoder, VAE encoders, denoise
   and decode. A crop plan in; its image out. The model's auto blocks pick text-to-image or reference-conditioned
   denoising from the inputs (``image``); a line repair sits in both (:mod:`diffu_page.draw.blocks.repair`). MOSS-Image
@@ -152,8 +153,9 @@ def crop_blocks(family: ModelFamily) -> CropBlocks:
 
 
 class PagePlanBlocks(SequentialPipelineBlocks):
-    """A template page (or one page of a two-page opening), a text, a style and optionally a reference crop and a
-    print/hand classifier in; the crops to draw out. No model but the small CNN that marks a template: CPU only."""
+    """A template page (or one page of a two-page opening) or a layout, a text (or none), a style and optionally a
+    reference crop and a print/hand classifier in; the crops to draw out. No model but the small CNN that marks a
+    template: CPU only."""
 
     block_classes = [LoadLayoutStep, MarkFromScanStep, OpeningPageStep, RefillStep, PlanCropsStep]
     block_names = ["load_layout", "mark_from_scan", "opening_page", "refill", "plan_crops"]
@@ -162,8 +164,8 @@ class PagePlanBlocks(SequentialPipelineBlocks):
     @override
     def description(self) -> str:
         return (
-            "Reads a PAGE/ALTO template (marked from its scan if asked), writes the text into its running-text lines "
-            "and plans it as crops."
+            "Reads a PAGE/ALTO template (marked from its scan if asked) or takes a layout, writes the text, if given, "
+            "into its running-text lines and plans it as crops."
         )
 
     @property

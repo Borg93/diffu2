@@ -3,12 +3,13 @@
 A replayed ALTO/PAGE layout (:func:`load_xml_layout`) carries the page's own transcription. :func:`refill` streams
 new text through its running-text lines in reading order, each line taking about as many characters as it held: the
 page's writing density (characters per pixel of line width, the median over its fuller lines) times the line's
-width. A blank line in the text ends a paragraph on a short line and the next starts on a fresh one; a word that
-overruns a line is split with ``¬``, as the Swedish GT transcriptions mark a break, when both halves keep at least
-``MIN_SPLIT`` characters. Lines beyond the end of the text are dropped. Other regions (page numbers, marginalia,
-headings, catchwords) keep their own text. On a page whose running text is handwritten, its printed lines are a form's
-print and keep theirs too: only the handwritten lines are rewritten, and they alone measure the density. A page whose
-running text is all printed, a printed book's, has its print rewritten.
+width. A layout whose lines hold no text to measure (one given as boxes) takes ``CHARS_PER_LINE_ASPECT`` characters
+per unit of each line's width over its height instead. A blank line in the text ends a paragraph on a short line and
+the next starts on a fresh one; a word that overruns a line is split with ``¬``, as the Swedish GT transcriptions mark
+a break, when both halves keep at least ``MIN_SPLIT`` characters. Lines beyond the end of the text are dropped. Other
+regions (page numbers, marginalia, headings, catchwords) keep their own text. On a page whose running text is
+handwritten, its printed lines are a form's print and keep theirs too: only the handwritten lines are rewritten, and
+they alone measure the density. A page whose running text is all printed, a printed book's, has its print rewritten.
 """
 
 from __future__ import annotations
@@ -24,15 +25,24 @@ PARAGRAPH_BREAK = re.compile(r"\n\s*\n")  # a blank line, spaces and all
 SPLIT_MARK = "¬"
 MIN_SPLIT = 3  # characters each half of a split word keeps
 DENSITY_MIN_CHARS = 10  # lines shorter than this (paragraph ends, numbers) don't measure the writing density
+# Characters a line holds per unit of its box's width over its height: the median over 24,807 handwritten running-text
+# lines of at least DENSITY_MIN_CHARS characters on 492 pages sampled at random from the Lejonet HTR ground truth of
+# Swedish and Finnish archives (PAGE XML, 41 collections). Half the lines hold 2.8 to 4.8; a collection's median is
+# 2.0 to 5.8.
+CHARS_PER_LINE_ASPECT = 3.7
 
 
-def _writing_density(lines: list[TextLine]) -> float:
+def _line_budget(lines: list[TextLine]) -> Callable[[TextLine], int]:
+    """How many characters each of ``lines`` takes: the median writing density of those holding
+    ``DENSITY_MIN_CHARS`` characters times its width; with none, ``CHARS_PER_LINE_ASPECT`` times its width over its
+    height. Every line takes one character at least."""
     densities = [
         len(line.text) / line.width for line in lines if len(line.text) >= DENSITY_MIN_CHARS and line.width > 0
     ]
     if not densities:
-        raise ValueError(f"no line of at least {DENSITY_MIN_CHARS} characters to measure the writing density")
-    return statistics.median(densities)
+        return lambda line: max(1, round(CHARS_PER_LINE_ASPECT * line.width / line.height))
+    density = statistics.median(densities)
+    return lambda line: max(1, round(density * line.width))
 
 
 class _TextStream:
@@ -82,7 +92,7 @@ def running_text(layout: Layout) -> str:
     return lines.replace(f"{SPLIT_MARK} ", "")
 
 
-def _rewritten(layout: Layout) -> Callable[[TextLine], bool]:
+def rewritten(layout: Layout) -> Callable[[TextLine], bool]:
     """Which of a layout's lines refill rewrites: its running-text lines (kind ``body``), and of a page whose running
     text is handwritten only the handwritten ones, the print among them being a form's (a line its template says
     nothing of counts as handwritten); of a page whose running text is all printed, every one."""
@@ -96,26 +106,23 @@ def refill(layout: Layout, text: str) -> Layout:
 
     Args:
         layout: The page; the lines it rewrites (its running-text lines, kind ``body``, and of a page whose running
-            text is handwritten only the handwritten ones) set the line widths and the writing density, its other
-            lines keep their text.
+            text is handwritten only the handwritten ones, :func:`rewritten`) set the line widths and the writing
+            density, its other lines keep their text.
         text: The new text; a blank line ends a paragraph, and the next starts on a fresh line.
 
     Returns:
         The layout with each line it rewrites holding the next part of ``text``, and without the lines left over
         when the text runs out.
-
-    Raises:
-        ValueError: If no line it rewrites holds ``DENSITY_MIN_CHARS`` characters to measure the density by.
     """
-    rewritten = _rewritten(layout)
-    density = _writing_density([line for line in layout.lines if rewritten(line)])
+    rewrites = rewritten(layout)
+    budget = _line_budget([line for line in layout.lines if rewrites(line)])
     stream = _TextStream(PARAGRAPH_BREAK.split(text))
     lines: list[TextLine] = []
     for line in layout.lines:
-        if not rewritten(line):
+        if not rewrites(line):
             lines.append(line)
             continue
-        written = stream.line(max(1, round(density * line.width)))
+        written = stream.line(budget(line))
         if written is not None:
             lines.append(line.model_copy(update={"text": written}))
     return layout.model_copy(update={"lines": lines})

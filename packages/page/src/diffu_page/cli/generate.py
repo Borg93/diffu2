@@ -15,8 +15,8 @@ and labelled with badly read lines tagged ``unclear``, as diffu-runner's GPU act
 With ``--reference`` (a sample to draw in the hand of, for a model trained with references) every crop is drawn from it
 and captioned as the model was trained (``--reference-caption``: ``described`` measures the crop's hand, so it needs
 the crop's ``metadata.jsonl`` from ``diffu_page.data.build_crops`` beside it). ``--jobs`` gives each page its own
-template, text, style, seed, reference, size and side instead: one :class:`diffu_page.draw.jobs.PageJob` per line,
-the run file diffu-runner reads. A style can be
+template or inline layout, text (or none: the lines keep their own), style, seed, reference, size and side instead: one
+:class:`diffu_page.draw.jobs.PageJob` per line, the run file diffu-runner reads. A style can be
 named instead of spelled out: ``--style`` (or a job line's ``style``) names a preset of ``--styles``
 (:mod:`diffu_page.draw.styles`: the archive and years, the look, the hand's LoRA and a reference), and its page is drawn
 by the preset's hand alone; a style spelled out is drawn with ``--lora``. A run can so draw several hands: its pages are
@@ -122,11 +122,11 @@ type LabelFiles = Mapping[str, Callable[[PageElements], str]]  # label files wri
 
 
 class CropSummary(BaseModel):
-    """A drawn crop as ``summary.json`` lists it: its name, its template, how well its lines read back, and how many
-    of them its repair passes took from unclear to clear (net)."""
+    """A drawn crop as ``summary.json`` lists it: its name, its template (None for a page given as a layout), how well
+    its lines read back, and how many of them its repair passes took from unclear to clear (net)."""
 
     name: str
-    template: str
+    template: str | None
     lines: int
     unclear_lines: int
     cer: float
@@ -156,7 +156,7 @@ class Summary(BaseModel):
     failed: dict[str, str]
 
 
-def _save(crop: DrawnCrop, template: Path, out: Path, *, repaired: int, label_files: LabelFiles) -> CropSummary:
+def _save(crop: DrawnCrop, template: Path | None, out: Path, *, repaired: int, label_files: LabelFiles) -> CropSummary:
     crop.image.save(out / f"{crop.name}.jpg", quality=JPEG_QUALITY)
     (out / f"{crop.name}.xml").write_text(crop.labels_xml, encoding="utf-8")
     elements = page_elements(crop.labels)
@@ -164,7 +164,7 @@ def _save(crop: DrawnCrop, template: Path, out: Path, *, repaired: int, label_fi
         (out / f"{crop.name}{suffix}").write_text(f"{write(elements)}\n", encoding="utf-8")
     return CropSummary(
         name=crop.name,
-        template=str(template),
+        template=None if template is None else str(template),
         lines=len(crop.plan.lines),
         unclear_lines=crop.unclear_lines,
         cer=fmean(crop.line_cers),

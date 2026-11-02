@@ -238,7 +238,8 @@ def check_judge(judge: JudgeModel) -> None:
 def check_pages(pages: list[PageJob], draw: DrawConfig, index: dict[str, object]) -> None:
     """Check every page can be drawn as ``draw`` draws it: a reference image only for a model whose ``index`` lets it
     take one, one for every page under reference guidance, and every template and reference image named by absolute
-    path (the nodes that plan and draw a page read them, from working directories of their own) and readable here.
+    path (the nodes that plan and draw a page read them, from working directories of their own) and readable here. A
+    page's inline layout was checked as the page job was read (:class:`diffu_page.draw.jobs.PageJob`).
 
     Raises:
         RunRefused: If any cannot.
@@ -253,7 +254,8 @@ def check_pages(pages: list[PageJob], draw: DrawConfig, index: dict[str, object]
         raise RunRefused(
             f"reference guidance needs a reference image, but {len(pages) - len(referenced)} pages give none"
         )
-    files = {page.template for page in pages} | {page.reference.image for page in pages if page.reference is not None}
+    templates = {page.template for page in pages if page.template is not None}
+    files = templates | {page.reference.image for page in pages if page.reference is not None}
     relative = sorted(str(path) for path in files if not path.is_absolute())
     if relative:
         raise RunRefused(

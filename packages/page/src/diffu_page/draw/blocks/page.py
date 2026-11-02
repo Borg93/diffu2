@@ -1,6 +1,7 @@
 """The page steps that run before any model: a template page read as its layout, marked from its scan if asked, the
-page of an opening asked for taken, refilled with new text and planned into the crops a model draws. CPU only; they
-need no components."""
+page of an opening asked for taken, refilled with new text if given and planned into the crops a model draws. A layout
+given in place of a template is a single page with no scan: it is neither marked nor split. CPU only; they need no
+components."""
 
 from __future__ import annotations
 
@@ -16,26 +17,36 @@ from diffu_page.page.marking import PrintHandClassifier, marked, template_scan
 
 
 class LoadLayoutStep(ModularPipelineBlocks):
-    """A PAGE or ALTO page read as its layout: its size, its text lines in reading order and its ruled lines."""
+    """A PAGE or ALTO page read as its layout (its size, its text lines in reading order and its ruled lines), or the
+    layout given in its place."""
 
     @property
     @override
     def description(self) -> str:
-        return "Reads a PAGE or ALTO file as its layout: the page size, and each line's text, box, baseline and region."
+        return (
+            "Reads a PAGE or ALTO file as its layout: the page size, and each line's text, box, baseline and region; "
+            "or takes the layout given instead."
+        )
 
     @property
     @override
     def inputs(self) -> list[InputParam]:
-        return [InputParam("template", type_hint=Path, required=True, description="A PAGE or ALTO file to redraw.")]
+        return [
+            InputParam("template", type_hint=Path, description="A PAGE or ALTO file to redraw; or give a layout."),
+            InputParam("layout", type_hint=Layout, description="The page to draw, in place of a template."),
+        ]
 
     @property
     @override
     def intermediate_outputs(self) -> list[OutputParam]:
-        return [OutputParam("layout", type_hint=Layout, description="The template's size and text lines.")]
+        return [OutputParam("layout", type_hint=Layout, description="The page's size and text lines.")]
 
     def __call__(self, components: ModularPipeline, state: PipelineState) -> tuple[ModularPipeline, PipelineState]:
         block_state = self.get_block_state(state)
-        block_state.layout = load_xml_layout(Path(block_state.template))
+        if (block_state.template is None) == (block_state.layout is None):
+            raise ValueError("give the page's template or its layout: exactly one of them")
+        if block_state.template is not None:
+            block_state.layout = load_xml_layout(Path(block_state.template))
         self.set_block_state(state, block_state)
         return components, state
 
@@ -43,7 +54,7 @@ class LoadLayoutStep(ModularPipelineBlocks):
 class MarkFromScanStep(ModularPipelineBlocks):
     """A template's layout marked from the scan beside it (:func:`diffu_page.page.marking.marked`) when a print/hand
     classifier is given: its lines printed or handwritten where the template does not say, its ruled lines where it has
-    none. Without a classifier the layout passes as it is."""
+    none. Without a classifier, or without a template (a layout given has no scan), the layout passes as it is."""
 
     @property
     @override
@@ -57,7 +68,7 @@ class MarkFromScanStep(ModularPipelineBlocks):
     @override
     def inputs(self) -> list[InputParam]:
         return [
-            InputParam("template", type_hint=Path, required=True, description="The PAGE file, its scan beside it."),
+            InputParam("template", type_hint=Path, description="The PAGE file, its scan beside it; none for a layout."),
             InputParam("layout", type_hint=Layout, required=True, description="The template's layout."),
             InputParam(
                 "print_hand",
@@ -74,7 +85,7 @@ class MarkFromScanStep(ModularPipelineBlocks):
 
     def __call__(self, components: ModularPipeline, state: PipelineState) -> tuple[ModularPipeline, PipelineState]:
         block_state = self.get_block_state(state)
-        if block_state.print_hand is not None:
+        if block_state.print_hand is not None and block_state.template is not None:
             template = Path(block_state.template)
             block_state.layout = marked(block_state.layout, template_scan(template), classifier=block_state.print_hand)
         self.set_block_state(state, block_state)
@@ -84,7 +95,8 @@ class MarkFromScanStep(ModularPipelineBlocks):
 class OpeningPageStep(ModularPipelineBlocks):
     """With a side, that page of a two-page opening, in its own coordinates; without one, the layout as it is. A scan
     wider than tall whose pages its lines cannot split (:func:`diffu_page.page.layout.is_unsplit_spread`) is refused,
-    with a side or without: a spread is never drawn."""
+    with a side or without: a spread is never drawn. A layout given without a template is a single page, passed as it
+    is."""
 
     @property
     @override
@@ -98,7 +110,7 @@ class OpeningPageStep(ModularPipelineBlocks):
     @override
     def inputs(self) -> list[InputParam]:
         return [
-            InputParam("template", type_hint=Path, required=True, description="The PAGE or ALTO file, for errors."),
+            InputParam("template", type_hint=Path, description="The PAGE or ALTO file; none for a layout given."),
             InputParam("layout", type_hint=Layout, required=True, description="The template's layout."),
             InputParam(
                 "side",
@@ -115,6 +127,9 @@ class OpeningPageStep(ModularPipelineBlocks):
 
     def __call__(self, components: ModularPipeline, state: PipelineState) -> tuple[ModularPipeline, PipelineState]:
         block_state = self.get_block_state(state)
+        if block_state.template is None:
+            self.set_block_state(state, block_state)
+            return components, state
         layout: Layout = block_state.layout
         if is_unsplit_spread(layout):
             raise ValueError(
@@ -135,12 +150,16 @@ class OpeningPageStep(ModularPipelineBlocks):
 
 
 class RefillStep(ModularPipelineBlocks):
-    """New text written into a layout's running-text lines, at the page's own writing density."""
+    """New text written into a layout's running-text lines, at the page's own writing density
+    (:func:`diffu_page.page.layout.refill`); without a text, every line keeps its own."""
 
     @property
     @override
     def description(self) -> str:
-        return "Rewrites the layout's running-text lines with the text; margin notes, headings and page numbers stay."
+        return (
+            "Rewrites the layout's running-text lines with the text, if one is given; margin notes, headings and page "
+            "numbers stay."
+        )
 
     @property
     @override
@@ -148,7 +167,9 @@ class RefillStep(ModularPipelineBlocks):
         return [
             InputParam("layout", type_hint=Layout, required=True, description="The page to write into."),
             InputParam(
-                "text", type_hint=str, required=True, description="The running text; a blank line ends a paragraph."
+                "text",
+                type_hint=str,
+                description="The running text; a blank line ends a paragraph. None keeps the lines' own text.",
             ),
         ]
 
@@ -159,7 +180,8 @@ class RefillStep(ModularPipelineBlocks):
 
     def __call__(self, components: ModularPipeline, state: PipelineState) -> tuple[ModularPipeline, PipelineState]:
         block_state = self.get_block_state(state)
-        block_state.layout = refill(block_state.layout, block_state.text)
+        if block_state.text is not None:
+            block_state.layout = refill(block_state.layout, block_state.text)
         self.set_block_state(state, block_state)
         return components, state
 

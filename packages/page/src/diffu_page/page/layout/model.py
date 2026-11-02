@@ -71,17 +71,32 @@ type PageBox = tuple[float, float, float, float]  # x0, y0, x1, y1 in page pixel
 class TextLine(BaseModel):
     """One text line of a page, from the reader through the crops: its box and baseline height (page px), its text,
     its kind (running text, a table cell's line or a role, :class:`LineKind`), the block it came from, how it was made
-    if its template says (None: it does not, and the line is drawn as handwriting) and, in a table, its cell."""
+    if its template says (None: it does not, and the line is drawn as handwriting) and, in a table, its cell.
+
+    A line given without a text holds none (refill writes one into it); without a baseline, its baseline is its box's
+    bottom, as an ALTO line's without a ``BASELINE``.
+    """
 
     model_config = {"frozen": True}
 
-    text: str
+    text: str = ""
     box: PageBox
     baseline_y: float
     kind: LineKind = LineKind.BODY
     block: str = ""  # the PAGE TextRegion / TableCell or ALTO TextBlock it came from: its id, else its place
     production: Production | None = None
     cell: CellRef | None = None  # set for a table cell's line
+
+    @model_validator(mode="before")
+    @classmethod
+    def _baseline_at_the_box_bottom(cls, data: object) -> object:
+        if not isinstance(data, dict) or "baseline_y" in data:
+            return data
+        match data.get("box"):
+            case [_, _, _, bottom]:
+                return {**data, "baseline_y": bottom}
+            case _:
+                return data
 
     @model_validator(mode="after")
     def _table_lines_have_cells(self) -> Self:
@@ -108,6 +123,11 @@ class TextLine(BaseModel):
     def width(self) -> float:
         """The line's width (page px)."""
         return self.box[2] - self.box[0]
+
+    @property
+    def height(self) -> float:
+        """The line's height (page px)."""
+        return self.box[3] - self.box[1]
 
     @property
     def middle_x(self) -> float:

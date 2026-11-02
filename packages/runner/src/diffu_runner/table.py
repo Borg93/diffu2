@@ -73,7 +73,7 @@ class PageRow(BaseModel):
         lines: Each line's text and the judge's verdict on it, in reading order.
         unclear_lines: How many lines the labels tag ``unclear``: the judge could not confirm them.
         seed: The noise seed it was drawn from (None if it never reached drawing).
-        template: Its template's path.
+        template: Its template's path; None for a page given as a layout.
         job: The page job as drawn, as JSON (:class:`diffu_page.draw.jobs.PageJob`, planned whole): it draws the page
             again.
         model: The model directory that drew it.
@@ -92,7 +92,7 @@ class PageRow(BaseModel):
     lines: list[LineRow] = []
     unclear_lines: int | None = None
     seed: int | None = None
-    template: str
+    template: str | None = None
     job: str
     model: str
     run: str

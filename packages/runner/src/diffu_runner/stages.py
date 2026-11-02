@@ -201,7 +201,7 @@ class DrawActor:
             lines=lines,
             unclear_lines=crop.unclear_lines,
             seed=job.seed,
-            template=str(page.template),
+            template=None if page.template is None else str(page.template),
             job=page.model_dump_json(),
             model=str(self._draw.model),
             run=self._run,
@@ -212,7 +212,7 @@ class DrawActor:
         return PageRow(
             id=str(page.id),
             seed=seed,
-            template=str(page.template),
+            template=None if page.template is None else str(page.template),
             job=page.model_dump_json(),
             model=str(self._draw.model),
             run=self._run,

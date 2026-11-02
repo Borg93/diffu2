@@ -42,6 +42,9 @@ PAGE/ALTO page ──► LoadLayout ──► MarkFromScan ──► OpeningPage
    a blank line in the text ends a paragraph and the next starts on a fresh line; margin notes, headings and page
    numbers keep theirs. On a page whose running text is handwritten, a form's printed lines keep theirs too, and the
    density is the handwriting's; a page whose running text is all printed, a printed book's, has its print rewritten.
+   Lines with no text to measure (a layout given as boxes) take `CHARS_PER_LINE_ASPECT` (3.7) characters per unit of
+   their width over their height. A job without text skips this step: every line keeps its own. A job may give its
+   layout inline (`PageJob.layout`) instead of a template: it is one page, neither marked from a scan nor split.
 3. **Crops** (`PlanCropsStep`, `diffu_page.page.crops`, `diffu_page.draw.plan`): the page is cut into the windows the
    models were trained on (whole lines, about 1 megapixel at a 64 px line pitch, NeMo bucket sizes, margin notes joined
    to the column beside them), or planned whole as one crop at a pixel budget (`plan_whole_page`, `--whole-page`). Each
@@ -106,8 +109,9 @@ jobs/spark_guard.sh --need-gb 50 --name pages -- uv run diffu-generate --model r
   ask for one, `"side": "left"` or `"right"`); a spread its lines cannot split is refused and recorded as failed.
 - `--mark-from-scan` marks each template from the scan beside it before planning (`--print-hand-model`, by default
   `runs/print_hand/print_hand.pt`); `summary.json` names the classifier.
-- `--jobs run.jsonl` gives every page its own template, text, style, seed, reference and size: one
-  `diffu_page.draw.jobs.PageJob` per line, the run file diffu-runner reads:
+- `--jobs run.jsonl` gives every page its own template or inline layout, text (or none, to keep the lines' own),
+  style, seed, reference and size: one `diffu_page.draw.jobs.PageJob` per line, the run file diffu-runner reads
+  (fields: [INFERENCE.md section 5](INFERENCE.md#5-writing-a-run-file)):
 
   ```json
   {"template": "page_a.xml", "text": "Anno 1720 den 5 maj ...", "style": {"provenance": {"title": "the court records of Jämtlands domsaga", "years": "1720"}, "look": {"greyscale": false, "paper": "cream", "ink": "dark brown"}}, "page_pixels": 2000000, "id": "jamt_1720_p1"}

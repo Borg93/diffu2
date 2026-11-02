@@ -25,6 +25,7 @@ from diffu_page.captions.restyle import ReferenceCaption
 from diffu_page.draw.jobs import PageJob, crop_jobs, single_pages
 from diffu_page.draw.pipeline import DrawSettings
 from diffu_page.draw.plan import PageStyle, Reference
+from diffu_page.page.layout import Layout, TextLine
 from diffu_runner.export import export_pages
 from diffu_runner.run import RUNS, RunConfig, RunMeta, RunRefused, app, read_draw_settings, read_pages, run
 from diffu_runner.stages import DEVICE_FAULT_EXIT, Attention, DrawActor, DrawConfig, JudgeModel
@@ -57,11 +58,17 @@ def sample(tmp_path: Path) -> Reference:
 
 @pytest.fixture
 def pages(opening_page: Path, unsplit_spread_page: Path, sample: Reference) -> list[PageJob]:
-    """A run's two page jobs, each drawn from the sample: a two-page opening (``op``), and a spread whose pages its
-    lines cannot split (``spread``), which planning refuses."""
+    """A run's three page jobs, each drawn from the sample: a two-page opening (``op``), a spread whose pages its
+    lines cannot split (``spread``), which planning refuses, and a page given as a layout of boxes alone (``boxes``)."""
+    boxes = Layout(
+        width=1000,
+        height=1200,
+        lines=[TextLine(box=(100, 200 + 100 * i, 900, 270 + 100 * i), baseline_y=270 + 100 * i) for i in range(4)],
+    )
     return [
         PageJob(id="op", template=opening_page, text=TEXT, style=STYLE, reference=sample, seed=3),
         PageJob(id="spread", template=unsplit_spread_page, text=TEXT, style=STYLE, reference=sample),
+        PageJob(id="boxes", layout=boxes, text=TEXT, style=STYLE, reference=sample),
     ]
 
 
@@ -131,9 +138,10 @@ def test_diffu_run_draws_each_page_whole_into_the_table_and_keeps_a_page_that_fa
     rows = _rows(out)
     [meta_file] = (out / RUNS).iterdir()
     meta = RunMeta.model_validate_json(meta_file.read_text(encoding="utf-8"))
-    assert sorted(rows) == ["op_left", "op_right", "spread"]
-    assert (meta.drawn, meta.failed, meta.in_table, meta.retried) == (2, 1, 0, 0)
-    for single in single_pages(pages[0]):
+    assert sorted(rows) == ["boxes", "op_left", "op_right", "spread"]
+    assert (meta.drawn, meta.failed, meta.in_table, meta.retried) == (3, 1, 0, 0)
+    assert [rows[page_id]["template"] for page_id in ("op_left", "boxes")] == [str(pages[0].template), None]
+    for single in [*single_pages(pages[0]), pages[2]]:
         [job] = crop_jobs(_whole(single), 0)
         lines = [job.plan.lines[k].text for k in job.plan.reading_order]
         row = rows[str(single.id)]
@@ -166,12 +174,12 @@ def test_run_into_a_table_draws_only_the_pages_it_lacks_and_those_that_failed(
     meta = run(pages, _on_the_cpu(draw), out, jobs=jobs)
 
     rows = _rows(out)
-    assert sorted(rows) == ["op_left", "op_right", "spread"]
+    assert sorted(rows) == ["boxes", "op_left", "op_right", "spread"]
     assert (rows["op_left"]["run"], rows["op_left"]["image"]) == ("earlier", b"drawn")
     assert (rows["op_right"]["run"], rows["op_right"]["error"]) == (meta.run, None)
     assert rows["spread"]["run"] == meta.run
     assert rows["spread"]["error"].startswith("ValueError: ")
-    assert (meta.drawn, meta.failed, meta.in_table, meta.retried) == (1, 1, 1, 1)
+    assert (meta.drawn, meta.failed, meta.in_table, meta.retried) == (2, 1, 1, 1)
 
 
 @pytest.fixture(scope="module")
@@ -269,7 +277,7 @@ def test_read_pages_refuses_a_line_that_is_not_a_page_job(tmp_path: Path) -> Non
     jobs = tmp_path / "run.jsonl"
     jobs.write_text('\n{"id": "a"}\n', encoding="utf-8")
 
-    with pytest.raises(RunRefused, match="run.jsonl:2 is not a page job: template: Field required"):
+    with pytest.raises(RunRefused, match="run.jsonl:2 is not a page job: style: Field required"):
         read_pages(jobs)
 
 
