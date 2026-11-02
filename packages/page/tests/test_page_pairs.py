@@ -47,9 +47,7 @@ from diffu_page.data.page_pairs import (
     ScanTask,
     WindowEntry,
     build,
-    digest,
     in_processes,
-    page_id,
     scan_once,
     scanned,
     text_digests,
@@ -59,6 +57,7 @@ from diffu_page.draw.plan import CropPlan, plan_page, plan_whole_page, whole_pag
 from diffu_page.draw.sample import legible_sample, line_pitch
 from diffu_page.page.crops.grid import as_reference
 from diffu_page.page.layout import PageSide, ScanPage, load_xml_layout, scan_pages
+from diffu_page.page.layout.pages import digest, page_id
 
 ARJEPLOG = "GT-RA_arjeplogs_tingslag_20260220"
 EARLY, LATE = "Arjeplogs tingslag (1690-1700)", "Arjeplogs tingslag (1701-1710)"

@@ -13,7 +13,9 @@ from such an opening, so every one is left out, the sheets with the spreads: a s
 
 from __future__ import annotations
 
+import hashlib
 from enum import StrEnum
+from pathlib import Path
 
 from pydantic import BaseModel
 
@@ -38,6 +40,17 @@ class ScanPage(BaseModel):
     side: PageSide | None
     rect: PageBox
     layout: Layout
+
+
+def digest(text: str) -> str:
+    """A stable 12-hex-digit name for ``text``."""
+    return hashlib.sha1(text.encode()).hexdigest()[:12]
+
+
+def page_id(xml: Path, page: ScanPage) -> str:
+    """A page's id: the digest of its PAGE file's path ``xml`` (below the GT's root, as the page-pair sets take it),
+    and its side of an opening."""
+    return digest(xml.as_posix()) + (f"_{page.side}" if page.side else "")
 
 
 def gutter(layout: Layout) -> float | None:

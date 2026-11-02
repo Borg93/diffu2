@@ -48,7 +48,6 @@ from diffu_page.data.page_pairs import (
     ScanSettings,
     in_processes,
     load_scan,
-    page_id,
     page_record,
     recorded_settings,
     scan_digest,
@@ -57,6 +56,7 @@ from diffu_page.data.page_pairs import (
 from diffu_page.output import console
 from diffu_page.page.layout import load_xml_layout, scan_pages
 from diffu_page.page.layout.page_xml import find_scan
+from diffu_page.page.layout.pages import page_id
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 

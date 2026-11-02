@@ -108,6 +108,7 @@ from diffu_page.page.crops.geometry import regions_of
 from diffu_page.page.crops.grid import as_reference
 from diffu_page.page.layout import Layout, PageBox, ScanPage, is_unsplit_spread, load_xml_layout, scan_pages
 from diffu_page.page.layout.page_xml import find_scan
+from diffu_page.page.layout.pages import digest, page_id
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 
@@ -318,16 +319,6 @@ def tokenizer_of(model: str) -> PreTrainedTokenizerBase:
     if pipe.tokenizer is None:
         raise RuntimeError(f"{model}: its tokenizer did not load")
     return pipe.tokenizer
-
-
-def digest(text: str) -> str:
-    """A stable 12-hex-digit name for ``text``."""
-    return hashlib.sha1(text.encode()).hexdigest()[:12]
-
-
-def page_id(xml: Path, page: ScanPage) -> str:
-    """A page's id: its PAGE file's digest, and its side of an opening."""
-    return digest(xml.as_posix()) + (f"_{page.side}" if page.side else "")
 
 
 def form_prompts(plans: Mapping[Variant, CropPlan], size: tuple[int, int]) -> dict[Variant, str]:

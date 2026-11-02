@@ -155,6 +155,47 @@ Free OCR, and the Markdown). PaddleOCR-VL gets a sample per page asked `OCR:` an
 0-1000 (`--task spotting`); `--task elements` gives its recogniser a sample per element instead, the element cut from
 its page into `<out stem>_crops/` and answered with what the recogniser reads there.
 
+`diffu-reader-set --xml` reads real pages too, and a drawn run's exports: PAGE or ALTO files with their scans, a folder
+of them (the GT's root, a `diffu-run-export` folder) or a file listing them, one a line, read from its folder
+(`diffu_page.data.reader_pages`). Each scan is read as its layout and split into its pages, an opening's two each cut
+from it into `<out stem>_pages/`; a region's PAGE type is its element's kind, an untyped region running text; a scan
+both a PAGE and an ALTO file describe is read from its PAGE file (ALTO, as read, has neither types nor tables). Left
+out, each with why in `<out stem>.skipped.jsonl`: a scan wider than tall that its lines cannot split, one without a
+transcribed line, one that is not the size its file says, a file without its scan or that cannot be read, and the GT's
+second export of a collection (`GT-RA_landskapshandlingar_20260227`, the scans of `..._20260220` again). Two more
+readers, as ms-swift fine-tunes them (`messages` and `images`):
+
+- `--model unlimited-ocr-2` (ms-swift's model type `unlimited-ocr`, template `unlimited_ocr`, which shows each
+  `<image>` as `<PAGE><image>`): `--task parse` (the default) a sample per page, asked `<image>Multi page parsing.` and
+  answered with `<PAGE>` and a line per region in reading order, `<BLOCK>{label}[x0, y0, x1, y1]<FORK>{its lines}`, the
+  box on 0-1000 of the page and the label `text` (running text), `title` (a heading), `aside_text` (a margin note),
+  `page_number`, `header`, `footer` (a footer, catchword or signature mark) or `table` (its lines an HTML table);
+  `--task opening` a sample per scan, an opening's two pages as two images (`<image><image>Multi page parsing.`),
+  answered with a `<PAGE>` each.
+- `--model minicpm-ocr` (model type and template `minicpm_ocr`): `--task elements` (the default) a sample per region,
+  its crop asked `<image>Text Recognition:` and answered with its lines, a table's asked `<image>Table Recognition:`
+  and answered in OTSL between `<otsl>` and `</otsl>`; `--task page` a sample per page asked
+  `<image>Text Recognition:` and answered with its plain text, a line of the page a line, a blank line between two
+  regions.
+
+Beside each set `<out stem>.meta.jsonl` gives a line per sample: its id (a page's is the MOSS page-pair sets', the
+digest of its PAGE file's path below the folder given and its side, `<digest>_left`), `source` (`real`, or
+`synthetic` for a page diffu_page drew), its collection (`GT-...`), volume, scan, side of an opening and split. To keep
+the evaluation honest:
+
+```bash
+uv run diffu-reader-set --xml ~/Desktop/data/GT-Lejonet_HTR_202602 --model unlimited-ocr-2 \
+    --split-from-gt-test-lists --exclude data/readers/generator_pages.txt --out data/readers/unlimited_ocr_2.jsonl
+uv run diffu-reader-set --xml out/run1/files --model minicpm-ocr --task page --out data/readers/minicpm_drawn.jsonl
+```
+
+`--split-from-gt-test-lists` sends each scan a test list of its volume names (the GT's `page/test_*`, nested, so their
+union is `test_0100`; the second export's lists count for the first's scans, the same scans) to
+`<out stem>.test.jsonl` and `<out stem>.test.meta.jsonl`, never to `--out`. `--exclude` leaves out the pages a file
+lists, one a line (`#` a comment): a page by its page-pair id (`<digest>_left`; the digest alone names a scan's every
+page) or by the path of its PAGE file or scan, whole or its last parts (`<collection>/<volume>/<volume>/page/x.xml`, as
+the training crops record a page): the pages a generator was trained on.
+
 ## In Python
 
 A page planned into crop jobs on CPU, then each crop drawn by the crop pipeline, as diffu-generate and diffu-runner do

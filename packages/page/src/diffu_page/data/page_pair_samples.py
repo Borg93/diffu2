@@ -39,10 +39,8 @@ from diffu_page.data.page_pairs import (
     SCAN_RECORD,
     SCANNED,
     ScanResult,
-    digest,
     in_processes,
     load_scan,
-    page_id,
     record_reader,
     recorded_settings,
     scan_digest,
@@ -51,6 +49,7 @@ from diffu_page.draw.sample import legible_sample, line_pitch
 from diffu_page.output import console
 from diffu_page.page.layout import load_xml_layout, scan_pages
 from diffu_page.page.layout.page_xml import find_scan
+from diffu_page.page.layout.pages import digest, page_id
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 

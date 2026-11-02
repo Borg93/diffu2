@@ -87,8 +87,9 @@ uv run diffu-run-export --out out/run1 --to out/run1/files
 Every field of a page job, with a worked example of each combination (template or layout, new text or its own), the
 draw settings, outputs and running on KubeRay: [docs/INFERENCE.md](docs/INFERENCE.md). What the model does well and
 what not yet: its [model card](https://huggingface.co/Gabriel/diffu-moss-r6b). Drawing on one machine without Ray, and
-every option of `diffu-generate`: [docs/PIPELINE.md](docs/PIPELINE.md); its `--reader-labels` and `diffu-reader-set`
-also write the labels in the page readers' own formats (DeepSeek-OCR 2, PaddleOCR-VL), which `diffu-run` does not yet.
+every option of `diffu-generate`: [docs/PIPELINE.md](docs/PIPELINE.md); `diffu-reader-set` writes pages as fine-tuning
+sets in the page readers' own formats (DeepSeek-OCR 2, PaddleOCR-VL, and Unlimited-OCR 2 and MiniCPM-OCR for ms-swift),
+from a `--reader-labels` run, from `diffu-run-export`'s PAGE files or from the GT, split by its own test lists.
 Drawing in a published hand (`Gabriel/diffu-moss-hand-pahlman`, `-landskapshandlingar`, `-overstathallarambetet-1715`,
 `-eight`: PEFT adapters of MOSS-Image-Base's own DiT, `--lora hand=<folder>`): [docs/MOSS.md](docs/MOSS.md), "Hand
 LoRAs". Drawing with FLUX.3 and its LoRAs: [docs/FLUX3.md](docs/FLUX3.md).

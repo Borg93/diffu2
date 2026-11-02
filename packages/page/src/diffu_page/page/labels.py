@@ -10,7 +10,10 @@ region and each table one element, in reading order. :func:`to_markdown` is the 
 under the other, a heading after ``## ``, a table as HTML), :func:`to_grounded_markdown` is DeepSeek-OCR 2's grounded
 form of it (each element under its label and box), :func:`to_spotting` is PaddleOCR-VL's spotting of the page (each
 line's text and box), and the elements themselves, as JSON, are PaddleOCR-VL's layout elements (each with its
-PP-DocLayoutV3 category, its box and the prompt and text its recogniser reads its crop with).
+PP-DocLayoutV3 category, its box and the prompt and text its recogniser reads its crop with). :func:`to_unlimited_ocr`
+is pages as Unlimited-OCR 2 parses them (each element a block: its label, its box and its lines), :func:`to_plain_text`
+a page as MiniCPM-OCR reads it whole, and :func:`minicpm_ocr_recognition` an element's crop as MiniCPM-OCR reads it.
+A real page's layout (:func:`diffu_page.page.layout.load_xml_layout`) gives the same elements (:func:`layout_elements`).
 """
 
 from __future__ import annotations
@@ -24,7 +27,7 @@ from xml.sax.saxutils import escape
 
 from pydantic import BaseModel, Field, computed_field, model_validator
 
-from diffu_page.page.layout.model import ROLE_NAMES, CellRef, LineKind, Production
+from diffu_page.page.layout.model import ROLE_NAMES, CellRef, Layout, LineKind, PageBox, Production
 
 try:
     _VERSION = version("diffu-page")
@@ -417,13 +420,31 @@ GROUNDING_LABELS: dict[LineKind, str] = {
     LineKind.SIGNATURE_MARK: "text",
 }
 
+# Unlimited-OCR 2's block labels for each kind of element, of those it was trained on (Unlimited-OCR issue #51; its
+# post-processing, utils/process_unlimitedOCR2.py, reads the same): a heading is a title, written without a <LEVELn>
+# as its own Transformers output writes one (issue #114), and page furniture under the text a footer, as above.
+UNLIMITED_OCR_LABELS: dict[LineKind, str] = {
+    LineKind.BODY: "text",
+    LineKind.TABLE: "table",
+    LineKind.HEADING: "title",
+    LineKind.MARGINALIA: "aside_text",
+    LineKind.PAGE_NUMBER: "page_number",
+    LineKind.HEADER: "header",
+    LineKind.FOOTER: "footer",
+    LineKind.CATCH_WORD: "footer",
+    LineKind.SIGNATURE_MARK: "footer",
+}
+
 GROUNDING_SCALE = 999  # DeepSeek-OCR's boxes: on 0-999 of the image's width and height, as its decoder divides them
 SPOTTING_SCALE = 1000  # PaddleOCR-VL's spotted boxes: <|LOC_0|> to <|LOC_1000|> of the image's width and height
+UNLIMITED_OCR_SCALE = 1000  # Unlimited-OCR 2's blocks: on 0-1000 of the page, as its post-processing clamps them
 
 # PaddleOCR-VL's prompts: a crop or a page read as text, a crop as a table (OTSL), a page's lines spotted
 OCR_PROMPT = "OCR:"
-TABLE_PROMPT = "Table Recognition:"
+TABLE_PROMPT = "Table Recognition:"  # MiniCPM-OCR's for a table's crop too
 SPOTTING_PROMPT = "Spotting:"
+TEXT_PROMPT = "Text Recognition:"  # MiniCPM-OCR's for a text region's crop or a whole page (its model card)
+PARSE_PROMPT = "Multi page parsing."  # Unlimited-OCR 2's after its pages' images, one page or several (its README)
 
 
 class ElementLine(BaseModel):
@@ -546,6 +567,50 @@ def page_elements(labels: PageLabels) -> PageElements:
     return PageElements(image=labels.image, width=labels.width, height=labels.height, elements=elements)
 
 
+def _on_page(box: PageBox, width: int, height: int) -> Rect | None:
+    """``box`` cut to the page (``width`` x ``height`` px) and rounded to whole pixels; None when nothing of it is on the
+    page."""
+    x0, y0 = round(max(box[0], 0)), round(max(box[1], 0))
+    x1, y1 = round(min(box[2], width)), round(min(box[3], height))
+    return (x0, y0, x1, y1) if x1 > x0 and y1 > y0 else None
+
+
+def layout_elements(layout: Layout, image: str) -> PageElements:
+    """A layout's page (``image`` its image's name) as the page readers read it, its elements made as a drawn page's
+    are (:func:`page_elements`): each text region one, each table one, in the layout's reading order. Each line's box
+    is cut to the page, a line with nothing on it left out (a transcriber's box may run over the scan's edge or the
+    gutter of an opening); a line its file does not say how it was made counts as handwritten."""
+    lines: list[LineLabel] = []
+    for order, line in enumerate(layout.lines):
+        box = _on_page(line.box, layout.width, layout.height)
+        if box is None:
+            continue
+        x0, y0, x1, y1 = box
+        lines.append(
+            LineLabel(
+                text=line.text,
+                polygon=[(x0, y0), (x1, y0), (x1, y1), (x0, y1)],
+                region=line.kind,
+                block=line.block,
+                order=order,
+                production=line.production or Production.HANDWRITTEN,
+                cell=line.cell,
+            )
+        )
+    return page_elements(PageLabels(width=layout.width, height=layout.height, image=image, lines=lines))
+
+
+def _on_grid(box: Rect, page: PageElements, scale: int) -> Rect:
+    """``box`` (page px) on a reader's grid: x on 0-``scale`` of the page's width, y of its height."""
+    x0, y0, x1, y1 = box
+    return (
+        round(scale * x0 / page.width),
+        round(scale * y0 / page.height),
+        round(scale * x1 / page.width),
+        round(scale * y1 / page.height),
+    )
+
+
 def to_markdown(page: PageElements) -> str:
     """The page as Markdown: its elements in reading order, a blank line between two. Each line of the page stays a
     line of its own, as transcribed: Markdown reads lines one under the other as one paragraph."""
@@ -555,9 +620,7 @@ def to_markdown(page: PageElements) -> str:
 def _grounding(element: PageElement, page: PageElements) -> str:
     """DeepSeek-OCR's reference to an element: its label and its box, x on 0-999 of the page's width, y of its
     height."""
-    x0, y0, x1, y1 = element.box
-    sides = ((x0, page.width), (y0, page.height), (x1, page.width), (y1, page.height))
-    box = ", ".join(str(round(GROUNDING_SCALE * value / size)) for value, size in sides)
+    box = ", ".join(str(value) for value in _on_grid(element.box, page, GROUNDING_SCALE))
     return f"<|ref|>{GROUNDING_LABELS[element.kind]}<|/ref|><|det|>[[{box}]]<|/det|>"
 
 
@@ -571,10 +634,7 @@ def to_grounded_markdown(page: PageElements) -> str:
 def _spotted(line: ElementLine, page: PageElements) -> str:
     """A line as PaddleOCR-VL spots it: its text, then the corners of its box clockwise from the top left, each an x
     and a y on 0-1000 of the page's width and height."""
-    x0, y0, x1, y1 = (
-        round(SPOTTING_SCALE * value / size)
-        for value, size in zip(line.box, (page.width, page.height, page.width, page.height), strict=True)
-    )
+    x0, y0, x1, y1 = _on_grid(line.box, page, SPOTTING_SCALE)
     return line.text + "".join(f"<|LOC_{value}|>" for value in (x0, y0, x1, y0, x1, y1, x0, y1))
 
 
@@ -582,6 +642,57 @@ def to_spotting(page: PageElements) -> str:
     """The page as PaddleOCR-VL spots its text (``Spotting:``): every line of it in reading order, a table's cell by
     cell, each on a line of its own, its text then its box as four corners (``<|LOC_x|><|LOC_y|>`` each)."""
     return "\n".join(_spotted(line, page) for element in page.elements for line in element.lines)
+
+
+def _lines(element: PageElement) -> str:
+    """An element's lines one under the other, a table's cell by cell."""
+    return "\n".join(line.text for line in element.lines)
+
+
+def _block(element: PageElement, page: PageElements) -> str:
+    """An element as Unlimited-OCR 2 parses it: ``<BLOCK>``, its label, its box on 0-1000 of the page and after
+    ``<FORK>`` its lines one under the other, a table as HTML."""
+    box = ", ".join(str(value) for value in _on_grid(element.box, page, UNLIMITED_OCR_SCALE))
+    content = _html_table(_table_grid(element.lines)) if element.kind is LineKind.TABLE else _lines(element)
+    return f"<BLOCK>{UNLIMITED_OCR_LABELS[element.kind]}[{box}]<FORK>{content}"
+
+
+def to_unlimited_ocr(pages: list[PageElements]) -> str:
+    """Pages as Unlimited-OCR 2 parses them, in the order its images are shown: each a ``<PAGE>`` and its elements in
+    reading order, a block each, one a line (``<BLOCK>text[x0, y0, x1, y1]<FORK>...``), as its Transformers output
+    writes a page (Unlimited-OCR issue #114); the next page's ``<PAGE>`` follows its last block, as its post-processing
+    reads pages apart."""
+    return "".join("<PAGE>" + "\n".join(_block(element, page) for element in page.elements) for page in pages)
+
+
+def to_plain_text(page: PageElements) -> str:
+    """The page as MiniCPM-OCR reads it whole (``Text Recognition:``, plain text): every line of it in reading order, a
+    table's cell by cell, each on a line of its own, a blank line between two elements."""
+    return "\n\n".join(_lines(element) for element in page.elements)
+
+
+class Recognition(BaseModel):
+    """An element's crop as a recogniser is taught it: the prompt it is asked with and the answer, what it reads
+    there."""
+
+    model_config = {"frozen": True}
+
+    prompt: str
+    answer: str
+
+
+def paddleocr_vl_recognition(element: PageElement) -> Recognition:
+    """An element's crop as PaddleOCR-VL's recogniser reads it: its prompt and text (a table as OTSL)."""
+    return Recognition(prompt=element.task, answer=element.text)
+
+
+def minicpm_ocr_recognition(element: PageElement) -> Recognition:
+    """An element's crop as MiniCPM-OCR reads it: a table asked ``Table Recognition:`` and answered in OTSL between
+    ``<otsl>`` and ``</otsl>``, as it answers (its FAQ, "Table output shows <otsl>"), any other element asked
+    ``Text Recognition:`` and answered with its lines one under the other."""
+    if element.kind is LineKind.TABLE:
+        return Recognition(prompt=TABLE_PROMPT, answer=f"<otsl>{element.text}</otsl>")
+    return Recognition(prompt=TEXT_PROMPT, answer=element.text)
 
 
 def to_elements_json(page: PageElements) -> str:

@@ -85,6 +85,13 @@ own FLUX.3-architecture model), is in git history (`git log -p -- TODO.md`).
       (3) draw pages aimed at what it misreads, on the volumes' own layouts; (4) oversample them; (5) fine-tune the
       reader on real and on real + synthetic pages, compared on held-out real pages (scratchpad
       `readers/finetune_paddle.py` overfits one page on CPU).
+- [ ] The Unlimited-OCR 2 and MiniCPM-OCR sets (`diffu-reader-set --model unlimited-ocr-2 | minicpm-ocr`) follow the
+      models' own code, docs and one real Unlimited-OCR 2 output (its issue #114); check them against a few base-model
+      outputs on our pages before fine-tuning, for format only: Unlimited-OCR 2's box grid (0-1000, as its
+      post-processing clamps; v1's documentation says 0-999), whether a page's `<PAGE>` follows the last block with no
+      line break, and whether it keeps a paragraph's line breaks or runs its lines together.
+- [ ] A reader set of the whole GT has not been written: openings are cut into their pages one scan at a time on one
+      core (a few tenths of a second a scan, some 27,000 openings).
 
 ## Pages, templates and labels
 
@@ -172,8 +179,6 @@ The runner and the KubeRay hand-off: [docs/RAY.md](docs/RAY.md), [docs/INFERENCE
 - [ ] New text goes into the running-text lines only: a template's table cells, margin notes and headings keep their
       own (a layout gives each of its lines its text), and text left over when the lines run out is dropped silently;
       return it, so a document continues on its next page.
-- [ ] `diffu-run` writes ALTO and PAGE only: the page readers' own formats come from `diffu-generate --reader-labels` and
-      `diffu-reader-set`.
 
 ## Repo
 

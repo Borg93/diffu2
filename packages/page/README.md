@@ -25,7 +25,8 @@ loop over many items).
   `build_crops` (FLUX.3's training windows), `pick_eval` (their held-out set), `style_pairs` (a crop and a reference
   crop of the same hand, for FLUX.3's style-reference LoRA and MOSS-Image), `page_pairs` (whole pages with a sample
   page, for MOSS-Image) and `page_pair_forms` (a page-pair manifest's rows given every prompt form); `evalset.py` is
-  the eval sets' rows, which the builders write and diffu-evaluate reads.
+  the eval sets' rows, which the builders write and diffu-evaluate reads, and `reader_pages.py` the pages a page
+  reader's set is written from (a run's, or PAGE and ALTO files' with their scans, split by the GT's test lists).
 - **`cli/`**: `diffu-generate` (pages), `diffu-evaluate` (held-out crops), `diffu-draw-pairs` (a MOSS reference
-  training's own pairs drawn back beside their real pages: an overfit test) and `diffu-reader-set` (a run's pages as a
-  page reader's fine-tuning set).
+  training's own pairs drawn back beside their real pages: an overfit test) and `diffu-reader-set` (a run's pages, or
+  PAGE and ALTO files' pages, as a page reader's fine-tuning set).
