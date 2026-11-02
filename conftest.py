@@ -26,6 +26,7 @@ from diffu_moss.init import write_moss_repo
 from diffu_moss.train.cache import CacheSettings, write_cache
 from diffu_moss.train.export import export_merged
 from diffu_moss.train.loop import TrainSettings, train
+from diffu_moss.train.records import EXPORT_RECORD, ExportRecord
 from diffu_moss.transformer import MossTransformer
 from diffu_page.captions.look import ScanLook
 from diffu_page.captions.prompt import PageStyle
@@ -450,12 +451,17 @@ TINY_MOSS_DIT = {
 
 @pytest.fixture(scope="session")
 def tiny_moss_base(tiny_flux3_snapshot: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """A tiny MOSS-Image Base snapshot: MOSS's own tokenizer (downloaded once), a tiny Qwen3.5 text encoder, a VAE of
-    FLUX.2's class that downsamples 8x as MOSS's does (tiny FLUX.3's) and a tiny DiT, all random weights, so a prompt
-    changes what it draws."""
+    """A tiny MOSS-Image Base snapshot: MOSS's own tokenizer and scheduler config (downloaded once), a tiny Qwen3.5
+    text encoder, a VAE of FLUX.2's class that downsamples 8x as MOSS's does (tiny FLUX.3's) and a tiny DiT, all random
+    weights, so a prompt changes what it draws."""
     base = tmp_path_factory.mktemp("moss_base")
-    snapshot = Path(snapshot_download(MOSS_BASE, revision=MOSS_BASE_REVISION, allow_patterns=["tokenizer/*"]))
+    snapshot = Path(
+        snapshot_download(
+            MOSS_BASE, revision=MOSS_BASE_REVISION, allow_patterns=["tokenizer/*", "scheduler/scheduler_config.json"]
+        )
+    )
     shutil.copytree(snapshot / "tokenizer", base / "tokenizer")
+    shutil.copytree(snapshot / "scheduler", base / "scheduler")
     torch.manual_seed(0)
     Qwen3_5Model(Qwen3_5Config(**TINY_QWEN3_5)).save_pretrained(base / "text_encoder")
     vae_config = {**AutoencoderKLFlux2.load_config(tiny_flux3_snapshot, subfolder="vae"), **TINY_FLUX3_VAE}
@@ -470,6 +476,21 @@ def tiny_moss(tiny_moss_base: Path, tmp_path_factory: pytest.TempPathFactory) ->
     middle block."""
     repo = tmp_path_factory.mktemp("moss")
     write_moss_repo(repo, base=tiny_moss_base, uncond_skip_layers=(1,))
+    return repo
+
+
+@pytest.fixture(scope="session")
+def tiny_moss_reference(tiny_moss_base: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A tiny MOSS-Image repo whose DiT takes a reference image, as a reference training's export records it (random
+    weights of their own), its unconditional pass skipping its middle block."""
+    dit = tmp_path_factory.mktemp("moss_reference_dit")
+    torch.manual_seed(1)
+    MossTransformer(**TINY_MOSS_DIT).save_pretrained(dit)
+    ExportRecord(takes_reference=True, base=str(tiny_moss_base / "transformer"), checkpoint=str(dit)).write(
+        dit / EXPORT_RECORD
+    )
+    repo = tmp_path_factory.mktemp("moss_reference")
+    write_moss_repo(repo, base=tiny_moss_base, transformer=dit, uncond_skip_layers=(1,))
     return repo
 
 

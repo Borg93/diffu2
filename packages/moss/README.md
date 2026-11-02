@@ -12,6 +12,9 @@ published design, around the released weights, and our own reference training. H
 - `sample_caption.py`: a reference-drawn caption in the forms MOSS draws from and trains on (the sample image named,
   dropped, or its look words dropped).
 - `init.py`: `diffu-moss-init`, a model directory of the Base snapshot's components around its own or a trained DiT.
+- `export_hf.py`: `diffu-moss-export-hf`, a model directory or checkpoint written in the official Hub layout
+  (`model_index.json`, `MOSSImageTransformer`, `rope.bands`), the folder SGLang Diffusion loads; SGLang's sample-page
+  input is `packages/sglang_moss`.
 - `train/`: the reference training: `pairs.py` (style and page pairs, the prompt forms), `cache.py`
   (`diffu-moss-cache-pairs`), `restyle.py` (look changes for the sample form), `loop.py` (`diffu-moss-train-ref`: a
   LoRA, or `--full` with `full.py` and `muon.py`), `sigmas.py`, `distributed.py` (FSDP2 over several GPUs),
