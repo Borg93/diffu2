@@ -20,20 +20,38 @@ their scans' exposure, take the drawn grey or colours alike. Every transform is 
 depends on its own colour (and its image's ink and paper) alone, never on its place, so an image keeps its size and
 every line its box, and the Layout prompt's boxes stay true. The ranges keep a restyled page a plausible archive scan,
 as looked at beside the real scans of the eight hands' volumes.
+
+A hand change (:class:`HandRestyle`, ``--hand-restyle-share``) is the same for the hand: one geometric change, its
+parameters drawn once, applied alike to the target and its sample, so each volume's hand comes slanted, weighted and
+spaced otherwise and the hand too can only come from the sample: the ink's strokes thinned by up to half a pixel or
+thickened by up to one on each side (each image's ink coverage, read from its ink and paper as above, its paper's grain
+left out, dilated or eroded by that fraction of a pixel and laid on in its strokes' own colour), the page sheared
+across about its middle row by up to ten degrees, and scaled across by 0.85 to 1.15 and fitted back onto the latent
+grid at its pixel count. The target's Layout prompt moves with it
+(:meth:`HandRestyle.moved_prompt`): each box the bounding box of where its ink goes, on the changed page's canvas; a
+change that would move a line off its page or onto another line is refused (:class:`HandRefused`).
 """
 
 from __future__ import annotations
 
+import json
+import math
 import random
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from itertools import combinations
 from typing import Annotated, Literal
 
+import torch
 from diffusers.image_processor import VaeImageProcessor
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 from torch import Tensor
+from torch.nn import functional as F
+
+from diffu_moss.latents import PIXELS_PER_LATENT
 
 type Rgb = tuple[int, int, int]  # 0-255
+type CentredBox = list[float]  # y0, x0, y1, x1: px from a canvas's centre, as a Layout prompt's items give them
 
 LUMA = (0.299, 0.587, 0.114)  # ITU-R 601-2, as PIL converts to greyscale
 INK_SHARE = 0.02  # an image's ink: the median luminance of its darkest 2 %
@@ -63,6 +81,16 @@ TINT_WARMTH = (-0.03, 0.03)  # red raised and blue lowered by it (cooler below 0
 TINT_CONTRAST = (0.88, 1.12)
 TINT_BRIGHTNESS = (-0.04, 0.04)
 TINT_GAMMA = (0.87, 1.15)
+
+SLANTS = (-10.0, 10.0)  # degrees the letters lean further right (left below 0): the page sheared by its tangent
+# px the ink's strokes grow by on each side (shrink, below 0). A 1 MP page's pen strokes are 1-2 px wide: thinned by
+# a whole px or two they broke up or were gone, thickened by two its letters filled in
+STROKES = (-0.5, 1.0)
+WIDTHS = (0.85, 1.15)  # the page scaled across by it, then fitted back to its pixel count: the letters' width
+INK_DEAD_ZONE = 0.25  # of the range from paper to ink: a pixel covered less is the paper's grain, never stroke
+INK_CORE = 0.6  # of the range above the dead zone: a pixel covered more is a stroke's core, its colour the ink's
+OFF_PAGE = "a line off its page"
+OVERLAP = "lines onto each other"
 
 
 def _luma(rgb: Tensor) -> Tensor:
@@ -198,3 +226,172 @@ def draw_restyles(count: int, rng: random.Random) -> list[Restyle]:
     kinds = [DRAWS[k % len(DRAWS)] for k in range(count)]
     rng.shuffle(kinds)
     return [draw(rng) for draw in kinds]
+
+
+class HandRefused(ValueError):
+    """A hand change refused for a page: it would move a line off the page, or onto another line (``reason``)."""
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(f"the hand change would move {reason}")
+
+
+def _median_colour(rgb: Tensor, pixels: Tensor) -> Tensor:
+    """The median of each channel ``[3, 1, 1]`` over the pixels ``pixels`` (a ``[H * W]`` mask) of one image
+    ``[3, H, W]``."""
+    return rgb.flatten(1)[:, pixels].median(dim=1).values.view(3, 1, 1)
+
+
+def _dilated(values: Tensor) -> Tensor:
+    """``values`` ``[B, 1, H, W]``, each the largest of its 3 x 3 neighbourhood, the edges repeated."""
+    height, width = values.shape[-2:]
+    padded = F.pad(values, (1, 1, 1, 1), mode="replicate")
+    largest = values
+    for dy in (0, 1, 2):
+        for dx in (0, 1, 2):
+            largest = largest.maximum(padded[..., dy : dy + height, dx : dx + width])
+    return largest
+
+
+def _stroked(rgb: Tensor, stroke: float) -> Tensor:
+    """Images ``[B, 3, H, W]`` in [0, 1] with their ink's strokes ``stroke`` px wider on each side (narrower below 0,
+    at most one px either way). Each image's ink coverage (by :func:`_levels`, its part above
+    :data:`INK_DEAD_ZONE`, so the paper's own grain is no ink) takes ``stroke`` of the step to its 3 x 3 dilation (or
+    erosion), and each pixel takes the coverage it gains in the colour of the strokes' cores (the median of the pixels
+    covered beyond :data:`INK_CORE`), or gives up what it loses towards the paper's colour (the median of the pixels
+    in the dead zone) and no further: the paper beyond the strokes keeps every pixel and its grain, and a stroke its
+    colour."""
+    if stroke == 0:
+        return rgb
+    changed = []
+    for image in rgb:  # each image's own ink and paper
+        coverage = (1 - _levels(_luma(image[None]), 0.0, 1.0)).clamp(0, 1)[0]
+        ink_cover = ((coverage - INK_DEAD_ZONE) / (1 - INK_DEAD_ZONE)).clamp(0, 1)
+        cores, grain = (ink_cover >= INK_CORE).flatten(), (coverage < INK_DEAD_ZONE).flatten()
+        if not (cores.any() and grain.any()):  # no stroke, or no paper, to change between
+            changed.append(image)
+            continue
+        ink, paper = _median_colour(image, cores), _median_colour(image, grain)
+        if stroke > 0:
+            gained = stroke * (_dilated(ink_cover[None])[0] - ink_cover)
+            changed.append(image + gained * (1 - INK_DEAD_ZONE) * (ink - paper))
+        else:
+            lost = -stroke * (ink_cover + _dilated(-ink_cover[None])[0])  # its coverage minus its 3 x 3 erosion's
+            changed.append((image + lost * (1 - INK_DEAD_ZONE) * (paper - ink)).minimum(image.maximum(paper)))
+    return torch.stack(changed).clamp(0, 1)
+
+
+def _sheared(rgb: Tensor, shear: float) -> Tensor:
+    """Images ``[B, 3, H, W]`` in [0, 1] sheared across about their middle row: a row ``d`` px above it moved
+    ``shear * d`` px right (below it, left), sampled bicubically; the edges it uncovers take the image mirrored there."""
+    batch, _, height, width = rgb.shape
+    # each drawn pixel's place in the image read, both in [-1, 1] of the image (affine_grid's coordinates)
+    theta = rgb.new_tensor([[1.0, shear * height / width, 0.0], [0.0, 1.0, 0.0]]).expand(batch, 2, 3)
+    grid = F.affine_grid(theta, [batch, 3, height, width], align_corners=False)
+    return F.grid_sample(rgb, grid, mode="bicubic", padding_mode="reflection", align_corners=False).clamp(0, 1)
+
+
+def _on_grid(side: float) -> int:
+    """A side, rounded onto the latent grid (at least one cell)."""
+    return max(PIXELS_PER_LATENT, round(side / PIXELS_PER_LATENT) * PIXELS_PER_LATENT)
+
+
+def _edge(value: float, rounding: Callable[[float], int]) -> int:
+    """A box's edge as whole pixels, floored or ceiled as the Layout prompt's compiler rounds them (a float's last
+    digits dropped first, so 3.0000000004 is 3)."""
+    return rounding(round(value, 9))
+
+
+def _overlap(a: Sequence[float], b: Sequence[float]) -> bool:
+    """Whether two boxes (``y0, x0, y1, x1``) share some area."""
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
+class HandRestyle(BaseModel):
+    """A change of hand: the ink's strokes ``stroke`` px wider on each side (narrower below 0; :func:`_stroked`), the
+    page sheared across about its middle row so that its letters lean ``slant`` degrees further right (left below 0),
+    then scaled across by ``width`` and fitted back onto the latent grid at its pixel count (:meth:`size`): wider or
+    narrower letters at the page's own writing scale."""
+
+    model_config = ConfigDict(frozen=True)
+
+    kind: Literal["hand"] = "hand"
+    slant: float = Field(gt=-45, lt=45)
+    stroke: float = Field(ge=-1, le=1)
+    width: float = Field(gt=0)
+
+    @property
+    def shear(self) -> float:
+        """How many px across a row moves per px above the page's middle row: the slant's tangent."""
+        return math.tan(math.radians(self.slant))
+
+    def size(self, size: tuple[int, int]) -> tuple[int, int]:
+        """The size (width, height) px an image of ``size`` comes out at: scaled across by ``width``, then by the same
+        factor on both sides back to its pixel count, each side rounded onto the latent grid."""
+        width, height = size
+        root = math.sqrt(self.width)
+        return _on_grid(width * root), _on_grid(height / root)
+
+    def apply(self, image: Image.Image) -> Image.Image:
+        """``image`` in this hand: an RGB image of :meth:`size`, 8 bits a channel, as a drawing is given a sample."""
+        rgb = VaeImageProcessor.numpy_to_pt(VaeImageProcessor.pil_to_numpy(image.convert("RGB")))
+        changed = _stroked(rgb, self.stroke)
+        if self.slant:  # a slant of 0 resamples nothing
+            changed = _sheared(changed, self.shear)
+        sheared = VaeImageProcessor.numpy_to_pil(VaeImageProcessor.pt_to_numpy(changed))[0]
+        return sheared.resize(self.size(sheared.size), Image.Resampling.LANCZOS)
+
+    def sheared_box(self, box: Sequence[float]) -> CentredBox:
+        """A box (``y0, x0, y1, x1``, px from its canvas's centre) sheared: the bounding box of where the ink inside it
+        goes, its rows kept, its sides moved by the shift of its top and of its bottom row."""
+        y0, x0, y1, x1 = box
+        shifts = (-self.shear * y0, -self.shear * y1)  # a row above the middle (y < 0) moves right as the slant grows
+        return [y0, x0 + min(shifts), y1, x1 + max(shifts)]
+
+    def moved_prompt(self, prompt: str, size: tuple[int, int]) -> tuple[str, tuple[int, int]]:
+        """``prompt``, a compiled Layout prompt of a page of ``size`` (width, height) px, for the page in this hand,
+        and the page's size then (:meth:`size`): each item's box sheared (:meth:`sheared_box`) and scaled with the
+        page, its top and left edges floored and its bottom and right ceiled to whole px as the compiler rounds them;
+        the paper, which covers the whole canvas, the whole new canvas. Every other word is kept.
+
+        Raises:
+            HandRefused: If the shear would move an item's box off the page, or make two lines' boxes overlap that did
+                not.
+        """
+        width, height = size
+        changed = self.size(size)
+        canvas = [-height / 2, -width / 2, height / 2, width / 2]
+        layout = json.loads(prompt)
+        items = layout["items"]
+        sheared = [self.sheared_box(item["bbox"]) for item in items]
+        paper = [item["bbox"] == canvas for item in items]
+        if any(
+            box[1] < canvas[1] or box[3] > canvas[3] for box, whole in zip(sheared, paper, strict=True) if not whole
+        ):
+            raise HandRefused(OFF_PAGE)
+        lines = [index for index, item in enumerate(items) if item["label"] == "text"]
+        for a, b in combinations(lines, 2):
+            if _overlap(sheared[a], sheared[b]) and not _overlap(items[a]["bbox"], items[b]["bbox"]):
+                raise HandRefused(OVERLAP)
+        across, down = changed[0] / width, changed[1] / height
+        for item, box, whole in zip(items, sheared, paper, strict=True):
+            if whole:
+                item["bbox"] = [-changed[1] // 2, -changed[0] // 2, changed[1] // 2, changed[0] // 2]
+                continue
+            y0, x0, y1, x1 = box
+            item["bbox"] = [
+                _edge(y0 * down, math.floor),
+                _edge(x0 * across, math.floor),
+                _edge(y1 * down, math.ceil),
+                _edge(x1 * across, math.ceil),
+            ]
+        return json.dumps(layout, ensure_ascii=False, separators=(",", ":"), allow_nan=False), changed
+
+
+def draw_hand_restyles(count: int, rng: random.Random) -> list[HandRestyle]:
+    """``count`` hand changes drawn from ``rng``, each its slant, its stroke and its width within the module's
+    ranges."""
+    return [
+        HandRestyle(slant=_uniform(rng, SLANTS), stroke=_uniform(rng, STROKES), width=_uniform(rng, WIDTHS))
+        for _ in range(count)
+    ]

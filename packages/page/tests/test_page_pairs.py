@@ -24,8 +24,8 @@ import pytest
 from diffusers.modular_pipelines import SequentialPipelineBlocks
 from PIL import Image, ImageDraw
 
-from diffu_moss.train.cache import CacheSettings, load_sample, read_entries, write_cache
-from diffu_moss.train.pairs import PagePairRow, PageWindow, Variant
+from diffu_moss.train.cache import CacheSettings, load_sample, read_entries, read_record, write_cache
+from diffu_moss.train.pairs import PagePairRow, PageWindow, PromptMix, SampleSize, Variant
 from diffu_page.captions.look import scan_look
 from diffu_page.captions.prompt import PageStyle
 from diffu_page.captions.provenance import provenance_of
@@ -33,6 +33,7 @@ from diffu_page.captions.restyle import ReferenceCaption
 from diffu_page.cli.generate import page_reference
 from diffu_page.data.evalset import read_crops, read_jsonl, write_jsonl
 from diffu_page.data.page_pair_forms import write_every_form
+from diffu_page.data.page_pair_samples import write_legible_samples
 from diffu_page.data.page_pairs import (
     IN_FLIGHT,
     BuildCounts,
@@ -55,6 +56,7 @@ from diffu_page.data.page_pairs import (
 )
 from diffu_page.draw.pipeline import FAMILIES, crop_blocks
 from diffu_page.draw.plan import CropPlan, plan_page, plan_whole_page, whole_page_size
+from diffu_page.draw.sample import legible_sample, line_pitch
 from diffu_page.page.crops.grid import as_reference
 from diffu_page.page.layout import PageSide, ScanPage, load_xml_layout, scan_pages
 
@@ -204,6 +206,8 @@ def test_page_pairs_prompt_a_page_as_drawing_prompts_it_planned_whole_from_its_s
         Variant.LOOK: drawn(ReferenceCaption.NAMED),
         Variant.PLAIN: drawn(ReferenceCaption.HAND),
         Variant.SAMPLE: drawn(ReferenceCaption.SAMPLE),
+        Variant.SAMPLE_LOOK: drawn(ReferenceCaption.SAMPLE_LOOK),
+        Variant.GENERIC: drawn(ReferenceCaption.GENERIC),
     }
     assert row.prompts == expected
     assert [json.loads(row.prompts[variant])["summary"]["caption"] for variant in Variant] == [
@@ -215,17 +219,30 @@ def test_page_pairs_prompt_a_page_as_drawing_prompts_it_planned_whole_from_its_s
         "Create a flat, evenly lit archival scan of a new handwritten page from the court minutes of Arjeplogs "
         "tingslag, dated 1690–1700, in the hand, ink and paper of the sample image. The paper carries 3 lines of "
         "cursive handwriting.",
-        # the sample alone: no archive, no years, no look
+        # the content mix's: no archive, no years in any; the sample alone, no look either
         "Create a flat, evenly lit archival scan of a new handwritten page in the hand, ink and paper of the sample "
         "image. The paper carries 3 lines of cursive handwriting.",
+        "Create a flat, evenly lit archival scan of a new handwritten page in the hand, ink and paper of the sample "
+        "image. The yellowed paper carries 3 lines of cursive handwriting in dark brown ink.",
+        "Flat, evenly lit archival scan of a handwritten page. The paper carries 3 lines of cursive handwriting.",
     ]
-    assert {item["caption"] for item in json.loads(row.prompts[Variant.PLAIN])["items"]} == {
-        "Aged paper of a bound archival volume.",  # its colour left to the sample image
-        "Handwritten line, cursive script in the sample image's hand and ink.",
-    }
-    assert {item["caption"] for item in json.loads(row.prompts[Variant.SAMPLE])["items"]} == {
-        "The paper of the sample image.",  # no word of its look
-        "Handwritten line, cursive script in the sample image's hand and ink.",
+    assert {
+        variant: {item["caption"] for item in json.loads(row.prompts[variant])["items"]}
+        for variant in (Variant.PLAIN, Variant.SAMPLE, Variant.SAMPLE_LOOK, Variant.GENERIC)
+    } == {
+        Variant.PLAIN: {
+            "Aged paper of a bound archival volume.",  # its colour left to the sample image
+            "Handwritten line, cursive script in the sample image's hand and ink.",
+        },
+        Variant.SAMPLE: {
+            "The paper of the sample image.",  # no word of its look
+            "Handwritten line, cursive script in the sample image's hand and ink.",
+        },
+        Variant.SAMPLE_LOOK: {
+            "Aged yellowed paper of a bound archival volume.",
+            "Handwritten line, cursive script in the sample image's hand, in dark brown ink.",
+        },
+        Variant.GENERIC: {"Aged paper of a bound archival volume.", "Handwritten line, cursive script."},
     }
 
 
@@ -282,6 +299,7 @@ def test_page_pairs_hold_out_whole_volumes_their_pairs_in_val_and_a_drawable_eva
     assert [crop.file_name for crop in eval_crops] == [f"{row.id}.jpg" for row in _rows(built, "val.jsonl")[:2]]
     for crop in eval_crops:
         assert crop.reference is not None
+        assert crop.plan().whole_page  # drawn as a whole page is: a legible sample at its pixel count
         assert (built / "val_eval" / crop.file_name).samefile(built / "pages" / crop.file_name)
         assert (built / "val_eval" / crop.reference).samefile(built / crop.reference)
 
@@ -512,6 +530,8 @@ def test_page_pairs_prompt_a_window_as_drawing_prompts_it_planned_as_a_crop_from
         Variant.LOOK: drawn(ReferenceCaption.NAMED),
         Variant.PLAIN: drawn(ReferenceCaption.HAND),
         Variant.SAMPLE: drawn(ReferenceCaption.SAMPLE),
+        Variant.SAMPLE_LOOK: drawn(ReferenceCaption.SAMPLE_LOOK),
+        Variant.GENERIC: drawn(ReferenceCaption.GENERIC),
     }
     assert [json.loads(row.prompts[variant])["summary"]["caption"] for variant in Variant] == [
         "Flat, evenly lit archival scan of a handwritten page from the court minutes of Arjeplogs tingslag, dated "
@@ -524,6 +544,9 @@ def test_page_pairs_prompt_a_window_as_drawing_prompts_it_planned_as_a_crop_from
         "cursive handwriting.",
         "Create a flat, evenly lit archival scan of a new handwritten page in the hand, ink and paper of the sample "
         "image. The paper carries 3 lines of cursive handwriting.",
+        "Create a flat, evenly lit archival scan of a new handwritten page in the hand, ink and paper of the sample "
+        "image. The yellowed paper carries 3 lines of cursive handwriting in dark brown ink.",
+        "Flat, evenly lit archival scan of a handwritten page. The paper carries 3 lines of cursive handwriting.",
     ]
 
 
@@ -565,16 +588,69 @@ def test_page_pairs_pair_each_window_with_its_pages_sample_in_its_volumes_split(
     ]
 
 
-def test_cache_of_page_pairs_holds_each_rows_prompt_in_its_form_as_long_as_its_row_counts_it(
-    built: Path, tiny_moss: Path, tmp_path: Path
+def test_page_pair_samples_cut_each_rows_sample_page_from_its_scan_at_its_targets_writing_scale(
+    tiny_gt: Path, built_windows: Path, tmp_path: Path
+) -> None:
+    for record in ("scan.json", "train.jsonl"):  # the set's records, so its own dir gets no sample written into it
+        shutil.copy(built_windows / record, tmp_path / record)
+    shutil.copytree(built_windows / "scanned", tmp_path / "scanned")
+    results = [ScanResult.model_validate_json(path.read_bytes()) for path in (built_windows / "scanned").glob("*.json")]
+    pages = {page.id: page for result in results for page in result.pages}
+    single = _single_pages(tiny_gt, built_windows)
+    rows = _rows(built_windows, "train.jsonl")
+
+    write_legible_samples(tmp_path / "train.jsonl", tmp_path / "legible.jsonl", workers=2)
+
+    def expected(row: PagePairRow) -> Image.Image:
+        """The row's sample cut as drawing cuts one from its sample page and the page's whole-page lines."""
+        sample = Path(row.reference).stem
+        xml, page = single[sample]
+        with Image.open(xml.parent.parent / f"{xml.stem}.png") as scan:
+            cut = scan.convert("RGB").crop(page.rect)
+        pitch = None
+        if row.window is not None:
+            window = next(window for window in pages[row.window.page].windows if window.id == row.id)
+            pitch = line_pitch([line.bbox for line in window.lines], row.size[1])
+        return legible_sample(cut, [line.bbox for line in pages[sample].lines], size=row.size, pitch=pitch)
+
+    legible = read_jsonl(tmp_path / "legible.jsonl", PagePairRow)
+    assert sorted(row.window is not None for row in rows) == [False, False, True, True, True, True]
+    assert legible == [
+        row.model_copy(
+            update={
+                "reference": f"samples/{row.id}.jpg",
+                "sample_size": SampleSize.LEGIBLE,
+                "sample": Path(row.reference).stem,
+            }
+        )
+        for row in rows
+    ]
+    for row, given in zip(rows, legible, strict=True):
+        with Image.open(tmp_path / given.reference) as sample:
+            cut = expected(row)
+            assert sample.size == cut.size, row.id
+            assert _mean_difference(sample, cut) < 2, row.id  # but for JPEG's
+
+
+@pytest.mark.parametrize(
+    ("mix", "forms"),
+    [
+        pytest.param(
+            PromptMix.NAMED, [Variant.NO_REFERENCE, Variant.LOOK, Variant.PLAIN, Variant.SAMPLE], id="named-mix"
+        ),
+        pytest.param(PromptMix.CONTENT, [Variant.SAMPLE, Variant.SAMPLE_LOOK, Variant.GENERIC], id="content-mix"),
+    ],
+)
+def test_cache_of_page_pairs_holds_each_rows_prompt_in_every_form_of_its_mix_as_long_as_its_row_counts_it(
+    built: Path, tiny_moss: Path, tmp_path: Path, mix: PromptMix, forms: list[Variant]
 ) -> None:
     rows = {row.id: row for row in _rows(built, "train.jsonl")}
 
-    write_cache(tiny_moss, built / "train.jsonl", tmp_path, CacheSettings(device="cpu", every_form=True))
+    write_cache(tiny_moss, built / "train.jsonl", tmp_path, CacheSettings(device="cpu", mix=mix, every_form=True))
 
     entries = read_entries(tmp_path)
     assert sorted((entry.pair, entry.variant) for entry in entries) == sorted(
-        (pair, variant) for pair in rows for variant in Variant
+        (pair, variant) for pair in rows for variant in forms
     )
     for entry in entries:
         row = rows[entry.pair]
@@ -582,6 +658,8 @@ def test_cache_of_page_pairs_holds_each_rows_prompt_in_its_form_as_long_as_its_r
         assert entry.tokens == row.tokens[entry.variant]
         assert entry.target_size == row.size
         assert (load_sample(tmp_path, entry, "cpu").reference is not None) is entry.variant.takes_reference
+    record = read_record(tmp_path)
+    assert (record.mix, record.entries) == (mix, dict.fromkeys(forms, len(rows)))
 
 
 def _repeated_rows(out: Path) -> list[PagePairRow]:

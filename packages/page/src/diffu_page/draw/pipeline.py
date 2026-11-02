@@ -60,7 +60,7 @@ from diffu_page.draw.blocks.repair import RepairBlendStep, RepairPrepareStep
 from diffu_page.draw.guidance import ReferenceGuidance
 from diffu_page.draw.lora import nemo_lora_state_dict
 from diffu_page.draw.plan import CropPlan
-from diffu_page.page.crops.geometry import pixel_box
+from diffu_page.page.crops.geometry import LayoutBox, pixel_box
 from diffu_page.page.crops.grid import LATENT_GRID
 from diffu_page.page.labels import LabelFormat
 from diffu_page.quality.judge import MAX_LINE_CER, Judge, default_judge
@@ -401,15 +401,18 @@ def draw_crop(
     reference: Image.Image | None,
     settings: DrawSettings,
     judge: Judge | None = None,
+    reference_lines: Sequence[LayoutBox] = (),
 ) -> DrawnCrop:
     """One crop drawn by a crop pipeline (:func:`crop_blocks`) from noise seed ``seed``, conditioned on ``reference``
+    (its line boxes ``reference_lines``, if known: a model trained on legible samples cuts a window's sample by them)
     when there is one, every line judged by ``judge`` (the default TrOCR judge on ``settings.device`` if none), and
     labelled with the lines the judge could not confirm tagged ``unclear``.
 
     Raises:
-        ValueError: If ``settings`` guide toward a reference and there is none, before anything is drawn.
+        ValueError: If ``settings`` guide toward a reference and there is none, before anything is drawn; from drawing,
+            if the model reads a window's sample cut from its line boxes and none are given.
     """
-    image = _draw(pipe, plan, seed=seed, reference=reference, settings=settings)
+    image = _draw(pipe, plan, seed=seed, reference=reference, settings=settings, reference_lines=reference_lines)
     verdicts = (judge or default_judge(settings.device))(image, plan.lines)
     labels = crop_labels(plan, verdicts, max_line_cer=settings.max_line_cer, image_name=f"{name}.jpg")
     return DrawnCrop(
@@ -430,11 +433,13 @@ def repair_lines(
     reference: Image.Image | None,
     settings: DrawSettings,
     judge: Judge | None = None,
+    reference_lines: Sequence[LayoutBox] = (),
 ) -> DrawnCrop:
     """``crop`` with the lines its verdicts reject drawn again in place (:mod:`diffu_page.draw.blocks.repair`) from
-    noise seed ``seed``, which should not be the seed that drew them. Each line is redrawn over the latent cells its box
-    touches, and a redrawn line replaces those cells of the crop only if the judge passes it, so every other pixel stays
-    the crop's; the labels then follow the judge's verdicts on the result, and a line still rejected stays ``unclear``.
+    noise seed ``seed``, which should not be the seed that drew them, from ``reference`` as :func:`draw_crop` draws.
+    Each line is redrawn over the latent cells its box touches, and a redrawn line replaces those cells of the crop
+    only if the judge passes it, so every other pixel stays the crop's; the labels then follow the judge's verdicts on
+    the result, and a line still rejected stays ``unclear``.
 
     Raises:
         ValueError: If ``settings`` guide toward a reference and there is none, before anything is drawn.
@@ -451,6 +456,7 @@ def repair_lines(
         seed=seed,
         reference=reference,
         settings=settings,
+        reference_lines=reference_lines,
         repair_latents=page_latents(pipe, crop.image),
         repair_mask=_latent_mask(cells, crop.image.size),
     )
@@ -497,13 +503,19 @@ def _draw(
     seed: int,
     reference: Image.Image | None,
     settings: DrawSettings,
+    reference_lines: Sequence[LayoutBox] = (),
     **repair: torch.Tensor,
 ) -> Image.Image:
-    """``plan`` drawn by a crop pipeline from noise seed ``seed``, conditioned on ``reference`` when there is one; with
-    ``repair`` (``repair_latents`` and ``repair_mask``), drawn again only inside the mask."""
+    """``plan`` drawn by a crop pipeline from noise seed ``seed``, conditioned on ``reference`` (and its line boxes
+    ``reference_lines``, when given) when there is one; with ``repair`` (``repair_latents`` and ``repair_mask``), drawn
+    again only inside the mask."""
     if reference is None and settings.guides_reference:
         raise ValueError("reference guidance needs a reference image: draw this crop at reference_guidance_scale 1")
-    reference_input = {} if reference is None else {"image": reference}
+    reference_input: dict[str, object] = {}
+    if reference is not None:
+        reference_input["image"] = reference
+        if reference_lines:
+            reference_input["reference_lines"] = list(reference_lines)
     # The text encoder step encodes the negative caption only if the guider guides at its current step, which until the
     # denoise loop starts is the previous crop's last: past guidance_stop, this crop would lose its negative caption.
     pipe.guider.set_state(step=0, num_inference_steps=settings.steps, timestep=None)

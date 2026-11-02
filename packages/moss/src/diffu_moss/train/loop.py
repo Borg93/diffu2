@@ -71,6 +71,7 @@ from diffu_moss.train.cache import (
 )
 from diffu_moss.train.distributed import Ranks, clip_sharded_gradients, joined, left
 from diffu_moss.train.full import STATE, FullSettings, FullTraining, MomentumDtype
+from diffu_moss.train.pairs import SampleSize
 from diffu_moss.train.records import (
     ADAPTER_RECORD,
     ADAPTER_WEIGHTS,
@@ -286,7 +287,7 @@ def validation_losses(
 
 class LoraTraining:
     """A reference LoRA in training (the module's docstring): the DiT at ``base`` with a fresh LoRA, AdamW over the
-    LoRA's weights, and the warmup.
+    LoRA's weights, and the warmup; its checkpoints record how the samples it trains on were sized (``sample_size``).
 
     Attributes:
         transformer: The DiT, frozen in bfloat16, with its LoRA in float32.
@@ -295,7 +296,7 @@ class LoraTraining:
 
     compute_dtype: torch.dtype | None = None  # the frozen DiT in its bfloat16 and the LoRA in its float32
 
-    def __init__(self, base: Path, settings: TrainSettings) -> None:
+    def __init__(self, base: Path, settings: TrainSettings, sample_size: SampleSize = SampleSize.HALF) -> None:
         self.transformer = lora_transformer(base, settings.lora, device=settings.device, seed=settings.seed)
         self.parameters: list[nn.Parameter] = [
             parameter for parameter in self.transformer.parameters() if parameter.requires_grad
@@ -305,6 +306,7 @@ class LoraTraining:
         )
         self._schedule = LambdaLR(self._optimizer, warmup(settings.warmup))
         self._lora = settings.lora
+        self._sample_size = sample_size
 
     def step(self) -> float:
         """One AdamW step of the LoRA from its gradients (then dropped).
@@ -325,7 +327,8 @@ class LoraTraining:
             for name, tensor in get_peft_model_state_dict(self.transformer).items()
         }
         save_file(weights, str(directory / ADAPTER_WEIGHTS))
-        AdapterRecord(lora=self._lora, step=progress.step).write(directory / ADAPTER_RECORD)
+        record = AdapterRecord(lora=self._lora, step=progress.step, sample_size=self._sample_size)
+        record.write(directory / ADAPTER_RECORD)
 
 
 def _log(out: Path, record: BaseModel) -> None:
@@ -439,6 +442,19 @@ def _peak_memory_gb(device: torch.device) -> float | None:
     return torch.cuda.max_memory_allocated(device) / 1e9 if device.type == "cuda" else None
 
 
+def sample_size_of(cache: Path, val_cache: Path | None) -> SampleSize:
+    """How the samples of the training cache ``cache`` were sized, the rule its checkpoints record.
+
+    Raises:
+        ValueError: If a cache is not finished, or the validation cache ``val_cache`` sized its samples otherwise: its
+            losses would score samples the training never saw.
+    """
+    rule = read_record(cache).sample_size
+    if val_cache is not None and (scored := read_record(val_cache).sample_size) is not rule:
+        raise ValueError(f"{cache} sized its samples {rule}, the validation cache {val_cache} {scored}")
+    return rule
+
+
 def prompt_encoder(
     cache: Path, val_cache: Path | None, settings: TrainSettings, model: Path | None
 ) -> PromptEncoder | None:
@@ -479,7 +495,8 @@ def train(
         The last checkpoint's directory.
 
     Raises:
-        ValueError: If a cache is not finished, holds no entry to train on or no prompt embeddings to read, ``out``
+        ValueError: If a cache is not finished, holds no entry to train on or no prompt embeddings to read, the
+            validation cache sized its samples otherwise than the training cache (:func:`sample_size_of`), ``out``
             holds a training's log already (unless resumed), or the run cannot resume from ``resume``
             (:func:`resumed_progress`; its cache's entries are others); over several ranks, if it trains a LoRA or its
             samples a step do not share out evenly among them.
@@ -499,15 +516,22 @@ def train(
     progress = None if resume is None else resumed_progress(out, resume, settings)
     if progress is not None and len(progress.order) != len(entries):
         raise ValueError(f"{cache} holds {len(entries)} entries; the run resumed drew from {len(progress.order)}")
+    sample_size = sample_size_of(cache, val_cache)
     encoder = prompt_encoder(cache, val_cache, settings, model)
     out.mkdir(parents=True, exist_ok=True)
     training: LoraTraining | FullTraining
     if settings.full is None:
-        training = LoraTraining(base, settings)
+        training = LoraTraining(base, settings, sample_size)
     else:
         schedule = warmup(settings.warmup)
         training = FullTraining(
-            base, settings.full, schedule=schedule, device=settings.device, resume=resume, ranks=ranks
+            base,
+            settings.full,
+            schedule=schedule,
+            device=settings.device,
+            resume=resume,
+            ranks=ranks,
+            sample_size=sample_size,
         )
     generator = torch.Generator().manual_seed(settings.seed)
     order = SampleOrder(len(entries), generator)

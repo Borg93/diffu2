@@ -15,7 +15,9 @@ per run).
 The index's ``takes_reference`` says whether the model draws from a reference image: true only for a DiT of a
 reference training (merged by ``diffu-moss-export-ref``, or a full fine-tune's checkpoint; their ``export.json`` says
 so), never by hand, so a DiT that never saw a reference (the released ones, a hand LoRA) is refused one rather than
-shown tokens it cannot read.
+shown tokens it cannot read. Its ``sample_size``, written only for a DiT trained on samples sized otherwise than shrunk
+under half a megapixel (``legible``: at the target's writing scale), is the rule the page pipeline's
+``ReferenceGridStep`` sizes a sample by; an index without it sizes samples as before.
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ from transformers import AutoTokenizer, Qwen3_5Model
 from diffu_core.repo import INDEX, ModelIndex, index_entry
 from diffu_moss.modular_pipelines.moss import MossAutoBlocks, MossModularPipeline
 from diffu_moss.modular_pipelines.moss.denoise import DEMO_UNCOND_SKIP_LAYERS
+from diffu_moss.train.pairs import SampleSize
 from diffu_moss.train.records import EXPORT_RECORD, ExportRecord
 from diffu_moss.transformer import MossTransformer
 
@@ -46,16 +49,31 @@ def _require(path: Path, what: str) -> None:
         raise ValueError(f"{path.parent} is not {what}: it has no {path.name}")
 
 
+def export_record(transformer: Path) -> ExportRecord | None:
+    """The export's record of the DiT folder ``transformer``: None for a DiT no reference training wrote."""
+    record = transformer / EXPORT_RECORD
+    return ExportRecord.read(record) if record.is_file() else None
+
+
 def takes_reference(transformer: Path) -> bool:
     """Whether the DiT folder ``transformer`` was trained to take a reference image, by its export's record."""
-    record = transformer / EXPORT_RECORD
-    return record.is_file() and ExportRecord.read(record).takes_reference
+    record = export_record(transformer)
+    return record is not None and record.takes_reference
+
+
+def sizing(transformer: Path) -> dict[str, str]:
+    """The model index's entry of how the DiT folder ``transformer`` was trained to read its samples sized, by its
+    export's record: none for samples shrunk under half a megapixel (or no record), as an index was written before."""
+    record = export_record(transformer)
+    if record is None or record.sample_size is SampleSize.HALF:
+        return {}
+    return {"sample_size": record.sample_size.value}
 
 
 def moss_index(base: Path, transformer: Path, *, uncond_skip_layers: tuple[int, ...]) -> ModelIndex:
     """The ``modular_model_index.json`` of a MOSS-Image repo: its pipeline and block classes, the blocks its
-    unconditional pass skips, whether it takes a reference image, the text encoder, tokenizer and VAE in the Base
-    snapshot ``base``'s folders and the DiT in the folder ``transformer``."""
+    unconditional pass skips, whether it takes a reference image and how its samples are sized (:func:`sizing`), the
+    text encoder, tokenizer and VAE in the Base snapshot ``base``'s folders and the DiT in the folder ``transformer``."""
     snapshot = str(base.resolve())
     return ModelIndex.model_validate(
         {
@@ -64,6 +82,7 @@ def moss_index(base: Path, transformer: Path, *, uncond_skip_layers: tuple[int, 
             "_diffusers_version": diffusers.__version__,
             "uncond_skip_layers": list(uncond_skip_layers),
             "takes_reference": takes_reference(transformer),
+            **sizing(transformer),
             "text_encoder": index_entry(
                 "transformers", Qwen3_5Model, repo=snapshot, revision=None, subfolder="text_encoder"
             ),
@@ -126,7 +145,9 @@ def main(
         index = write_moss_repo(out, base=base, transformer=transformer)
     except ValueError as error:  # every refusal is about the arguments: a usage error
         raise typer.BadParameter(str(error)) from error
-    reference = "takes a reference image" if (index.model_extra or {}).get("takes_reference") else "text only"
+    extra = index.model_extra or {}
+    sized = extra.get("sample_size", SampleSize.HALF.value)
+    reference = f"takes a reference image sized {sized}" if extra.get("takes_reference") else "text only"
     console.print(f"MOSS-Image, the DiT in {transformer or base / 'transformer'} ({reference}) -> {out}")
 
 

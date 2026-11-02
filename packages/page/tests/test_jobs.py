@@ -1,5 +1,6 @@
 """A run's pages planned into crop jobs: cut by the plan steps exactly as the page is planned (captioned for its
-reference when it has one), each named and seeded by its page's place in the run or by its id. A page that plans to
+reference when it has one, the reference's line boxes kept beside it), each named and seeded by its page's place in
+the run or by its id. A page that plans to
 nothing is refused, not dropped from the run: test_pipeline's generate test reads the refusal from the summary. A job
 of a two-page opening becomes a job per page, named apart. A page's layout is its template's or given inline, and its
 text new or its own."""
@@ -35,7 +36,10 @@ def _boxes_layout(texts: list[str] | None = None) -> Layout:
 
 @pytest.mark.parametrize(
     "reference",
-    [pytest.param(None, id="named-style"), pytest.param(Reference(image=Path("ref.jpg")), id="reference")],
+    [
+        pytest.param(None, id="named-style"),
+        pytest.param(Reference(image=Path("ref.jpg"), lines=[(100, 80, 160, 920)]), id="reference-and-its-lines"),
+    ],
 )
 def test_crop_jobs_plan_page_two_of_a_run_into_named_and_seeded_crops(
     body_and_notes_page: Path, reference: Reference | None, page_style: PageStyle, page_text: str
@@ -45,9 +49,9 @@ def test_crop_jobs_plan_page_two_of_a_run_into_named_and_seeded_crops(
     jobs = crop_jobs(page, 2)
 
     plans = plan_page(refill(load_xml_layout(body_and_notes_page), page_text), page_style, reference=reference)
-    image = reference.image if reference else None
-    assert [(job.name, job.seed, job.plan, job.reference) for job in jobs] == [
-        (f"002_page_{k}", 2005 + k, plan, image) for k, plan in enumerate(plans)
+    image, lines = (reference.image, reference.lines) if reference else (None, [])
+    assert [(job.name, job.seed, job.plan, job.reference, job.reference_lines) for job in jobs] == [
+        (f"002_page_{k}", 2005 + k, plan, image, lines) for k, plan in enumerate(plans)
     ]
 
 

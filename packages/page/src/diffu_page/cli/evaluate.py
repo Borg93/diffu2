@@ -134,7 +134,16 @@ def evaluate_crop(
     plan = crop.plan()
     reference = crop.reference_image(crops_dir)
     drawn_from = reference if draw_reference else None
-    drawn = draw_crop(pipe, plan, name=f"{index:03d}", seed=seed, reference=drawn_from, settings=settings, judge=judge)
+    drawn = draw_crop(
+        pipe,
+        plan,
+        name=f"{index:03d}",
+        seed=seed,
+        reference=drawn_from,
+        settings=settings,
+        judge=judge,
+        reference_lines=crop.reference_lines or (),
+    )
     drawn.image.save(generated_path(out, index))
     real = crop.real_image(crops_dir, drawn.image.size)
     real_verdicts = judge(real, plan.lines)

@@ -27,6 +27,25 @@ own FLUX.3-architecture model), is in git history (`git log -p -- TODO.md`).
       it (27c9fc9, `--restyle-share`). Running: full_r6b (`~/diffu_queue/queue_restyle2.sh`: from full_r6's step 250,
       750 steps, then the verify swap set, the held-out pages in the sample form and writer ID). It passes when the
       sample form's validation drops below the by-name form's and the swap test's pages follow their samples.
+- [ ] **The content-only pilot** (`jobs/moss/run_content_pilot.sh`, written, not run; ~22 GPU hours): the hand still
+      followed the page's own volume in 11 of 12 swaps, as 60 % of the prompts named the archive and the samples were
+      shrunk to half a page's pixels (a window's sample at a 23-25 px line pitch beside its own 63). From Base on the
+      many-volumes set less `GT-RA_landskapshandlingar_20260227` (the scans of `..._20260220` again, md5-checked; the
+      GT holds that collection twice, so a build of the whole GT should leave one out too): the content mix
+      (`--mix content`: no prompt names an archive, years or hand), legible samples
+      (`page_pair_samples`, `sample_size: legible` through to the model index) and look and hand changes for half the
+      sample-form entries each. It passes when the sample form's validation loss falls below the generic form's and
+      the swap test's pages (page rows: a window's legible sample is cut for its own window) follow their samples.
+- [ ] Hand changes: a shear of the whole page moves the lines near its top and bottom furthest, and is refused for
+      55 % of the many-volumes rows (half their pages allow 3 degrees at most before a line leaves them; 10 % have a
+      box at an edge), most refusals over 5 degrees. Decide: keep the refusals, draw each page's slant within what its
+      margins allow, or slant each line about its own baseline (lines stay put). Thinning strokes by a whole pixel or
+      two erased 1 MP pages' 1-2 px strokes, so strokes change from half a pixel thinner to a pixel thicker.
+- [ ] A content-mix model drawn without a sample should be prompted in its generic form (nothing named); diffu-generate
+      captions a page drawn without a sample in its named style, and has no option for the generic form yet.
+- [ ] A legible model draws a window only from a sample given with its line boxes (a job's `reference.lines`,
+      `diffu-evaluate`'s rows); `diffu-generate --reference` gives none (whole pages need none), and the SGLang plugin
+      takes a sample sized already.
 - [ ] The results of the 27-29 Oct MOSS queue (the microfilm LoRAs, the print mix, the eight-hands LoRA, the blank-page
       canvas test, the 1715 LoRA's step-350 pages and its guidance 2 and 2.5) are in `runs/` and the queue logs, not yet
       looked at beside the scans and written up.

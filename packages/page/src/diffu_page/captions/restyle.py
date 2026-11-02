@@ -15,7 +15,11 @@ or a planned crop's) as a FLUX.3 image-edit record drawn from ``<ref_image_0>``:
 - ``hand_edit_caption``: the archive and years named alone, whose hand it is, the look left to the reference (the
   plain form of MOSS-Image's page pairs, ``diffu_page.data.page_pairs``);
 - ``sample_edit_caption``: ``edit_caption`` with its paper row citing ``<ref_image_0>``'s paper too, where
-  ``edit_caption``'s names an aged paper (the sample form of MOSS-Image's page pairs).
+  ``edit_caption``'s names an aged paper (the sample form of MOSS-Image's page pairs);
+- ``sample_look_edit_caption``: ``named_edit_caption`` without the archive and years: the look in words beside the
+  reference, no hand named (the sample-and-look form of the page pairs' content mix);
+- ``generic_caption``: no reference cited and nothing named, neither archive nor years nor look: the page's content
+  alone (the form of the content mix drawn without the sample).
 
 Training captions (from records) and generation captions (from crop plans) go through the same functions, and a
 record keeps the template its own caption was rendered from, so a crop is drawn from exactly the caption grammar it
@@ -55,6 +59,8 @@ class ReferenceCaption(StrEnum):
     NAMED = "named"  # the archive, years and look named beside it (named_edit_caption: the page pairs' look form)
     HAND = "hand"  # the archive and years named as the hand, the look from it alone (the page pairs' plain form)
     SAMPLE = "sample"  # only by <ref_image_0>, its paper row too (sample_edit_caption: the page pairs' sample form)
+    SAMPLE_LOOK = "sample_look"  # the look named beside it, no archive or years (sample_look_edit_caption)
+    GENERIC = "generic"  # no reference cited, nothing named: the content alone (generic_caption), its image unread
 
 
 class CaptionParts(BaseModel):
@@ -129,6 +135,32 @@ def _from_reference_naming(parts: CaptionParts) -> StylePhrases:
         paper_row=words.paper_row,
         ink_line=f"cursive script in the reference's hand, in {style.look.ink} ink.",
         ink_fragment=words.ink_fragment,
+    )
+
+
+def _from_reference_naming_look(parts: CaptionParts) -> StylePhrases:
+    """The image-edit phrases that name the caption's scan, paper and ink beside the reference, and neither its archive
+    nor its years: the look in words, the hand from the reference alone."""
+    look = parts.style.look
+    return _from_reference_naming(parts).model_copy(
+        update={
+            "opening": (
+                f"Create a flat, evenly lit {scan_words(look.greyscale)} of a new {page_words(parts.printed)} in the "
+                f"hand, ink and paper of <ref_image_0>. The {look.paper} paper <paper_1>"
+            )
+        }
+    )
+
+
+def _naming_nothing(parts: CaptionParts) -> StylePhrases:
+    """The phrases that name nothing of the page's style, neither archive nor years nor scan, paper or ink, and cite no
+    reference: what is on the page, and nothing of how it looks."""
+    return StylePhrases(
+        opening=f"Flat, evenly lit archival scan of a {page_words(parts.printed)}. The paper <paper_1>",
+        ink_opening="cursive handwriting",
+        paper_row="Aged paper of a bound archival volume.",
+        ink_line="cursive script.",
+        ink_fragment="handwritten line, cut off",
     )
 
 
@@ -210,6 +242,19 @@ def hand_edit_caption(parts: CaptionParts) -> str:
     return _edit(parts, _from_reference_naming_hand(parts))
 
 
+def sample_look_edit_caption(parts: CaptionParts) -> str:
+    """``edit_caption`` that also names the caption's scan, paper and ink, and not its archive or years: the look in
+    words and by example, the hand by example alone."""
+    return _edit(parts, _from_reference_naming_look(parts))
+
+
+def generic_caption(parts: CaptionParts) -> str:
+    """The caption naming nothing of its style, neither archive, years nor look, and citing no reference: a page's
+    caption as ``caption_for`` writes it, its style's words left out."""
+    paragraph, rows = parts.template.render(_naming_nothing(parts))
+    return caption_text(paragraph, rows)
+
+
 def described_edit_caption(parts: CaptionParts, reference: ReferenceLook) -> str:
     """``edit_caption`` that describes the reference's hand, ink and paper as measured (``reference_look``)."""
     return _edit(parts, _from_reference_describing(parts, reference))
@@ -236,6 +281,10 @@ def reference_caption(parts: CaptionParts, form: ReferenceCaption, reference: Re
             return hand_edit_caption(parts)
         case ReferenceCaption.SAMPLE:
             return sample_edit_caption(parts)
+        case ReferenceCaption.SAMPLE_LOOK:
+            return sample_look_edit_caption(parts)
+        case ReferenceCaption.GENERIC:
+            return generic_caption(parts)
 
 
 def _edit(parts: CaptionParts, phrases: StylePhrases) -> str:

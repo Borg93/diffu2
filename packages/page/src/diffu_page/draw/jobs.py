@@ -28,6 +28,7 @@ from diffu_page.draw.pipeline import PagePlanBlocks
 from diffu_page.draw.plan import CropPlan, Reference
 from diffu_page.draw.styles import StylePreset
 from diffu_page.output import load_rgb, plain_file_name, validation_problems
+from diffu_page.page.crops.geometry import LayoutBox
 from diffu_page.page.layout import Layout, PageSide, load_xml_layout, rewritten, scan_pages
 from diffu_page.page.marking import PrintHandClassifier
 
@@ -206,14 +207,16 @@ def read_page_jobs(path: Path, *, presets: Mapping[str, StylePreset], loras: dic
 
 
 class CropJob(BaseModel):
-    """One crop to draw: its name, its page's template (None for a page given as a layout), its plan, its noise seed
-    and its reference image."""
+    """One crop to draw: its name, its page's template (None for a page given as a layout), its plan, its noise seed,
+    its reference image and the reference's line boxes (its page's ``reference.lines``; left out of its JSON when it
+    has none, so such a job is written as before)."""
 
     name: str
     template: Path | None
     plan: CropPlan
     seed: int
     reference: Path | None = None
+    reference_lines: list[LayoutBox] = Field(default_factory=list, exclude_if=lambda lines: not lines)
 
     def reference_image(self) -> Image.Image | None:
         """The image the crop is drawn from, as RGB; None without a reference."""
@@ -243,9 +246,11 @@ def crop_jobs(page: PageJob, index: int, *, print_hand: PrintHandClassifier | No
     if not plans:
         source = page.name_at(index) if page.template is None else page.template
         raise ValueError(f"{source} plans to no crops: no window of it holds enough whole lines")
-    image = page.reference.image if page.reference else None
+    image, lines = (page.reference.image, page.reference.lines) if page.reference else (None, [])
     jobs: list[CropJob] = []
     for k, plan in enumerate(plans):
         name, seed = crop_identity(page.name_at(index), page.seed_at(index), k)
-        jobs.append(CropJob(name=name, template=page.template, plan=plan, seed=seed, reference=image))
+        jobs.append(
+            CropJob(name=name, template=page.template, plan=plan, seed=seed, reference=image, reference_lines=lines)
+        )
     return jobs

@@ -10,6 +10,8 @@ from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from diffu_moss.train.pairs import PromptMix, SampleSize
+
 CACHE_RECORD = "cache.json"
 ADAPTER_RECORD = "adapter.json"
 ADAPTER_WEIGHTS = "adapter.safetensors"
@@ -41,19 +43,28 @@ class LoraSettings(JsonRecord):
     target_modules: str
 
 
+def _half(size: SampleSize) -> bool:
+    """Whether a record's sample size is the first rule, which a record written before the rule leaves out."""
+    return size is SampleSize.HALF
+
+
 class AdapterRecord(JsonRecord):
-    """A checkpoint's LoRA: its shape and the optimizer step it was saved at."""
+    """A checkpoint's LoRA: its shape, the optimizer step it was saved at and how its training's samples were sized
+    (left out when shrunk under half a megapixel, as a record was written before)."""
 
     lora: LoraSettings
     step: int
+    sample_size: SampleSize = Field(default=SampleSize.HALF, exclude_if=_half)
 
 
 class CacheRecord(JsonRecord):
     """How a cache was made: from which pairs and model, how many pairs it holds and how they were drawn into the mix
-    of prompt forms (``diffu_moss.train.pairs.Variant``), how many pairs were left out for sharing a line with their
-    reference, whether it holds the latents alone (no prompt embeddings: a training encodes them), and the share of
-    its entries in the sample form asked to take a look change and how many took each kind
-    (``diffu_moss.train.restyle``; both left out of a cache without, which is written as before)."""
+    of prompt forms (``mix``, ``diffu_moss.train.pairs.Variant``), how many pairs were left out for sharing a line with
+    their reference, whether it holds the latents alone (no prompt embeddings: a training encodes them), how its
+    samples were sized (``sample_size``), the share of its entries in the sample form asked to take a look change and
+    how many took each kind (``diffu_moss.train.restyle``), and the share asked to take a hand change, how many took
+    one and why the others were refused. Each is left out of a cache without it (the named mix, the samples shrunk, no
+    change), which is written as before."""
 
     pairs: str
     model: str
@@ -64,18 +75,25 @@ class CacheRecord(JsonRecord):
     latents_only: bool = False
     restyle_share: float = Field(default=0.0, exclude_if=lambda share: share == 0)
     restyled: dict[str, int] = Field(default_factory=dict, exclude_if=lambda kinds: not kinds)
+    mix: PromptMix = Field(default=PromptMix.NAMED, exclude_if=lambda mix: mix is PromptMix.NAMED)
+    sample_size: SampleSize = Field(default=SampleSize.HALF, exclude_if=_half)
+    hand_restyle_share: float = Field(default=0.0, exclude_if=lambda share: share == 0)
+    hand_restyled: int = Field(default=0, exclude_if=lambda count: count == 0)
+    hand_refused: dict[str, int] = Field(default_factory=dict, exclude_if=lambda reasons: not reasons)
 
 
 class ExportRecord(JsonRecord):
     """A trained DiT's provenance: the DiT it was trained from (``base``: the Base DiT, or a full fine-tune's checkpoint
     it went on from, whose own record names its), the checkpoint it is (or whose LoRA was merged into Base;
-    ``adapter`` is None for a full fine-tune, whose own weights are the DiT), and whether it was trained to take a
-    reference image (``diffu-moss-init`` writes that into the model index's ``takes_reference``)."""
+    ``adapter`` is None for a full fine-tune, whose own weights are the DiT), whether it was trained to take a
+    reference image and how its samples were sized (``diffu-moss-init`` writes both into the model index:
+    ``takes_reference``, and ``sample_size`` when not shrunk under half a megapixel, left out here then too)."""
 
     takes_reference: bool
     base: str
     checkpoint: str
     adapter: AdapterRecord | None = None
+    sample_size: SampleSize = Field(default=SampleSize.HALF, exclude_if=_half)
 
 
 class Progress(JsonRecord):

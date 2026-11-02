@@ -1,14 +1,23 @@
-"""The crop steps that run before a model's own blocks: a crop plan as the model's inputs, and a reference image on the
-grid it was trained on."""
+"""The crop steps that run before a model's own blocks: a crop plan as the model's inputs, and a reference image at the
+size and on the grid it was trained on."""
 
 from __future__ import annotations
 
 from typing import override
 
 from diffusers.modular_pipelines import InputParam, ModularPipeline, ModularPipelineBlocks, OutputParam, PipelineState
+from diffusers.modular_pipelines.modular_pipeline_utils import ConfigSpec
 
+from diffu_moss.train.pairs import SampleSize
 from diffu_page.draw.plan import CropPlan
-from diffu_page.page.crops.grid import as_reference
+from diffu_page.draw.sample import sized_sample
+
+SAMPLE_SIZE = ConfigSpec(
+    "sample_size",
+    SampleSize.HALF.value,
+    description="How the model's training sized its reference images (its modular_model_index.json; diffu-moss-init "
+    "reads it from a reference training's export): half (shrunk under half a megapixel) unless it says legible",
+)
 
 
 class CropPromptStep(ModularPipelineBlocks):
@@ -45,25 +54,48 @@ class CropPromptStep(ModularPipelineBlocks):
 
 
 class ReferenceGridStep(ModularPipelineBlocks):
-    """Puts a reference image at the size and on the grid the reference-trained models were trained on
-    (``as_reference``).
+    """Puts a reference image at the size and on the grid the model was trained on, by the rule its model index names
+    (``sample_size``, :func:`diffu_page.draw.sample.sized_sample`).
 
-    The training references were shrunk to the reference size (half a target's pixels) and NeMo's cache encoder
-    squashed them onto the 16-pixel grid, while FLUX.3's own preprocessing would keep a 1 MP crop at 1 MP and pad it
-    out to the grid with a reflected border. Resizing here first makes FLUX.3's preprocessing a no-op, so a reference
-    of any size is drawn from as in training; MOSS-Image's reference training shrinks its samples alike. Without a
-    reference the step does nothing.
+    The first rule, ``half`` (every FLUX.3 model's and a MOSS-Image index's without the key): the training references
+    were shrunk to the reference size (half a target's pixels) and NeMo's cache encoder squashed them onto the 16-pixel
+    grid, while FLUX.3's own preprocessing would keep a 1 MP crop at 1 MP and pad it out to the grid with a reflected
+    border. Resizing here first makes FLUX.3's preprocessing a no-op, so a reference of any size is drawn from as in
+    training; MOSS-Image's reference training shrinks its samples alike (``as_reference``). The ``legible`` rule sizes
+    a sample at the crop's writing scale: a whole page's at its pixel count, a window's cut at its line pitch from the
+    sample page, whose line boxes (``reference_lines``) it then needs. Without a reference the step does nothing.
+
+    Raises:
+        ValueError: From the call, if the model names a rule this step does not know, or reads a window's sample cut
+            from the sample page's lines and none are given.
     """
 
     @property
     @override
     def description(self) -> str:
-        return "Resizes the reference image to the reference size and 16-px grid it was trained at (as_reference)."
+        return (
+            "Resizes the reference image to the size and 16-px grid the model was trained at (its sample_size: half, "
+            "as_reference; or legible, at the crop's writing scale)."
+        )
+
+    @property
+    @override
+    def expected_configs(self) -> list[ConfigSpec]:
+        return [SAMPLE_SIZE]
 
     @property
     @override
     def inputs(self) -> list[InputParam]:
-        return [InputParam("image", required=False, description="The reference image (PIL), if any.")]
+        return [
+            InputParam("image", required=False, description="The reference image (PIL), if any."),
+            InputParam("crop_plan", type_hint=CropPlan, description="The crop drawn from it."),
+            InputParam(
+                "reference_lines",
+                type_hint=list,
+                description="The reference's line boxes (0-1000 of it, y first): a legible window's sample is cut by "
+                "them.",
+            ),
+        ]
 
     @property
     @override
@@ -73,6 +105,12 @@ class ReferenceGridStep(ModularPipelineBlocks):
     def __call__(self, components: ModularPipeline, state: PipelineState) -> tuple[ModularPipeline, PipelineState]:
         block_state = self.get_block_state(state)
         if block_state.image is not None:
-            block_state.image = as_reference(block_state.image)
+            named = components.config.sample_size
+            try:
+                rule = SampleSize(named)
+            except ValueError as error:
+                raise ValueError(f"the model sizes its samples by {named!r}, which no rule here knows") from error
+            lines = block_state.reference_lines or []
+            block_state.image = sized_sample(block_state.image, rule, plan=block_state.crop_plan, lines=lines)
         self.set_block_state(state, block_state)
         return components, state

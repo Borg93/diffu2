@@ -2,9 +2,9 @@
 and a stand-in print/hand classifier to mark it with, a crop and its training record, diffusers' tiny FLUX.3 test model
 (with a VAE that downsamples as FLUX.3's does), a tiny MOSS-Image repo (MOSS's own tokenizer, a tiny Qwen3.5, a tiny
 FLUX.2-class VAE and a tiny DiT, random weights), and a reference training on it: a tiny style-pair set in the
-described reference form, its caches (one with look changes for its sample form), a short training run and the MOSS
-repo of its merged export, which takes a reference image; and a LoRA of one module of either model, a NeMo LoRA
-checkpoint or a MOSS-Image adapter converted from a LyCORIS file."""
+described reference form, its caches (one with look changes for its sample form, one with hand changes), a short
+training run and the MOSS repo of its merged export, which takes a reference image; and a LoRA of one module of either
+model, a NeMo LoRA checkpoint or a MOSS-Image adapter converted from a LyCORIS file."""
 
 from __future__ import annotations
 
@@ -583,6 +583,15 @@ def tiny_restyled_cache(tiny_moss: Path, tiny_pairs: Path, tmp_path_factory: pyt
     form (``--restyle-share 0.4``: 1.6 of its 4, rounded to 2): vol_08 made microfilm and vol_06 colourised."""
     cache = tmp_path_factory.mktemp("restyled_pair_cache") / "cache"
     write_cache(tiny_moss, tiny_pairs / "train.jsonl", cache, CacheSettings(restyle_share=0.4, device="cpu"))
+    return cache
+
+
+@pytest.fixture(scope="session")
+def tiny_hand_cache(tiny_moss: Path, tiny_pairs: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The tiny pairs cached as ``tiny_pair_cache`` is, but with a hand change for half of its 4 entries in the
+    sample form (``--hand-restyle-share 0.5``): vol_06 and vol_07."""
+    cache = tmp_path_factory.mktemp("hand_pair_cache") / "cache"
+    write_cache(tiny_moss, tiny_pairs / "train.jsonl", cache, CacheSettings(hand_restyle_share=0.5, device="cpu"))
     return cache
 
 

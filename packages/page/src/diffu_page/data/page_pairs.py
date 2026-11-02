@@ -11,7 +11,7 @@ caption of its whole-page plan compiled as MOSS's Layout prompt (``diffu_moss.sa
 as ``MossLayoutPromptStep`` compiles it), every line's exact text in its box. The page is captioned in its own style:
 the archive and the volume's years (``provenance_of``: whose hand it is, by name, as a v2 caption names its archive)
 and the look measured on the page (``scan_look``: greyscale or colour, the paper's and the ink's colour). Each row
-carries the page's prompt in all four forms the training mixes (``diffu_moss.train.pairs.Variant``;
+carries the page's prompt in all six forms the training's mixes draw from (``diffu_moss.train.pairs.Variant``;
 ``diffu-moss-cache-pairs`` fixes each pair's by its seed):
 
 - no reference: the page's own caption (``plan_whole_page`` without a reference), hand and look in words;
@@ -19,10 +19,15 @@ carries the page's prompt in all four forms the training mixes (``diffu_moss.tra
 - plain: the sample image, and the hand alone in words (``ReferenceCaption.HAND``: ``--reference-caption hand``);
 - sample: the sample image alone, naming neither the hand nor the look, its paper "the paper of the sample image"
   (``ReferenceCaption.SAMPLE``: ``--reference-caption sample``), so both must be read from it: where each archive has
-  one look, its name gives the hand and the look away and the sample need not be read.
+  one look, its name gives the hand and the look away and the sample need not be read;
+- sample and look: the sample image, and the look in words but neither archive nor years (``ReferenceCaption.
+  SAMPLE_LOOK``), so the hand must be read from it;
+- generic: no reference, nothing named, neither archive, years nor look (``ReferenceCaption.GENERIC``): the page's
+  content alone, the form drawn without the sample in the content mix, which names no hand in any form.
 
 A set built before a form was added gets it for the rows of its manifests from ``diffu_page.data.page_pair_forms``, in
-new manifests beside the old, its images as they are.
+new manifests beside the old, its images as they are. ``diffu_page.data.page_pair_samples`` gives a manifest's rows
+samples at their targets' writing scale (legible) in place of the shrunk ``refs/``, likewise in a new manifest.
 
 A page's prompt is counted in the text encoder's tokens by MOSS's own tokenizer (``--model``'s); a page whose longest
 form passes the encoder's 4,096 tokens is skipped and counted, never cut. A page's sample is another single page of its
@@ -120,6 +125,8 @@ FORM_REFERENCES: dict[Variant, Reference | None] = {  # the sample is only named
     Variant.LOOK: Reference(image=Path("sample"), caption=ReferenceCaption.NAMED),
     Variant.PLAIN: Reference(image=Path("sample"), caption=ReferenceCaption.HAND),
     Variant.SAMPLE: Reference(image=Path("sample"), caption=ReferenceCaption.SAMPLE),
+    Variant.SAMPLE_LOOK: Reference(image=Path("sample"), caption=ReferenceCaption.SAMPLE_LOOK),
+    Variant.GENERIC: Reference(image=Path("sample"), caption=ReferenceCaption.GENERIC),  # cites none, names nothing
 }
 
 
@@ -653,6 +660,7 @@ def eval_row(target: PageRecord, reference: PageRecord) -> ReferencedCrop:
         width=target.size[0],
         height=target.size[1],
         lines=target.lines,
+        whole_page=True,
         reference=f"{REFS}/{reference.id}.jpg",
         reference_lines=[line.bbox for line in reference.lines],
     )

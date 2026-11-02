@@ -37,9 +37,21 @@ is trained. How a page becomes the crops it draws: [PIPELINE.md](PIPELINE.md).
   reference axis (reference `k` at `k + 1`), its grid centred, modulated as at timestep 0 (FLUX.3 Klein's design), in
   every guidance pass; without one it is the released model bit for bit. The released models were not trained with
   references, so a model directory takes one only when its DiT was. `MossReferenceEncodeStep` encodes a reference on
-  its own grid after the page pipeline's `ReferenceGridStep` (0.5 MP), and the Layout prompt names "the sample image"
-  where the caption cites `<ref_image_0>` (without a reference the citation is dropped). Reference guidance
+  its own grid after the page pipeline's `ReferenceGridStep` has sized it by the rule the DiT was trained on, which
+  the model index names (`sample_size`, below; 0.5 MP when it names none), and the Layout prompt names "the sample
+  image" where the caption cites `<ref_image_0>` (without a reference the citation is dropped). Reference guidance
   (`--reference-guidance`) adds a pass without it.
+- **The sample's size** (`sample_size`, `diffu_page/draw/sample.py`): `half`, the first rule, shrinks a sample under
+  0.5 MP (`as_reference`) whatever its target, so a 1 MP page's sample shows its hand at about 0.7 of the page's
+  scale and a window's at well under half (measured on real rows: a 23-25 px line pitch beside the window's 63 px).
+  `legible` sizes it at the target's writing scale: a whole page's sample at the target's pixel count, a window's a
+  window of the sample page at the target's line pitch and size, cut around the middle of its lines (a line's box is
+  its slot of one pitch, so a pitch is the boxes' median height). A training records its cache's rule beside each
+  checkpoint (`export.json`, `adapter.json`), `diffu-moss-init` writes it into the model index when it is not `half`,
+  and `ReferenceGridStep` sizes a sample by it: a whole page (`--whole-page`, a runner page) needs the sample image
+  alone; a window needs the sample page's line boxes (a page job's `reference.lines`, `diffu-evaluate`'s
+  `reference_lines`) and is refused without them, as is a rule it does not know, rather than drawn from a sample sized
+  otherwise than in training. The SGLang plugin takes its reference sized already: size it so before.
 - **Drawing**: `diffu-generate --model <MOSS dir>` (and `diffu-evaluate`, `diffu-studio`) draws through the page
   pipeline, at MOSS's own guidance and shift unless `--guidance` or `--sampling-shift` name others. `--lora
   hand=<adapter folder>` loads a hand LoRA onto the DiT ("Hand LoRAs", below); a LoRA of our reference training is
@@ -72,32 +84,59 @@ Built on CPU by diffu-page's builders, cached once on the GPU by `diffu-moss-cac
   each a row of its own with its page's sample, after the page rows, which stay exactly as without windows.
   `python -m diffu_page.data.page_pair_forms` gives the rows of a set built before a form every form, in a new manifest
   beside it (each row planned again from its PAGE file and scan as the build planned it; `--replace <form>` plans a
-  form whose caption changed again), its images as they are.
+  form whose caption changed again), its images as they are. `python -m diffu_page.data.page_pair_samples` gives a
+  manifest's rows legible samples, in a new manifest beside it: each row's sample page cut from its scan at its
+  target's writing scale (`samples/<row id>.jpg`; the row records `sample_size: legible` and its sample page's id),
+  the pitches measured as drawing measures them (the window's on its lines, the sample page's on its whole-page plan's).
 
       python -m diffu_page.data.page_pairs --gt-root ~/Desktop/data/GT-Lejonet_HTR_202602 --model runs/moss/base \
           --out data_flux3/page_pairs --workers 8 --windows-per-page 2
+      python -m diffu_page.data.page_pair_samples --pairs data_flux3/page_pairs_many_1mp/train_content.jsonl \
+          --out data_flux3/page_pairs_many_1mp/train_content_legible.jsonl --workers 4
 
-- **Prompt forms** (`train/pairs.py`: `Variant`, `SHARES`): each pair is cached in one of four forms, fixed per pair by
-  a seed: a fifth without the reference (`no_reference`: the citation dropped, the look words kept), a fifth with the
-  sample and the look in words (`look`; drawn with `--reference-caption named`), a fifth with the sample and no look
-  words (`plain`; a page pair still names its hand: `--reference-caption hand`, a style pair's `plain`), and two
-  fifths with the sample alone (`sample`: no hand named, no look words, the paper "the paper of the sample image":
-  `--reference-caption sample`), so the hand and the look must be read from the image. Where each archive has one
-  look (the eight hands' set), its name gives both away: trained on the first three forms, the model ignored its
-  sample. A style pair's caption names no hand, so its plain and sample forms differ in the paper alone
-  (`sample_caption.py` drops the look words and names the sample image).
+- **Prompt forms** (`train/pairs.py`: `Variant`, `MIXES`): each pair is cached in one form, fixed per pair by a seed,
+  from one of two mixes (`--mix`). The named mix (the default): a fifth without the reference (`no_reference`: the
+  citation dropped, the look words kept), a fifth with the sample and the look in words (`look`; drawn with
+  `--reference-caption named`), a fifth with the sample and no look words (`plain`; a page pair still names its hand:
+  `--reference-caption hand`, a style pair's `plain`), and two fifths with the sample alone (`sample`: no hand named,
+  no look words, the paper "the paper of the sample image": `--reference-caption sample`). Three of its four forms
+  name a page pair's archive and years, 60 % of the steps, and with them its hand: trained on them, the eight-hands and
+  the many-volumes fine-tunes drew a page's hand from its name and left their samples unread (1 of 12 swaps followed
+  its sample). The content mix (`--mix content`) names no archive, years or hand in any form: three fifths `sample`,
+  a fifth `sample_look` (the sample and the look in words: "Create a flat, evenly lit greyscale archival scan of a
+  new handwritten page in the hand, ink and paper of the sample image. The light grey paper carries 40 lines of
+  cursive handwriting in black ink.": `--reference-caption sample_look`) and a fifth `generic`, without the sample and
+  naming nothing, neither archive, years nor look ("Flat, evenly lit archival scan of a handwritten page. The paper
+  carries 40 lines of cursive handwriting."; the reference dropped, as guidance needs). Every page-pair build plans
+  all six forms; `page_pair_forms` adds the two new ones to an older set's rows. A style pair's caption names no hand,
+  so its plain and sample forms differ in the paper alone (`sample_caption.py` drops the look words and names the
+  sample image); it describes its reference's hand in words, so it has no `sample_look` or `generic` form, and the
+  cache refuses the content mix for it.
 - **The cache** (`diffu-moss-cache-pairs`): each entry encoded exactly as drawing encodes it, by the model directory's
   own components loaded as the page pipeline loads them; one safetensors file per entry, written whole, so a stopped
-  run resumes; `entries.jsonl` and `cache.json` last. `--limit`, `--every-form` (a validation set),
-  `--latents-only` (no text encoder: for `--encode-text`), and `--restyle-share s`: that share of the sample-form
-  entries takes one look change for the page and its sample alike (`train/restyle.py`: microfilm, colourised or
+  run resumes; `entries.jsonl` and `cache.json` last. `--limit`, `--mix`, `--every-form` (a validation set: every
+  form of the mix), `--latents-only` (no text encoder: for `--encode-text`), `--restyle-share s` and
+  `--hand-restyle-share s`, each that share of the sample-form entries, picked apart (an entry may take both, a hand
+  change first): a look change for the page and its sample alike (`train/restyle.py`: microfilm, colourised or
   tinted, each image's own ink and paper mapped onto the drawn tones, no pixel moved), so a page's look cannot come
-  from its hand; each such entry records its change, and `diffu-draw-pairs` draws it back from its sample in that look.
+  from its hand, or a hand change for both alike (`HandRestyle`): the strokes half a pixel thinner to a pixel thicker
+  (the ink coverage above the paper's grain spread or shrunk by that fraction of a pixel and laid on in the strokes'
+  own colour; a whole pixel or two thinner broke 1 MP pages' 1-2 px strokes up or erased them), the page sheared about
+  its middle row by up to 10 degrees, and scaled across by 0.85-1.15 and fitted back to its pixel count on the grid,
+  the target's Layout prompt moved with it (each box the bounding box of its sheared and scaled corners). A hand change
+  that would move a line's box off its page or onto another line's is refused: the entry is cached without it, its
+  reason recorded (on 3,000 rows of the many-volumes set, 55 % are, most of them sheared over 5 degrees: half its
+  pages can be sheared 3 degrees at most before a line leaves them). Each entry records its changes, the cache's record
+  the mix, how its samples were sized (`sample_size`, one rule for every pair), the changes made and the refusals; a
+  cache without them is written as before. `diffu-draw-pairs` draws an entry back from its sample in its hand and look.
 
       diffu-moss-cache-pairs --model runs/moss/base --pairs data_flux3/style_pairs_v3d/train.jsonl \
           --out data_flux3/cache_moss_ref_v3d --limit 4000
       diffu-moss-cache-pairs --model runs/moss/base --pairs data_flux3/page_pairs_eight/train_bal_sample2.jsonl \
           --out data_flux3/cache_moss_eight_bal_restyle --restyle-share 0.5
+      diffu-moss-cache-pairs --model runs/moss/base --pairs data_flux3/page_pairs_many_1mp/train_content_legible.jsonl \
+          --out data_flux3/cache_moss_content_train --limit 12000 --mix content --restyle-share 0.5 \
+          --hand-restyle-share 0.5
 
 ## Reference training (`diffu-moss-train-ref`, our own loop)
 
@@ -164,15 +203,30 @@ CPU and GPU).
   its loss and drawings read against stated pass criteria), the training, its model directory and the held-out crops.
 - `jobs/moss/hpc_full.sbatch.example`: a Slurm template (no site names) for the full fine-tune over several GPUs; not
   yet run on GPUs.
+- `jobs/moss/run_content_pilot.sh` (written, not run): does the hand follow the sample once no prompt names it? From
+  Base, on the 55-collection 1 MP page pairs (`data_flux3/page_pairs_many_1mp`, reused) less
+  `GT-RA_landskapshandlingar_20260227`, which holds the scans of `GT-RA_landskapshandlingar_20260220` again (418 of
+  the set's 15,745 training rows left out, so that hand counts once): the content forms and legible
+  samples added to its manifests on CPU (minutes), caches of 12,000 training rows in the content mix with look and
+  hand changes for half the sample-form entries each, a validation and a held-out cache (~5.5 h), 2,500 steps of one
+  sample (~22 s each at a 1 MP page and a 1 MP sample: ~16 h), and the model directory (`sample_size: legible`). It
+  passes when the sample form's validation loss falls below the generic form's and the swap test's pages follow their
+  samples' hands.
+
+      mkdir -p runs/moss_content_pilot && setsid nohup jobs/moss/run_content_pilot.sh \
+          >> runs/moss_content_pilot/run.log 2>&1 < /dev/null &
 
 ## What keeps training and drawing consistent
 
 The training reads a pair as drawing reads a crop: its prompt is compiled by `diffu_moss.layout_prompt` from the pair's
 caption in the form drawing gives it (`diffu_moss.sample_caption`) and encoded by `MossTextEncoderStep` with the
-components loaded as the page pipeline loads them, its latents by the reference encode step's functions.
-`packages/page/tests/test_moss.py` checks a cached pair against the page pipeline's encoding of the same crop and
-reference, bit for bit, and that a trained pair drawn back (`diffu-draw-pairs`) is the crop the page pipeline draws;
-`packages/moss/tests/test_train.py` that `--encode-text` encodes what the cache holds.
+components loaded as the page pipeline loads them, its latents by the reference encode step's functions, its sample
+sized by the rule drawing reads from the model index (`diffu_page.draw.sample`, the same functions for the training
+pairs and for `ReferenceGridStep`). `packages/page/tests/test_moss.py` checks a cached pair against the page pipeline's
+encoding of the same crop and reference, bit for bit, that a trained pair drawn back (`diffu-draw-pairs`) is the crop
+the page pipeline draws, and that `ReferenceGridStep` sizes a sample by its model's rule; `packages/moss/tests/
+test_train.py` that `--encode-text` encodes what the cache holds and that the rule travels from a cache to the model
+index.
 
 ## Hand LoRAs
 

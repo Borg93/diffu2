@@ -185,12 +185,22 @@ def _draw(
     judge: Judge | None,
     label_files: LabelFiles,
 ) -> CropSummary:
-    reference = job.reference_image()
-    crop = draw_crop(pipe, job.plan, name=job.name, seed=job.seed, reference=reference, settings=settings, judge=judge)
+    reference, lines = job.reference_image(), job.reference_lines
+    crop = draw_crop(
+        pipe,
+        job.plan,
+        name=job.name,
+        seed=job.seed,
+        reference=reference,
+        settings=settings,
+        judge=judge,
+        reference_lines=lines,
+    )
     drawn_unclear = crop.unclear_lines
     for repair_pass in range(1, settings.repair_passes + 1):
+        seed = repair_seed(job.seed, repair_pass)
         crop = repair_lines(
-            pipe, crop, seed=repair_seed(job.seed, repair_pass), reference=reference, settings=settings, judge=judge
+            pipe, crop, seed=seed, reference=reference, settings=settings, judge=judge, reference_lines=lines
         )
     result = _save(crop, job.template, out, repaired=drawn_unclear - crop.unclear_lines, label_files=label_files)
     console.print(f"{crop.name}: CER {result.cer:.3f}, {crop.unclear_lines} unclear lines ({result.repaired} repaired)")

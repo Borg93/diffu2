@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Self
 
 from PIL import Image
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from diffu_page.captions.prompt import LineRecord
 from diffu_page.draw.plan import CropPlan
@@ -17,13 +17,15 @@ from diffu_page.page.crops.geometry import LayoutBox
 
 
 class CropRow(BaseModel):
-    """What every row of an eval set has: the real crop to compare with, its caption and line boxes."""
+    """What every row of an eval set has: the real crop to compare with, its caption and line boxes, and whether it is
+    a whole page (page_pairs' rows; left out of a window's row, which is written as before)."""
 
     file_name: str  # the real crop, relative to the set's dir
     caption: str
     width: int
     height: int
     lines: list[LineRecord]
+    whole_page: bool = Field(default=False, exclude_if=lambda whole: not whole)
 
     def plan(self) -> CropPlan:
         """The crop as a plan: its stored caption and boxes, lines read top to bottom as numbered."""
@@ -34,6 +36,7 @@ class CropRow(BaseModel):
             caption=self.caption,
             lines=self.lines,
             reading_order=list(range(len(self.lines))),
+            whole_page=self.whole_page,
         )
 
 

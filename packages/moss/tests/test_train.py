@@ -1,25 +1,33 @@
 """MOSS-Image's reference training on CPU (conftest's tiny MOSS and tiny style pairs): the caption forms, the mix of
-prompt forms in the cache (the pairs that share a line with their reference left out, page pairs too) and over a run,
-the look changes of the cache's sample form (exactly the share asked, the target and its sample alike, by transforms
-that move no pixel; a cache without them written as before), a page pair that refuses a prompt its row was not
-compiled for (another size, a form built after its set), MOSS's noise levels, the flow-matching loss over the drawn
-image alone, a LoRA that learns at the recipe's learning rate, the validation's paired noise, a training that lowers
-the loss of what it trains on, one that refuses an empty cache, and prompts encoded in the step as the cache encodes
-them, by a frozen encoder, from a cache of latents alone."""
+prompt forms in the cache (the pairs that share a line with their reference left out, page pairs too; a mix whose
+forms the pairs lack refused) and over a run, the look changes of the cache's sample form (exactly the share asked,
+the target and its sample alike, by transforms that move no pixel; a cache without them written as before), its hand
+changes (each box moved exactly as the shear and the width move it, every line's ink inside its moved box, the target
+and its sample changed alike, a change that would move a line off its page or onto another refused), a page pair that
+refuses a prompt its row was not compiled for (another size, a form built after its set), how a cache's samples were
+sized recorded from its pairs to the model index (and a validation cache sized otherwise refused), MOSS's noise levels,
+the flow-matching loss over the drawn image alone, a LoRA that learns at the recipe's learning rate, the validation's
+paired noise, a training that lowers the loss of what it trains on, one that refuses an empty cache, and prompts
+encoded in the step as the cache encodes them, by a frozen encoder, from a cache of latents alone."""
 
 from __future__ import annotations
 
 import json
+import math
+from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
 
+import numpy as np
 import pytest
 import torch
 from peft import get_peft_model_state_dict
-from PIL import Image
+from PIL import Image, ImageDraw
 from safetensors import safe_open
 from safetensors.torch import load_file
 
+from diffu_core.repo import ModelIndex
+from diffu_moss.init import write_moss_repo
 from diffu_moss.latents import encode_latents, image_pixels
 from diffu_moss.sample_caption import with_sample, without_sample
 from diffu_moss.train.cache import (
@@ -33,9 +41,11 @@ from diffu_moss.train.cache import (
     load_sample,
     read_entries,
     read_record,
+    styled,
     write_cache,
 )
 from diffu_moss.train.export import export_merged
+from diffu_moss.train.full import FullSettings
 from diffu_moss.train.loop import (
     LOG,
     TrainSettings,
@@ -44,9 +54,30 @@ from diffu_moss.train.loop import (
     train,
     validation_losses,
 )
-from diffu_moss.train.pairs import PagePair, TrainingPair, Variant, apart, read_pairs
+from diffu_moss.train.pairs import (
+    MIXES,
+    PagePair,
+    PagePairRow,
+    PromptMix,
+    SampleSize,
+    TrainingPair,
+    Variant,
+    apart,
+    assign_variants,
+    read_pairs,
+)
 from diffu_moss.train.records import ADAPTER_WEIGHTS, CACHE_RECORD
-from diffu_moss.train.restyle import Colourise, Microfilm, Restyle, Tint, restyled
+from diffu_moss.train.restyle import (
+    OFF_PAGE,
+    OVERLAP,
+    Colourise,
+    HandRefused,
+    HandRestyle,
+    Microfilm,
+    Restyle,
+    Tint,
+    restyled,
+)
 from diffu_moss.train.sigmas import draw_sigmas, sigma_grid, sigma_weights
 from diffu_moss.transformer import MossTransformer
 
@@ -203,7 +234,7 @@ def test_cache_holds_a_fifth_of_the_pairs_in_each_form_but_two_fifths_with_the_s
 ) -> None:
     entries = read_entries(tiny_pair_cache)
 
-    counts = {variant: sum(entry.variant is variant for entry in entries) for variant in Variant}
+    counts = Counter(entry.variant for entry in entries)
     forms = {
         (
             entry.variant,
@@ -314,6 +345,274 @@ def test_restyle_moves_no_pixel_and_keeps_the_images_size(restyle: Restyle) -> N
     assert (changed.mode, changed.size) == ("RGB", image.size)
     # each pixel's new colour, wherever it is
     assert restyled(_shuffled(image, order), restyle).tobytes() == _shuffled(changed, order).tobytes()
+
+
+PAGE = (640, 960)  # px (width, height): a page's canvas
+LINES = [  # its lines' boxes (y0, x0, y1, x1, px from its centre): two near the top, a margin note, one near the bottom
+    [-400, -250, -350, 200],
+    [-340, -250, -290, 230],
+    [-100, -300, -60, -270],
+    [300, -200, 350, 250],
+]
+PAPER_RGB, INK_RGB = (230, 220, 200), (40, 30, 20)
+
+
+def _prompt(boxes: list[list[int]], size: tuple[int, int]) -> str:
+    """A compiled Layout prompt of a page of ``size``: its paper over the whole canvas, then a line in each box."""
+    width, height = size
+    paper = {"label": "object", "caption": "Aged paper.", "bbox": [-height // 2, -width // 2, height // 2, width // 2]}
+    lines = [
+        {"label": "text", "caption": "Handwritten line.", "text": f"rad {k}", "bbox": box}
+        for k, box in enumerate(boxes)
+    ]
+    layout = {"summary": {"caption": "A page."}, "items": [paper, *lines], "bbox_coord_space": "abs_centralized"}
+    return json.dumps(layout, ensure_ascii=False, separators=(",", ":"))
+
+
+def _corners_moved(box: list[int], hand: HandRestyle, size: tuple[int, int]) -> list[int]:
+    """Where ``hand`` moves a box: each of its four corners sheared (x - tan(slant) y) and scaled to the changed page,
+    their bounding box's top and left edges floored and its bottom and right ceiled."""
+    (width, height), (changed_width, changed_height) = size, hand.size(size)
+    shear = math.tan(math.radians(hand.slant))
+    y0, x0, y1, x1 = box
+    corners = [
+        ((x - shear * y) * changed_width / width, y * changed_height / height) for x in (x0, x1) for y in (y0, y1)
+    ]
+    xs, ys = [x for x, _ in corners], [y for _, y in corners]
+    return [
+        math.floor(round(min(ys), 9)),
+        math.floor(round(min(xs), 9)),
+        math.ceil(round(max(ys), 9)),
+        math.ceil(round(max(xs), 9)),
+    ]
+
+
+@pytest.mark.parametrize(
+    "hand",
+    [
+        pytest.param(HandRestyle(slant=7.5, stroke=1.0, width=1.0), id="leaning-right"),
+        pytest.param(HandRestyle(slant=-9.0, stroke=-0.5, width=1.0), id="leaning-left"),
+        pytest.param(HandRestyle(slant=4.0, stroke=0.5, width=1.15), id="leaning-right-and-wider"),
+    ],
+)
+def test_hand_change_moves_each_box_of_a_prompt_as_the_shear_and_the_width_move_its_corners(hand: HandRestyle) -> None:
+    moved, size = hand.moved_prompt(_prompt(LINES, PAGE), PAGE)
+
+    items = json.loads(moved)["items"]
+    width, height = hand.size(PAGE)
+    assert size == (width, height)
+    assert items[0]["bbox"] == [-height // 2, -width // 2, height // 2, width // 2]  # the paper: the whole new page
+    assert [item["bbox"] for item in items[1:]] == [_corners_moved(box, hand, PAGE) for box in LINES]
+    assert [item["text"] for item in items[1:]] == ["rad 0", "rad 1", "rad 2", "rad 3"]
+
+
+@pytest.mark.parametrize(
+    ("boxes", "reason"),
+    [
+        pytest.param([[-400, 0, -350, 310]], OFF_PAGE, id="a-line-near-the-top-off-the-right-edge"),
+        pytest.param([[300, -310, 350, 0]], OFF_PAGE, id="a-line-near-the-bottom-off-the-left-edge"),
+        pytest.param([[-60, -300, 0, -2], [-60, 0, 0, 300]], OVERLAP, id="lines-side-by-side-onto-each-other"),
+    ],
+)
+def test_hand_change_refuses_to_move_a_line_off_its_page_or_onto_another(boxes: list[list[int]], reason: str) -> None:
+    leaning_right = HandRestyle(slant=5.0, stroke=1.0, width=1.0)
+
+    with pytest.raises(HandRefused, match=reason):
+        leaning_right.moved_prompt(_prompt(boxes, PAGE), PAGE)
+
+
+@pytest.mark.parametrize(
+    ("stroke", "ink_gained"),
+    [pytest.param(1.0, 1.0, id="a-pixel-thicker"), pytest.param(-0.5, -1.0, id="half-a-pixel-thinner")],
+)
+def test_hand_change_of_stroke_lays_on_or_takes_off_ink_and_leaves_the_paper_grain_beyond_the_strokes(
+    stroke: float, ink_gained: float
+) -> None:
+    grain = torch.randint(0, 14, (64, 96), generator=torch.Generator().manual_seed(0))  # up to 13 levels darker
+    pixels = (torch.tensor(PAPER_RGB).view(3, 1, 1) - grain).permute(1, 2, 0)
+    pixels[16:48, 40:50] = torch.tensor(INK_RGB)  # a stroke 10 px wide
+    page = Image.fromarray(pixels.to(torch.uint8).numpy())
+
+    changed = HandRestyle(slant=0.0, stroke=stroke, width=1.0).apply(page)
+
+    before, after = (torch.from_numpy(np.array(image.convert("L"))).float() for image in (page, changed))
+    beyond = torch.ones(64, 96, dtype=torch.bool)
+    beyond[14:50, 38:52] = False  # 2 px around the stroke
+    assert torch.equal(before[beyond], after[beyond])  # the paper beyond the stroke keeps every pixel
+    assert torch.sign(before.sum() - after.sum()).item() == ink_gained  # darker where the stroke grew
+
+
+def test_hand_change_keeps_every_lines_ink_inside_its_moved_box_and_none_outside_them() -> None:
+    hand = HandRestyle(slant=8.0, stroke=1.0, width=1.1)
+    page = Image.new("RGB", PAGE, PAPER_RGB)
+    draw = ImageDraw.Draw(page)
+    middle_x, middle_y = PAGE[0] // 2, PAGE[1] // 2
+    for y0, x0, y1, x1 in LINES:  # each line's ink 4 px inside its box, as a slot's margins hold a line's
+        draw.rectangle((middle_x + x0 + 4, middle_y + y0 + 4, middle_x + x1 - 5, middle_y + y1 - 5), fill=INK_RGB)
+
+    changed = hand.apply(page)
+
+    moved, (width, height) = hand.moved_prompt(_prompt(LINES, PAGE), PAGE)
+    boxes = [item["bbox"] for item in json.loads(moved)["items"][1:]]
+    rows, columns = torch.nonzero(torch.from_numpy(np.asarray(changed.convert("L")) < 128), as_tuple=True)
+    ink = {(x - width // 2, y - height // 2) for x, y in zip(columns.tolist(), rows.tolist(), strict=True)}
+    inked = [{(x, y) for x, y in ink if y0 <= y < y1 and x0 <= x < x1} for y0, x0, y1, x1 in boxes]
+    assert changed.size == (width, height)
+    assert [len(line) > 0 for line in inked] == [True] * len(LINES)  # each box holds its line
+    assert ink == set().union(*inked)  # and no ink lies outside them
+
+
+def test_cache_gives_a_pairs_target_and_sample_the_hand_change_its_entry_records_its_prompt_moved_with_its_lines(
+    tiny_moss: Path, tiny_pairs: Path, tiny_pair_cache: Path, tiny_hand_cache: Path
+) -> None:
+    pairs = {pair.id: pair for pair in read_pairs(tiny_pairs / "train.jsonl")}
+    unchanged = {entry.file: entry for entry in read_entries(tiny_pair_cache)}
+    vae = encoder_pipeline(tiny_moss, "cpu", ("vae",)).vae
+
+    entries = read_entries(tiny_hand_cache)
+
+    def encoded(path: Path, hand: HandRestyle) -> torch.Tensor:
+        with Image.open(path) as image:
+            return encode_latents(vae, image_pixels(styled(image, hand=hand))).to(CACHE_DTYPE)
+
+    changed = [(entry, entry.hand) for entry in entries if entry.hand is not None]
+    # 2 of the 4 in the sample form (vol_08, vol_06, vol_05, vol_07), by a stream of their own
+    assert [(entry.pair, entry.variant) for entry, _ in changed] == [
+        ("vol_06", Variant.SAMPLE),
+        ("vol_07", Variant.SAMPLE),
+    ]
+    for entry, hand in changed:
+        sample, size = load_sample(tiny_hand_cache, entry, "cpu"), unchanged[entry.file].target_size
+        assert (entry.prompt, entry.target_size) == hand.moved_prompt(unchanged[entry.file].prompt, size)
+        assert torch.equal(sample.target, encoded(pairs[entry.pair].target, hand))
+        assert sample.reference is not None
+        assert torch.equal(sample.reference, encoded(pairs[entry.pair].reference, hand))
+    differ = [
+        entry.file
+        for entry in entries
+        if entry.hand is None
+        and (tiny_hand_cache / entry.file).read_bytes() != (tiny_pair_cache / entry.file).read_bytes()
+    ]
+    assert differ == []
+    record = read_record(tiny_hand_cache)
+    assert (record.hand_restyle_share, record.hand_restyled, record.hand_refused) == (0.5, 2, {})
+
+
+def test_content_mix_draws_the_sample_alone_for_three_fifths_and_the_sample_with_the_look_or_nothing_for_a_fifth() -> (
+    None
+):
+    forms = assign_variants(10, seed=0, mix=PromptMix.CONTENT)
+
+    assert Counter(forms) == {Variant.SAMPLE: 6, Variant.SAMPLE_LOOK: 2, Variant.GENERIC: 2}
+
+
+def test_cache_refuses_a_mix_whose_forms_its_pairs_lack_before_it_loads_an_encoder(
+    tiny_pairs: Path, tmp_path: Path
+) -> None:
+    (tmp_path / "no_model").mkdir()  # an encoder loaded from it would fail otherwise
+    content = CacheSettings(mix=PromptMix.CONTENT, device="cpu")
+
+    # a style pair's caption describes its hand in words: of the content mix it has the sample form alone
+    with pytest.raises(ValueError, match=r"4 pairs lack the form they are planned in .* or another mix"):
+        write_cache(tmp_path / "no_model", tiny_pairs / "train.jsonl", tmp_path / "cache", content)
+
+
+PAIR_SIZE = (64, 32)  # px: the tiny pairs' targets
+
+
+@pytest.fixture(scope="module")
+def legible_pairs(tiny_pairs: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The tiny style pairs as a page-pair manifest whose samples were cut at their targets' writing scale (each
+    pair's own reference image, as it is), each row's prompts its named mix's forms."""
+    forms = MIXES[PromptMix.NAMED].forms
+    rows = [
+        PagePairRow(
+            id=pair.id,
+            target=str(pair.target),
+            reference=str(pair.reference),
+            size=PAIR_SIZE,
+            volume="vol",
+            prompts={variant: pair.prompt(variant, PAIR_SIZE) for variant in forms},
+            tokens=dict.fromkeys(forms, 1),
+            sample_size=SampleSize.LEGIBLE,
+        )
+        for pair in read_pairs(tiny_pairs / "train.jsonl")
+    ]
+    manifest = tmp_path_factory.mktemp("legible_pairs") / "train.jsonl"
+    manifest.write_text("".join(f"{row.model_dump_json()}\n" for row in rows), encoding="utf-8")
+    return manifest
+
+
+@pytest.fixture(scope="module")
+def legible_cache(tiny_moss: Path, legible_pairs: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Two of the legible pairs cached."""
+    cache = tmp_path_factory.mktemp("legible_cache") / "cache"
+    write_cache(tiny_moss, legible_pairs, cache, CacheSettings(limit=2, device="cpu"))
+    return cache
+
+
+def test_cache_refuses_pairs_whose_samples_were_sized_by_more_than_one_rule(
+    legible_pairs: Path, tmp_path: Path
+) -> None:
+    rows = legible_pairs.read_text(encoding="utf-8").splitlines()
+    shrunk = PagePairRow.model_validate_json(rows[0]).model_copy(update={"sample_size": SampleSize.HALF})
+    mixed = tmp_path / "mixed.jsonl"
+    mixed.write_text("".join(f"{row}\n" for row in [shrunk.model_dump_json(), *rows[1:]]), encoding="utf-8")
+    (tmp_path / "no_model").mkdir()
+
+    with pytest.raises(ValueError, match=r"samples are sized by more than one rule \(half, legible\)"):
+        write_cache(tmp_path / "no_model", mixed, tmp_path / "cache", CacheSettings(device="cpu"))
+
+
+def _merged(base: Path, checkpoint: Path, out: Path) -> Path:
+    """A LoRA checkpoint's DiT: merged into ``base`` (diffu-moss-export-ref), into ``out``."""
+    export_merged(base, checkpoint, out)
+    return out
+
+
+def _its_own(base: Path, checkpoint: Path, out: Path) -> Path:
+    """A full fine-tune checkpoint's DiT: its own ``transformer/``."""
+    return checkpoint / "transformer"
+
+
+@pytest.mark.parametrize(
+    ("full", "dit_of"),
+    [pytest.param(None, _merged, id="lora"), pytest.param(FullSettings(), _its_own, id="full-fine-tune")],
+)
+def test_model_index_names_how_the_cache_its_dit_trained_on_sized_its_samples(
+    full: FullSettings | None,
+    dit_of: Callable[[Path, Path, Path], Path],
+    tiny_moss_dit: Path,
+    legible_cache: Path,
+    tmp_path: Path,
+) -> None:
+    checkpoint = train(tiny_moss_dit, legible_cache, tmp_path / "run", TrainSettings(steps=1, full=full, device="cpu"))
+    dit = dit_of(tiny_moss_dit, checkpoint, tmp_path / "export")
+
+    index = write_moss_repo(tmp_path / "repo", base=tiny_moss_dit.parent, transformer=dit)
+
+    extra = index.model_extra or {}
+    assert (read_record(legible_cache).sample_size, extra["takes_reference"], extra["sample_size"]) == (
+        SampleSize.LEGIBLE,
+        True,
+        "legible",
+    )
+    assert ModelIndex.read(tmp_path / "repo") == index
+
+
+def test_training_refuses_a_validation_cache_whose_samples_were_sized_otherwise(
+    legible_cache: Path, tiny_pair_cache: Path, tmp_path: Path
+) -> None:
+    (tmp_path / "no_dit").mkdir()  # refused before the DiT is loaded
+
+    with pytest.raises(ValueError, match=r"sized its samples legible, the validation cache .* half"):
+        train(
+            tmp_path / "no_dit",
+            legible_cache,
+            tmp_path / "run",
+            TrainSettings(steps=1, device="cpu"),
+            val_cache=tiny_pair_cache,
+        )
 
 
 def test_training_draws_every_entry_once_a_pass_so_a_run_keeps_the_caches_mix(

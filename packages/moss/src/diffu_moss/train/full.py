@@ -49,6 +49,7 @@ from torch.optim.lr_scheduler import LambdaLR
 
 from diffu_moss.train.distributed import Ranks, gathered, shard, sharded_like
 from diffu_moss.train.muon import Muon
+from diffu_moss.train.pairs import SampleSize
 from diffu_moss.train.records import EXPORT_RECORD, PROGRESS_RECORD, ExportRecord, Progress
 from diffu_moss.transformer import MossTransformer
 
@@ -234,7 +235,8 @@ class WeightAverage:
 
 class FullTraining:
     """A full fine-tune in training (the module's docstring), from the DiT at ``base`` or, with ``resume``, from that
-    checkpoint's state: the DiT's weights, the optimizer's state and the average's as they were saved.
+    checkpoint's state: the DiT's weights, the optimizer's state and the average's as they were saved. Each checkpoint's
+    ``export.json`` records how the samples it trained on were sized (``sample_size``).
 
     Over several ranks (``ranks.mesh``) the DiT is loaded on the CPU on each, then sharded onto the mesh's device
     (:func:`diffu_moss.train.distributed.shard`); the optimizer's and the average's state are sharded as the weights
@@ -258,8 +260,10 @@ class FullTraining:
         device: str,
         resume: Path | None = None,
         ranks: Ranks | None = None,
+        sample_size: SampleSize = SampleSize.HALF,
     ) -> None:
         self._base = base
+        self._sample_size = sample_size
         self._save_state = settings.save_state
         self._ranks = Ranks() if ranks is None else ranks
         mesh = self._ranks.mesh
@@ -303,7 +307,12 @@ class FullTraining:
         every rank calls it, as the sharded weights and state are gathered from all. One file at a time: its weights
         copied to the CPU tensor by tensor and held there only while it is written
         (:func:`diffu_moss.train.distributed.gathered`); CUDA's free cached blocks go back to the system after."""
-        record = ExportRecord(takes_reference=True, base=str(self._base.resolve()), checkpoint=str(directory.resolve()))
+        record = ExportRecord(
+            takes_reference=True,
+            base=str(self._base.resolve()),
+            checkpoint=str(directory.resolve()),
+            sample_size=self._sample_size,
+        )
         weights = dict(self.transformer.named_parameters())
         self._save_dit(weights, directory / DIT, record)
         if self.average is not None:

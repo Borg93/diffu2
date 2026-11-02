@@ -8,8 +8,9 @@ The Base DiT is loaded in bfloat16, the LoRA (``adapter.json``, ``adapter.safete
 trained and fused into its weights (each merged weight rounded to bfloat16 once), the adapter layers removed, and the
 DiT saved as
 ``config.json`` and safetensors beside ``export.json``: the export's record, which says the DiT was trained to take a
-reference image, so the model directory ``diffu-moss-init`` writes for it takes one. A full fine-tune's checkpoint
-(``diffu-moss-train-ref --full``) needs no export: it is such a folder already.
+reference image, and how its samples were sized (the LoRA's own record's), so the model directory ``diffu-moss-init``
+writes for it takes one, sized so. A full fine-tune's checkpoint (``diffu-moss-train-ref --full``) needs no export: it
+is such a folder already.
 """
 
 from __future__ import annotations
@@ -52,7 +53,11 @@ def export_merged(base: Path, checkpoint: Path, out: Path, *, device: str = "cpu
     transformer.unload_lora()
     transformer.save_pretrained(str(out))
     record = ExportRecord(
-        takes_reference=True, base=str(base.resolve()), checkpoint=str(checkpoint.resolve()), adapter=adapter
+        takes_reference=True,
+        base=str(base.resolve()),
+        checkpoint=str(checkpoint.resolve()),
+        adapter=adapter,
+        sample_size=adapter.sample_size,
     )
     record.write(out / EXPORT_RECORD)
     return record

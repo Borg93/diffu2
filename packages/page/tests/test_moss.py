@@ -7,10 +7,13 @@ exported and initialised): its training cache holds what drawing encodes, it dra
 toward it, its own training pairs drawn back (diffu_page.cli.draw_pairs) are the crops the page pipeline draws (a pair
 the cache restyled, from its sample in that look), a described caption's look words drop to exactly the plain caption
 the page captions would write (or, given the sample form's paper row, its sample-form caption), and a named caption's
-citation drops with the comma after its archive."""
+citation drops with the comma after its archive. A sample is sized by the rule its model's index names (shrunk, or
+legible: a whole page's at its pixel count, a window's cut by the sample's line boxes), and a rule the drawing cannot
+follow (one it does not know, a legible window's sample without its line boxes) is refused."""
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -22,10 +25,11 @@ from diffusers.modular_pipelines import ModularPipeline, SequentialPipelineBlock
 from PIL import Image
 
 from diffu_core.loading import COMPONENT_DTYPES
+from diffu_core.repo import INDEX
 from diffu_moss.layout_prompt import caption_layout, caption_texts
 from diffu_moss.modular_pipelines.moss import MossAutoBlocks, MossModularPipeline
 from diffu_moss.sample_caption import PLAIN_PAPER_ROW, SAMPLE_PAPER_ROW, without_look, without_sample
-from diffu_moss.train.cache import load_sample, read_entries
+from diffu_moss.train.cache import load_sample, read_entries, styled
 from diffu_moss.train.pairs import Pair, Variant, read_pairs
 from diffu_moss.train.restyle import restyled
 from diffu_page.captions.hand import HandLook, ReferenceLook
@@ -50,7 +54,10 @@ from diffu_page.draw.pipeline import (
     repair_lines,
 )
 from diffu_page.draw.plan import CropPlan, plan_page, plan_whole_page
-from diffu_page.page.crops.geometry import Crop, CropSettings, crops_for_page, regions_of
+from diffu_page.draw.sample import line_pitch, sample_at_pixels, sample_window
+from diffu_page.output import load_rgb
+from diffu_page.page.crops.geometry import Crop, CropSettings, LayoutBox, crops_for_page, regions_of
+from diffu_page.page.crops.grid import as_reference
 from diffu_page.page.layout import load_xml_layout
 from diffu_page.quality.judge import LineVerdict
 
@@ -274,6 +281,31 @@ def test_draw_pairs_draws_a_restyled_pair_back_from_its_sample_in_the_look_it_wa
         assert drawn.tobytes() == crop.tobytes()
 
 
+def test_draw_pairs_draws_a_hand_changed_pair_back_from_its_moved_prompt_and_its_sample_in_that_hand(
+    tiny_pairs: Path, tiny_hand_cache: Path, tiny_reference_moss: Path, tmp_path: Path
+) -> None:
+    entry = read_entries(tiny_hand_cache)[3]  # vol_06, the cache's third pair drawn with its reference
+    assert entry.hand is not None
+    pair = next(pair for pair in read_pairs(tiny_pairs / "train.jsonl") if pair.id == entry.pair)
+    pipe = load_pipeline(tiny_reference_moss, lambda family: family.blocks(), loras={}, settings=MOSS_SETTINGS)
+    pipe.guider.set_state(step=0, num_inference_steps=MOSS_SETTINGS.steps, timestep=None)
+    width, height = entry.target_size
+    in_that_hand = pipe(
+        prompt=entry.prompt,
+        image=styled(load_rgb(pair.reference), hand=entry.hand),
+        height=height,
+        width=width,
+        generator=torch.Generator().manual_seed(2),  # the third pair drawn: seed 0 + 2
+        **MOSS_SETTINGS.pipeline_inputs(),
+        output="images",
+    )[0]
+
+    draw_pairs(tiny_reference_moss, tiny_hand_cache, tmp_path, count=3, seed=0, settings=MOSS_SETTINGS)
+
+    with Image.open(tmp_path / "generated" / "002.png") as drawn:
+        assert drawn.tobytes() == in_that_hand.tobytes()
+
+
 def test_reference_trained_moss_guides_toward_its_reference_with_a_pass_without_it(
     tiny_reference_moss: Path, first_pair: Pair
 ) -> None:
@@ -392,3 +424,121 @@ def test_model_family_draws_each_repo_with_the_blocks_and_pipeline_of_its_own_fa
     family = model_family(request.getfixturevalue(repo))
 
     assert (family.blocks, family.pipeline) == (blocks, pipeline)
+
+
+def _naming(repo: Path, out: Path, sample_size: str) -> Path:
+    """``out``: the MOSS repo ``repo``'s model index (its components where they are), naming ``sample_size``."""
+    index = json.loads((repo / INDEX).read_text(encoding="utf-8"))
+    out.mkdir(parents=True)
+    (out / INDEX).write_text(json.dumps({**index, "sample_size": sample_size}), encoding="utf-8")
+    return out
+
+
+@pytest.fixture(scope="module")
+def legible_moss(tiny_moss_reference: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The tiny MOSS that takes a reference image, its index naming the legible rule, as diffu-moss-init writes it for
+    a DiT trained on legible samples."""
+    return _naming(tiny_moss_reference, tmp_path_factory.mktemp("legible") / "moss", "legible")
+
+
+SAMPLE_LINES: list[LayoutBox] = [(100 + 80 * k, 100, 160 + 80 * k, 900) for k in range(10)]  # 0-1000 of the sample
+
+
+@pytest.fixture
+def sample_page() -> Image.Image:
+    """A 480 x 640 px sample page (a gradient): its lines' boxes are ``SAMPLE_LINES``, a 38.4 px pitch."""
+    return Image.linear_gradient("L").resize((480, 640)).convert("RGB")
+
+
+@pytest.fixture
+def body_page_plans(body_and_notes_page: Path, page_style: PageStyle) -> dict[str, CropPlan]:
+    """The body-and-notes page planned whole (at 64 x 80 px) and its first window (drawn at 64 x 64 px)."""
+    layout = load_xml_layout(body_and_notes_page)
+    window = plan_page(layout, page_style)[0].model_copy(update={"width": 64, "height": 64})
+    return {"whole": plan_whole_page(layout, page_style, pixels=64 * 80), "window": window}
+
+
+def _shrunk(sample: Image.Image, plan: CropPlan) -> Image.Image:
+    return as_reference(sample)
+
+
+def _at_its_pixel_count(sample: Image.Image, plan: CropPlan) -> Image.Image:
+    return sample_at_pixels(sample, plan.width * plan.height)
+
+
+def _at_its_line_pitch(sample: Image.Image, plan: CropPlan) -> Image.Image:
+    pitch = line_pitch([line.bbox for line in plan.lines], plan.height)
+    return sample_window(sample, SAMPLE_LINES, pitch=pitch, size=(plan.width, plan.height))
+
+
+def _sized_by(repo: Path, plan: CropPlan, sample: Image.Image) -> Image.Image:
+    """``sample`` (its lines ``SAMPLE_LINES``) as the crop pipeline of the MOSS repo ``repo`` hands it to its own
+    blocks for ``plan``."""
+    blocks = crop_blocks(FAMILIES["MossAutoBlocks"]).sub_blocks
+    steps = SequentialPipelineBlocks.from_blocks_dict(
+        {name: blocks[name] for name in ("crop_prompt", "reference_grid")}
+    )
+    pipe = MossModularPipeline(blocks=steps, pretrained_model_name_or_path=str(repo))
+    return pipe(crop_plan=plan, image=sample, reference_lines=SAMPLE_LINES, output="image")
+
+
+@pytest.mark.parametrize(
+    ("repo", "plan", "sized"),
+    [
+        pytest.param("tiny_moss_reference", "window", _shrunk, id="shrunk-for-a-model-whose-index-names-none"),
+        pytest.param("legible_moss", "whole", _at_its_pixel_count, id="legible-for-a-whole-page"),
+        pytest.param("legible_moss", "window", _at_its_line_pitch, id="legible-for-a-window"),
+    ],
+)
+def test_reference_grid_sizes_a_sample_by_the_rule_its_models_index_names(
+    repo: str,
+    plan: str,
+    sized: Callable[[Image.Image, CropPlan], Image.Image],
+    body_page_plans: dict[str, CropPlan],
+    sample_page: Image.Image,
+    request: pytest.FixtureRequest,
+) -> None:
+    drawn_from = _sized_by(request.getfixturevalue(repo), body_page_plans[plan], sample_page)
+
+    expected = sized(sample_page, body_page_plans[plan])
+    assert (drawn_from.size, drawn_from.tobytes()) == (expected.size, expected.tobytes())
+
+
+def test_reference_grid_refuses_a_sample_size_its_models_index_names_that_it_does_not_know(
+    tiny_moss_reference: Path, body_page_plans: dict[str, CropPlan], sample_page: Image.Image, tmp_path: Path
+) -> None:
+    repo = _naming(tiny_moss_reference, tmp_path / "moss", "quarter")
+
+    with pytest.raises(ValueError, match="sizes its samples by 'quarter', which no rule here knows"):
+        _sized_by(repo, body_page_plans["whole"], sample_page)
+
+
+@pytest.fixture(scope="module")
+def legible_pipe(legible_moss: Path) -> ModularPipeline:
+    return load_pipeline(legible_moss, crop_blocks, loras={}, settings=MOSS_SETTINGS)
+
+
+def test_legible_moss_draws_a_window_from_a_sample_given_with_its_line_boxes(
+    legible_pipe: ModularPipeline, body_page_plans: dict[str, CropPlan], sample_page: Image.Image
+) -> None:
+    window = body_page_plans["window"]
+
+    crop = draw_crop(
+        legible_pipe,
+        window,
+        name="000",
+        seed=0,
+        reference=sample_page,
+        settings=MOSS_SETTINGS,
+        judge=ScriptedJudge(),
+        reference_lines=SAMPLE_LINES,
+    )
+
+    assert crop.image.size == (window.width, window.height)
+
+
+def test_legible_moss_refuses_a_windows_sample_given_without_its_line_boxes(
+    legible_pipe: ModularPipeline, body_page_plans: dict[str, CropPlan], sample_page: Image.Image
+) -> None:
+    with pytest.raises(ValueError, match="give the sample's line boxes"):
+        _draw(legible_pipe, body_page_plans["window"], seed=0, reference=sample_page)

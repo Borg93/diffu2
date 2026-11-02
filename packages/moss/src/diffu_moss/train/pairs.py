@@ -5,15 +5,24 @@ on. A page pair (:class:`PagePair`): a whole single page, or a window of one, an
 none of its lines, its Layout prompt in each form compiled by ``diffu_page.data.page_pairs``, read from its page-pair
 manifest. :func:`read_manifest` reads either.
 
-Each pair is drawn into one of four prompt forms, its :class:`Variant`, the mix fixed per pair by a seed
-(:func:`assign_variants`, :data:`SHARES`): a fifth without the reference (the caption's citation dropped, its look
-words kept: plain text-to-image, as MOSS-Image was trained), a fifth with the sample image and the look words, a fifth
-with the sample image and no look words (a page pair's prompt still names its hand), and two fifths with the sample
-image alone, naming no hand and no look, its paper "the paper of the sample image", so the hand and the look must come
-from the image. A style pair's caption names no hand, so its plain and sample forms differ in the paper alone. Each
-form is compiled as MOSS's Layout prompt of the target (:mod:`diffu_moss.layout_prompt`), as the page pipeline
-compiles a crop drawn with or without its reference (``MossLayoutPromptStep``); a page pair's rows carry theirs
-compiled.
+Each pair is drawn into one prompt form, its :class:`Variant`, by a mix of forms fixed per pair by a seed
+(:func:`assign_variants`, :data:`MIXES`). The named mix (:attr:`PromptMix.NAMED`, the default): a fifth without the
+reference (the caption's citation dropped, its look words kept: plain text-to-image, as MOSS-Image was trained), a
+fifth with the sample image and the look words, a fifth with the sample image and no look words (a page pair's prompt
+still names its hand), and two fifths with the sample image alone, naming no hand and no look, its paper "the paper of
+the sample image", so the hand and the look must come from the image. Three of its four forms name a page pair's
+archive and years, and with them its hand: trained so, a model draws a page's hand from the name and leaves its sample
+unread. The content mix (:attr:`PromptMix.CONTENT`) names none: three fifths with the sample image alone, a fifth with
+the sample image and the look in words but no archive, years or hand, and a fifth without the reference naming nothing
+at all, the page's content alone (the reference dropped, as guidance needs). A style pair's caption names no hand, so
+its plain and sample forms differ in the paper alone; it describes the reference's hand in words, so it has no form of
+the content mix but the sample form. Each form is compiled as MOSS's Layout prompt of the target
+(:mod:`diffu_moss.layout_prompt`), as the page pipeline compiles a crop drawn with or without its reference
+(``MossLayoutPromptStep``); a page pair's rows carry theirs compiled.
+
+A page pair's sample is shrunk under half a megapixel by default, or cut at its target's writing scale
+(:attr:`SampleSize.LEGIBLE`): the rule its row records, which a cache, a training and a model record after it, so that
+drawing sizes a sample as its model was trained on.
 """
 
 from __future__ import annotations
@@ -36,14 +45,50 @@ class Variant(StrEnum):
     LOOK = "look"  # the sample image, and the look in words too
     PLAIN = "plain"  # the sample image, the look words dropped (a page pair's prompt still names its hand)
     SAMPLE = "sample"  # the sample image alone: no hand named, no look words, the paper the sample image's
+    SAMPLE_LOOK = "sample_look"  # the sample image and the look in words, no archive, years or hand named
+    GENERIC = "generic"  # no reference image, nothing named: no archive, years, hand or look, the content alone
 
     @property
     def takes_reference(self) -> bool:
         """Whether a step of this form gives the DiT the reference image."""
-        return self is not Variant.NO_REFERENCE
+        return self not in (Variant.NO_REFERENCE, Variant.GENERIC)
 
 
-SHARES = {Variant.NO_REFERENCE: 0.2, Variant.PLAIN: 0.2, Variant.SAMPLE: 0.4}  # of all pairs; the look form the rest
+class PromptMix(StrEnum):
+    """Which prompt forms a cache's entries take, in which shares (:data:`MIXES`)."""
+
+    NAMED = "named"  # the forms first trained: three of four name a page's archive and years
+    CONTENT = "content"  # no form names an archive, years or hand: the hand only from the sample image
+
+
+class MixShares(BaseModel):
+    """A mix of prompt forms: the share of all pairs each form of ``shares`` takes (rounded), in that order, and the
+    form that takes the rest."""
+
+    model_config = ConfigDict(frozen=True)
+
+    shares: dict[Variant, float]
+    rest: Variant
+
+    @property
+    def forms(self) -> list[Variant]:
+        """The mix's forms in :class:`Variant`'s order: the forms a pair of an every-form cache takes."""
+        return [variant for variant in Variant if variant in self.shares or variant is self.rest]
+
+
+MIXES = {
+    PromptMix.NAMED: MixShares(
+        shares={Variant.NO_REFERENCE: 0.2, Variant.PLAIN: 0.2, Variant.SAMPLE: 0.4}, rest=Variant.LOOK
+    ),
+    PromptMix.CONTENT: MixShares(shares={Variant.GENERIC: 0.2, Variant.SAMPLE_LOOK: 0.2}, rest=Variant.SAMPLE),
+}
+
+
+class SampleSize(StrEnum):
+    """How a sample page is sized before the DiT reads it, in training and so in drawing (a model's ``sample_size``)."""
+
+    HALF = "half"  # shrunk under half a megapixel (diffu_page's as_reference), whatever its target
+    LEGIBLE = "legible"  # at its target's writing scale: a page's at its pixel count, a window's at its line pitch
 
 
 class Media(BaseModel):
@@ -61,8 +106,12 @@ class ManifestRow(BaseModel):
     media: list[Media]
 
 
+STYLE_PAIR_FORMS = frozenset({Variant.NO_REFERENCE, Variant.LOOK, Variant.PLAIN, Variant.SAMPLE})
+
+
 class Pair(BaseModel):
-    """A target crop, its reference crop and the target's described reference caption (citing ``<ref_image_0>``)."""
+    """A target crop, its reference crop and the target's described reference caption (citing ``<ref_image_0>``). Its
+    reference was shrunk under half a megapixel (``SampleSize.HALF``)."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -70,6 +119,7 @@ class Pair(BaseModel):
     target: Path
     reference: Path
     caption: str
+    sample_size: SampleSize = SampleSize.HALF
 
     def prompt(self, variant: Variant, size: tuple[int, int]) -> str:
         """The target's MOSS Layout prompt in ``variant``'s form, on its canvas of ``size`` (width, height) px. The
@@ -77,8 +127,8 @@ class Pair(BaseModel):
         the sample image's paper.
 
         Raises:
-            ValueError: If the caption has no layout list, does not quote a line's text, or (for the plain and the
-                sample form) describes no look to drop.
+            ValueError: If the caption has no layout list, does not quote a line's text, (for the plain and the sample
+                form) describes no look to drop, or ``variant`` is no form of a style pair (:meth:`forms`).
         """
         match variant:
             case Variant.NO_REFERENCE:
@@ -89,7 +139,17 @@ class Pair(BaseModel):
                 caption = with_sample(without_look(self.caption))
             case Variant.SAMPLE:
                 caption = with_sample(without_look(self.caption, paper_row=SAMPLE_PAPER_ROW))
+            case _:
+                raise ValueError(f"{self.id}: a style pair has no {variant} form (its forms: {sorted(self.forms())})")
         return layout_prompt(caption, caption_texts(self.caption), size)
+
+    def forms(self) -> frozenset[Variant]:
+        """The forms its caption is compiled in: not the content mix's own, as its words describe the hand."""
+        return STYLE_PAIR_FORMS
+
+    def sample_id(self) -> str:
+        """Its reference's name in its set: a target's crop of its own row, by its file's stem."""
+        return self.reference.stem
 
     def texts(self) -> set[str]:
         """The texts of the target's lines, as its caption quotes them."""
@@ -109,7 +169,10 @@ class PagePairRow(BaseModel):
     single page, or a window of one (``window``), a sample page of its volume and the target's MOSS Layout prompt in
     every form, with its length in the text encoder's tokens, compiled for the target's size (a set built before a form
     lacks it: ``diffu_page.data.page_pair_forms`` adds it). A page's row has no ``window`` key, so a set built without
-    windows is written as one was before them."""
+    windows is written as one was before them. Its sample is its sample page's ``refs/`` image, shrunk under half a
+    megapixel, or, cut for this row at its target's writing scale (``sample_size`` legible:
+    ``diffu_page.data.page_pair_samples``), its own image, the sample page then named by ``sample``; a row of a shrunk
+    sample has neither key."""
 
     id: str
     target: str  # relative to the manifest's directory
@@ -119,10 +182,13 @@ class PagePairRow(BaseModel):
     prompts: dict[Variant, str]
     tokens: dict[Variant, int]
     window: PageWindow | None = Field(default=None, exclude_if=lambda window: window is None)  # None: a whole page
+    sample_size: SampleSize = Field(default=SampleSize.HALF, exclude_if=lambda size: size is SampleSize.HALF)
+    sample: str | None = Field(default=None, exclude_if=lambda sample: sample is None)  # its sample page's id
 
 
 class PagePair(BaseModel):
-    """A whole page, its sample page and its Layout prompt in every form."""
+    """A whole page, its sample page (by its id, ``sample``, when its image is not named by it), how the sample was
+    sized and the page's Layout prompt in every form."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -131,6 +197,16 @@ class PagePair(BaseModel):
     reference: Path
     size: tuple[int, int]
     prompts: dict[Variant, str]
+    sample_size: SampleSize = SampleSize.HALF
+    sample: str | None = None
+
+    def forms(self) -> frozenset[Variant]:
+        """The forms its row holds a prompt in."""
+        return frozenset(self.prompts)
+
+    def sample_id(self) -> str:
+        """Its sample page's id: its reference's file's stem, a target of the set's own row, unless cut for this row."""
+        return self.reference.stem if self.sample is None else self.sample
 
     def prompt(self, variant: Variant, size: tuple[int, int]) -> str:
         """The page's Layout prompt in ``variant``'s form.
@@ -194,6 +270,8 @@ def read_page_pairs(manifest: Path) -> list[PagePair]:
             reference=manifest.parent / row.reference,
             size=row.size,
             prompts=row.prompts,
+            sample_size=row.sample_size,
+            sample=row.sample,
         )
         for row in read
     ]
@@ -215,16 +293,18 @@ def read_manifest(manifest: Path) -> list[TrainingPair]:
 
 def apart(pairs: list[TrainingPair]) -> list[TrainingPair]:
     """The pairs whose reference holds none of their target's lines, by the texts its own row gives (a reference is an
-    image of the same set, a target of its own row, by its file's stem): consecutive scans can show the same lines,
-    and a reference holding the target's own lines teaches copying. A reference without a row of its own is kept."""
+    image of the same set, a target of its own row, by its id: :meth:`PagePair.sample_id`): consecutive scans can show
+    the same lines, and a reference holding the target's own lines teaches copying. A reference without a row of its
+    own is kept."""
     texts = {pair.target.stem: pair.texts() for pair in pairs}
-    return [pair for pair in pairs if not texts[pair.target.stem] & texts.get(pair.reference.stem, set())]
+    return [pair for pair in pairs if not texts[pair.target.stem] & texts.get(pair.sample_id(), set())]
 
 
-def assign_variants(count: int, seed: int) -> list[Variant]:
-    """The prompt forms of ``count`` pairs, in pair order: of each form of :data:`SHARES` exactly its share of them
-    (rounded), the look form the rest, placed by a shuffle seeded by ``seed``."""
-    variants = [variant for variant, share in SHARES.items() for _ in range(round(count * share))]
-    variants += [Variant.LOOK] * (count - len(variants))
+def assign_variants(count: int, seed: int, mix: PromptMix = PromptMix.NAMED) -> list[Variant]:
+    """The prompt forms of ``count`` pairs, in pair order: of each form of ``mix``'s shares (:data:`MIXES`) exactly
+    its share of them (rounded), its ``rest`` form the rest, placed by a shuffle seeded by ``seed``."""
+    shares = MIXES[mix]
+    variants = [variant for variant, share in shares.shares.items() for _ in range(round(count * share))]
+    variants += [shares.rest] * (count - len(variants))
     random.Random(seed).shuffle(variants)
     return variants

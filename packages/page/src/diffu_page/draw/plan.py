@@ -64,7 +64,8 @@ class Reference(BaseModel):
 
 
 class CropPlan(BaseModel):
-    """One crop of a page to draw: where it sits on the page, its size and its prompt."""
+    """One crop of a page to draw: where it sits on the page, its size and its prompt, and whether it is the whole page
+    (``plan_whole_page``'s; left out of its JSON when not, so a window's plan is written as before)."""
 
     rect: tuple[float, float, float, float]  # page px: x0, y0, x1, y1
     width: int
@@ -73,6 +74,7 @@ class CropPlan(BaseModel):
     lines: list[LineRecord]  # boxes on 0-1000 of the crop, y first, in the caption's numbering
     reading_order: list[int]  # indices into ``lines``: block by block in page order, top to bottom in each
     rules: list[LayoutBox] = Field(default_factory=list)  # the ruled lines' boxes, 0-1000 of the crop, y first
+    whole_page: bool = Field(default=False, exclude_if=lambda whole: not whole)
 
     @model_validator(mode="after")
     def _reading_order_orders_the_lines(self) -> Self:
@@ -168,7 +170,7 @@ def plan_whole_page(layout: Layout, style: PageStyle, *, pixels: int, reference:
         fragments=[],
         rules=[(rule.x0, rule.y0, rule.x1, rule.y1) for rule in layout.rules],
     )
-    return _plans([crop], layout, style, reference)[0]
+    return _plans([crop], layout, style, reference)[0].model_copy(update={"whole_page": True})
 
 
 def _plans(crops: list[Crop], layout: Layout, style: PageStyle, reference: Reference | None) -> list[CropPlan]:
