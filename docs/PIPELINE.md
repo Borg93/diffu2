@@ -61,9 +61,8 @@ PAGE/ALTO page ──► LoadLayout ──► MarkFromScan ──► OpeningPage
    trained on (`--reference-caption`). MOSS-Image compiles the caption into its own Layout prompt.
 5. **Drawing** (`diffu_page.draw.pipeline`): a model directory names its blocks in `modular_model_index.json`, and
    `FAMILIES` maps those to the model's blocks and pipeline class (FLUX.3 Klein: `Flux3AutoBlocks` without its prompt
-   upsampler, which would rewrite the quoted lines; MOSS-Image: `MossAutoBlocks`, a `diffu-moss-init` directory), the
-   guidance scale it draws at unless `--guidance` names one (FLUX.3's 4, MOSS's 3) and whether LoRAs load into it at
-   draw time (not into MOSS's: a MOSS LoRA is merged into the DiT folder its directory names). Around them:
+   upsampler, which would rewrite the quoted lines; MOSS-Image: `MossAutoBlocks`, a `diffu-moss-init` directory) and
+   the guidance scale it draws at unless `--guidance` names one (FLUX.3's 4, MOSS's 3). Around them:
    - `crop_blocks`: `CropPromptStep` (plan → prompt, boxes, size), `ReferenceGridStep` (a reference image on the
      training grid), the model's text encoder, VAE encoders (only with a reference image), denoise and decode. The
      model's auto blocks choose plain or reference-conditioned denoising from the inputs. Both denoise branches carry
@@ -82,10 +81,12 @@ PAGE/ALTO page ──► LoadLayout ──► MarkFromScan ──► OpeningPage
      follow the judge's verdicts on the result.
    - `PagePlanBlocks`: the plan steps alone, no model. `jobs.crop_jobs` turns a page's plans into crop jobs, crop k
      named `<page>_<k>` and drawn from noise seed `seed + k`, each with the page's reference image if it has one.
-   LoRAs load through the model's own LoRA loader as named adapters (`diffu_page.draw.lora`); with
-   `DrawSettings.fuse_loras` (`--fuse-loras`) they are fused into the transformer's weights at load, and
-   `DrawSettings.compile_blocks` (`--compile-blocks`) then compiles the transformer's repeated blocks (diffusers'
-   regional compilation), refused around unfused LoRAs.
+   LoRAs load as named adapters, at `--lora-scale`: FLUX.3's (NeMo checkpoints) through the model's own LoRA loader
+   (`diffu_page.draw.lora`), MOSS-Image's (PEFT adapters of its DiT, `diffu-moss-convert-lora`'s: [MOSS.md](MOSS.md),
+   "Hand LoRAs") onto the DiT (`diffu_moss.adapters`); with `DrawSettings.fuse_loras` (`--fuse-loras`) they are fused
+   into the transformer's weights at load, and `DrawSettings.compile_blocks` (`--compile-blocks`) then compiles the
+   transformer's repeated blocks (diffusers' regional compilation), refused around unfused LoRAs, as MOSS-Image's MXFP8
+   and AOTInductor packages are.
 
 Who runs what: every entry point plans pages with `PagePlanBlocks` and draws each crop on its own with the crop
 pipeline (`pipeline.draw_crop`). `diffu-generate` draws a run's crop jobs one after another; diffu-runner plans pages
@@ -119,7 +120,10 @@ jobs/spark_guard.sh --need-gb 50 --name pages -- uv run diffu-generate --model r
 
 - `--styles styles.json --style NAME` (or a job line's `"style": NAME`) draws in a named preset
   (`diffu_page.draw.styles.StylePreset`: the archive and years, the look, a LoRA and a reference, paths relative to the
-  file); a run with several presets draws one pipeline per set of LoRAs in turn (`summary.json`: `groups`).
+  file); a run with several presets draws one pipeline per set of LoRAs in turn (`summary.json`: `groups`). The repo's
+  `styles.json` holds FLUX.3's hands; a preset of MOSS-Image's names a hand's adapter folder as its `lora`.
+- `--lora hand=<folder>` draws every page whose style is spelled out with a LoRA: a NeMo checkpoint's `model/` dir for
+  FLUX.3, a hand's adapter for MOSS-Image ([MOSS.md](MOSS.md), "Hand LoRAs").
 - `--repair N` draws the lines the read-back rejects again in place, up to N times, each pass from its own noise and
   kept only where it reads back; `summary.json` gives each crop's lines repaired.
 - `--reference <crop>` draws every page from a sample (a model trained with references), captioned in

@@ -12,6 +12,9 @@ published design, around the released weights, and our own reference training. H
 - `sample_caption.py`: a reference-drawn caption in the forms MOSS draws from and trains on (the sample image named,
   dropped, or its look words dropped).
 - `init.py`: `diffu-moss-init`, a model directory of the Base snapshot's components around its own or a trained DiT.
+- `adapters.py`, `convert_lora.py`: hand LoRAs as PEFT LoRA adapters of the DiT, loaded onto it at draw time
+  (`--lora`), and `diffu-moss-convert-lora`, a KohakuMossTrainer LyCORIS export written as one (the four hands are
+  published so: `Gabriel/diffu-moss-hand-*`).
 - `export_hf.py`: `diffu-moss-export-hf`, a model directory or checkpoint written in the official Hub layout
   (`model_index.json`, `MOSSImageTransformer`, `rope.bands`), the folder SGLang Diffusion loads; SGLang's sample-page
   input is `packages/sglang_moss`.

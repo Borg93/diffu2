@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from conftest import NemoLoraWriter
 
 
-def test_read_style_presets_names_the_file_and_the_preset_whose_lora_is_no_nemo_lora(
+def test_read_style_presets_names_the_file_and_the_preset_whose_lora_is_no_adapter_folder(
     tmp_path: Path, page_style: PageStyle, write_nemo_lora: NemoLoraWriter
 ) -> None:
     hand, not_a_lora = write_nemo_lora("to_q", torch.zeros(2, 8), torch.zeros(8, 2), alpha=2), tmp_path / "b_lora"
@@ -28,7 +28,7 @@ def test_read_style_presets_names_the_file_and_the_preset_whose_lora_is_no_nemo_
     presets.write_text(
         json.dumps({"a": {**style, "lora": str(hand)}, "b": {**style, "lora": str(not_a_lora)}}), encoding="utf-8"
     )
-    problem = f"b.lora: Value error, {not_a_lora} is not a NeMo LoRA model dir: it has no adapter_config.json"
+    problem = f"b.lora: Value error, {not_a_lora} is not a LoRA adapter folder: it has no adapter_config.json"
 
     with pytest.raises(ValueError, match=re.escape(f"{presets} is not a file of style presets: {problem}")):
         read_style_presets(presets)

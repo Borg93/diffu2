@@ -15,9 +15,10 @@ that draws is a Modular Diffusers pipeline, our blocks around a model's own, the
 - **`packages/core`** (diffu-core): what every member shares about a model directory: its `modular_model_index.json`
   (`diffu_core.repo.ModelIndex`) and loading its components without letting a failed one through
   (`diffu_core.loading`).
-- **`packages/moss`** (diffu-moss): MOSS-Image: our DiT, its blocks, `diffu-moss-init` (a model directory), and its
-  reference training (`train/`: `diffu-moss-cache-pairs`, `diffu-moss-train-ref`, a LoRA or every weight, on one GPU
-  or sharded over several, and `diffu-moss-export-ref`). [docs/MOSS.md](docs/MOSS.md)
+- **`packages/moss`** (diffu-moss): MOSS-Image: our DiT, its blocks, `diffu-moss-init` (a model directory), hand
+  LoRAs as PEFT adapters loaded at draw time (`diffu-moss-convert-lora`), and its reference training (`train/`:
+  `diffu-moss-cache-pairs`, `diffu-moss-train-ref`, a LoRA or every weight, on one GPU or sharded over several, and
+  `diffu-moss-export-ref`). [docs/MOSS.md](docs/MOSS.md)
 - **`packages/page`** (diffu-page), in layers: `page/` (a page as data: layouts, crops, labels, a template marked from
   its scan), `captions/`, `quality/` (read-back, the judge, hand fidelity), `draw/` (planning, our blocks, the page and
   crop pipelines) and `data/` (the training- and eval-set builders); `diffu-generate`, `diffu-evaluate`,
@@ -88,4 +89,6 @@ draw settings, outputs and running on KubeRay: [docs/INFERENCE.md](docs/INFERENC
 what not yet: its [model card](https://huggingface.co/Gabriel/diffu-moss-r6b). Drawing on one machine without Ray, and
 every option of `diffu-generate`: [docs/PIPELINE.md](docs/PIPELINE.md); its `--reader-labels` and `diffu-reader-set`
 also write the labels in the page readers' own formats (DeepSeek-OCR 2, PaddleOCR-VL), which `diffu-run` does not yet.
-Drawing with FLUX.3 and its LoRAs: [docs/FLUX3.md](docs/FLUX3.md).
+Drawing in a published hand (`Gabriel/diffu-moss-hand-pahlman`, `-landskapshandlingar`, `-overstathallarambetet-1715`,
+`-eight`: PEFT adapters of MOSS-Image-Base's own DiT, `--lora hand=<folder>`): [docs/MOSS.md](docs/MOSS.md), "Hand
+LoRAs". Drawing with FLUX.3 and its LoRAs: [docs/FLUX3.md](docs/FLUX3.md).

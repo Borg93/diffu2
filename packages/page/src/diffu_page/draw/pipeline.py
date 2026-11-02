@@ -37,6 +37,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from diffu_core.loading import COMPONENT_DTYPES, require_loaded
 from diffu_core.repo import ModelIndex
+from diffu_moss.adapters import fuse_adapters, load_adapters, read_adapter
 from diffu_moss.inference import MossInference, check_inference, prepare_inference
 from diffu_moss.latents import encode_latents
 from diffu_moss.modular_pipelines.moss import MossAutoBlocks, MossModularPipeline
@@ -71,8 +72,8 @@ REPAIR_SEED_STRIDE = 7919  # between a crop's seed and each repair pass's, so no
 
 
 class ModelFamily(BaseModel):
-    """A model family's own blocks and pipeline class, the blocks of its that generation leaves out, the guidance
-    scale it draws at unless the settings name one, and whether LoRAs load into it at draw time."""
+    """A model family's own blocks and pipeline class, the blocks of its that generation leaves out, and the guidance
+    scale it draws at unless the settings name one."""
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
@@ -80,15 +81,13 @@ class ModelFamily(BaseModel):
     pipeline: type[ModularPipeline]
     unused: tuple[str, ...] = ()
     guidance_scale: float = 4.0
-    takes_loras: bool = True
 
 
 FAMILIES: dict[str, ModelFamily] = {
     # FLUX.3's prompt upsampler rewrites a prompt as prose: it would rewrite the quoted lines of a layout caption
     "Flux3AutoBlocks": ModelFamily(blocks=Flux3AutoBlocks, pipeline=Flux3ModularPipeline, unused=("prompt_upsampler",)),
-    # a MOSS LoRA is merged into the DiT a MOSS repo names (diffu-moss-init --transformer)
     "MossAutoBlocks": ModelFamily(
-        blocks=MossAutoBlocks, pipeline=MossModularPipeline, guidance_scale=MOSS_GUIDANCE_SCALE, takes_loras=False
+        blocks=MossAutoBlocks, pipeline=MossModularPipeline, guidance_scale=MOSS_GUIDANCE_SCALE
     ),
 }
 
@@ -195,7 +194,8 @@ class DrawSettings(BaseModel):
         lora_scale: How strongly every LoRA applies: 1 at its trained strength, 0 not at all (diffusers'
             ``set_adapters`` weights, which fusing keeps).
         fuse_loras: Fuse the LoRAs into the transformer's weights at load and drop their adapter layers: no LoRA
-            matmuls per step, and the transformer can be compiled; the LoRAs can't be switched or rescaled after.
+            matmuls per step, and the transformer can be compiled (or MOSS-Image's DiT quantized or run from a
+            package); the LoRAs can't be switched or rescaled after.
         compile_blocks: Compile the transformer's repeated blocks (torch.compile, diffusers' regional compilation) at
             load; the first crop pays for the compilation. A run with LoRAs must fuse them first. MOSS-Image's joint
             blocks are compiled after any MXFP8 swap, so the quantization of their inputs fuses into them; not with a
@@ -203,12 +203,13 @@ class DrawSettings(BaseModel):
         precision: MOSS-Image only: its DiT's joint-block projections in their own bfloat16, or in MXFP8: weights and
             inputs in blocks of 32 FP8 values sharing a power-of-two scale, multiplied by a Blackwell GPU's tensor cores
             (:mod:`diffu_moss.mxfp8`; emulated on the CPU). It pays off with ``compile_blocks`` or ``aoti_package``,
-            which fuse each layer's quantization of its input: run eagerly, that is some fifteen small kernels.
+            which fuse each layer's quantization of its input: run eagerly, that is some fifteen small kernels. A run
+            with LoRAs must fuse them first.
         text_encoder_precision: MOSS-Image only: its text encoder's decoder-layer projections alike (half their
             memory).
         aoti_package: MOSS-Image only: run its joint blocks from this AOTInductor package (``diffu-moss-aoti``), built
             for ``precision``, this GPU's architecture and this torch version (any other is refused); instead of
-            ``compile_blocks``.
+            ``compile_blocks``. A run with LoRAs must fuse them first.
         sampler: MOSS-Image only: what steps its sampling grid: ``euler``, its own sampler, or ``unipc``, diffusers'
             multistep UniPC solver, which draws as well in fewer ``steps``. Either calls the DiT once a pass a step, at
             the grid's levels.
@@ -273,6 +274,18 @@ class DrawSettings(BaseModel):
         return [name for name, is_asked in asked.items() if is_asked]
 
     @property
+    def needs_fused_loras(self) -> list[str]:
+        """The settings asked that rework the transformer's layers once its LoRAs are loaded, by name: its blocks
+        compiled, MOSS-Image's joint-block projections in MXFP8, its joint blocks run from a package. Each would leave
+        unfused adapter layers out of what it builds, or refuse them."""
+        asked = {
+            "compile_blocks": self.compile_blocks,
+            "precision": self.precision is not Precision.BF16,
+            "aoti_package": self.aoti_package is not None,
+        }
+        return [name for name, is_asked in asked.items() if is_asked]
+
+    @property
     def guides_reference(self) -> bool:
         """Whether guidance also pushes toward the reference image (a third pass a step)."""
         return not math.isclose(self.reference_guidance_scale, 1.0)
@@ -285,36 +298,71 @@ class DrawSettings(BaseModel):
 
 
 type BlocksFor = Callable[[ModelFamily], SequentialPipelineBlocks]
+type LoadLoras = Callable[[ModularPipeline, DrawSettings], None]  # loads LoRAs read before onto a loaded pipeline
+
+
+def _nemo_loras(loras: dict[str, Path]) -> LoadLoras:
+    """FLUX.3 Klein's LoRAs, NeMo LoRA checkpoints' ``model/`` dirs by adapter name, read now as diffusers LoRA state
+    dicts (:func:`diffu_page.draw.lora.nemo_lora_state_dict`, which refuses one that would load at the wrong strength).
+    The function returned loads them by the pipeline's own LoRA loader as named adapters, every one active at the
+    settings' ``lora_scale`` and fused into the transformer when they ask."""
+    state_dicts = {name: nemo_lora_state_dict(lora_dir) for name, lora_dir in loras.items()}
+
+    def load(pipe: ModularPipeline, settings: DrawSettings) -> None:
+        for name, state_dict in state_dicts.items():
+            pipe.load_lora_weights(state_dict, adapter_name=name)
+        if state_dicts:
+            pipe.set_adapters(list(state_dicts), adapter_weights=[settings.lora_scale] * len(state_dicts))
+        if state_dicts and settings.fuse_loras:
+            pipe.fuse_lora(adapter_names=list(state_dicts))
+            pipe.unload_lora_weights()
+
+    return load
+
+
+def _moss_adapters(loras: dict[str, Path]) -> LoadLoras:
+    """MOSS-Image's LoRAs, PEFT LoRA adapter folders of its DiT (``diffu-moss-convert-lora``'s) by adapter name, read
+    now (:func:`diffu_moss.adapters.read_adapter`). The function returned loads them onto the DiT under their names,
+    every one active at the settings' ``lora_scale`` and fused into its weights when they ask
+    (:mod:`diffu_moss.adapters`; it refuses an adapter that does not fit the DiT)."""
+    adapters = {name: read_adapter(lora_dir) for name, lora_dir in loras.items()}
+
+    def load(pipe: ModularPipeline, settings: DrawSettings) -> None:
+        load_adapters(pipe.transformer, adapters, scale=settings.lora_scale)
+        if adapters and settings.fuse_loras:
+            fuse_adapters(pipe.transformer)
+
+    return load
 
 
 def load_pipeline(model: Path, blocks: BlocksFor, *, loras: dict[str, Path], settings: DrawSettings) -> ModularPipeline:
     """``blocks`` built for the model at ``model``, its components loaded (VAE in float32, the rest in bfloat16) on
     ``settings.device``, the guider at ``settings.guidance_scale`` (the model family's own when None, and
-    ``settings.reference_guidance_scale``) until ``settings.guidance_stop``, and every
-    LoRA of ``loras`` (NeMo ``model/`` dirs by adapter name) active, fused into the transformer when
+    ``settings.reference_guidance_scale``) until ``settings.guidance_stop``, every LoRA of ``loras`` (by adapter name:
+    a NeMo LoRA checkpoint's ``model/`` dir for FLUX.3 Klein, a PEFT adapter folder of its DiT for MOSS-Image,
+    ``diffu-moss-convert-lora``'s) active at ``settings.lora_scale``, fused into the transformer when
     ``settings.fuse_loras``, and the transformer's repeated blocks compiled when ``settings.compile_blocks``. A
     MOSS-Image model computes as ``settings.moss_inference`` asks (:func:`diffu_moss.inference.prepare_inference`: its
     layers in MXFP8, UniPC, its joint blocks from an AOTInductor package or compiled, a step cache around them, for
-    pages of ``settings.steps``).
+    pages of ``settings.steps``), its LoRAs loaded first.
 
-    Everything that can be checked without the model is checked first: its family, the guider, every LoRA, and
+    Everything that can be checked without the model is checked first: its family, the guider, every LoRA as read, and
     MOSS-Image's precision and package against the device.
 
     Raises:
         ValueError: If the model's blocks have no family, the guidance settings do not go together, a LoRA would
-            load at the wrong strength or into a model that takes none at draw time (MOSS-Image), the blocks are to
-            be compiled around LoRAs that are not fused, a setting only MOSS-Image takes is asked of another model, or
-            MOSS-Image's precision or package does not fit the device, this process or the model.
+            load at the wrong strength or does not fit the DiT (MOSS-Image), the transformer's layers are to be
+            compiled, quantized or packaged around LoRAs that are not fused, a setting only MOSS-Image takes is asked of
+            another model, or MOSS-Image's precision or package does not fit the device, this process or the model.
         RuntimeError: If a component failed to load.
     """
-    if settings.compile_blocks and loras and not settings.fuse_loras:
-        raise ValueError("compile the transformer's blocks only with its LoRAs fused: adapter layers would recompile")
-    family = model_family(model)
-    if loras and not family.takes_loras:
+    reworked = settings.needs_fused_loras
+    if loras and reworked and not settings.fuse_loras:
         raise ValueError(
-            f"{model} takes no LoRAs at draw time: merge them into the transformer it draws with (diffu-moss-init "
-            "--transformer)"
+            f"{', '.join(reworked)} only with the LoRAs fused (fuse_loras): they rework the transformer's layers, and "
+            "unfused adapter layers would stand in the way"
         )
+    family = model_family(model)
     moss = family.pipeline is MossModularPipeline
     if settings.moss_only and not moss:
         raise ValueError(f"{model} is not MOSS-Image, which alone takes {', '.join(settings.moss_only)}")
@@ -326,7 +374,7 @@ def load_pipeline(model: Path, blocks: BlocksFor, *, loras: dict[str, Path], set
         reference_scale=settings.reference_guidance_scale,
         stop=settings.guidance_stop,
     )
-    adapters = {name: nemo_lora_state_dict(lora_dir) for name, lora_dir in loras.items()}
+    load_loras = _moss_adapters(loras) if moss else _nemo_loras(loras)
     pipe = family.pipeline(blocks=blocks(family), pretrained_model_name_or_path=str(model))
     pipe.load_components(dtype=COMPONENT_DTYPES)
     require_loaded(pipe)
@@ -336,13 +384,7 @@ def load_pipeline(model: Path, blocks: BlocksFor, *, loras: dict[str, Path], set
             scheduler=FlowMatchEulerDiscreteScheduler.from_config(pipe.scheduler.config, shift=settings.sampling_shift)
         )
     pipe.to(settings.device)
-    for name, state_dict in adapters.items():
-        pipe.load_lora_weights(state_dict, adapter_name=name)
-    if loras:
-        pipe.set_adapters(list(loras), adapter_weights=[settings.lora_scale] * len(loras))
-    if loras and settings.fuse_loras:
-        pipe.fuse_lora(adapter_names=list(loras))
-        pipe.unload_lora_weights()
+    load_loras(pipe, settings)
     if moss:
         prepare_inference(pipe, settings.moss_inference, steps=settings.steps)
     elif settings.compile_blocks:  # dynamic: crop sizes and caption lengths vary, and each new shape would recompile

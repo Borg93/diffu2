@@ -1,4 +1,6 @@
-"""NeMo AutoModel LoRA checkpoints as diffusers LoRA state dicts, for the model's own (diffusers) LoRA loader."""
+"""LoRAs at draw time: the folder every LoRA option names, laid out as PEFT saves an adapter (a NeMo AutoModel LoRA
+checkpoint's ``model/`` dir for FLUX.3 Klein; a PEFT adapter of MOSS-Image's DiT, :mod:`diffu_moss.adapters`), and NeMo
+LoRA checkpoints as diffusers LoRA state dicts, for FLUX.3's own (diffusers) LoRA loader."""
 
 from __future__ import annotations
 
@@ -8,7 +10,7 @@ import torch
 from pydantic import BaseModel, ValidationError
 from safetensors.torch import load_file
 
-ADAPTER_CONFIG = "adapter_config.json"  # the two files of a NeMo LoRA checkpoint's model/ dir
+ADAPTER_CONFIG = "adapter_config.json"  # the two files of a LoRA adapter folder (a NeMo checkpoint's model/ dir)
 ADAPTER_WEIGHTS = "adapter_model.safetensors"
 _NEMO_PREFIX = "base_model.model."
 
@@ -36,14 +38,15 @@ class AdapterConfig(BaseModel):
 
 
 def lora_model_dir(path: Path) -> Path:
-    """``path``, checked to be a NeMo LoRA checkpoint's ``model/`` dir: it holds the adapter's config and weights.
+    """``path``, checked to be a LoRA adapter folder (a NeMo LoRA checkpoint's ``model/`` dir, or a MOSS-Image adapter
+    of ``diffu-moss-convert-lora``): it holds the adapter's config and weights.
 
     Raises:
         ValueError: If it lacks either file.
     """
     missing = [file for file in (ADAPTER_CONFIG, ADAPTER_WEIGHTS) if not (path / file).is_file()]
     if missing:
-        raise ValueError(f"{path} is not a NeMo LoRA model dir: it has no {' or '.join(missing)}")
+        raise ValueError(f"{path} is not a LoRA adapter folder: it has no {' or '.join(missing)}")
     return path
 
 

@@ -118,8 +118,8 @@ class PageJob(BaseModel):
 
 
 class ResolvedPage(BaseModel):
-    """A page as a run draws it: its job, its style spelled out, and the LoRAs that draw it (NeMo ``model/`` dirs by
-    adapter name)."""
+    """A page as a run draws it: its job, its style spelled out, and the LoRAs that draw it (adapter folders by adapter
+    name)."""
 
     page: PageJob
     loras: dict[str, Path]

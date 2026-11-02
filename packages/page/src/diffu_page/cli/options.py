@@ -56,7 +56,8 @@ RepairPasses = Annotated[
 
 
 class Lora(BaseModel):
-    """A NeMo LoRA checkpoint (its ``model/`` dir) under the adapter name it loads as."""
+    """A LoRA adapter folder (a NeMo LoRA checkpoint's ``model/`` dir for FLUX.3 Klein, ``diffu-moss-convert-lora``'s
+    for MOSS-Image) under the adapter name it loads as."""
 
     name: str
     path: Path
@@ -75,12 +76,12 @@ def named_path(value: str, form: str) -> tuple[str, Path]:
 
 
 def parse_lora(value: str) -> Lora:
-    """``name=<dir>`` as a :class:`Lora`, its dir checked to be a NeMo LoRA checkpoint's ``model/`` dir.
+    """``name=<dir>`` as a :class:`Lora`, its dir checked to be a LoRA adapter folder.
 
     Raises:
-        typer.BadParameter: If ``value`` is not ``name=<dir>``, or the dir lacks a LoRA checkpoint's files.
+        typer.BadParameter: If ``value`` is not ``name=<dir>``, or the dir lacks an adapter folder's files.
     """
-    name, path = named_path(value, "name=<lora model dir>")
+    name, path = named_path(value, "name=<lora adapter folder>")
     try:
         lora_model_dir(path)
     except ValueError as error:
@@ -91,7 +92,13 @@ def parse_lora(value: str) -> Lora:
 Model = Annotated[
     Path | None, typer.Option(help="the model directory (MOSS-Image or FLUX.3 Klein); default $FLUX3_MODEL")
 ]
-Loras = Annotated[list[Lora] | None, typer.Option(parser=parse_lora, help="name=<NeMo LoRA model dir>")]
+Loras = Annotated[
+    list[Lora] | None,
+    typer.Option(
+        parser=parse_lora,
+        help="name=<LoRA adapter folder>: a NeMo checkpoint's model/ dir (FLUX.3), diffu-moss-convert-lora's (MOSS-Image)",
+    ),
+]
 
 
 def text_layers(layers: list[int] | None) -> tuple[int, ...] | None:
@@ -136,7 +143,7 @@ def settings_from_options(
 
 
 def lora_dirs(loras: list[Lora] | None) -> dict[str, Path]:
-    """The LoRA model dirs by adapter name.
+    """The LoRA adapter folders by adapter name.
 
     Raises:
         typer.BadParameter: If two LoRAs share a name: the later would silently replace the earlier.

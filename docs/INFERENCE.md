@@ -60,6 +60,7 @@ The code is `packages/runner` (`diffu-run`, `diffu-run-export`); the drawing its
 | The fine-tuned DiT | our MOSS-Image transformer trained to draw from a sample page: `config.json`, `diffusion_pytorch_model.safetensors` (5.1 B parameters, bf16) and `export.json` (it says the DiT takes a sample image) | [`Gabriel/diffu-moss-r6b`](https://huggingface.co/Gabriel/diffu-moss-r6b) at commit `2246c79aa65bf5a16409f185671fd2877efdb142` (public), or a checkpoint folder you are handed | 10.2 GB | `/models/dit/diffu-moss-r6b` |
 | The handwriting judge | the Swedish TrOCR model every drawn line is read back with | `Riksarkivet/trocr-base-handwritten-hist-swe-2` at revision `aa79fcb1850bf3155ebc442570d6c6bfc0ac8100` | 1.5 GB | `/models/trocr-base-handwritten-hist-swe-2` |
 | The model directory | a 2 KB `modular_model_index.json` naming where the text encoder, tokenizer, VAE and DiT are (written by `diffu-moss-init`) | written on the cluster | - | `/models/moss-<dit-name>` |
+| A hand's adapter (optional) | a PEFT LoRA adapter of Base's own DiT, one collection's handwriting ("A hand's adapter", below) | `Gabriel/diffu-moss-hand-<hand>`, four, public | 0.16 GB | `/models/adapters/<hand>` |
 
 Only safetensors are loaded, no remote code runs (`trust_remote_code` is never set), and the image sets
 `HF_HUB_OFFLINE=1`: a run reads the staged files and nothing else. The Base snapshot's own `transformer/` is not needed
@@ -117,6 +118,29 @@ diffu-moss-init --base /models/MOSS-Image-Base --transformer /models/dit/<dit-na
 
 It prints whether the model takes a sample image (`takes a reference image`): a DiT trained with sample pages does,
 and only such a DiT may be given pages with a `reference` (section 5).
+
+### A hand's adapter (optional)
+
+A hand LoRA draws in one collection's handwriting from the caption alone, no sample page: a PEFT LoRA adapter of
+MOSS-Image-Base's own DiT (156 MB), loaded onto the DiT as each actor loads the pipeline. Four are published, public:
+`Gabriel/diffu-moss-hand-pahlman`, `Gabriel/diffu-moss-hand-landskapshandlingar`,
+`Gabriel/diffu-moss-hand-overstathallarambetet-1715` and `Gabriel/diffu-moss-hand-eight` ([MOSS.md](MOSS.md), "Hand
+LoRAs"). A hand needs Base's `transformer/` staged too, and a model directory of Base's own DiT; stage both as the rest
+is staged (in a pod with network access, the volume mounted read-write):
+
+```bash
+hf download OpenMOSS-Team/MOSS-Image-Base --revision 85975793d8b3d432f1b6e27f352abaa4c2a4c0d3 \
+  --include "transformer/*" --local-dir /models/MOSS-Image-Base
+hf download Gabriel/diffu-moss-hand-pahlman --local-dir /models/adapters/pahlman
+diffu-moss-init --base /models/MOSS-Image-Base --out /models/moss-base
+```
+
+The run then names the model directory and the adapter, `--model /models/moss-base --lora hand=/models/adapters/pahlman`
+(section 7), and every page of it is drawn with that hand: one hand a run, and one `--out` holds the pages of one
+model, adapter and settings. Its pages give no `reference` (Base takes none), and their `style` names the collection
+as the hand was trained on it (the adapter's model card). In `draw.json`, `"fuse_loras": true` merges the adapter into
+the DiT's weights at load, so a step runs no LoRA matmuls; MXFP8, a package and `compile_blocks` (section 12) take an
+adapter only fused.
 
 ## 4. Building the image
 
@@ -199,6 +223,8 @@ default holds. For example:
 | `guidance_stop` | 1 | the share of the steps after which guidance stops |
 | `sampling_shift` | MOSS-Image's own, 5 | the timestep shift |
 | `max_line_cer` | 0.25 | a line the judge reads with a higher character error rate is tagged `unclear` in the labels |
+| `lora_scale` | 1 | how strongly a hand's adapter (`--lora`, section 3) applies: 1 as trained, 0 not at all |
+| `fuse_loras` | false | merge the adapter into the DiT's weights at load: no LoRA matmuls a step, but it can no longer be switched |
 | `device` | `cuda` | `cpu` only for tests (with `--gpus 0`) |
 
 The settings reach every actor whole: a field the page pipeline gains (such as the precision options of section 12)
@@ -231,6 +257,14 @@ diffu-run --jobs /data/runs/example.jsonl --draw-settings /data/runs/draw.json \
 
 It ends with one line, for example `run 20261101T120000123456Z: 1998 pages drawn, 2 failed, 0 already drawn before
 it; 1210 pages an hour over 99.1 min, 23.4 s a page on an actor (median)` (the numbers here are made up).
+
+A run in a hand's handwriting (section 3, "A hand's adapter") names Base's model directory and the hand's adapter:
+
+```bash
+diffu-run --jobs /data/runs/pahlman.jsonl --draw-settings /data/runs/draw.json \
+  --model /models/moss-base --lora hand=/models/adapters/pahlman --out /outputs/pahlman \
+  --htr-model /models/trocr-base-handwritten-hist-swe-2 --htr-revision "" --gpus <total GPUs>
+```
 
 ## 8. Scaling knobs
 
@@ -348,7 +382,9 @@ no flags for them yet); another model family refuses them.
 
 MXFP8 is meant to run with `compile_blocks` or an `aoti_package`: run eagerly, each layer's input quantization is some
 fifteen small kernels, which can cost more than the faster matmul saves. The text encoder is never compiled, so its
-MXFP8 mostly saves memory (it encodes two prompts a page, the DiT runs two passes a step).
+MXFP8 mostly saves memory (it encodes two prompts a page, the DiT runs two passes a step). With a hand's adapter
+(section 3) the DiT's MXFP8, a package and `compile_blocks` rework the joint blocks' layers, which the adapter's layers
+wrap: they are refused unless `fuse_loras` is set, and then work on the merged weights.
 
 A package holds one compiled joint block and no weights (each block hands it its own at every call), so it serves all
 42 blocks and any DiT of MOSS-Image's widths, a fine-tune's too. For a Ray cluster: build one per GPU kind on a node of
@@ -587,6 +623,11 @@ otherwise) and flag the pages to drop or redraw; the result goes into the table 
   time (no `kernels` package, no hub kernels).
 - **"names component folders that are not on this machine".** The model directory was written where the volume is
   mounted elsewhere: write it again on the cluster (section 3).
+- **"the adapter 'hand' does not fit this DiT".** The `--lora` folder is no adapter of MOSS-Image's DiT (a FLUX.3
+  LoRA, a DiT of other widths): its layers are named or shaped otherwise. A hand's adapter is of Base's own DiT
+  (section 3).
+- **"precision only with the LoRAs fused".** MXFP8, a package or `compile_blocks` with an adapter: set
+  `"fuse_loras": true` in `draw.json`.
 - **"the HTR model ... is neither a local directory nor in the Hugging Face cache".** Stage the judge and pass
   `--htr-model <dir> --htr-revision ""`.
 - **"N templates or reference images are not here".** The inputs volume is not mounted, or not at the paths the run
@@ -607,7 +648,8 @@ otherwise) and flag the pages to drop or redraw; the result goes into the table 
 - [ ] Image built for the nodes' architecture and pushed: `<registry>/diffu-inference:<tag>`.
 - [ ] Models volume holds `MOSS-Image-Base/{text_encoder,tokenizer,vae}` at revision `85975793...`, the DiT folder
       (with `export.json`), the judge at revision `aa79fcb1...`, all readable by UID 10001.
-- [ ] Model directory written on the cluster with `diffu-moss-init`, printing "takes a reference image".
+- [ ] Model directory written on the cluster with `diffu-moss-init`, printing "takes a reference image" (or, for a
+      hand's adapter, Base's own DiT and the adapter staged: section 3).
 - [ ] Inputs volume holds the templates, sample images, run file and draw settings, mounted at the same path on every
       pod.
 - [ ] Run file lines are page jobs with unique ids; samples only for a model that takes them.

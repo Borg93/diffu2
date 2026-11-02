@@ -1,11 +1,11 @@
 """Styles by name: a :class:`StylePreset` holds all a page is drawn in (the archive and its years and the scan's look,
 which its captions name, the hand's LoRA and a reference crop), so a job names its style instead of repeating it.
 
-A presets file is a JSON object of presets by name (the repo's ``styles.json`` holds our per-hand LoRAs, in the archive,
-years and look their evaluations drew them in); its relative paths start from the file's own directory, so it reads the
-same from any working directory. A page in a named style is drawn by the preset's LoRA alone, loaded under the adapter
-name ``hand``, and from the preset's reference unless the page gives its own
-(:class:`diffu_page.draw.jobs.PageRequest`).
+A presets file is a JSON object of presets by name (the repo's ``styles.json`` holds FLUX.3 Klein's per-hand LoRAs, in
+the archive, years and look their evaluations drew them in); its relative paths start from the file's own directory, so
+it reads the same from any working directory. A page in a named style is drawn by the preset's LoRA alone, loaded under
+the adapter name ``hand`` (a preset's LoRA is of one model family: a MOSS-Image hand's is its adapter), and from the
+preset's reference unless the page gives its own (:class:`diffu_page.draw.jobs.PageRequest`).
 """
 
 from __future__ import annotations
@@ -26,8 +26,9 @@ FILE_DIR = "file_dir"  # the validation context's key for the directory a preset
 
 
 class StylePreset(BaseModel):
-    """A style by name: the archive and years and the scan's look a page's captions name, the hand's LoRA (a NeMo LoRA
-    ``model/`` dir, checked as ``--lora`` checks one) and a reference crop to draw from.
+    """A style by name: the archive and years and the scan's look a page's captions name, the hand's LoRA (an adapter
+    folder of the model drawn with: a NeMo LoRA ``model/`` dir for FLUX.3 Klein, a ``diffu-moss-convert-lora`` adapter
+    for MOSS-Image; checked as ``--lora`` checks one) and a reference crop to draw from.
 
     Validated with a ``file_dir`` in its context (:func:`read_style_presets`), its relative paths start from there.
     """
@@ -41,7 +42,7 @@ class StylePreset(BaseModel):
 
     @field_validator("lora")
     @classmethod
-    def _a_nemo_lora_model_dir(cls, lora: Path | None, info: ValidationInfo) -> Path | None:
+    def _a_lora_adapter_folder(cls, lora: Path | None, info: ValidationInfo) -> Path | None:
         return None if lora is None else lora_model_dir(_from_file_dir(lora, info))
 
     @field_validator("reference")

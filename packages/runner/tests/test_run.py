@@ -1,5 +1,5 @@
 """A run on a local Ray cluster (CPU): each page drawn whole by an actor holding the tiny MOSS-Image model that takes a
-sample image, judged by a tiny TrOCR and committed to the run's Lance table; a page that fails kept with its error; a
+sample image, with a hand's adapter, judged by a tiny TrOCR and committed to the run's Lance table; a page that fails kept with its error; a
 run into a table resuming it; and everything that would stop a run checked before it starts."""
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ import os
 import re
 from collections.abc import Iterator
 from pathlib import Path
+from typing import TYPE_CHECKING
 from xml.etree import ElementTree
 
 import lance
@@ -30,6 +31,9 @@ from diffu_runner.export import export_pages
 from diffu_runner.run import RUNS, RunConfig, RunMeta, RunRefused, app, read_draw_settings, read_pages, run
 from diffu_runner.stages import DEVICE_FAULT_EXIT, Attention, DrawActor, DrawConfig, JudgeModel
 from diffu_runner.table import FILE_FORMAT, PAGES, PageRow, page_table
+
+if TYPE_CHECKING:
+    from conftest import MossAdapterWriter
 
 STYLE = PageStyle(
     provenance=Provenance(title="the archive", years="1700"), look=ScanLook(greyscale=False, paper="cream", ink="brown")
@@ -122,13 +126,20 @@ def _held(page_id: str, *, image: bytes | None = None, error: str | None = None,
     )
 
 
-def test_diffu_run_draws_each_page_whole_into_the_table_and_keeps_a_page_that_fails_with_its_error(
-    local_ray: None, pages: list[PageJob], jobs: Path, tiny_reference_moss: Path, tiny_htr: Path, tmp_path: Path
+def test_diffu_run_draws_each_page_whole_with_its_adapter_into_the_table_and_keeps_a_page_that_fails_with_its_error(
+    local_ray: None,
+    pages: list[PageJob],
+    jobs: Path,
+    tiny_reference_moss: Path,
+    tiny_htr: Path,
+    tmp_path: Path,
+    write_moss_adapter: MossAdapterWriter,
 ) -> None:
     out = tmp_path / "out"
     draw_settings = tmp_path / "draw.json"
     draw_settings.write_text(json.dumps({"steps": 2, "device": "cpu"}), encoding="utf-8")
-    options = ["--jobs", str(jobs), "--out", str(out), "--model", str(tiny_reference_moss)]
+    hand = write_moss_adapter("layers.0.proj.q", torch.randn(4, 32) / 4, torch.randn(32, 4) / 4, alpha=4.0)
+    options = ["--jobs", str(jobs), "--out", str(out), "--model", str(tiny_reference_moss), "--lora", f"hand={hand}"]
     options += ["--draw-settings", str(draw_settings), "--gpus", "0", "--cpus-per-actor", "0"]
     options += ["--page-megapixels", "0.25", "--htr-model", str(tiny_htr), "--htr-revision", ""]
 
@@ -140,6 +151,7 @@ def test_diffu_run_draws_each_page_whole_into_the_table_and_keeps_a_page_that_fa
     meta = RunMeta.model_validate_json(meta_file.read_text(encoding="utf-8"))
     assert sorted(rows) == ["boxes", "op_left", "op_right", "spread"]
     assert (meta.drawn, meta.failed, meta.in_table, meta.retried) == (3, 1, 0, 0)
+    assert meta.config.draw.loras == {"hand": hand}  # every page drawn from its sample with the hand's adapter
     assert [rows[page_id]["template"] for page_id in ("op_left", "boxes")] == [str(pages[0].template), None]
     for single in [*single_pages(pages[0]), pages[2]]:
         [job] = crop_jobs(_whole(single), 0)

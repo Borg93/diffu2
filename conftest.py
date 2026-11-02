@@ -3,7 +3,8 @@ and a stand-in print/hand classifier to mark it with, a crop and its training re
 (with a VAE that downsamples as FLUX.3's does), a tiny MOSS-Image repo (MOSS's own tokenizer, a tiny Qwen3.5, a tiny
 FLUX.2-class VAE and a tiny DiT, random weights), and a reference training on it: a tiny style-pair set in the
 described reference form, its caches (one with look changes for its sample form), a short training run and the MOSS
-repo of its merged export, which takes a reference image."""
+repo of its merged export, which takes a reference image; and a LoRA of one module of either model, a NeMo LoRA
+checkpoint or a MOSS-Image adapter converted from a LyCORIS file."""
 
 from __future__ import annotations
 
@@ -22,6 +23,7 @@ from PIL import Image
 from safetensors.torch import save_file
 from transformers import Qwen3_5Config, Qwen3_5Model
 
+from diffu_moss.convert_lora import BaseModelRef, convert_lycoris, dit_layout
 from diffu_moss.init import write_moss_repo
 from diffu_moss.train.cache import CacheSettings, write_cache
 from diffu_moss.train.export import export_merged
@@ -633,5 +635,32 @@ def write_nemo_lora(tmp_path: Path) -> NemoLoraWriter:
         (lora_dir / "adapter_config.json").write_text(json.dumps(config))
         written.append(lora_dir)
         return lora_dir
+
+    return write
+
+
+class MossAdapterWriter(Protocol):
+    """``write_moss_adapter``: a MOSS-Image adapter of one ``module`` of the tiny DiT, down weights ``a`` and up weights
+    ``b``, its folder."""
+
+    def __call__(self, module: str, a: torch.Tensor, b: torch.Tensor, *, alpha: float) -> Path: ...
+
+
+@pytest.fixture
+def write_moss_adapter(tmp_path: Path, tiny_moss_dit: Path) -> MossAdapterWriter:
+    """Writes a LoRA of one module of the tiny MOSS's DiT as KohakuMossTrainer exports one, a LyCORIS file of the
+    module's down weights ``a``, up weights ``b`` and ``alpha``, and converts it as diffu-moss-convert-lora does:
+    ``write_moss_adapter(module, a, b, alpha=...)`` returns the adapter's folder."""
+    written: list[Path] = []
+
+    def write(module: str, a: torch.Tensor, b: torch.Tensor, *, alpha: float) -> Path:
+        lycoris = tmp_path / f"moss_lora_{len(written)}.safetensors"
+        key = "lora_unet_" + module.replace(".", "_")
+        tensors = {f"{key}.lora_down.weight": a, f"{key}.lora_up.weight": b, f"{key}.alpha": torch.tensor(alpha)}
+        save_file(tensors, lycoris, metadata={"kohakumoss_algo": "lora", "kohakumoss_step": "700"})
+        adapter = tmp_path / f"moss_adapter_{len(written)}"
+        convert_lycoris(lycoris, adapter, transformer=dit_layout(tiny_moss_dit), base=BaseModelRef(repo="tiny-moss"))
+        written.append(adapter)
+        return adapter
 
     return write

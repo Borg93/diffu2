@@ -1,7 +1,8 @@
 """The page and crop pipelines with a MOSS-Image repo on CPU (conftest's tiny MOSS, random weights, so it draws noise):
 a crop plan's caption compiled as MOSS's Layout prompt exactly as the verified scratchpad code compiled it, a crop drawn
 end to end from its seed, the line repair in MOSS's denoise loop, MOSS's own guidance and sampling shift, what MOSS
-refuses, and each repo drawn by its own family. A MOSS trained to take a reference (conftest's tiny reference training,
+refuses, a crop drawn with a hand's adapter (diffu-moss-convert-lora's) loaded or fused, and each repo drawn by its own
+family. A MOSS trained to take a reference (conftest's tiny reference training,
 exported and initialised): its training cache holds what drawing encodes, it draws a crop from a reference and guides
 toward it, its own training pairs drawn back (diffu_page.cli.draw_pairs) are the crops the page pipeline draws (a pair
 the cache restyled, from its sample in that look), a described caption's look words drop to exactly the plain caption
@@ -54,7 +55,7 @@ from diffu_page.page.layout import load_xml_layout
 from diffu_page.quality.judge import LineVerdict
 
 if TYPE_CHECKING:
-    from conftest import NemoLoraWriter, RecordMaker
+    from conftest import MossAdapterWriter, RecordMaker
 
 # The scratchpad's moss_prompt.layout_prompt (27 Oct; the prompts MOSS's 1715 LoRA trained on) of the certificate
 # page's crop: its printed and handwritten lines as text items, its paper and ruled lines as objects
@@ -354,11 +355,28 @@ def test_without_sample_drops_a_named_reference_captions_citation_with_the_comma
     )
 
 
-def test_load_pipeline_refuses_a_lora_for_a_moss_repo(tiny_moss: Path, write_nemo_lora: NemoLoraWriter) -> None:
-    lora = write_nemo_lora("layers.0.proj.q", torch.zeros(2, 32), torch.zeros(32, 2), alpha=2)
+def test_moss_draws_a_crop_otherwise_with_an_adapter_and_with_it_fused_as_with_its_layers(
+    tiny_moss: Path, moss_pipe: ModularPipeline, small_plan: CropPlan, write_moss_adapter: MossAdapterWriter
+) -> None:
+    torch.manual_seed(0)
+    adapter = write_moss_adapter("final_linear_video", torch.randn(4, 32) / 4, torch.randn(16, 4) / 4, alpha=4.0)
+    adapted, fused = (
+        load_pipeline(
+            tiny_moss,
+            crop_blocks,
+            loras={"hand": adapter},
+            settings=MOSS_SETTINGS.model_copy(update={"fuse_loras": fuse}),
+        )
+        for fuse in (False, True)
+    )
 
-    with pytest.raises(ValueError, match="takes no LoRAs at draw time: merge them into the transformer"):
-        load_pipeline(tiny_moss, crop_blocks, loras={"hand": lora}, settings=MOSS_SETTINGS)
+    drawn = {
+        name: _latents(pipe, small_plan, seed=0)
+        for name, pipe in (("without", moss_pipe), ("adapter", adapted), ("fused", fused))
+    }
+
+    assert (drawn["adapter"] - drawn["without"]).abs().max() > 0.5  # 2.1 of latents up to 5
+    torch.testing.assert_close(drawn["fused"], drawn["adapter"], rtol=0.0, atol=0.05)  # 0.024: weights in bfloat16
 
 
 @pytest.mark.parametrize(

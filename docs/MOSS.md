@@ -10,7 +10,8 @@ is trained. How a page becomes the crops it draws: [PIPELINE.md](PIPELINE.md).
 
 - **The DiT** (`transformer.py`): `MossTransformer`, 42 single-stream blocks over the image's and the prompt's tokens;
   the released Base transformer (or a merged LoRA or a full fine-tune, exported in diffusers format) loads into it by
-  name, nothing missing or unexpected.
+  name, nothing missing or unexpected, and a hand LoRA loads onto it at draw time as a PEFT adapter ("Hand LoRAs",
+  below).
 - **The blocks** (`modular_pipelines/moss/`): `MossAutoBlocks` and `MossModularPipeline`. `MossLayoutPromptStep`
   compiles a crop plan's caption and lines into MOSS's Layout prompt (`layout_prompt.py`, as the MOSS prompt-enhancer
   skill compiles a draft): the caption's prose as the summary, a text item per line with its exact text and its box in
@@ -40,10 +41,10 @@ is trained. How a page becomes the crops it draws: [PIPELINE.md](PIPELINE.md).
   where the caption cites `<ref_image_0>` (without a reference the citation is dropped). Reference guidance
   (`--reference-guidance`) adds a pass without it.
 - **Drawing**: `diffu-generate --model <MOSS dir>` (and `diffu-evaluate`, `diffu-studio`) draws through the page
-  pipeline, at MOSS's own guidance and shift unless `--guidance` or `--sampling-shift` name others. A MOSS directory
-  takes no `--lora`: merge a LoRA into the DiT folder it names (`diffu-moss-export-ref`, or KohakuMossTrainer's merge).
-  `--reference` (a sample page) only for a DiT trained with references, its caption in the form it trained on
-  (`--reference-caption`, below).
+  pipeline, at MOSS's own guidance and shift unless `--guidance` or `--sampling-shift` name others. `--lora
+  hand=<adapter folder>` loads a hand LoRA onto the DiT ("Hand LoRAs", below); a LoRA of our reference training is
+  merged into the DiT folder instead (`diffu-moss-export-ref`). `--reference` (a sample page) only for a DiT trained
+  with references, its caption in the form it trained on (`--reference-caption`, below).
 
       jobs/spark_guard.sh --need-gb 50 --name pages -- uv run diffu-generate --model runs/moss/eight_full_r6b_step_000750 \
           --templates page_a.xml --text-from text.txt --title "the records of Överståthållarämbetet" \
@@ -173,11 +174,63 @@ components loaded as the page pipeline loads them, its latents by the reference 
 reference, bit for bit, and that a trained pair drawn back (`diffu-draw-pairs`) is the crop the page pipeline draws;
 `packages/moss/tests/test_train.py` that `--encode-text` encodes what the cache holds.
 
-## Hand LoRAs with KohakuMossTrainer
+## Hand LoRAs
 
-MOSS-Image hand LoRAs (one per volume) train with KohakuMossTrainer in its own environment
-(`~/Desktop/repos/kohakumoss`), on manifests whose captions the scratchpad's `moss_prompt.layout_prompt` compiled:
-`diffu_moss.layout_prompt` compiles a crop plan's caption to the same string (`packages/page/tests/test_moss.py`). The
-trainer's text caches are written with transformers' forward, one prompt a call (`forward: hf`), as
-`MossTextEncoderStep` encodes; its latents (the VAE's mode, 2x2, batch-norm statistics) matched ours at cosine 0.99998.
-Its LoRA is merged into Base and drawn through `diffu-moss-init --transformer`.
+In plain words: the scribe (MOSS-Image-Base) keeps one desk, and a hand LoRA is a small notebook of one archive's pen
+habits that it opens when a page asks for that hand; the adapter is that notebook as a file of its own, so a new hand
+is a new notebook, not a new scribe.
+
+A hand LoRA teaches MOSS-Image-Base the handwriting of one collection (or of several, each chosen by the collection the
+caption names): rank 32, alpha 32, on 265 linear layers of the DiT (each joint block's `q`, `k`, `v`, `o`,
+`ffn_up_gate` and `ffn_down`, the text refiner's, the two embedders and the output layer). The hands train with
+KohakuMossTrainer in its own environment (`~/Desktop/repos/kohakumoss`), on manifests whose captions the scratchpad's
+`moss_prompt.layout_prompt` compiled: `diffu_moss.layout_prompt` compiles a crop plan's caption to the same string
+(`packages/page/tests/test_moss.py`). The trainer's text caches are written with transformers' forward, one prompt a
+call (`forward: hf`), as `MossTextEncoderStep` encodes; its latents (the VAE's mode, 2x2, batch-norm statistics)
+matched ours at cosine 0.99998.
+
+A hand is drawn from its adapter, loaded onto the one Base DiT at draw time, so a hand needs its 156 MB, not a 10 GB
+DiT of its own. Four are published as PEFT LoRA adapters of the Base DiT (public, Apache-2.0):
+
+| Adapter | Hand | Trained |
+|---|---|---|
+| [`Gabriel/diffu-moss-hand-pahlman`](https://huggingface.co/Gabriel/diffu-moss-hand-pahlman) | Carl Fredrik Påhlman's travel journals, 1825–1826 | 700 steps |
+| [`Gabriel/diffu-moss-hand-landskapshandlingar`](https://huggingface.co/Gabriel/diffu-moss-hand-landskapshandlingar) | the landskapshandlingar provincial accounts | 700 steps |
+| [`Gabriel/diffu-moss-hand-overstathallarambetet-1715`](https://huggingface.co/Gabriel/diffu-moss-hand-overstathallarambetet-1715) | the records of Överståthållarämbetet (its 1715 letter book) | 700 steps |
+| [`Gabriel/diffu-moss-hand-eight`](https://huggingface.co/Gabriel/diffu-moss-hand-eight) | eight hands, each chosen by naming its collection | 2000 steps |
+
+- **An adapter** (`diffu_moss/adapters.py`) is a folder of PEFT's two files: `adapter_config.json`, a `LoraConfig`
+  (rank, alpha, the 265 modules by their names, the base: `OpenMOSS-Team/MOSS-Image-Base` at revision `85975793`), and
+  `adapter_model.safetensors`, each module's `lora_A` and `lora_B` in bfloat16 under PEFT's `base_model.model.` prefix,
+  its metadata saying where they came from (a KohakuMossTrainer LyCORIS export, and its step). PEFT loads it as any
+  adapter (`PeftModel.from_pretrained(dit, folder)`, then `merge_and_unload()` to merge it).
+- **Converting** a KohakuMossTrainer export (`lora/export/lora-lycoris.safetensors`: LyCORIS's kohya form, each
+  module's `lora_down`, `lora_up` and `alpha` keyed by its name with dots as underscores) with
+  `diffu-moss-convert-lora`: each key is looked up among the DiT's linear layers by their names with dots as
+  underscores (never split on underscores, which the names hold), `lora_down` becomes `lora_A` and `lora_up`
+  `lora_B` as stored, so `lora_alpha / r * lora_B @ lora_A` is each layer's change, exactly. Anything it cannot convert
+  exactly is refused before a file is written: another LyCORIS algorithm (LoHa, LoKr, DoRA, rsLoRA's scale), a key
+  that names no linear layer or two, a down and up of different ranks or of other widths than their layer, a missing
+  tensor. Converted so, the four exports are the published folders, tensor for tensor (2 Nov).
+
+      diffu-moss-convert-lora runs/moss_hand_pahlman/lora/export/lora-lycoris.safetensors \
+          --out runs/moss_hand_pahlman/adapter
+
+- **Drawing** with a hand: a model directory of the Base DiT (`diffu-moss-init --base $BASE --out runs/moss/base`),
+  and the hand's adapter by `--lora hand=<folder>` (or as the `lora` of a style preset, `--styles`; a run of several
+  hands draws them a pipeline at a time, as FLUX.3's hands are drawn: [PIPELINE.md](PIPELINE.md)). Its caption names
+  the collection as the hand trained on it (the page's style: provenance title and years). `--lora-scale` sets its
+  strength (1: as trained). The adapter's layers compute their change in float32 beside the DiT's bfloat16;
+  `--fuse-loras` merges them into the DiT's weights at load instead (no LoRA matmul a step), each weight rounded to
+  bfloat16 once, as a merge in float32 rounds it: as KohakuMossTrainer merged the hands, whose merge checks give every
+  kind of weight the change so rounded. MXFP8, an AOTInductor package and `--compile-blocks` rework the DiT's layers,
+  so they take a hand only fused.
+
+      hf download Gabriel/diffu-moss-hand-pahlman --local-dir models/adapters/pahlman
+      jobs/spark_guard.sh --need-gb 50 --name pages -- uv run diffu-generate --model runs/moss/base \
+          --templates page_a.xml --text-from text.txt --title "Carl Fredrik Påhlman's travel journals" \
+          --years "1825–1826" --paper off-white --ink "dark brown" --lora hand=models/adapters/pahlman \
+          --whole-page --out runs/pages_pahlman
+
+  A LoRA of our reference training (`diffu-moss-train-ref`) is still merged into the DiT folder it draws with
+  (`diffu-moss-export-ref`).

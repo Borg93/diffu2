@@ -9,7 +9,7 @@ authors = [{ name = "Gabriel Borg" }]
 dependencies = [
     "diffu-core",
     "diffusers",
-    "peft>=0.17",  # the reference training's LoRA
+    "peft>=0.17",  # the reference training's LoRA, and the adapters drawing loads
     "pillow>=11",
     "pydantic>=2",
     "rich>=13",
@@ -26,6 +26,7 @@ diffu-moss-train-ref = "diffu_moss.train.loop:app"  # a LoRA, or every weight (-
 diffu-moss-export-ref = "diffu_moss.train.export:app"  # that LoRA merged into the Base DiT, for diffu-moss-init
 diffu-moss-aoti = "diffu_moss.aoti:app"  # the joint block compiled ahead of time (AOTInductor), for aoti_package
 diffu-moss-export-hf = "diffu_moss.export_hf:app"  # a MOSS model in the official Hub layout (model_index.json), for SGLang Diffusion
+diffu-moss-convert-lora = "diffu_moss.convert_lora:app"  # a LyCORIS LoRA (KohakuMossTrainer's) as a PEFT adapter, loaded at draw time
 
 [build-system]
 requires = ["hatchling"]

@@ -1,6 +1,6 @@
-"""The option types the generation CLIs share: a LoRA option names a NeMo LoRA checkpoint dir, checked when the
-option is read, before any model loads; the model comes from --model or FLUX3_MODEL, never a default path; every draw
-option a CLI is given reaches the settings it draws with."""
+"""The option types the generation CLIs share: a LoRA option names a LoRA adapter folder (a NeMo checkpoint's, a
+MOSS-Image adapter), checked when the option is read, before any model loads; the model comes from --model or
+FLUX3_MODEL, never a default path; every draw option a CLI is given reaches the settings it draws with."""
 
 from __future__ import annotations
 
@@ -18,8 +18,8 @@ from diffu_page.page.labels import LabelFormat
 from diffu_page.settings import Settings
 
 
-def test_parse_lora_refuses_a_dir_that_holds_no_nemo_lora(tmp_path: Path) -> None:
-    with pytest.raises(typer.BadParameter, match="is not a NeMo LoRA model dir: it has no adapter_config.json"):
+def test_parse_lora_refuses_a_dir_that_holds_no_lora_adapter(tmp_path: Path) -> None:
+    with pytest.raises(typer.BadParameter, match="is not a LoRA adapter folder: it has no adapter_config.json"):
         parse_lora(f"hand={tmp_path}")
 
 

@@ -3,7 +3,8 @@
 The tiny model draws noise, so every line reads back badly: what is checked is the wiring (a plan in, an image of the
 plan's size with one label per line out; a reference image drawn from as it was resized for training, and guided
 toward when asked; diffu-generate drawing each planned crop on its own, so one that fails costs no other, and each
-hand's pages with its own pipeline) and that a NeMo LoRA loads at its trained strength.
+hand's pages with its own pipeline, FLUX.3's or MOSS-Image's) and that a LoRA of either (a NeMo checkpoint, a MOSS-Image
+adapter) loads at its trained strength.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from PIL import Image
 from safetensors.torch import load_file, save_file
 from typer.testing import CliRunner
 
+from diffu_moss.mxfp8 import Precision
 from diffu_page.captions.look import Ink, Paper, ScanLook
 from diffu_page.captions.prompt import LineRecord, PageStyle
 from diffu_page.captions.provenance import Provenance
@@ -56,8 +58,10 @@ if TYPE_CHECKING:
 
 TINY_SETTINGS = DrawSettings(steps=2, guidance_scale=4.0, text_layers=(1,), device="cpu")
 TINY_OPTIONS = ["--steps", "2", "--text-layer", "1", "--device", "cpu"]  # TINY_SETTINGS as diffu-generate's options
+MOSS_OPTIONS = ["--steps", "2", "--device", "cpu"]  # the tiny MOSS-Image draws with its own guidance and text layers
 FLAG_PAGES = ["--templates", "page.xml", "--text-from", "text.txt"]  # a page from the flags, in a test's working dir
 LORA_MODULE = "single_transformer_blocks.0.attn.to_q"
+MOSS_LORA_MODULE = "layers.0.proj.q"
 FLAG_STYLE = PageStyle(  # diffu-generate --title "the archive" with every other style flag left at its default
     provenance=Provenance(title="the archive", years=""),
     look=ScanLook(greyscale=False, paper=Paper.CREAM, ink=Ink.DARK_BROWN),
@@ -279,7 +283,7 @@ def test_draw_pages_records_a_crop_it_cannot_draw_by_name_and_saves_the_other_cr
 
     def load(loras: dict[str, Path]) -> ModularPipeline:
         if loras == unloadable:
-            raise ValueError(f"{loras['hand']} is not a NeMo LoRA model dir")
+            raise ValueError(f"{loras['hand']} is not a LoRA adapter folder")
         return crop_pipe
 
     jobs, unplanned = plan_jobs(enumerate(pages))
@@ -495,18 +499,32 @@ def test_generate_draws_the_templates_in_the_style_preset_style_names_by_its_han
     assert summary.groups == [PageGroup(loras={"hand": hand}, pages=[0])]
 
 
+@pytest.mark.parametrize(
+    ("repo", "pipe_without", "module_name", "writer", "options"),
+    [
+        pytest.param("tiny_flux3", "crop_pipe", LORA_MODULE, "write_nemo_lora", TINY_OPTIONS, id="flux3"),
+        pytest.param(
+            "tiny_moss", "moss_crop_pipe", MOSS_LORA_MODULE, "write_moss_adapter", MOSS_OPTIONS, id="moss-adapters"
+        ),
+    ],
+)
 def test_generate_draws_each_hands_pages_with_its_own_pipeline_and_keeps_their_names_and_seeds(
-    tiny_flux3: Path,
-    crop_pipe: ModularPipeline,
+    request: pytest.FixtureRequest,
+    repo: str,
+    pipe_without: str,
+    module_name: str,
+    writer: str,
+    options: list[str],
     one_line_page: Path,
     tmp_path: Path,
-    write_nemo_lora: NemoLoraWriter,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    linear = crop_pipe.transformer.get_submodule(LORA_MODULE)
+    linear = request.getfixturevalue(pipe_without).transformer.get_submodule(module_name)
+    model_dir = request.getfixturevalue(repo)
+    write_lora = request.getfixturevalue(writer)
     torch.manual_seed(0)
     hands = [
-        write_nemo_lora(LORA_MODULE, torch.randn(2, linear.in_features), torch.randn(linear.out_features, 2), alpha=4)
+        write_lora(module_name, torch.randn(2, linear.in_features), torch.randn(linear.out_features, 2), alpha=4)
         for _ in range(2)
     ]
     styles = _write_presets(tmp_path / "styles.json", a={"lora": str(hands[0])}, b={"lora": str(hands[1])})
@@ -527,8 +545,8 @@ def test_generate_draws_each_hands_pages_with_its_own_pipeline_and_keeps_their_n
 
     monkeypatch.setattr("diffu_page.cli.generate.load_pipeline", load_and_count)
     monkeypatch.setattr("diffu_page.cli.generate.TrOCRJudge", lambda device: ScriptedJudge())  # reads are not tested
-    args = ["--jobs", str(job_file), "--styles", str(styles), "--model", str(tiny_flux3)]
-    args += ["--out", str(tmp_path / "out"), *TINY_OPTIONS]
+    args = ["--jobs", str(job_file), "--styles", str(styles), "--model", str(model_dir)]
+    args += ["--out", str(tmp_path / "out"), *options]
 
     result = CliRunner().invoke(generate_app, args)
 
@@ -542,7 +560,7 @@ def test_generate_draws_each_hands_pages_with_its_own_pipeline_and_keeps_their_n
     jobs = [(hands[0], crop_jobs(page, 0)[0]), (hands[0], crop_jobs(page, 2)[0]), (hands[1], crop_jobs(page, 1)[0])]
     assert [crop.name for crop in summary.crops] == [job.name for _, job in jobs]  # named as pages 0, 2 and 1
     by_hand = {
-        hand: load_pipeline(tiny_flux3, crop_blocks, loras={"hand": hand}, settings=TINY_SETTINGS) for hand in hands
+        hand: load_pipeline(model_dir, crop_blocks, loras={"hand": hand}, settings=summary.settings) for hand in hands
     }
     expected = [  # each page drawn by its hand, from its seed as that page of the run
         draw_crop(
@@ -551,7 +569,7 @@ def test_generate_draws_each_hands_pages_with_its_own_pipeline_and_keeps_their_n
             name=job.name,
             seed=job.seed,
             reference=None,
-            settings=TINY_SETTINGS,
+            settings=summary.settings,
             judge=ScriptedJudge(),
         )
         for hand, job in jobs
@@ -812,17 +830,26 @@ def test_load_pipeline_compiles_exactly_the_transformers_repeated_blocks(tiny_fl
     assert compiled == {"Flux3ModeTransformerBlock", "Flux3SingleTransformerBlock"}
 
 
-def test_load_pipeline_refuses_to_compile_the_blocks_around_unfused_loras(
-    tiny_flux3: Path, crop_pipe: ModularPipeline, write_nemo_lora: NemoLoraWriter
+@pytest.mark.parametrize(
+    ("model", "module_name", "writer", "setting"),
+    [
+        pytest.param("tiny_flux3", LORA_MODULE, "write_nemo_lora", {"compile_blocks": True}, id="compile_blocks"),
+        pytest.param(
+            "tiny_moss", MOSS_LORA_MODULE, "write_moss_adapter", {"precision": Precision.MXFP8}, id="precision"
+        ),
+        pytest.param(
+            "tiny_moss", MOSS_LORA_MODULE, "write_moss_adapter", {"aoti_package": Path("blocks.pt2")}, id="aoti_package"
+        ),
+    ],
+)
+def test_load_pipeline_refuses_to_rework_the_transformers_layers_around_unfused_loras(
+    request: pytest.FixtureRequest, model: str, module_name: str, writer: str, setting: dict[str, object]
 ) -> None:
-    linear = crop_pipe.transformer.get_submodule(LORA_MODULE)
-    lora_dir = write_nemo_lora(
-        LORA_MODULE, torch.zeros(2, linear.in_features), torch.zeros(linear.out_features, 2), alpha=2
-    )
-    settings = TINY_SETTINGS.model_copy(update={"compile_blocks": True})
+    lora_dir = request.getfixturevalue(writer)(module_name, torch.zeros(2, 32), torch.zeros(32, 2), alpha=2)
+    settings = TINY_SETTINGS.model_copy(update=setting)
 
-    with pytest.raises(ValueError, match="only with its LoRAs fused"):
-        load_pipeline(tiny_flux3, crop_blocks, loras={"v2": lora_dir}, settings=settings)
+    with pytest.raises(ValueError, match=f"^{next(iter(setting))} only with the LoRAs fused"):
+        load_pipeline(request.getfixturevalue(model), crop_blocks, loras={"v2": lora_dir}, settings=settings)
 
 
 def test_draw_crop_refuses_reference_guidance_on_a_crop_without_a_reference(crop_pipe: ModularPipeline) -> None:
@@ -856,23 +883,41 @@ def test_draw_crop_guides_each_crop_only_until_guidance_stop(tiny_flux3: Path) -
     assert again.image.tobytes() == first.image.tobytes()
 
 
+@pytest.fixture(scope="module")
+def moss_crop_pipe(tiny_moss: Path) -> ModularPipeline:
+    return load_pipeline(tiny_moss, crop_blocks, loras={}, settings=TINY_SETTINGS)
+
+
+FAMILY_LORAS = [  # each model family's LoRA of one module: (its model, its pipeline without, the module, its writer)
+    pytest.param("tiny_flux3", "crop_pipe", LORA_MODULE, "write_nemo_lora", id="flux3"),
+    pytest.param("tiny_moss", "moss_crop_pipe", MOSS_LORA_MODULE, "write_moss_adapter", id="moss"),
+]
+
+
 @pytest.mark.parametrize("fuse", [pytest.param(False, id="adapter"), pytest.param(True, id="fused")])
 @pytest.mark.parametrize("strength", [pytest.param(1.0, id="trained"), pytest.param(0.5, id="half")])
-def test_nemo_lora_loads_at_its_trained_strength_times_the_lora_scale(
-    tiny_flux3: Path, crop_pipe: ModularPipeline, write_nemo_lora: NemoLoraWriter, fuse: bool, strength: float
+@pytest.mark.parametrize(("model", "pipe_without", "module_name", "writer"), FAMILY_LORAS)
+def test_lora_loads_at_its_trained_strength_times_the_lora_scale(
+    request: pytest.FixtureRequest,
+    model: str,
+    pipe_without: str,
+    module_name: str,
+    writer: str,
+    fuse: bool,
+    strength: float,
 ) -> None:
     torch.manual_seed(0)
-    linear = crop_pipe.transformer.get_submodule(LORA_MODULE)
+    linear = request.getfixturevalue(pipe_without).transformer.get_submodule(module_name)
     a = torch.randn(2, linear.in_features)
     b = torch.randn(linear.out_features, 2)
-    lora_dir = write_nemo_lora(LORA_MODULE, a, b, alpha=4)  # scale alpha / r = 2
+    lora_dir = request.getfixturevalue(writer)(module_name, a, b, alpha=4)  # scale alpha / r = 2
     x = torch.randn(3, linear.in_features)
     expected = linear(x.to(linear.weight.dtype)).float() + strength * 2 * x @ a.T @ b.T
     settings = TINY_SETTINGS.model_copy(update={"fuse_loras": fuse, "lora_scale": strength})
 
-    pipe = load_pipeline(tiny_flux3, crop_blocks, loras={"v2": lora_dir}, settings=settings)
+    pipe = load_pipeline(request.getfixturevalue(model), crop_blocks, loras={"v2": lora_dir}, settings=settings)
 
-    module = pipe.transformer.get_submodule(LORA_MODULE)
+    module = pipe.transformer.get_submodule(module_name)
     assert (type(module) is torch.nn.Linear) == fuse  # fused: a plain Linear, the LoRA in its weight
     torch.testing.assert_close(module(x.to(linear.weight.dtype)).float(), expected, rtol=2e-2, atol=2e-1)
 

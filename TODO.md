@@ -41,7 +41,10 @@ own FLUX.3-architecture model), is in git history (`git log -p -- TODO.md`).
 - [ ] Writing no label asks for (scratchpad `hand/unlabelled_words.py`: ink outside every labelled box; a LoRA writes a
       caption's dates or an invented heading where real pages carry untranscribed marks): a judge stage, a learned line
       detector in place of the thresholds.
-- [ ] LoRA adapters at draw time: a MOSS hand LoRA is merged into Base today, so one model directory per hand.
+- [ ] The four hands drawn through their adapters on a GPU (`--lora`, fused and not), looked at beside the pages their
+      merged DiTs drew (`runs/moss_hand_*/windows_step*`) and the scans: on CPU the adapters are exact (each layer's
+      change, and fused weights rounded once, as the merges were), not yet looked at drawn. Then a presets file of the
+      MOSS hands beside `styles.json` (FLUX.3's), and an adapter in the studio.
 - [ ] KohakuMossTrainer's glue in the repo: its manifests, cache and train configs and checks still live in the
       scratchpad (`write_manifest.py`, `moss_encoders.py`, `moss_hand_*.py`, `check_cache.py`, `check_merged.py`).
 - [ ] `--compile-blocks` for MOSS (the DiT names no repeated blocks; its per-sample loop and text mask would break a

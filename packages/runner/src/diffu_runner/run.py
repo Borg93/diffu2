@@ -5,7 +5,8 @@ committed to the run's Lance table as they are drawn.
 
 ``run.jsonl`` holds one :class:`diffu_page.draw.jobs.PageJob` per line, each with its own ``id``; ``draw.json`` the
 :class:`diffu_page.draw.pipeline.DrawSettings` the pages are drawn with, whole (a field it leaves out keeps its
-default). Ray Data reads the run file, plans each page on CPU workers (an opening becomes its two pages), draws the
+default); ``--lora hand=<adapter>`` draws every page with a LoRA too (a MOSS-Image hand's adapter,
+``diffu-moss-convert-lora``'s). Ray Data reads the run file, plans each page on CPU workers (an opening becomes its two pages), draws the
 pages with ``--gpus`` times ``--actors-per-gpu`` actors (a ``map_batches`` actor pool) and the driver writes them to
 ``<out>/pages.lance`` (:mod:`diffu_runner.table`) every ``--commit-every`` pages; ``<out>/runs/`` keeps each run's
 settings and counts. A run into an ``--out`` that holds a table resumes it: the pages drawn are skipped and those that
@@ -420,9 +421,7 @@ def main(
         Path,
         typer.Option(help="the run's directory: pages.lance and runs/ go there; one that holds a table is resumed"),
     ],
-    model: Annotated[
-        Path, typer.Option(help="the model directory: MOSS-Image's (diffu-moss-init), or FLUX.3 Klein's with --lora")
-    ],
+    model: Annotated[Path, typer.Option(help="the model directory: MOSS-Image's (diffu-moss-init), or FLUX.3 Klein's")],
     draw_settings: Annotated[
         Path | None,
         typer.Option(

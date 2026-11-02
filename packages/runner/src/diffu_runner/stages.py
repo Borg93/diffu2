@@ -79,9 +79,10 @@ class JudgeModel(BaseModel):
 
 class DrawConfig(BaseModel):
     """What decides how a run's pages come out: the model directory (MOSS-Image's, ``diffu-moss-init``'s; or FLUX.3
-    Klein's with its ``loras``, NeMo ``model/`` dirs by adapter name), the draw settings, the size in pixels a page is
-    drawn whole at unless its job gives its own, and the judge. Every run into one table draws with the same. Paths are
-    held absolute: the actors load them from working directories of their own."""
+    Klein's) and its ``loras`` (adapter folders by adapter name, every page drawn with all of them: a MOSS-Image hand's
+    adapter, ``diffu-moss-convert-lora``'s, or NeMo ``model/`` dirs for FLUX.3), the draw settings, the size in pixels a
+    page is drawn whole at unless its job gives its own, and the judge. Every run into one table draws with the same.
+    Paths are held absolute: the actors load them from working directories of their own."""
 
     model_config = ConfigDict(frozen=True)
 

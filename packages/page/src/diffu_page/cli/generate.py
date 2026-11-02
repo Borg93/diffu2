@@ -9,8 +9,9 @@ training-scale crops, or with ``--whole-page`` kept whole as one crop of ``--pag
 scan by ``--print-hand-model``, and its ruled lines found there if it has none, so its form's print is drawn as print
 and its grid as rules. A two-page opening (most scans) is planned as its single pages, never as a spread
 (:func:`diffu_page.draw.jobs.single_pages`), and ``summary.json`` lists them.
-Each crop is then drawn on its own by the crop pipeline (MOSS-Image, or FLUX.3 and its LoRAs), read back line by line,
-and labelled with badly read lines tagged ``unclear``, as diffu-runner's GPU actors draw it. The text comes from
+Each crop is then drawn on its own by the crop pipeline (MOSS-Image or FLUX.3, and their LoRAs: a MOSS-Image hand's is
+its adapter, ``diffu-moss-convert-lora``'s), read back line by line, and labelled with badly read lines tagged
+``unclear``, as diffu-runner's GPU actors draw it. The text comes from
 ``--text-from``: a PAGE/ALTO page's running text, or a plain text file as it stands (a blank line ends a paragraph).
 With ``--reference`` (a sample to draw in the hand of, for a model trained with references) every crop is drawn from it
 and captioned as the model was trained (``--reference-caption``: ``described`` measures the crop's hand, so it needs
@@ -34,6 +35,9 @@ jobs/spark_guard.sh:
     jobs/spark_guard.sh --need-gb 45 --name pages -- diffu-generate \\
         --templates <page.xml> --text-from <text.txt> --styles styles.json --style pahlman --out <dir>
     jobs/spark_guard.sh --need-gb 45 --name pages -- diffu-generate --jobs run.jsonl --styles styles.json --out <dir>
+    jobs/spark_guard.sh --need-gb 50 --name pages -- diffu-generate --model runs/moss/base \\
+        --templates <page.xml> --text-from <text.txt> --title "Carl Fredrik Påhlman's travel journals" \\
+        --lora hand=runs/moss_hand_pahlman/adapter --whole-page --out <dir>
 """
 
 from __future__ import annotations
@@ -134,7 +138,7 @@ class CropSummary(BaseModel):
 
 
 class PageGroup(BaseModel):
-    """Pages a run draws with one crop pipeline: the LoRAs it loads (NeMo ``model/`` dirs by adapter name) and the
+    """Pages a run draws with one crop pipeline: the LoRAs it loads (adapter folders by adapter name) and the
     pages, by their place in the run (in ``Summary.pages``)."""
 
     loras: dict[str, Path]
