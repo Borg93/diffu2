@@ -148,6 +148,15 @@ The runner and the KubeRay hand-off: [docs/RAY.md](docs/RAY.md), [docs/INFERENCE
 - [ ] From NeMo Curator: a small stage contract (setup, `process_batch`, declared resources), deterministic task ids,
       failures as sentinels, atomic writes, composite stages, tuning by diagnosis; a spike on Curator itself later.
 - [ ] The runner's `int(str(...))` round-trip and direct imports (numpy, pillow); its draw test should call `run()`.
+- [ ] Page jobs given as an inline layout or keeping their own text are checked on CPU only: draw each combination on a
+      GPU (template or layout, new text or its own) and look at the pages beside a template's.
+- [ ] A run-file builder: page jobs written from templates (a catalogue of GT pages by kind: tables, columns, margin
+      notes, headings) or generated box layouts, a text corpus and sample pages, in shards of tens of thousands of lines.
+- [ ] New text goes into the running-text lines only: a template's table cells, margin notes and headings keep their
+      own (a layout gives each of its lines its text), and text left over when the lines run out is dropped silently;
+      return it, so a document continues on its next page.
+- [ ] `diffu-run` writes ALTO and PAGE only: the page readers' own formats come from `diffu-generate --reader-labels` and
+      `diffu-reader-set`.
 
 ## Repo
 

@@ -1,11 +1,11 @@
 # A Job that fills the models volume (docs/INFERENCE.md, section 3): MOSS-Image-Base's text encoder, tokenizer and
-# VAE and the TrOCR judge, each at the revision the code was tested with, the fine-tuned DiT from a private model
-# repository, and the model directory diffu-moss-init writes around them. It runs the inference image, needs network
+# VAE and the TrOCR judge, each at the revision the code was tested with, the fine-tuned DiT from a model repository
+# (set to the published Gabriel/diffu-moss-r6b), and the model directory diffu-moss-init writes around them. It runs the inference image, needs network
 # access to huggingface.co (this Job only: a run never downloads), and can be run again (downloads resume; an existing
 # model directory is kept). Every <...> is a value of your site.
 #
 #   kubectl -n <namespace> apply -f deploy/kuberay/volumes.yaml
-#   kubectl -n <namespace> create secret generic diffu-hf-token --from-literal=token=<a read token>   # for the DiT
+#   kubectl -n <namespace> create secret generic diffu-hf-token --from-literal=token=<a read token>   # a private DiT only
 #   kubectl -n <namespace> apply -f deploy/kuberay/stage-models.yaml
 #   kubectl -n <namespace> logs -f job/diffu-stage-models
 #
@@ -34,18 +34,18 @@ spec:
               value: "0"
             - name: HF_HOME
               value: /tmp/hf
-            - name: HF_TOKEN  # read access to the private DiT repository
+            - name: HF_TOKEN  # read access to a private DiT repository; the published one needs none
               valueFrom:
                 secretKeyRef:
                   name: diffu-hf-token
                   key: token
                   optional: true
             - name: DIT_REPO  # "" when the DiT folder is copied in by hand
-              value: <org>/<dit-repo>
+              value: Gabriel/diffu-moss-r6b
             - name: DIT_REVISION
-              value: <commit of the DiT repository>
+              value: 2246c79aa65bf5a16409f185671fd2877efdb142
             - name: DIT_NAME
-              value: <dit-name>
+              value: diffu-moss-r6b
           command: ["/bin/bash", "-c"]
           args:
             - |

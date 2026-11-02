@@ -57,7 +57,7 @@ The code is `packages/runner` (`diffu-run`, `diffu-run-export`); the drawing its
 | Artifact | What it is | Version | Size | Staged at (example) |
 |---|---|---|---|---|
 | MOSS-Image-Base, `text_encoder/` `tokenizer/` `vae/` | the frozen Qwen3.5-9B text encoder, its tokenizer and the FLUX.2-class VAE that every MOSS-Image model shares | `OpenMOSS-Team/MOSS-Image-Base` at revision `85975793d8b3d432f1b6e27f352abaa4c2a4c0d3` | 16.8 GB + 0.02 GB + 0.25 GB | `/models/MOSS-Image-Base` |
-| The fine-tuned DiT | our MOSS-Image transformer trained to draw from a sample page: `config.json`, `diffusion_pytorch_model.safetensors` (5.1 B parameters, bf16) and `export.json` (it says the DiT takes a sample image) | the checkpoint folder you are handed | 10.2 GB | `/models/dit/<dit-name>` |
+| The fine-tuned DiT | our MOSS-Image transformer trained to draw from a sample page: `config.json`, `diffusion_pytorch_model.safetensors` (5.1 B parameters, bf16) and `export.json` (it says the DiT takes a sample image) | [`Gabriel/diffu-moss-r6b`](https://huggingface.co/Gabriel/diffu-moss-r6b) at commit `2246c79aa65bf5a16409f185671fd2877efdb142` (public), or a checkpoint folder you are handed | 10.2 GB | `/models/dit/diffu-moss-r6b` |
 | The handwriting judge | the Swedish TrOCR model every drawn line is read back with | `Riksarkivet/trocr-base-handwritten-hist-swe-2` at revision `aa79fcb1850bf3155ebc442570d6c6bfc0ac8100` | 1.5 GB | `/models/trocr-base-handwritten-hist-swe-2` |
 | The model directory | a 2 KB `modular_model_index.json` naming where the text encoder, tokenizer, VAE and DiT are (written by `diffu-moss-init`) | written on the cluster | - | `/models/moss-<dit-name>` |
 
@@ -71,12 +71,12 @@ Pick one way to get the files onto the models volume.
 
 **A. A PersistentVolumeClaim filled by a staging Job (recommended).** `deploy/kuberay/volumes.yaml` creates the three
 claims (models, data, outputs); `deploy/kuberay/stage-models.yaml` runs a Job in the inference image that downloads
-the Base folders and the judge at their pinned revisions, fetches the DiT (from a private model repository, see C),
-and writes the model directory. Fill in their placeholders, then:
+the Base folders and the judge at their pinned revisions, fetches the DiT (`Gabriel/diffu-moss-r6b` as it is set, or
+another model repository, see C), and writes the model directory. Fill in their placeholders, then:
 
 ```bash
 kubectl -n <namespace> apply -f deploy/kuberay/volumes.yaml
-kubectl -n <namespace> create secret generic diffu-hf-token --from-literal=token=<a read token>
+kubectl -n <namespace> create secret generic diffu-hf-token --from-literal=token=<a read token>  # a private DiT only
 kubectl -n <namespace> apply -f deploy/kuberay/stage-models.yaml
 kubectl -n <namespace> logs -f job/diffu-stage-models
 ```
@@ -88,14 +88,18 @@ and `draw.json`, copied in with your site's tool (`kubectl cp` into a pod that m
 mounts the claim (`aws s3 sync s3://<bucket>/models/ /models/`, `rclone copy <remote>:models /models`), then write the
 model directory as in "The model directory" below.
 
-**C. A private model repository.** The person who trained the DiT uploads its folder once:
+**C. A model repository.** The published DiT is `Gabriel/diffu-moss-r6b`, public, at commit
+`2246c79aa65bf5a16409f185671fd2877efdb142`: the staging Job fetches it as it is set (`DIT_NAME` `diffu-moss-r6b`, so
+the model directory is `/models/moss-diffu-moss-r6b`), with no token. A DiT of your own is uploaded once by the person
+who trained it:
 
 ```bash
 hf upload <org>/<dit-repo> <path to the checkpoint>/transformer . --private
 ```
 
-and the staging Job downloads it with a read token from a Secret (`hf download <org>/<dit-repo> --revision <commit>
---local-dir /models/dit/<dit-name>`). Pin the commit, as the Base and the judge are pinned.
+and the staging Job, given its `DIT_REPO`, `DIT_REVISION` and `DIT_NAME`, downloads it with a read token from a Secret
+(`hf download <org>/<dit-repo> --revision <commit> --local-dir /models/dit/<dit-name>`). Pin the commit, as the Base
+and the judge are pinned.
 
 Whichever way: the files must be readable by the image's user (UID 10001). A checkpoint copied with its permissions
 kept can arrive as `-rw-------`; make it readable (`chmod -R a+rX /models`).

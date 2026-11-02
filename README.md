@@ -53,15 +53,39 @@ Package names keep the `diffu-` prefix (imports `diffu_page`, ...) so they stay 
 
 ## Drawing pages
 
+The model is [Gabriel/diffu-moss-r6b](https://huggingface.co/Gabriel/diffu-moss-r6b) (public): our fine-tuned
+MOSS-Image DiT. Its text encoder, tokenizer and VAE are MOSS-Image-Base's. Once:
+
 ```bash
-BASE=~/.cache/huggingface/hub/models--OpenMOSS-Team--MOSS-Image-Base/snapshots/85975793d8b3d432f1b6e27f352abaa4c2a4c0d3
-uv run diffu-moss-init --base $BASE --transformer runs/moss_eight_full/full_r6b/checkpoints/step_000750/transformer \
-    --out runs/moss/eight_full_r6b_step_000750
-jobs/spark_guard.sh --need-gb 50 --name pages -- uv run diffu-generate --model runs/moss/eight_full_r6b_step_000750 \
-    --templates page_a.xml --text-from text.txt --title "the records of Överståthållarämbetet" --paper yellowed \
-    --ink brown --whole-page --page-megapixels 2 --reader-labels --out runs/pages
-uv run diffu-reader-set --run runs/pages --model paddleocr-vl --out data/readers/paddleocr_vl.jsonl
+uv sync --all-packages
+hf download OpenMOSS-Team/MOSS-Image-Base --revision 85975793d8b3d432f1b6e27f352abaa4c2a4c0d3 \
+    --include "text_encoder/*" --include "tokenizer/*" --include "vae/*" --local-dir models/MOSS-Image-Base
+hf download Gabriel/diffu-moss-r6b --revision 2246c79aa65bf5a16409f185671fd2877efdb142 \
+    --local-dir models/dit/diffu-moss-r6b
+uv run diffu-moss-init --base models/MOSS-Image-Base --transformer models/dit/diffu-moss-r6b --out models/moss-r6b
 ```
 
-Every option, job files and style presets: [docs/PIPELINE.md](docs/PIPELINE.md). Drawing with FLUX.3 and its LoRAs:
-[docs/FLUX3.md](docs/FLUX3.md).
+A run file holds one page job per line, as JSON. A page's layout is a PAGE or ALTO file (`template`) or its lines'
+boxes in pixels given as JSON (`layout`); its text is the `text` given, poured into the running-text lines, or, left
+out, the layout's own. Two lines of `run.jsonl`, a template with new text and a layout of boxes with new text (its
+heading keeps its own), each drawn in the look of a sample page:
+
+```json
+{"id": "court-0001", "template": "/data/templates/0105.xml", "text": "Anno 1649 den 6 Aprilis Tå laga tingh höltz medh Allmogen ...", "style": {"provenance": {"title": "the court records of Jämtlands domsaga", "years": "1649"}, "look": {"greyscale": false, "paper": "cream", "ink": "black"}}, "reference": {"image": "/data/samples/court.jpg", "caption": "sample"}}
+{"id": "boxes-0001", "layout": {"width": 1400, "height": 2000, "lines": [{"box": [150, 200, 1250, 270], "kind": "heading", "text": "Anno 1650"}, {"box": [150, 320, 1250, 390]}, {"box": [150, 410, 1250, 480]}]}, "text": "Tå laga tingh höltz medh Allmogen ...", "style": {"provenance": {"title": "the court records of Jämtlands domsaga", "years": "1650"}, "look": {"greyscale": false, "paper": "cream", "ink": "black"}}, "reference": {"image": "/data/samples/court.jpg", "caption": "sample"}}
+```
+
+Then draw and write each page out as an image with its labels (`<id>.jpg`, `<id>.alto.xml`, `<id>.page.xml`):
+
+```bash
+echo '{"steps": 50, "device": "cuda"}' > draw.json  # Blackwell: add "precision": "mxfp8", "compile_blocks": true
+uv run diffu-run --jobs run.jsonl --draw-settings draw.json --model models/moss-r6b --out out/run1 --gpus 1
+uv run diffu-run-export --out out/run1 --to out/run1/files
+```
+
+Every field of a page job, with a worked example of each combination (template or layout, new text or its own), the
+draw settings, outputs and running on KubeRay: [docs/INFERENCE.md](docs/INFERENCE.md). What the model does well and
+what not yet: its [model card](https://huggingface.co/Gabriel/diffu-moss-r6b). Drawing on one machine without Ray, and
+every option of `diffu-generate`: [docs/PIPELINE.md](docs/PIPELINE.md); its `--reader-labels` and `diffu-reader-set`
+also write the labels in the page readers' own formats (DeepSeek-OCR 2, PaddleOCR-VL), which `diffu-run` does not yet.
+Drawing with FLUX.3 and its LoRAs: [docs/FLUX3.md](docs/FLUX3.md).
