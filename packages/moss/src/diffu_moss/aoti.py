@@ -11,7 +11,9 @@ token (``[1, 6, dim]``: a page drawn without a reference) or one per token (``[1
 tokens at timestep 0). A package is built for one precision of the blocks' projections (bf16, or MXFP8:
 :mod:`diffu_moss.mxfp8`), the block's widths and dtype, and is valid only on the GPU architecture and with the torch
 version that built it: all are recorded in its metadata, and a package that does not match is refused before its code
-is loaded.
+is loaded. Its metadata also records the token counts it takes, from 2 in bf16 or 129 in MXFP8 (two tiles of its
+activations' block scales: :data:`MIN_TOKENS_BY_PRECISION`) to 65,536, and a call of any other count is refused before
+the compiled block runs.
 """
 
 from __future__ import annotations
@@ -37,7 +39,7 @@ from torch.func import functional_call
 
 from diffu_core.repo import ModelIndex
 from diffu_moss import mxfp8
-from diffu_moss.mxfp8 import JOINT_BLOCK_LINEARS, Precision, quantize_linears, supports_mxfp8
+from diffu_moss.mxfp8 import JOINT_BLOCK_LINEARS, TILE_ROWS, Precision, quantize_linears, supports_mxfp8
 from diffu_moss.transformer import MODULATIONS, JointBlock, MossTransformer
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
@@ -48,6 +50,10 @@ METADATA_KEY = "diffu_moss.joint_block"  # the package metadata's entry holding 
 MIN_TOKENS = 2  # an image token and a prompt token at least
 MAX_TOKENS = 1 << 16  # a page of ~6 MP with its prompt and sample; int32 indexing holds the widest product of it
 EXAMPLE_TOKENS = 4096  # a 1 MP page's image tokens: the size the compiler tunes for
+# The fewest tokens a package takes, by its projections' precision. MXFP8 pads its activations' block scales to whole
+# tiles of 128 rows (diffu_moss.mxfp8.swizzled), and torch.export guards the tile count away from 1 (its contiguity
+# check treats a dimension of 1 apart), so an MXFP8 package cannot take one tile's 2 to 128 tokens: 129 (two) or more.
+MIN_TOKENS_BY_PRECISION = {Precision.BF16: MIN_TOKENS, Precision.MXFP8: TILE_ROWS + 1}
 
 
 class Modulation(StrEnum):
@@ -70,6 +76,8 @@ class BlockPackage(BaseModel):
         ffn_dim: Its feed-forward width.
         heads: Its attention heads.
         tensors: The block's tensors by name, in the order the compiled block takes them.
+        min_tokens: The fewest tokens it takes (:data:`MIN_TOKENS_BY_PRECISION`); 2 if its metadata records none
+            (a package built before it was recorded: every one took 2).
         max_tokens: The most tokens it takes.
     """
 
@@ -84,6 +92,7 @@ class BlockPackage(BaseModel):
     ffn_dim: int
     heads: int
     tensors: tuple[str, ...]
+    min_tokens: int = Field(default=MIN_TOKENS, ge=MIN_TOKENS)
     max_tokens: int = Field(ge=MIN_TOKENS)
 
 
@@ -123,15 +132,17 @@ def block_description(block: JointBlock, *, max_tokens: int) -> BlockPackage:
     ffn_down = block.proj["ffn_down"]
     if not isinstance(ffn_down, nn.Linear | mxfp8.Linear):
         raise TypeError(f"the block's ffn_down is a {type(ffn_down).__name__}, not a linear layer")
+    precision = block_precision(block)
     return BlockPackage(
         torch=torch.__version__,
         arch=device_arch(norm.device),
-        precision=block_precision(block),
+        precision=precision,
         dtype=dtype_name(norm.dtype),
         dim=norm.shape[0],
         ffn_dim=ffn_down.in_features,
         heads=block.heads,
         tensors=tuple(block_tensors(block)),
+        min_tokens=MIN_TOKENS_BY_PRECISION[precision],
         max_tokens=max_tokens,
     )
 
@@ -158,8 +169,9 @@ class TensorsCall(nn.Module):
 
 
 def export_block(block: JointBlock, modulation: Modulation, *, tokens: int, max_tokens: int) -> ExportedProgram:
-    """``block`` exported as a function of its tensors (:class:`TensorsCall`) for one sample of 2 to ``max_tokens``
-    tokens, its modulation of the form ``modulation``; ``tokens`` is the example's count."""
+    """``block`` exported as a function of its tensors (:class:`TensorsCall`) for one sample of the fewest tokens its
+    precision takes (:data:`MIN_TOKENS_BY_PRECISION`) to ``max_tokens``, its modulation of the form ``modulation``;
+    ``tokens`` is the example's count."""
     norm = block.norm1.weight
     dim = norm.shape[0]
     shared = modulation is Modulation.SHARED
@@ -168,7 +180,7 @@ def export_block(block: JointBlock, modulation: Modulation, *, tokens: int, max_
     modulation_shape = (1, MODULATIONS, dim) if shared else (1, tokens, MODULATIONS, dim)
     modulation_input = torch.randn(modulation_shape, device=norm.device, dtype=norm.dtype)
     tensors = [tensor.detach() for tensor in block_tensors(block).values()]
-    count = Dim("tokens", min=MIN_TOKENS, max=max_tokens)
+    count = Dim("tokens", min=MIN_TOKENS_BY_PRECISION[block_precision(block)], max=max_tokens)
     dynamic = {
         "x": {1: count},
         "rope": {1: count},
@@ -191,11 +203,16 @@ def build_package(
         What the package was built for.
 
     Raises:
-        ValueError: If ``out`` is not a new ``.pt2`` file.
+        ValueError: If ``out`` is not a new ``.pt2`` file, or ``tokens`` is not a count the package takes.
     """
     if out.suffix != ".pt2" or out.exists():
         raise ValueError(f"{out} is not a new .pt2 file")
     info = block_description(block, max_tokens=max_tokens)
+    if not info.min_tokens <= tokens <= info.max_tokens:
+        raise ValueError(
+            f"a package of the {info.precision} joint block takes {info.min_tokens} to {info.max_tokens} tokens, "
+            f"so it is tuned for a count among them, not {tokens}"
+        )
     options = {"aot_inductor.package": True, "aot_inductor.metadata": {METADATA_KEY: info.model_dump_json()}}
     files = {}
     for modulation in Modulation:
@@ -258,13 +275,15 @@ class PackagedForward:
         """The block's output for ``x`` ``[1, tokens, dim]``, as its own forward takes it.
 
         Raises:
-            ValueError: If ``x`` is not one sample of 2 to the package's most tokens, in its dtype.
+            ValueError: If ``x`` is not one sample of the package's fewest to most tokens, in its dtype (before the
+                compiled block runs).
         """
         batch, tokens = x.shape[:2]
-        if batch != 1 or not MIN_TOKENS <= tokens <= self.info.max_tokens or dtype_name(x.dtype) != self.info.dtype:
+        info = self.info
+        if batch != 1 or not info.min_tokens <= tokens <= info.max_tokens or dtype_name(x.dtype) != info.dtype:
             raise ValueError(
-                f"a packaged joint block takes one sample of {MIN_TOKENS} to {self.info.max_tokens} tokens in "
-                f"{self.info.dtype}, not {list(x.shape)} in {x.dtype}"
+                f"a packaged joint block takes one sample of {info.min_tokens} to {info.max_tokens} tokens in "
+                f"{info.dtype}, not {list(x.shape)} in {x.dtype}"
             )
         form = Modulation.SHARED if modulation.dim() == 3 else Modulation.PER_TOKEN
         tensors = list(block_tensors(self.block).values())
@@ -330,7 +349,12 @@ def main(
         str, typer.Option(help="the device to build for: the package runs on its architecture only")
     ] = "cuda",
     tokens: Annotated[
-        int, typer.Option(min=MIN_TOKENS, help="the token count the compiler tunes for")
+        int,
+        typer.Option(
+            min=MIN_TOKENS,
+            help="the token count the compiler tunes for, one the package takes (in MXFP8: "
+            f"{MIN_TOKENS_BY_PRECISION[Precision.MXFP8]} or more)",
+        ),
     ] = EXAMPLE_TOKENS,
 ) -> None:
     """Compile MOSS-Image's joint block ahead of time into a package the page pipeline loads (aoti_package)."""
