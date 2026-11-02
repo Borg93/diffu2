@@ -99,7 +99,7 @@ class BlockPackage(BaseModel):
 class CompiledBlock(Protocol):
     """A loaded package's compiled block: the joint block's output for its input and its tensors."""
 
-    def __call__(self, x: Tensor, rope: Tensor, modulation: Tensor, tensors: list[Tensor]) -> Tensor: ...
+    def __call__(self, hidden_states: Tensor, rope: Tensor, modulation: Tensor, tensors: list[Tensor]) -> Tensor: ...
 
 
 def device_arch(device: torch.device) -> str:
@@ -159,13 +159,13 @@ class TensorsCall(nn.Module):
 
     def forward(  # ty: ignore[invalid-mutable-override]  torch declares forward an attribute; Modules override it
         self,
-        x: Tensor,
+        hidden_states: Tensor,
         rope: Tensor,
         modulation: Tensor,
         tensors: list[Tensor],
     ) -> Tensor:
         own = dict(zip(self.names, tensors, strict=True))
-        return functional_call(self.blocks[0], own, (x, rope, modulation), strict=True)
+        return functional_call(self.blocks[0], own, (hidden_states, rope, modulation), strict=True)
 
 
 def export_block(block: JointBlock, modulation: Modulation, *, tokens: int, max_tokens: int) -> ExportedProgram:
@@ -175,21 +175,21 @@ def export_block(block: JointBlock, modulation: Modulation, *, tokens: int, max_
     norm = block.norm1.weight
     dim = norm.shape[0]
     shared = modulation is Modulation.SHARED
-    x = torch.randn(1, tokens, dim, device=norm.device, dtype=norm.dtype)
+    hidden_states = torch.randn(1, tokens, dim, device=norm.device, dtype=norm.dtype)
     rope = torch.randn(1, tokens, dim // block.heads, device=norm.device, dtype=norm.dtype)
     modulation_shape = (1, MODULATIONS, dim) if shared else (1, tokens, MODULATIONS, dim)
     modulation_input = torch.randn(modulation_shape, device=norm.device, dtype=norm.dtype)
     tensors = [tensor.detach() for tensor in block_tensors(block).values()]
     count = Dim("tokens", min=MIN_TOKENS_BY_PRECISION[block_precision(block)], max=max_tokens)
     dynamic = {
-        "x": {1: count},
+        "hidden_states": {1: count},
         "rope": {1: count},
         "modulation": None if shared else {1: count},
         "tensors": [None] * len(tensors),
     }
     with torch.no_grad():
         return torch.export.export(
-            TensorsCall(block), (x, rope, modulation_input, tensors), dynamic_shapes=dynamic, strict=False
+            TensorsCall(block), (hidden_states, rope, modulation_input, tensors), dynamic_shapes=dynamic, strict=False
         )
 
 
@@ -264,30 +264,32 @@ def check_package(info: BlockPackage, device: torch.device) -> None:
 
 class PackagedForward:
     """A joint block's forward run by a package's compiled block, handed the block's own tensors at every call (so the
-    block is read as it is, wherever it was moved since)."""
+    block is read as it is, wherever it was moved since). A step cache's hooks (:mod:`diffu_moss.step_cache`), set
+    after it, wrap it as they wrap the block's own forward."""
 
     def __init__(self, block: JointBlock, compiled: Mapping[Modulation, CompiledBlock], info: BlockPackage) -> None:
         self.block = block
         self.compiled = compiled
         self.info = info
 
-    def __call__(self, x: Tensor, rope: Tensor, modulation: Tensor) -> Tensor:
-        """The block's output for ``x`` ``[1, tokens, dim]``, as its own forward takes it.
+    def __call__(self, hidden_states: Tensor, rope: Tensor, modulation: Tensor) -> Tensor:
+        """The block's output for ``hidden_states`` ``[1, tokens, dim]``, as its own forward takes them.
 
         Raises:
-            ValueError: If ``x`` is not one sample of the package's fewest to most tokens, in its dtype (before the
-                compiled block runs).
+            ValueError: If ``hidden_states`` is not one sample of the package's fewest to most tokens, in its dtype
+                (before the compiled block runs).
         """
-        batch, tokens = x.shape[:2]
+        batch, tokens = hidden_states.shape[:2]
         info = self.info
-        if batch != 1 or not info.min_tokens <= tokens <= info.max_tokens or dtype_name(x.dtype) != info.dtype:
+        fits = info.min_tokens <= tokens <= info.max_tokens and dtype_name(hidden_states.dtype) == info.dtype
+        if batch != 1 or not fits:
             raise ValueError(
                 f"a packaged joint block takes one sample of {info.min_tokens} to {info.max_tokens} tokens in "
-                f"{info.dtype}, not {list(x.shape)} in {x.dtype}"
+                f"{info.dtype}, not {list(hidden_states.shape)} in {hidden_states.dtype}"
             )
         form = Modulation.SHARED if modulation.dim() == 3 else Modulation.PER_TOKEN
         tensors = list(block_tensors(self.block).values())
-        return self.compiled[form](x.contiguous(), rope.contiguous(), modulation.contiguous(), tensors)
+        return self.compiled[form](hidden_states.contiguous(), rope.contiguous(), modulation.contiguous(), tensors)
 
 
 def install_package(transformer: MossTransformer, path: Path) -> BlockPackage:

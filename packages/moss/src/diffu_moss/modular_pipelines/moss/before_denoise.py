@@ -1,13 +1,16 @@
 """MOSS-Image's steps before the denoising loop: the initial noise, drawn in fp32 from the generator and packed into
 tokens as FLUX.3 packs its latents (so the page pipeline's line repair runs on them), and the sampling grid: ``steps``
-noise levels from 1 down, shifted, each moved to the nearest level of the 1,000-step training grid."""
+noise levels from 1 down, shifted, each moved to the nearest level of the 1,000-step training grid, stepped by
+MOSS-Image's own Euler sampler or by UniPC (:class:`Sampler`)."""
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import TYPE_CHECKING, override
 
+import numpy as np
 import torch
-from diffusers import FlowMatchEulerDiscreteScheduler
+from diffusers import FlowMatchEulerDiscreteScheduler, UniPCMultistepScheduler
 from diffusers.configuration_utils import FrozenDict
 from diffusers.modular_pipelines import ComponentSpec, InputParam, ModularPipelineBlocks, OutputParam, PipelineState
 from diffusers.utils.torch_utils import randn_tensor
@@ -20,6 +23,31 @@ if TYPE_CHECKING:
 
 TRAIN_STEPS = 1000
 SAMPLING_SHIFT = 5.0  # the official demo's
+
+
+class Sampler(StrEnum):
+    """What steps the sampling grid, calling the DiT once a pass a step at the grid's levels either way."""
+
+    EULER = "euler"  # MOSS-Image's own: diffusers' FlowMatchEulerDiscreteScheduler, the velocity a step
+    UNIPC = "unipc"  # diffusers' UniPCMultistepScheduler: a predictor-corrector on the last steps' predictions too
+
+
+def unipc_sampler(euler: FlowMatchEulerDiscreteScheduler) -> UniPCMultistepScheduler:
+    """UniPC for the sampling grid ``euler`` draws: diffusers' multistep predictor-corrector (its order 2, bh2, the
+    corrector at every step after the first, the last step of order 1 and onto sigma 0) on flow sigmas, the DiT's
+    velocity (noise minus image) read as its ``flow_prediction`` (the image is ``sample - sigma * velocity``).
+
+    UniPC shifts a grid it is given by its ``flow_shift``, and MOSS-Image's is shifted already (by the sampling shift,
+    then snapped to the training grid): it steps it at ``flow_shift`` 1, and its config keeps ``euler``'s sampling shift
+    as ``shift``, which :class:`MossSetTimestepsStep` draws the grid at, as from the Euler sampler's config."""
+    unipc = UniPCMultistepScheduler(
+        num_train_timesteps=euler.config.num_train_timesteps,
+        prediction_type="flow_prediction",
+        use_flow_sigmas=True,
+        flow_shift=1.0,
+    )
+    unipc.register_to_config(shift=euler.config.shift)
+    return unipc
 
 
 def sampling_sigmas(steps: int, shift: float) -> list[float]:
@@ -93,8 +121,15 @@ class MossPrepareLatentsStep(ModularPipelineBlocks):
 
 class MossSetTimestepsStep(ModularPipelineBlocks):
     """The scheduler set to MOSS-Image's sampling grid (:func:`sampling_sigmas`) at the shift its config names: the
-    sampling shift, 5 by default, as MOSS-Image's own scheduler config names it. The grid is shifted and on the
-    training grid already, so the scheduler steps it as given, at shift 1."""
+    sampling shift, 5 by default, as MOSS-Image's own scheduler config names it (and a UniPC sampler's keeps it:
+    :func:`unipc_sampler`). The grid is shifted and on the training grid already, so the scheduler steps it as given,
+    at shift 1, and the DiT is called at its levels, sigma x 1,000, whichever the sampler: UniPC's own timesteps are
+    those cut to whole steps (some a step below their level), and it starts a millionth below sigma 1, which keeps its
+    log-SNR finite.
+
+    Raises:
+        ValueError: From the call, if a UniPC sampler would shift the grid again (its ``flow_shift`` is not 1).
+    """
 
     model_name = "moss"
 
@@ -104,7 +139,7 @@ class MossSetTimestepsStep(ModularPipelineBlocks):
         return [
             ComponentSpec(
                 "scheduler",
-                FlowMatchEulerDiscreteScheduler,
+                FlowMatchEulerDiscreteScheduler,  # MOSS-Image's own; diffu_moss.inference swaps in UniPC when asked
                 config=FrozenDict({"num_train_timesteps": TRAIN_STEPS, "shift": SAMPLING_SHIFT}),
                 default_creation_method="from_config",
             )
@@ -115,7 +150,8 @@ class MossSetTimestepsStep(ModularPipelineBlocks):
     def description(self) -> str:
         return (
             "Step that sets the scheduler's timesteps to MOSS-Image's sampling grid: the steps shifted by the "
-            "scheduler's shift, then each moved to the nearest level of the 1,000-step training grid."
+            "scheduler's shift, then each moved to the nearest level of the 1,000-step training grid. The Euler "
+            "sampler or UniPC steps it as given; the DiT is called at its levels."
         )
 
     @property
@@ -140,12 +176,24 @@ class MossSetTimestepsStep(ModularPipelineBlocks):
         self, components: MossModularPipeline, state: PipelineState
     ) -> tuple[MossModularPipeline, PipelineState]:
         block_state = self.get_block_state(state)
-        scheduler: FlowMatchEulerDiscreteScheduler = components.scheduler
+        scheduler: FlowMatchEulerDiscreteScheduler | UniPCMultistepScheduler = components.scheduler
         sigmas = sampling_sigmas(block_state.num_inference_steps, scheduler.config.shift)
-        scheduler.set_shift(1.0)
-        scheduler.set_timesteps(sigmas=sigmas, device=components._execution_device)
+        device = components._execution_device
+        if isinstance(scheduler, UniPCMultistepScheduler):
+            if scheduler.config.flow_shift != 1.0:
+                raise ValueError(
+                    f"a UniPC sampler at flow_shift {scheduler.config.flow_shift} would shift MOSS-Image's grid again: "
+                    "give it flow_shift 1 (diffu_moss.modular_pipelines.moss.before_denoise.unipc_sampler)"
+                )
+            scheduler.set_timesteps(sigmas=np.array(sigmas), device=device)  # an array: it multiplies them by its shift
+            levels = torch.tensor(sigmas, dtype=torch.float32, device=device)
+            timesteps = levels * scheduler.config.num_train_timesteps  # as the Euler sampler's own
+        else:
+            scheduler.set_shift(1.0)
+            scheduler.set_timesteps(sigmas=sigmas, device=device)
+            timesteps = scheduler.timesteps
         scheduler.set_begin_index(0)
-        block_state.timesteps = scheduler.timesteps
-        block_state.num_inference_steps = len(scheduler.timesteps)
+        block_state.timesteps = timesteps
+        block_state.num_inference_steps = len(timesteps)
         self.set_block_state(state, block_state)
         return components, state

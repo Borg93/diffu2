@@ -1,11 +1,13 @@
 """MOSS-Image's denoising loop: at each noise level the DiT predicts the velocity of the latents from the prompt, and
 under classifier-free guidance from the negative prompt too with some of its blocks skipped; the two are combined in
-fp32 and the scheduler steps the latents with it (FLUX.3's own scheduler step). A reference image's latents, for a DiT
-trained to take them, go into every pass: the reference conditions the look, guidance pushes toward the prompt.
+fp32 and the scheduler (the Euler sampler or UniPC) steps the latents with it (FLUX.3's own scheduler step). A
+reference image's latents, for a DiT trained to take them, go into every pass: the reference conditions the look,
+guidance pushes toward the prompt.
 
 The latents stay tokens through the loop, as FLUX.3's do, and the loop's steps carry FLUX.3's names (``denoiser``,
 ``after_denoiser``), so the page pipeline's line repair (``diffu_page.draw.blocks.repair``) runs in it as in FLUX.3's.
-The DiT itself takes the latents on their grid.
+The DiT itself takes the latents on their grid. Each pass runs in the DiT's cache context, named as the guider names
+it, so a step cache (:mod:`diffu_moss.step_cache`) keeps a state per pass, cleared as the loop starts.
 """
 
 from __future__ import annotations
@@ -29,6 +31,7 @@ from diffusers.modular_pipelines.modular_pipeline import BlockState
 from diffusers.modular_pipelines.modular_pipeline_utils import ConfigSpec
 
 from diffu_moss.latents import PIXELS_PER_LATENT
+from diffu_moss.step_cache import reset_step_cache
 from diffu_moss.transformer import MossTransformer
 
 if TYPE_CHECKING:
@@ -47,7 +50,8 @@ class MossLoopDenoiser(ModularPipelineBlocks):
     """The guided velocity of the latents at one noise level: the DiT's prediction from the prompt and, while the
     guider guides, from the negative prompt with the model's ``uncond_skip_layers`` skipped, combined by the guider in
     fp32. The reference latents, when there are any, go into both passes (``references``, which a reference guider's
-    third pass leaves out)."""
+    third pass leaves out). Each pass runs in the DiT's cache context of the guider's name for it, and gives the DiT
+    the whole prompt (no mask)."""
 
     model_name = "moss"
 
@@ -118,11 +122,15 @@ class MossLoopDenoiser(ModularPipelineBlocks):
         passes = guider.prepare_inputs(guider_inputs)
         for guider_pass in passes:
             guider.prepare_models(components.transformer)
-            text: torch.Tensor = guider_pass.text
-            mask = torch.ones(text.shape[:2], dtype=torch.bool, device=text.device)
-            velocity = components.transformer(
-                latents, t, text, mask, guider_pass.skip_layers, references=block_state.reference_latents
-            ).float()
+            with components.transformer.cache_context(getattr(guider_pass, guider._identifier_key)):
+                velocity = components.transformer(
+                    latents,
+                    t,
+                    guider_pass.text,
+                    None,
+                    guider_pass.skip_layers,
+                    references=block_state.reference_latents,
+                ).float()
             guider_pass.noise_pred = velocity.flatten(2).transpose(1, 2)
             guider.cleanup_models(components.transformer)
         block_state.noise_pred = guider(passes)[0]
@@ -130,7 +138,7 @@ class MossLoopDenoiser(ModularPipelineBlocks):
 
 
 class MossDenoiseLoopWrapper(LoopSequentialPipelineBlocks):
-    """Runs its steps once per timestep, in order."""
+    """Runs its steps once per timestep, in order, after clearing what a step cache kept from the last page."""
 
     model_name = "moss"
 
@@ -138,15 +146,16 @@ class MossDenoiseLoopWrapper(LoopSequentialPipelineBlocks):
     @override
     def description(self) -> str:
         return (
-            "Pipeline block that iteratively denoises the latents over `timesteps`. "
-            "The specific steps within each iteration can be customized with `sub_blocks` attribute"
+            "Pipeline block that iteratively denoises the latents over `timesteps`, a step cache's state cleared "
+            "first. The specific steps within each iteration can be customized with `sub_blocks` attribute"
         )
 
     @property
     @override
     def loop_expected_components(self) -> list[ComponentSpec]:
         return [
-            # config-less: the scheduler config is owned by `MossSetTimestepsStep`, whose spec is combined first
+            # config-less: the scheduler config is owned by `MossSetTimestepsStep`, whose spec is combined first; the
+            # Euler sampler is MOSS-Image's own, and UniPC may stand in for it (diffu_moss.inference)
             ComponentSpec("scheduler", FlowMatchEulerDiscreteScheduler, default_creation_method="from_config"),
             ComponentSpec("transformer", MossTransformer),
         ]
@@ -166,6 +175,7 @@ class MossDenoiseLoopWrapper(LoopSequentialPipelineBlocks):
         self, components: MossModularPipeline, state: PipelineState
     ) -> tuple[MossModularPipeline, PipelineState]:
         block_state = self.get_block_state(state)
+        reset_step_cache(components.transformer)  # a new page: no pass's state from the last, maybe of another size
         with self.progress_bar(total=block_state.num_inference_steps) as progress_bar:
             for i, t in enumerate(block_state.timesteps):
                 components, block_state = self.loop_step(components, block_state, i=i, t=t)

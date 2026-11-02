@@ -1,21 +1,30 @@
 """MOSS-Image on CPU: our DiT predicts bit for bit the velocity the verified implementation predicted when it is given
-no reference, and with a reference reads its tokens at timestep 0 on their own grid and reference axis; the text
-encoder refuses a prompt past its 4,096 tokens, and a MOSS repo draws with the DiT folder it names."""
+no reference, and with a reference reads its tokens at timestep 0 on their own grid and reference axis; under a step
+cache it takes one sample a call; the text encoder refuses a prompt past its 4,096 tokens, a MOSS repo draws with the
+DiT folder it names, and UniPC steps MOSS-Image's grid of a smooth flow closer to its end than Euler in as many steps.
+The test marked for a GPU checks that a forward, once warm, never waits for the GPU, and is skipped without one."""
 
 from __future__ import annotations
 
 import json
 import zlib
+from collections.abc import Sequence
 from pathlib import Path
+from typing import override
 
 import pytest
 import torch
+from diffusers.guiders import ClassifierFreeGuidance
 from diffusers.modular_pipelines import ModularPipeline, SequentialPipelineBlocks
-from torch import nn
+from torch import Tensor, nn
 
+from diffu_moss.inference import MossInference, prepare_inference
 from diffu_moss.init import write_moss_repo
 from diffu_moss.modular_pipelines.moss import MossModularPipeline
+from diffu_moss.modular_pipelines.moss.before_denoise import Sampler
 from diffu_moss.modular_pipelines.moss.encoders import MossTextEncoderStep
+from diffu_moss.modular_pipelines.moss.modular_blocks_moss import MossCoreDenoiseStep
+from diffu_moss.step_cache import FirstBlockCache, enable_step_cache
 from diffu_moss.transformer import MossTransformer, token_positions
 
 # The verified implementation's velocities (the scratchpad's moss_model.MossTransformer, from which this DiT was
@@ -68,6 +77,35 @@ def test_moss_transformer_without_references_predicts_exactly_the_velocity_the_v
 
     golden = json.loads(VELOCITIES.read_text(encoding="utf-8"))[expected]
     assert torch.equal(velocity, torch.tensor(golden, dtype=torch.float32))  # bit for bit, as before references
+
+
+def test_moss_transformer_under_a_step_cache_refuses_more_than_one_sample_a_call() -> None:
+    model = _seeded_dit()
+    enable_step_cache(model, FirstBlockCache(), steps=2, skip_layers=())
+    latents, text, mask = _inputs()
+
+    with (
+        pytest.raises(ValueError, match="one state per pass of guidance: give it one sample a call, not 2"),
+        torch.no_grad(),
+        model.cache_context("pred_cond"),
+    ):
+        model(latents, torch.tensor([700.0, 300.0]), text, mask)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="what waits for a GPU, on a GPU")
+def test_moss_transformer_forward_once_warm_never_waits_for_the_gpu() -> None:
+    model = _seeded_dit().cuda()
+    latents, text, _ = (tensor[:1].cuda() for tensor in _inputs())
+    timestep = torch.tensor([700.0], device="cuda")
+    with torch.no_grad():
+        model(latents, timestep, text, None)  # the rotary frequencies copied to the GPU, once
+        torch.cuda.set_sync_debug_mode("error")
+        try:
+            velocity = model(latents, timestep, text, None)
+        finally:
+            torch.cuda.set_sync_debug_mode("default")
+
+    assert velocity.shape == latents.shape
 
 
 def test_moss_transformer_reads_a_references_content_into_the_drawn_images_velocity_not_its_shape() -> None:
@@ -163,3 +201,61 @@ def test_moss_repo_draws_with_the_transformer_folder_it_names(tiny_moss_base: Pa
     pipe = MossModularPipeline.from_pretrained(str(tmp_path / "model"))
     pipe.load_components(names=["transformer"])
     assert torch.equal(pipe.transformer.final_linear_video.weight, trained.final_linear_video.weight)
+
+
+DATA_MEAN, DATA_SPREAD = 0.7, 0.3  # the stand-in flow's data: every latent drawn from N(0.7, 0.3^2)
+FLOW_SIZE = (96, 64)  # px, (width, height): latents of 4 rows and 6 columns
+
+
+class GaussianFlow(MossTransformer):
+    """A stand-in DiT whose velocity is exactly the flow's from noise to data drawn latent by latent from
+    N(``DATA_MEAN``, ``DATA_SPREAD``^2): smooth in sigma, and its end known, since the flow keeps each latent's place in
+    its distribution: ``DATA_MEAN + DATA_SPREAD * noise``."""
+
+    @override
+    def forward(
+        self,
+        latents: Tensor,
+        timestep: Tensor,
+        text: Tensor,
+        text_mask: Tensor | None,
+        skip_layers: frozenset[int] = frozenset(),
+        references: Sequence[Tensor] | None = None,
+    ) -> Tensor:
+        sigma = timestep.float() / 1000
+        image = 1 - sigma
+        variance = image**2 * DATA_SPREAD**2 + sigma**2
+        return (sigma - image * DATA_SPREAD**2) * (latents - image * DATA_MEAN) / variance - DATA_MEAN
+
+
+def _flow_drawn(sampler: Sampler, steps: int) -> Tensor:
+    """The stand-in flow drawn by MOSS-Image's denoise blocks (the noise, the grid, the loop, unguided) in ``steps``
+    steps of ``sampler``, from noise seed 0."""
+    pipe = MossModularPipeline(blocks=SequentialPipelineBlocks.from_blocks_dict({"denoise": MossCoreDenoiseStep()}))
+    pipe.update_components(transformer=GaussianFlow(**TINY_DIT), guider=ClassifierFreeGuidance(guidance_scale=1.0))
+    prepare_inference(pipe, MossInference(sampler=sampler), steps=steps)
+    width, height = FLOW_SIZE
+    prompt = torch.zeros(1, 1, TINY_DIT["text_dim"])  # read by no one
+    generator = torch.Generator().manual_seed(0)
+    return pipe(
+        width=width,
+        height=height,
+        generator=generator,
+        num_inference_steps=steps,
+        prompt_embeds=prompt,
+        output="latents",
+    )
+
+
+def test_unipc_draws_a_smooth_flow_on_moss_grid_closer_to_its_end_than_euler_in_as_many_steps() -> None:
+    width, height = FLOW_SIZE
+    noise = torch.randn(
+        1, TINY_DIT["latent_channels"], height // 16, width // 16, generator=torch.Generator().manual_seed(0)
+    )
+    end = DATA_MEAN + DATA_SPREAD * noise
+    euler = _flow_drawn(Sampler.EULER, 6)
+
+    unipc = _flow_drawn(Sampler.UNIPC, 6)
+
+    errors = [(drawn - end).pow(2).mean().sqrt().item() for drawn in (euler, unipc)]
+    assert errors[1] < errors[0]  # RMS 0.132 against Euler's 0.218

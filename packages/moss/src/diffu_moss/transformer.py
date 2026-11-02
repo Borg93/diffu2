@@ -9,15 +9,19 @@ embedded as the drawn image's are, placed on the reference axis (the drawn image
 at ``k + 1``) with their own grid centred, and modulated as at timestep 0 while the drawn image and the prompt are
 modulated at the flow timestep; they join the joint attention and only the drawn image's tokens are predicted. The
 released models were trained without them: only a DiT trained with references (``diffu_moss.train``) reads them.
+
+The DiT takes diffusers' step caches, which skip its joint blocks at some denoising steps (:mod:`diffu_moss.step_cache`).
 """
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Sequence
 
 import torch
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import PeftAdapterMixin
+from diffusers.models.cache_utils import CacheMixin
 from diffusers.models.modeling_utils import ModelMixin
 from torch import Tensor, nn
 from torch.nn import functional as F
@@ -93,12 +97,18 @@ def token_positions(
     return torch.cat((grid_positions(height, width, text_length, 0, device), text, *images))
 
 
-def rope_table(positions: Tensor, head_dim: int, base: float) -> Tensor:
-    """The rotary table ``[1, L, head_dim]`` of ``positions``: ``head_dim / 8`` frequencies per axis (computed in fp32
-    on the CPU), all the sines, then all the cosines."""
+@functools.cache
+def rope_frequencies(head_dim: int, base: float, device: torch.device) -> Tensor:
+    """The ``head_dim / 8`` rotary frequencies of an axis, computed in fp32 on the CPU and held on ``device``: copied
+    there once, since copying a CPU tensor to a GPU at every forward waits for the GPU's queued work."""
     bands = head_dim // 8
-    frequencies = 1 / (base ** (torch.arange(bands, dtype=torch.float32) / bands))
-    phase = positions.unsqueeze(-1) * frequencies.to(positions.device)
+    return (1 / (base ** (torch.arange(bands, dtype=torch.float32) / bands))).to(device)
+
+
+def rope_table(positions: Tensor, head_dim: int, base: float) -> Tensor:
+    """The rotary table ``[1, L, head_dim]`` of ``positions``: :func:`rope_frequencies` per axis, all the sines, then
+    all the cosines."""
+    phase = positions.unsqueeze(-1) * rope_frequencies(head_dim, base, positions.device)
     return torch.cat((phase.sin(), phase.cos()), -2).flatten(-2).unsqueeze(0)
 
 
@@ -167,7 +177,8 @@ def modulation_by_token(modulation: Tensor) -> tuple[Tensor, ...]:
 class JointBlock(nn.Module):
     """A single-stream block over the image's and the prompt's tokens (and any reference's), its attention and
     feed-forward halves shifted, scaled and gated by the time modulation: one shared by every token (``[B, 6, dim]``),
-    or one per token (``[B, tokens, 6, dim]``: the references' at timestep 0)."""
+    or one per token (``[B, tokens, 6, dim]``: the references' at timestep 0). Its forward takes the tokens as
+    ``hidden_states``, the name diffusers' step caches read them by."""
 
     def __init__(self, dim: int, ffn_dim: int, heads: int) -> None:
         super().__init__()
@@ -180,37 +191,41 @@ class JointBlock(nn.Module):
 
     def forward(  # ty: ignore[invalid-mutable-override]  torch declares forward an attribute; Modules override it
         self,
-        x: Tensor,
+        hidden_states: Tensor,
         rope: Tensor,
         modulation: Tensor,
     ) -> Tensor:
         shift_a, scale_a, gate_a, shift_f, scale_f, gate_f = modulation_by_token(modulation)
         dtype = self.norm1.weight.dtype  # the block's own: an MXFP8 projection (diffu_moss.mxfp8) holds bytes
-        y = (self.norm1(x) * (1 + scale_a) + shift_a).to(dtype)
+        y = (self.norm1(hidden_states) * (1 + scale_a) + shift_a).to(dtype)
         q = self.q_norm(self.proj["q"](y).unflatten(-1, (self.heads, -1))).flatten(2)
         k = self.k_norm(self.proj["k"](y).unflatten(-1, (self.heads, -1))).flatten(2)
-        x = x + self.proj["o"](joint_attention(q, k, self.proj["v"](y), rope, self.heads)) * gate_a
+        x = hidden_states + self.proj["o"](joint_attention(q, k, self.proj["v"](y), rope, self.heads)) * gate_a
         y = self.norm2(x) * (1 + scale_f) + shift_f
         hidden, gate = self.proj["ffn_up_gate"](y.to(dtype)).chunk(2, -1)
         return x + self.proj["ffn_down"](soft_gated(hidden, gate)) * gate_f
 
 
-class MossTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin):
+class MossTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, CacheMixin):
     """MOSS-Image's DiT. ``forward`` takes noisy latents ``[B, latent_channels, H, W]`` (one per 16-px cell), the flow
-    timestep (sigma x 1000), the prompts' hidden states ``[B, S, text_dim]`` and their mask ``[B, S]``, and returns the
-    predicted velocity (noise minus image) in the latents' shape. ``skip_layers`` leaves out joint blocks by index.
+    timestep (sigma x 1000), the prompts' hidden states ``[B, S, text_dim]`` and their mask ``[B, S]`` (``None`` when
+    every token of every prompt counts: the prompts are then read whole, where picking the tokens a mask keeps waits for
+    the GPU), and returns the predicted velocity (noise minus image) in the latents' shape. ``skip_layers`` leaves out
+    joint blocks by index.
 
     ``references`` are reference images' clean latents, each ``[B, latent_channels, h, w]`` on its own grid of any
     size (row ``b`` is sample ``b``'s): their tokens follow the prompt's on the reference axis at ``k + 1``, modulated
     as at timestep 0, and are not predicted. Without references the forward is exactly the released model's.
 
-    As diffusers' own transformers, it takes PEFT adapters (``add_adapter``, ``fuse_lora``) and checkpoints its joint
-    blocks' activations while training once ``enable_gradient_checkpointing`` is called.
+    As diffusers' own transformers, it takes PEFT adapters (``add_adapter``, ``fuse_lora``), checkpoints its joint
+    blocks' activations while training once ``enable_gradient_checkpointing`` is called, and takes diffusers' step
+    caches (``enable_cache``, each pass of guidance in its own ``cache_context``: :mod:`diffu_moss.step_cache`).
 
     Raises:
         ValueError: From the constructor, if ``dim`` does not split into heads whose width is a multiple of 8 or
-            ``freq_dim`` is odd; from ``forward``, if a sample has no prompt token, or a reference is not a batch of
-            latents like the drawn image's (as many samples, as many channels).
+            ``freq_dim`` is odd; from ``forward``, if a sample has no prompt token, a reference is not a batch of
+            latents like the drawn image's (as many samples, as many channels), or a step cache is given more than one
+            sample (it keeps one state per pass).
     """
 
     _keys_to_ignore_on_load_unexpected = [r"^rope\.bands$"]  # the rotary frequencies are recomputed in fp32
@@ -247,11 +262,15 @@ class MossTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin):
         latents: Tensor,
         timestep: Tensor,
         text: Tensor,
-        text_mask: Tensor,
+        text_mask: Tensor | None,
         skip_layers: frozenset[int] = frozenset(),
         references: Sequence[Tensor] | None = None,
     ) -> Tensor:
         batch, channels = latents.shape[:2]
+        if batch > 1 and self.is_cache_enabled:
+            raise ValueError(
+                f"a step cache keeps one state per pass of guidance: give it one sample a call, not {batch}"
+            )
         references = list(references or ())
         for reference in references:
             if reference.dim() != 4 or tuple(reference.shape[:2]) != (batch, channels):
@@ -272,7 +291,7 @@ class MossTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin):
             [
                 self._sample(
                     latents[k : k + 1],
-                    text[k : k + 1, text_mask[k].bool()],
+                    text[k : k + 1] if text_mask is None else text[k : k + 1, text_mask[k].bool()],
                     modulation[k : k + 1],
                     head[k : k + 1],
                     skip_layers,

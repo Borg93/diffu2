@@ -243,14 +243,14 @@ def synthetic_prompt(width: int, height: int, lines: int = PAGE_LINES) -> str:
     return json.dumps(prompt, ensure_ascii=False, separators=(",", ":"))
 
 
-def load(model: Path, options: MossInference, device: torch.device) -> MossModularPipeline:
+def load(model: Path, options: MossInference, device: torch.device, *, steps: int) -> MossModularPipeline:
     """The MOSS-Image repo ``model`` loaded as the page pipeline loads it (its own blocks, the VAE in float32, the rest
-    in bfloat16) on ``device``, prepared as ``options`` ask."""
+    in bfloat16) on ``device``, prepared as ``options`` ask for pages of ``steps`` steps."""
     pipe = MossModularPipeline(blocks=MossAutoBlocks(), pretrained_model_name_or_path=str(model))
     pipe.load_components(dtype=COMPONENT_DTYPES)
     require_loaded(pipe)
     pipe.to(device)
-    prepare_inference(pipe, options)
+    prepare_inference(pipe, options, steps=steps)
     return pipe
 
 
@@ -334,7 +334,7 @@ def measure(config: BenchConfig, options: MossInference, settings: BenchSettings
     device = torch.device(settings.device)
     reset_device(device)
     start = time.perf_counter()
-    pipe = load(settings.model, options, device)
+    pipe = load(settings.model, options, device, steps=settings.steps)
     synchronize(device)
     load_seconds = time.perf_counter() - start
     load_peak = peak_gb(device)

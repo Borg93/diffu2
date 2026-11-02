@@ -39,8 +39,10 @@ from diffu_core.repo import ModelIndex
 from diffu_moss.inference import MossInference, check_inference, prepare_inference
 from diffu_moss.latents import encode_latents
 from diffu_moss.modular_pipelines.moss import MossAutoBlocks, MossModularPipeline
+from diffu_moss.modular_pipelines.moss.before_denoise import Sampler
 from diffu_moss.modular_pipelines.moss.denoise import GUIDANCE_SCALE as MOSS_GUIDANCE_SCALE
 from diffu_moss.mxfp8 import Precision
+from diffu_moss.step_cache import StepCache
 from diffu_page.draw.blocks import (
     CropPromptStep,
     DrawnCrop,
@@ -194,7 +196,8 @@ class DrawSettings(BaseModel):
             matmuls per step, and the transformer can be compiled; the LoRAs can't be switched or rescaled after.
         compile_blocks: Compile the transformer's repeated blocks (torch.compile, diffusers' regional compilation) at
             load; the first crop pays for the compilation. A run with LoRAs must fuse them first. MOSS-Image's joint
-            blocks are compiled after any MXFP8 swap, so the quantization of their inputs fuses into them.
+            blocks are compiled after any MXFP8 swap, so the quantization of their inputs fuses into them; not with a
+            step cache (``cache``), whose hooks decide eagerly around each block.
         precision: MOSS-Image only: its DiT's joint-block projections in their own bfloat16, or in MXFP8: weights and
             inputs in blocks of 32 FP8 values sharing a power-of-two scale, multiplied by a Blackwell GPU's tensor cores
             (:mod:`diffu_moss.mxfp8`; emulated on the CPU). It pays off with ``compile_blocks`` or ``aoti_package``,
@@ -204,6 +207,14 @@ class DrawSettings(BaseModel):
         aoti_package: MOSS-Image only: run its joint blocks from this AOTInductor package (``diffu-moss-aoti``), built
             for ``precision``, this GPU's architecture and this torch version (any other is refused); instead of
             ``compile_blocks``.
+        sampler: MOSS-Image only: what steps its sampling grid: ``euler``, its own sampler, or ``unipc``, diffusers'
+            multistep UniPC solver, which draws as well in fewer ``steps``. Either calls the DiT once a pass a step, at
+            the grid's levels.
+        cache: MOSS-Image only: a step cache that skips its DiT's joint blocks at some steps
+            (:mod:`diffu_moss.step_cache`), by ``kind``: ``{"kind": "first_block", "threshold": 0.05}``,
+            ``{"kind": "taylorseer", "cache_interval": 5, "disable_cache_before_step": 3}``, ``{"kind": "magcache",
+            "mag_ratios": [...]}``, or ``{"kind": "magcache_calibration", "ratios_file": ...}``, which skips nothing
+            and measures MagCache's ratios for this sampler and these ``steps``. Not with ``compile_blocks``.
         repair_passes: How many times a drawn crop's rejected lines are drawn again in place (:func:`repair_lines`),
             each pass from its own noise (:func:`repair_seed`); 0 keeps every crop as drawn.
     """
@@ -225,11 +236,13 @@ class DrawSettings(BaseModel):
     precision: Precision = Precision.BF16
     text_encoder_precision: Precision = Precision.BF16
     aoti_package: Path | None = None
+    sampler: Sampler = Sampler.EULER
+    cache: StepCache | None = None
     repair_passes: int = Field(default=0, ge=0)
 
     @model_validator(mode="after")
     def _moss_inference_fits(self) -> Self:
-        _ = self.moss_inference  # MossInference validates itself: a package refuses compile_blocks
+        _ = self.moss_inference  # MossInference validates itself: a package or a step cache refuses compile_blocks
         return self
 
     @property
@@ -240,16 +253,20 @@ class DrawSettings(BaseModel):
             text_encoder_precision=self.text_encoder_precision,
             compile_blocks=self.compile_blocks,
             aoti_package=self.aoti_package,
+            sampler=self.sampler,
+            cache=self.cache,
         )
 
     @property
     def moss_only(self) -> list[str]:
         """The settings asked that only MOSS-Image takes, by name: MXFP8 for its DiT or text encoder, a package of its
-        joint blocks."""
+        joint blocks, UniPC, a step cache."""
         asked = {
             "precision": self.precision is not Precision.BF16,
             "text_encoder_precision": self.text_encoder_precision is not Precision.BF16,
             "aoti_package": self.aoti_package is not None,
+            "sampler": self.sampler is not Sampler.EULER,
+            "cache": self.cache is not None,
         }
         return [name for name, is_asked in asked.items() if is_asked]
 
@@ -275,7 +292,8 @@ def load_pipeline(model: Path, blocks: BlocksFor, *, loras: dict[str, Path], set
     LoRA of ``loras`` (NeMo ``model/`` dirs by adapter name) active, fused into the transformer when
     ``settings.fuse_loras``, and the transformer's repeated blocks compiled when ``settings.compile_blocks``. A
     MOSS-Image model computes as ``settings.moss_inference`` asks (:func:`diffu_moss.inference.prepare_inference`: its
-    layers in MXFP8, its joint blocks from an AOTInductor package or compiled).
+    layers in MXFP8, UniPC, its joint blocks from an AOTInductor package or compiled, a step cache around them, for
+    pages of ``settings.steps``).
 
     Everything that can be checked without the model is checked first: its family, the guider, every LoRA, and
     MOSS-Image's precision and package against the device.
@@ -324,7 +342,7 @@ def load_pipeline(model: Path, blocks: BlocksFor, *, loras: dict[str, Path], set
         pipe.fuse_lora(adapter_names=list(loras))
         pipe.unload_lora_weights()
     if moss:
-        prepare_inference(pipe, settings.moss_inference)
+        prepare_inference(pipe, settings.moss_inference, steps=settings.steps)
     elif settings.compile_blocks:  # dynamic: crop sizes and caption lengths vary, and each new shape would recompile
         pipe.transformer.compile_repeated_blocks(fullgraph=True, dynamic=True)
     return pipe
