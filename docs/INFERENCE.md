@@ -526,6 +526,7 @@ import io
 
 import numpy as np
 import ray
+import torch
 from PIL import Image
 
 
@@ -546,7 +547,7 @@ class SGLangMossDraw:
                 "prompt": str(prompt), "image_path": str(sample), "seed": int(seed),
                 "width": int(width), "height": int(height), "num_inference_steps": 50, "save_output": False,
             })
-            pixels = (np.asarray(result.samples).transpose(1, 2, 0) * 255).round().astype(np.uint8)
+            pixels = (torch.as_tensor(result.samples).float().cpu().numpy().transpose(1, 2, 0) * 255).round().astype(np.uint8)
             buffer = io.BytesIO()
             Image.fromarray(pixels).save(buffer, format="PNG")
             images.append(buffer.getvalue())

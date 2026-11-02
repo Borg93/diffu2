@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import torch
 from sglang.multimodal_gen import DiffGenerator
 
 if __name__ == "__main__":
@@ -20,6 +21,7 @@ if __name__ == "__main__":
         result = generator.generate(sampling_params_kwargs={**request["params"], "save_output": False})
         if result is None:
             raise SystemExit("SGLang drew nothing: its log above says why")
-        np.save(sys.argv[2], np.asarray(result.samples, dtype=np.float32))
+        # on a GPU SGLang hands back its pixels on the device: copied to the host before saving
+        np.save(sys.argv[2], torch.as_tensor(result.samples).float().cpu().numpy())
     finally:
         generator.shutdown()
