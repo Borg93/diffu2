@@ -576,6 +576,11 @@ one after the other (the two models are never in memory together), with PyTorch'
 two need not be bit for bit: on a GPU SGLang loads its own Qwen3.5 text encoder (on CPU it falls back to
 transformers', which ours runs), and its fused kernels take over some of the DiT's elementwise operations.
 
+Measured on the DGX Spark (GB10), 2 Nov 2026, with `Gabriel/diffu-moss-r6b` on a held-out court-record page at
+784 x 1280 px, 50 steps, with its sample page: the two pages differ by at most 0.00054 in a pixel (on 0-1, about a
+seventh of one 8-bit level; PSNR 88.7 dB) and look the same; not bit for bit, as expected. SGLang drew at 2.76 s a step
+(eager, bfloat16), its memory peaking at 29 GB.
+
 **Ray Serve and vLLM-Omni.** Ray Serve LLM's SGLang server serves chat and completion models over an OpenAI-compatible
 API, not image generation; it is the route if a reading model (section 14) is ever served online. vLLM-Omni serves
 MOSS-Image text-to-image only.
