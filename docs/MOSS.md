@@ -29,7 +29,8 @@ is trained. How a page becomes the crops it draws: [PIPELINE.md](PIPELINE.md).
 
       BASE=~/.cache/huggingface/hub/models--OpenMOSS-Team--MOSS-Image-Base/snapshots/85975793d8b3d432f1b6e27f352abaa4c2a4c0d3
       diffu-moss-init --base $BASE --out runs/moss/base
-      diffu-moss-init --base $BASE --transformer runs/moss_hand_1715/merged_step350 --out runs/moss/hand_1715
+      diffu-moss-init --base $BASE --transformer runs/moss_eight_full/full_r6b/checkpoints/step_000750/transformer \
+          --out runs/moss/eight_full_r6b_step_000750
 
 - **Reference images** (sample pages): the DiT reads a reference's clean latents as tokens after the prompt's, on the
   reference axis (reference `k` at `k + 1`), its grid centred, modulated as at timestep 0 (FLUX.3 Klein's design), in
@@ -44,7 +45,7 @@ is trained. How a page becomes the crops it draws: [PIPELINE.md](PIPELINE.md).
   `--reference` (a sample page) only for a DiT trained with references, its caption in the form it trained on
   (`--reference-caption`, below).
 
-      jobs/spark_guard.sh --need-gb 50 --name pages -- uv run diffu-generate --model runs/moss/hand_1715 \
+      jobs/spark_guard.sh --need-gb 50 --name pages -- uv run diffu-generate --model runs/moss/eight_full_r6b_step_000750 \
           --templates page_a.xml --text-from text.txt --title "the records of Överståthållarämbetet" \
           --paper yellowed --ink brown --whole-page --page-megapixels 2 --out runs/pages_moss
 

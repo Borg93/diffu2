@@ -3,7 +3,8 @@
 # own template side and running text, drawn whole at 1 MP in the sample form from its pair's sample of the same hand,
 # by diffu-run on a local Ray cluster (one actor on the GB10) into runs/runner_smoke/pages.lance, then exported as
 # files to look at beside the real pages (data_flux3/page_pairs_eight/pages/<id>.jpg). The model is a MOSS-Image
-# model directory that takes a sample image (default: the eight-hands full fine-tune's step 1500). One GPU job,
+# model directory that takes a sample image (default: the eight-hands full fine-tune with the sample form and
+# look changes, full_r6b step 750). One GPU job,
 # through jobs/spark_guard.sh: ~35 GB for the pipeline and the judge, and Ray's own processes.
 #
 #   jobs/moss/runner_smoke.sh
@@ -16,7 +17,7 @@ set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$REPO"
 PAIRS="${PAIRS:-data_flux3/page_pairs_eight}"
-MODEL="${MODEL:-runs/moss/eight_full_r5_step_001500}"
+MODEL="${MODEL:-runs/moss/eight_full_r6b_step_000750}"
 OUT="${OUT:-runs/runner_smoke}"
 PAGES="${PAGES:-003dd088c8cf_right 52989ccbc60a_right}"  # held-out pages of Jämtlands domsaga and Påhlman's journals
 STEPS="${STEPS:-50}"

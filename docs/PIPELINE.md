@@ -93,7 +93,7 @@ them name and seed crops alike, so a page comes out the same from any of them.
 ## Running it: diffu-generate
 
 ```bash
-jobs/spark_guard.sh --need-gb 50 --name pages -- uv run diffu-generate --model runs/moss/hand_1715 \
+jobs/spark_guard.sh --need-gb 50 --name pages -- uv run diffu-generate --model runs/moss/eight_full_r6b_step_000750 \
     --templates page_a.xml --templates page_b.xml --text-from other_page.xml \
     --title "the records of Överståthållarämbetet" --paper yellowed --ink brown --whole-page --page-megapixels 2 \
     --out runs/pages
