@@ -26,11 +26,11 @@ new manifests beside the old, its images as they are.
 
 A page's prompt is counted in the text encoder's tokens by MOSS's own tokenizer (``--model``'s); a page whose longest
 form passes the encoder's 4,096 tokens is skipped and counted, never cut. A page's sample is another single page of its
-volume (same collection and volume folder) sharing none of its lines' texts, picked from one seeded stream; a page
-without one is skipped and counted. Whole volumes are held out (``--val-volumes``, a share of them, at least one): their
-pairs go to ``val.jsonl``, never to ``train.jsonl``, and ``--eval-pages`` of them spread over it make ``val_eval/``, a
-``diffu_page.cli.evaluate`` dir (each page, its sample in ``refs/`` and the sample's line boxes; drawn with MOSS-Image,
-its caption compiles to the look form's prompt).
+volume (same collection and volume folder) sharing none of its lines' texts (compared by 8 bytes of each text's
+digest), picked from one seeded stream; a page without one is skipped and counted. Whole volumes are held out
+(``--val-volumes``, a share of them, at least one): their pairs go to ``val.jsonl``, never to ``train.jsonl``, and
+``--eval-pages`` of them spread over it make ``val_eval/``, a ``diffu_page.cli.evaluate`` dir (each page, its sample in
+``refs/`` and the sample's line boxes; drawn with MOSS-Image, its caption compiles to the look form's prompt).
 
 With ``--windows-per-page N`` each page also gives up to N windows: consecutive whole lines of one of its columns,
 planned on the single page exactly as ``diffu-generate`` plans its crops (``plan_page``: a 64 px line pitch at a NeMo
@@ -43,14 +43,21 @@ window whose longest form passes the encoder's tokens is skipped and counted. A 
 its windows a sample, drawn after every page's from the same stream. The window rows follow the page rows, which are
 written as a build without windows (the default) writes them.
 
+A build holds none of its scans' pages as planned: as each scan is read it keeps its pages' entries alone
+(:class:`PageEntry`: a page's id, volume and windows, whether a form of its prompt is too long, its lines' texts by
+their digests), which its pages are grouped, paired and split by, and each manifest row is written from its scan's
+record, read back as the row is written. Its memory grows with the scans by those entries and the pairs made of them,
+about 1.6 KB a page (28 MB for 10,000 scans of the GT, where holding the pages as planned took 7.8 GB), and its
+processes are given a few scans each ahead of the results taken.
+
 Written under ``--out``:
 
 - ``pages/<id>.jpg``, each page at its whole-page size, ``refs/<id>.jpg``, each at the reference size
   (``as_reference``, about 0.5 MP), and ``windows/<id>.jpg`` (``<page id>_w<k>``, window k of its page in page order),
   cut from the scan;
 - ``scanned/<digest>.json``, a scan's pages and windows as planned (:class:`ScanResult`), written whole after its
-  images, so a stopped build resumes where it stopped (``scan.json`` holds what they are cut and prompted by: a build
-  resumed with other settings, or one recorded before windows, is refused);
+  images, so a stopped build resumes where it stopped and its rows are written from them (``scan.json`` holds what they
+  are cut and prompted by: a build resumed with other settings, or one recorded before windows, is refused);
 - ``train.jsonl`` and ``val.jsonl``, the page-pair manifests (``diffu_moss.train.pairs.PagePairRow``, paths relative
   to ``--out``), ``val_eval/`` and, last, ``build.json`` (:class:`BuildRecord`: how the set was built and what became of
   every scan, page and window).
@@ -65,13 +72,13 @@ import hashlib
 import multiprocessing
 import os
 import random
-from collections import defaultdict
+from collections import Counter, defaultdict, deque
 from collections.abc import Callable, Iterable, Iterator, Mapping
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import Future, ProcessPoolExecutor
 from enum import StrEnum
-from functools import cache
+from functools import cache, lru_cache
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, NamedTuple
 
 import typer
 from PIL import Image
@@ -106,6 +113,8 @@ WINDOWS = "windows"
 VAL_EVAL = "val_eval"
 SCAN_RECORD = "scan.json"
 BUILD_RECORD = "build.json"
+IN_FLIGHT = 8  # tasks given each process ahead of the results taken
+RECORDS_KEPT = 4  # scans' records held read while a build writes its rows: a scan's pages and windows follow each other
 FORM_REFERENCES: dict[Variant, Reference | None] = {  # the sample is only named in these forms' captions, never read
     Variant.NO_REFERENCE: None,
     Variant.LOOK: Reference(image=Path("sample"), caption=ReferenceCaption.NAMED),
@@ -161,6 +170,16 @@ class PageRecord(Planned):
     caption: str  # the look form's caption, citing <ref_image_0>: what an eval row of the page stores
     windows: list[WindowRecord] = []
 
+    def entry(self) -> PageEntry:
+        """What a build groups, pairs and splits the page by: all it holds of it."""
+        return PageEntry(
+            id=self.id,
+            volume=self.volume,
+            too_long=self.too_long,
+            digests=text_digests(self.texts()),
+            windows=tuple(WindowEntry(id=window.id, too_long=window.too_long) for window in self.windows),
+        )
+
 
 class ScanProblem(StrEnum):
     """Why a scan gave no page."""
@@ -178,6 +197,53 @@ class ScanResult(BaseModel):
     pages: list[PageRecord] = []
     problem: ScanProblem | None = None
     error: str = ""
+
+    def entry(self) -> ScanEntry:
+        """What a build holds of the scan: its pages' entries, or why it gave none."""
+        return ScanEntry(
+            xml=self.xml, pages=tuple(page.entry() for page in self.pages), problem=self.problem, error=self.error
+        )
+
+
+def text_digests(texts: Iterable[str]) -> bytes:
+    """The distinct ``texts``, each as 8 bytes of its BLAKE2b digest, sorted: what a build compares two pages' lines by
+    (:class:`PageEntry`), in a tenth of their memory. Two texts share 8 bytes once in 2^64."""
+    return b"".join(sorted({hashlib.blake2b(text.encode(), digest_size=8).digest() for text in texts}))
+
+
+class WindowEntry(NamedTuple):
+    """What a build pairs a window by (its scan's record holds its :class:`WindowRecord`): its id, and whether a form of
+    its prompt passes what the text encoder reads."""
+
+    id: str
+    too_long: bool
+
+
+class PageEntry(NamedTuple):
+    """What a build groups, pairs and splits a page by, all it holds of it (its scan's record holds its
+    :class:`PageRecord`, which its rows are written from): its id, its volume, whether a form of its prompt passes what
+    the text encoder reads, its lines' texts by their digests (:func:`text_digests`) and its windows. A tuple, not a
+    model: one is held for every page of a build, and a model takes five times the memory."""
+
+    id: str
+    volume: str
+    too_long: bool
+    digests: bytes
+    windows: tuple[WindowEntry, ...]
+
+    def texts(self) -> memoryview[int]:
+        """Its lines' distinct texts, each as the integer of its digest: two pages share a line when they share one."""
+        return memoryview(self.digests).cast("Q")  # 8 bytes a text
+
+
+class ScanEntry(NamedTuple):
+    """What a build holds of a scan (its record holds its :class:`ScanResult`): its PAGE file, its pages' entries, and
+    why it gave none."""
+
+    xml: str
+    pages: tuple[PageEntry, ...]
+    problem: ScanProblem | None
+    error: str
 
 
 class ScanTask(BaseModel):
@@ -407,13 +473,14 @@ def scanned(task: ScanTask) -> ScanResult:
     return ScanResult(xml=xml.as_posix(), pages=written)
 
 
-def scan_once(task: ScanTask) -> ScanResult:
-    """A PAGE file's result: the one a stopped build recorded, else :func:`scanned`'s, recorded (written whole before
-    it is named). A scan that fails is recorded with its error, so one unreadable page does not end the build."""
+def scan_once(task: ScanTask) -> ScanEntry:
+    """A PAGE file's entry (:meth:`ScanResult.entry`): of the result a stopped build recorded, else of :func:`scanned`'s,
+    recorded first (written whole before it is named): the build's rows are written from the record. A scan that fails
+    is recorded with its error, so one unreadable page does not end the build."""
     xml = task.xml.relative_to(Path(task.settings.gt_root)).as_posix()
     record = task.out / SCANNED / f"{digest(xml)}.json"
     if record.exists():
-        return ScanResult.model_validate_json(record.read_text(encoding="utf-8"))
+        return ScanResult.model_validate_json(record.read_text(encoding="utf-8")).entry()
     try:
         result = scanned(task)
     except Exception as error:  # one unreadable page must not end the build; it is recorded and counted
@@ -421,7 +488,7 @@ def scan_once(task: ScanTask) -> ScanResult:
     partial = record.with_suffix(".partial")
     partial.write_text(result.model_dump_json(), encoding="utf-8")
     partial.rename(record)
-    return result
+    return result.entry()
 
 
 def page_files(gt_root: Path, collections: list[str], *, max_scans: int | None, seed: int) -> list[Path]:
@@ -437,14 +504,26 @@ def page_files(gt_root: Path, collections: list[str], *, max_scans: int | None, 
     return files
 
 
-def in_processes[T, R](work: Callable[[T], R], tasks: list[T], workers: int) -> Iterator[R]:
-    """``work`` done on every task, its results in order, on ``workers`` processes (in this one for one)."""
+def in_processes[T, R](work: Callable[[T], R], tasks: Iterable[T], workers: int) -> Iterator[R]:
+    """``work`` done on every task, its results in order, on ``workers`` processes (in this one for one). The tasks are
+    drawn as the results are taken, :data:`IN_FLIGHT` a process ahead, so neither every task nor every result waiting
+    to be taken is held at once."""
     if workers == 1:
         yield from map(work, tasks)
         return
     # forkserver: a process holding threads (torch, the tokenizer) is not forked
     with ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("forkserver")) as pool:
-        yield from pool.map(work, tasks, chunksize=4)
+        waiting: deque[Future[R]] = deque()
+        try:
+            for task in tasks:
+                waiting.append(pool.submit(work, task))
+                if len(waiting) == IN_FLIGHT * workers:
+                    yield waiting.popleft().result()
+            while waiting:
+                yield waiting.popleft().result()
+        finally:  # a stopped run waits for the tasks running, not for those waiting
+            for future in waiting:
+                future.cancel()
 
 
 def held_out_volumes(volumes: Iterable[str], share: float, seed: int) -> set[str]:
@@ -457,21 +536,21 @@ def held_out_volumes(volumes: Iterable[str], share: float, seed: int) -> set[str
     return set(ranked[:count])
 
 
-def pick_partner(page: PageRecord, volume: list[PageRecord], rng: random.Random) -> PageRecord | None:
+def pick_partner(page: PageEntry, volume: list[PageEntry], rng: random.Random) -> PageEntry | None:
     """Another page of ``page``'s ``volume`` (its pages, in a fixed order) sharing none of its lines' texts, drawn from
     ``rng``; None when there is none. A sample holding the page's own lines teaches copying them."""
-    texts = page.texts()
+    texts = set(page.texts())
     others = [other for other in volume if other.id != page.id]
     rng.shuffle(others)
-    return next((other for other in others if not texts & other.texts()), None)
+    return next((other for other in others if texts.isdisjoint(other.texts())), None)
 
 
 def window_partners(
-    pages: list[PageRecord], volumes: Mapping[str, list[PageRecord]], rng: random.Random
-) -> dict[str, PageRecord]:
+    pages: list[PageEntry], volumes: Mapping[str, list[PageEntry]], rng: random.Random
+) -> dict[str, PageEntry]:
     """A sample for each page too long to be a pair that has a window short enough to be one, by page id, drawn from
     ``rng`` (:func:`pick_partner`) after every page's own."""
-    partners: dict[str, PageRecord] = {}
+    partners: dict[str, PageEntry] = {}
     for page in pages:
         if page.too_long and any(not window.too_long for window in page.windows):
             partner = pick_partner(page, volumes[page.volume], rng)
@@ -481,8 +560,8 @@ def window_partners(
 
 
 def window_pairs(
-    pages: list[PageRecord], partners: Mapping[str, PageRecord]
-) -> list[tuple[WindowRecord, PageRecord, PageRecord]]:
+    pages: list[PageEntry], partners: Mapping[str, PageEntry]
+) -> list[tuple[WindowEntry, PageEntry, PageEntry]]:
     """Each window short enough for the text encoder whose page has a sample in ``partners``, with its page and that
     sample, in page order."""
     return [
@@ -494,12 +573,34 @@ def window_pairs(
     ]
 
 
-def pair_row(target: PageRecord, reference: PageRecord) -> PagePairRow:
-    """A page and its sample as a manifest row, its images under ``pages/`` and ``refs/``."""
+def scan_digest(identity: str) -> str:
+    """The digest of the PAGE file of the scan a page or a window (its id ``identity``) is of, which its id begins with
+    (:func:`page_id`): the scan's record is ``scanned/<digest>.json``."""
+    return identity.split("_", 1)[0]
+
+
+def record_reader(out: Path) -> Callable[[str], PageRecord]:
+    """The pages of the build in ``out`` by their ids, each read from its scan's record, the last
+    :data:`RECORDS_KEPT` scans' records kept: a build's rows are written in page order, so the rows of a scan's pages,
+    and of their windows, follow each other."""
+
+    @lru_cache(maxsize=RECORDS_KEPT)
+    def scan(name: str) -> ScanResult:
+        return ScanResult.model_validate_json((out / SCANNED / f"{name}.json").read_text(encoding="utf-8"))
+
+    def page(identity: str) -> PageRecord:
+        return next(page for page in scan(scan_digest(identity)).pages if page.id == identity)
+
+    return page
+
+
+def pair_row(target: PageRecord, reference: str) -> PagePairRow:
+    """A page and its sample (its page's id ``reference``) as a manifest row, its images under ``pages/`` and
+    ``refs/``."""
     return PagePairRow(
         id=target.id,
         target=f"{PAGES}/{target.id}.jpg",
-        reference=f"{REFS}/{reference.id}.jpg",
+        reference=f"{REFS}/{reference}.jpg",
         size=target.size,
         volume=target.volume,
         prompts=target.prompts,
@@ -507,19 +608,40 @@ def pair_row(target: PageRecord, reference: PageRecord) -> PagePairRow:
     )
 
 
-def window_row(window: WindowRecord, page: PageRecord, reference: PageRecord) -> PagePairRow:
-    """A window of ``page`` and the page's sample as a manifest row, its image under ``windows/``, marked as a window
-    of the page."""
+def window_row(window: WindowRecord, page: PageRecord, reference: str) -> PagePairRow:
+    """A window of ``page`` and the page's sample (its page's id ``reference``) as a manifest row, its image under
+    ``windows/``, marked as a window of the page."""
     return PagePairRow(
         id=window.id,
         target=f"{WINDOWS}/{window.id}.jpg",
-        reference=f"{REFS}/{reference.id}.jpg",
+        reference=f"{REFS}/{reference}.jpg",
         size=window.size,
         volume=page.volume,
         prompts=window.prompts,
         tokens=window.tokens,
         window=PageWindow(page=page.id, rect=window.rect),
     )
+
+
+def manifest_rows(
+    pairs: Iterable[tuple[PageEntry, PageEntry]],
+    windows: Iterable[tuple[WindowEntry, PageEntry, PageEntry]],
+    page_of: Callable[[str], PageRecord],
+) -> Iterator[PagePairRow]:
+    """A manifest's rows: each page of ``pairs`` with its sample, then each window of ``windows`` with its page's
+    sample, each page read (``page_of``) as its row or its window's is made."""
+    for target, reference in pairs:
+        yield pair_row(page_of(target.id), reference.id)
+    for window, page, reference in windows:
+        record = page_of(page.id)
+        yield window_row(next(item for item in record.windows if item.id == window.id), record, reference.id)
+
+
+def write_rows(path: Path, rows: Iterable[BaseModel]) -> None:
+    """``rows`` as the JSON-lines file at ``path`` (as ``evalset.write_jsonl`` writes them), each written as it comes:
+    none held but the one."""
+    with path.open("w", encoding="utf-8") as lines:
+        lines.writelines(f"{row.model_dump_json()}\n" for row in rows)
 
 
 def eval_row(target: PageRecord, reference: PageRecord) -> ReferencedCrop:
@@ -536,8 +658,11 @@ def eval_row(target: PageRecord, reference: PageRecord) -> ReferencedCrop:
     )
 
 
-def write_eval_set(out: Path, pairs: list[tuple[PageRecord, PageRecord]], count: int) -> int:
-    """``count`` of the held-out ``pairs``, spread over them, as ``out/val_eval``, their images hard-linked there.
+def write_eval_set(
+    out: Path, pairs: list[tuple[PageEntry, PageEntry]], count: int, *, page_of: Callable[[str], PageRecord]
+) -> int:
+    """``count`` of the held-out ``pairs``, spread over them, as ``out/val_eval``, their images hard-linked there and
+    their pages read (``page_of``) for their rows.
 
     Returns:
         How many pages it holds.
@@ -548,7 +673,8 @@ def write_eval_set(out: Path, pairs: list[tuple[PageRecord, PageRecord]], count:
     for target, reference in spread:
         link(out / PAGES / f"{target.id}.jpg", directory / f"{target.id}.jpg")
         link(out / REFS / f"{reference.id}.jpg", directory / REFS / f"{reference.id}.jpg")
-    write_jsonl(directory / "metadata.jsonl", [eval_row(target, reference) for target, reference in spread])
+    rows = [eval_row(page_of(target.id), page_of(reference.id)) for target, reference in spread]
+    write_jsonl(directory / "metadata.jsonl", rows)
     return len(spread)
 
 
@@ -587,23 +713,32 @@ def build(out: Path, settings: BuildSettings, *, workers: int) -> BuildRecord:
     scan_record.write_text(settings.scan.model_dump_json(indent=1), encoding="utf-8")
 
     root = Path(settings.scan.gt_root)
-    files = page_files(root, settings.collections, max_scans=settings.max_scans, seed=settings.seed)
-    tasks = [ScanTask(xml=xml, out=out, settings=settings.scan) for xml in files]
-    results: list[ScanResult] = []
-    for k, result in enumerate(in_processes(scan_once, tasks, workers), start=1):
-        results.append(result)
+    # as text, in their order: a sorted Path keeps its parts, a kilobyte a scan more
+    files = [
+        path.as_posix()
+        for path in page_files(root, settings.collections, max_scans=settings.max_scans, seed=settings.seed)
+    ]
+    tasks = (ScanTask(xml=Path(xml), out=out, settings=settings.scan) for xml in files)
+    pages: list[PageEntry] = []
+    outcomes: Counter[ScanProblem | None] = Counter()  # each scan's problem, None for a scan that gave pages
+    failed: dict[str, str] = {}
+    for k, scan in enumerate(in_processes(scan_once, tasks, workers), start=1):
+        pages += scan.pages
+        outcomes[scan.problem] += 1
+        if scan.problem is ScanProblem.FAILED:
+            failed[scan.xml] = scan.error
         if k % 500 == 0:
-            console.print(f"{k} of {len(tasks)} scans read")
+            console.print(f"{k} of {len(files)} scans read")
 
-    pages = sorted((page for result in results for page in result.pages), key=lambda page: page.id)
-    volumes: dict[str, list[PageRecord]] = defaultdict(list)
+    pages.sort(key=lambda page: page.id)
+    volumes: dict[str, list[PageEntry]] = defaultdict(list)
     for page in pages:
         volumes[page.volume].append(page)
     held_out = held_out_volumes(volumes, settings.val_volumes, settings.seed)
     rng = random.Random(settings.seed)
-    train: list[tuple[PageRecord, PageRecord]] = []
-    val: list[tuple[PageRecord, PageRecord]] = []
-    partners: dict[str, PageRecord] = {}
+    train: list[tuple[PageEntry, PageEntry]] = []
+    val: list[tuple[PageEntry, PageEntry]] = []
+    partners: dict[str, PageEntry] = {}
     too_long = no_partner = 0
     for page in pages:
         if page.too_long:
@@ -618,11 +753,11 @@ def build(out: Path, settings: BuildSettings, *, workers: int) -> BuildRecord:
     windows = window_pairs(pages, partners | window_partners(pages, volumes, rng))
     train_windows = [pair for pair in windows if pair[1].volume not in held_out]
     val_windows = [pair for pair in windows if pair[1].volume in held_out]
-    write_jsonl(out / "train.jsonl", [pair_row(*pair) for pair in train] + [window_row(*w) for w in train_windows])
-    write_jsonl(out / "val.jsonl", [pair_row(*pair) for pair in val] + [window_row(*w) for w in val_windows])
-    eval_pages = write_eval_set(out, val, settings.eval_pages)
+    page_of = record_reader(out)
+    write_rows(out / "train.jsonl", manifest_rows(train, train_windows, page_of))
+    write_rows(out / "val.jsonl", manifest_rows(val, val_windows, page_of))
+    eval_pages = write_eval_set(out, val, settings.eval_pages, page_of=page_of)
 
-    problems = [result.problem for result in results]
     cut = [window for page in pages for window in page.windows]
     windows_too_long = sum(window.too_long for window in cut)
     record = BuildRecord(
@@ -634,11 +769,11 @@ def build(out: Path, settings: BuildSettings, *, workers: int) -> BuildRecord:
         seed=settings.seed,
         held_out_volumes=sorted(held_out),
         counts=BuildCounts(
-            scans=len(results),
-            no_scan=problems.count(ScanProblem.NO_SCAN),
-            no_text=problems.count(ScanProblem.NO_TEXT),
-            spread=problems.count(ScanProblem.SPREAD),
-            failed=problems.count(ScanProblem.FAILED),
+            scans=outcomes.total(),
+            no_scan=outcomes[ScanProblem.NO_SCAN],
+            no_text=outcomes[ScanProblem.NO_TEXT],
+            spread=outcomes[ScanProblem.SPREAD],
+            failed=outcomes[ScanProblem.FAILED],
             pages=len(pages),
             too_long=too_long,
             no_partner=no_partner,
@@ -651,7 +786,7 @@ def build(out: Path, settings: BuildSettings, *, workers: int) -> BuildRecord:
             val_windows=len(val_windows),
             eval_pages=eval_pages,
         ),
-        failed={result.xml: result.error for result in results if result.problem is ScanProblem.FAILED},
+        failed=failed,
     )
     (out / BUILD_RECORD).write_text(record.model_dump_json(indent=1), encoding="utf-8")
     return record

@@ -1,19 +1,23 @@
 """MOSS-Image's page pairs (diffu_page.data.page_pairs) built from a tiny ground truth of three volumes: each page's
 prompts are the ones drawing compiles for it planned whole, from its sample or without, its sample is a page of its own
 volume sharing none of its lines, whole volumes are held out, the build records what became of every scan (a scan
-wider than tall that cannot be split gives no page), a stopped build resumes from what it recorded, and
-diffu-moss-cache-pairs caches the pairs as their rows give them. With windows, each page also gives windows of its
-lines, planned as diffu-generate plans its crops and prompted as drawing prompts them, each a pair with its page's
-sample in its volume's split, after page rows written as without windows. A manifest of a set built before a form gets
-that form for its rows exactly as a build gives it (diffu_page.data.page_pair_forms), and a form it is told to replace
-planned again, which refuses a row planned otherwise now in a form it keeps, a form past the text encoder's tokens, and
-a file to write over."""
+wider than tall that cannot be split gives no page), a build stopped midway resumes from the scans it recorded and ends
+file for file as an unstopped one, and diffu-moss-cache-pairs caches the pairs as their rows give them. A build holds
+of a scan its pages' entries alone (the pages whole in the scan's record, which its rows are written from), and gives
+its processes their tasks a few ahead of the results taken. With windows, each page also gives windows of its lines,
+planned as diffu-generate plans its crops and prompted as drawing prompts them, each a pair with its page's sample in
+its volume's split, after page rows written as without windows. A manifest of a set built before a form gets that form
+for its rows exactly as a build gives it (diffu_page.data.page_pair_forms), and a form it is told to replace planned
+again, which refuses a row planned otherwise now in a form it keeps (writing nothing), a form past the text encoder's
+tokens, and a file to write over."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 from collections import Counter
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -30,15 +34,24 @@ from diffu_page.cli.generate import page_reference
 from diffu_page.data.evalset import read_crops, read_jsonl, write_jsonl
 from diffu_page.data.page_pair_forms import write_every_form
 from diffu_page.data.page_pairs import (
+    IN_FLIGHT,
     BuildCounts,
     BuildRecord,
     BuildSettings,
+    PageEntry,
     PageRecord,
+    ScanEntry,
     ScanResult,
     ScanSettings,
+    ScanTask,
+    WindowEntry,
     build,
     digest,
+    in_processes,
     page_id,
+    scan_once,
+    scanned,
+    text_digests,
 )
 from diffu_page.draw.pipeline import FAMILIES, crop_blocks
 from diffu_page.draw.plan import CropPlan, plan_page, plan_whole_page, whole_page_size
@@ -299,20 +312,90 @@ def test_page_pairs_record_what_became_of_every_scan_and_page(built: Path) -> No
     assert list(record.failed) == [f"{ARJEPLOG}/{EARLY}/{EARLY}/page/0004.xml"]
 
 
-def test_page_pairs_resume_a_stopped_build_from_the_scans_it_recorded(
-    tiny_gt: Path, tiny_moss: Path, tmp_path: Path
+class _Stopped(BaseException):
+    """A build stopped as a kill stops it: past the handler that records a scan's failure."""
+
+
+def _file_digests(out: Path) -> dict[str, str]:
+    """Every file under ``out``, by its path there, as its bytes' digest."""
+    return {
+        path.relative_to(out).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in out.rglob("*")
+        if path.is_file()
+    }
+
+
+def test_page_pairs_resume_a_build_stopped_midway_from_the_scans_it_recorded_ending_as_an_unstopped_build(
+    tiny_gt: Path, tiny_moss: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     gt = tmp_path / "gt"
     shutil.copytree(tiny_gt, gt)
+    settings = _settings(gt, tiny_moss, windows=2)
+    unstopped = tmp_path / "unstopped"
+    build(unstopped, settings, workers=1)
+    read: list[ScanTask] = []
+
+    def stopped_after_six(task: ScanTask) -> ScanResult:
+        if len(read) == 6:
+            raise _Stopped
+        read.append(task)
+        return scanned(task)
+
+    monkeypatch.setattr("diffu_page.data.page_pairs.scanned", stopped_after_six)
     out = tmp_path / "out"
-    build(out, _settings(gt, tiny_moss), workers=1)
-    first = {path.name: path.read_bytes() for path in (out / "pages").iterdir()}
-    for scan in gt.rglob("*.png"):  # read again, every page would come out black
-        Image.new("RGB", Image.open(scan).size, "black").save(scan)
+    with pytest.raises(_Stopped):
+        build(out, settings, workers=1)
+    monkeypatch.undo()
+    for record in (out / "scanned").glob("*.json"):  # read again, a recorded scan's pages would come out black
+        xml = gt / ScanResult.model_validate_json(record.read_bytes()).xml
+        scan = xml.parent.parent / f"{xml.stem}.png"
+        if scan.exists():
+            Image.new("RGB", Image.open(scan).size, "black").save(scan)
 
-    build(out, _settings(gt, tiny_moss), workers=1)
+    build(out, settings, workers=1)
 
-    assert {path.name: path.read_bytes() for path in (out / "pages").iterdir()} == first
+    assert _file_digests(out) == _file_digests(unstopped)
+
+
+def test_page_pairs_give_the_build_of_a_scan_its_pages_entries_alone_the_pages_whole_in_its_record(
+    tiny_gt: Path, tiny_moss: Path, tmp_path: Path
+) -> None:
+    xml = tiny_gt / ARJEPLOG / EARLY / EARLY / "page" / "0001.xml"
+    relative = xml.relative_to(tiny_gt).as_posix()
+    left, right = f"{digest(relative)}_left", f"{digest(relative)}_right"
+    for directory in ("scanned", "pages", "refs", "windows"):
+        (tmp_path / directory).mkdir()
+
+    entry = scan_once(ScanTask(xml=xml, out=tmp_path, settings=_settings(tiny_gt, tiny_moss, windows=2).scan))
+
+    volume = f"{ARJEPLOG}/{EARLY}"
+    assert entry == ScanEntry(
+        xml=relative,
+        pages=(
+            PageEntry(left, volume, False, text_digests(_texts("vänster", 3)), (WindowEntry(f"{left}_w0", False),)),
+            PageEntry(right, volume, False, text_digests(_texts("höger", 3)), (WindowEntry(f"{right}_w0", False),)),
+        ),
+        problem=None,
+        error="",
+    )
+    record = ScanResult.model_validate_json((tmp_path / "scanned" / f"{digest(relative)}.json").read_bytes())
+    assert [(page.id, len(page.lines), list(page.prompts), [w.id for w in page.windows]) for page in record.pages] == [
+        (left, 3, list(Variant), [f"{left}_w0"]),
+        (right, 3, list(Variant), [f"{right}_w0"]),
+    ]
+
+
+def test_in_processes_draw_the_tasks_a_few_a_process_ahead_of_the_results_taken() -> None:
+    drawn: list[int] = []
+
+    def tasks() -> Iterator[int]:
+        for task in range(100):
+            drawn.append(task)
+            yield task
+
+    taken = [(result, len(drawn)) for result in in_processes(str, tasks(), workers=2)]
+
+    assert taken == [(str(k), min(100, k + 2 * IN_FLIGHT)) for k in range(100)]
 
 
 def test_page_pairs_refuse_to_resume_a_build_cut_at_another_size(tiny_gt: Path, tiny_moss: Path, built: Path) -> None:
@@ -569,13 +652,16 @@ def test_page_pair_forms_refuse_a_row_whose_form_is_planned_otherwise_now(
     built_before_sample: Path, replace: frozenset[Variant]
 ) -> None:
     rows = read_jsonl(built_before_sample, PagePairRow)
-    first = rows[0]
-    tampered = first.model_copy(update={"prompts": {**first.prompts, Variant.PLAIN: first.prompts[Variant.LOOK]}})
-    write_jsonl(built_before_sample, [tampered, *rows[1:]])
+    last = rows[-1]  # the rows before it written first
+    tampered = last.model_copy(update={"prompts": {**last.prompts, Variant.PLAIN: last.prompts[Variant.LOOK]}})
+    write_jsonl(built_before_sample, [*rows[:-1], tampered])
     every = built_before_sample.with_name("every.jsonl")
+    kept = sorted(path.name for path in built_before_sample.parent.iterdir())
 
-    with pytest.raises(ValueError, match=f"row {first.id}: its plain prompt is planned otherwise now"):
+    with pytest.raises(ValueError, match=f"row {last.id}: its plain prompt is planned otherwise now"):
         write_every_form(built_before_sample, every, workers=1, replace=replace)
+
+    assert sorted(path.name for path in built_before_sample.parent.iterdir()) == kept  # nothing of every.jsonl left
 
 
 def test_page_pair_forms_refuse_a_row_with_a_form_past_the_text_encoders_tokens(

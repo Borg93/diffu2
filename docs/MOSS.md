@@ -63,7 +63,10 @@ Built on CPU by diffu-page's builders, cached once on the GPU by `diffu-moss-cac
   prompts it, with a sample page of its own volume sharing none of its lines (0.5 MP). Whole volumes are held out
   (`val.jsonl`, `val_eval/` for `diffu-evaluate`); prompts past 4,096 tokens are skipped and counted; scans run in
   parallel and a stopped build resumes from the scans it recorded (`scanned/`); `build.json` records the settings and
-  what became of every scan, page and window. `--windows-per-page N` adds up to N windows of each page (whole lines of
+  what became of every scan, page and window. The build holds no planned page: of each scan it keeps its pages' small
+  entries (id, volume, windows, too long or not, the lines' texts as digests), pairs and splits by them, and writes
+  each manifest row from its scan's record, so its memory grows by about 28 MB per 10,000 scans (7.8 GB when it held
+  the planned pages); `page_pair_forms` likewise holds no row but the one it writes. `--windows-per-page N` adds up to N windows of each page (whole lines of
   one column, planned on the single page as diffu-generate plans its crops, cut at the pages' pixels: larger letters),
   each a row of its own with its page's sample, after the page rows, which stay exactly as without windows.
   `python -m diffu_page.data.page_pair_forms` gives the rows of a set built before a form every form, in a new manifest

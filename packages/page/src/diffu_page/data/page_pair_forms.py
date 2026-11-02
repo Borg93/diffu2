@@ -14,6 +14,11 @@ forms named by ``--replace`` (repeat it) are replaced by the ones planned now, w
 set was built (the sample form, its paper row citing the sample's paper): every other form is still checked. The rows
 are written to ``--out``, a new file, in their order, each as it was but for the forms added and replaced.
 
+No row is held but the one written: the manifest is read twice, a row at a time, first for the scans its rows draw,
+then to write each row in every form. Each scan's forms, planned in between, wait on disk in a dir beside ``--out``
+(removed at the end, and with it what was written of ``--out`` when a row is refused), the last few scans' read back as
+their rows are written.
+
     python -m diffu_page.data.page_pair_forms --pairs data_flux3/page_pairs_eight/train_bal.jsonl \\
         --out data_flux3/page_pairs_eight/train_bal_sample.jsonl --workers 4
     python -m diffu_page.data.page_pair_forms --pairs data_flux3/page_pairs_eight/train_bal_sample.jsonl \\
@@ -24,16 +29,18 @@ from __future__ import annotations
 
 import os
 from collections import Counter
+from collections.abc import Callable, Iterator, Mapping
+from functools import lru_cache
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Annotated
 
 import typer
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, TypeAdapter
 
 from diffu_moss.modular_pipelines.moss.encoders import MAX_PROMPT_TOKENS
 from diffu_moss.train.pairs import PagePairRow, Variant
 from diffu_page.captions.provenance import provenance_of
-from diffu_page.data.evalset import read_jsonl, write_jsonl
 from diffu_page.data.page_pairs import (
     SCAN_RECORD,
     SCANNED,
@@ -44,6 +51,7 @@ from diffu_page.data.page_pairs import (
     page_id,
     page_record,
     recorded_settings,
+    scan_digest,
     whole_page,
 )
 from diffu_page.output import console
@@ -51,6 +59,8 @@ from diffu_page.page.layout import load_xml_layout, scan_pages
 from diffu_page.page.layout.page_xml import find_scan
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
+
+FORMS_KEPT = 4  # scans' planned forms held read while the rows are written: a scan's rows mostly follow each other
 
 
 class Forms(BaseModel):
@@ -60,6 +70,9 @@ class Forms(BaseModel):
 
     prompts: dict[Variant, str]
     tokens: dict[Variant, int]
+
+
+PLANNED_FORMS = TypeAdapter(dict[str, Forms])  # a scan's targets' forms, by id, as kept on disk until they are written
 
 
 class ScanTargets(BaseModel):
@@ -152,6 +165,73 @@ def scan_xml(directory: Path, digest: str) -> str:
     return ScanResult.model_validate_json(record.read_text(encoding="utf-8")).xml
 
 
+def read_rows(manifest: Path) -> Iterator[PagePairRow]:
+    """The rows of the page-pair manifest ``manifest``, read one at a time."""
+    with manifest.open(encoding="utf-8") as lines:
+        for line in lines:
+            if line.strip():
+                yield PagePairRow.model_validate_json(line)
+
+
+def row_target(row: PagePairRow) -> tuple[str, str]:
+    """The id of the page ``row`` draws, or draws a window of, and the id of its target (the page or the window)."""
+    target = Path(row.target).stem
+    return (target if row.window is None else row.window.page), target
+
+
+def drawn_targets(manifest: Path) -> dict[str, dict[str, list[str]]]:
+    """The targets the rows of ``manifest`` draw, each once, by the digest of their scan's PAGE file and by their page's
+    id, in the order of their first rows."""
+    targets: dict[str, dict[str, list[str]]] = {}
+    for row in read_rows(manifest):
+        page, target = row_target(row)
+        page_targets = targets.setdefault(scan_digest(page), {}).setdefault(page, [])
+        if target not in page_targets:
+            page_targets.append(target)
+    return targets
+
+
+def forms_reader(directory: Path) -> Callable[[str], dict[str, Forms]]:
+    """The forms planned of each scan, by the digest of its PAGE file, read from ``directory`` (``<digest>.json``), the
+    last :data:`FORMS_KEPT` scans' kept."""
+
+    @lru_cache(maxsize=FORMS_KEPT)
+    def forms_of(digest: str) -> dict[str, Forms]:
+        return PLANNED_FORMS.validate_json((directory / f"{digest}.json").read_bytes())
+
+    return forms_of
+
+
+def write_in_every_form(
+    manifest: Path, out: Path, forms_of: Callable[[str], Mapping[str, Forms]], *, replace: frozenset[Variant]
+) -> FormsAdded:
+    """The rows of ``manifest`` in every form (:func:`with_every_form`), each given its target's forms as its scan's
+    planned forms hold them (``forms_of``, by the digest of the scan's PAGE file), written to ``out`` a row at a time.
+
+    Raises:
+        ValueError: If a row is refused (:func:`with_every_form`).
+    """
+    added: Counter[Variant] = Counter()
+    replaced: Counter[Variant] = Counter()
+    rows = longest = 0
+    with out.open("w", encoding="utf-8") as lines:
+        for row in read_rows(manifest):
+            page, target = row_target(row)
+            forms = forms_of(scan_digest(page))[target]
+            written = with_every_form(row, forms, replace=replace)
+            lines.write(f"{written.model_dump_json()}\n")
+            rows += 1
+            added.update(written.prompts.keys() - row.prompts.keys())
+            replaced.update(planned_otherwise(row, forms))
+            longest = max(longest, *written.tokens.values())
+    return FormsAdded(
+        rows=rows,
+        added={variant: added[variant] for variant in Variant if added[variant]},
+        replaced={variant: replaced[variant] for variant in Variant if replaced[variant]},
+        longest=longest,
+    )
+
+
 def write_every_form(
     manifest: Path, out: Path, *, workers: int, replace: frozenset[Variant] = frozenset()
 ) -> FormsAdded:
@@ -168,41 +248,21 @@ def write_every_form(
     if not (directory / SCAN_RECORD).is_file():
         raise ValueError(f"{manifest} is in no page-pair set's dir: no {SCAN_RECORD} beside it")
     settings = recorded_settings(directory / SCAN_RECORD)
-    rows = read_jsonl(manifest, PagePairRow)
-    targets: dict[str, dict[str, list[str]]] = {}  # by the digest of a scan's PAGE file, by page id, the targets drawn
-    for row in rows:
-        target = Path(row.target).stem
-        page = target if row.window is None else row.window.page
-        digest = page.split("_", 1)[0]  # a page's id begins with its PAGE file's digest (page_pairs.page_id)
-        page_targets = targets.setdefault(digest, {}).setdefault(page, [])
-        if target not in page_targets:
-            page_targets.append(target)
-    tasks = [
-        ScanTargets(xml=scan_xml(directory, digest), targets=pages, settings=settings)
-        for digest, pages in targets.items()
-    ]
-    forms: dict[str, Forms] = {}
-    for k, planned in enumerate(in_processes(planned_forms, tasks, workers), start=1):
-        forms |= planned
-        if k % 100 == 0:
-            console.print(f"{k} of {len(tasks)} scans planned")
-    planned = [forms[Path(row.target).stem] for row in rows]
-    written = [with_every_form(row, row_forms, replace=replace) for row, row_forms in zip(rows, planned, strict=True)]
-    partial = out.with_name(f"{out.name}.partial")
-    write_jsonl(partial, written)
-    partial.rename(out)
-    added = Counter(
-        variant for old, new in zip(rows, written, strict=True) for variant in new.prompts.keys() - old.prompts.keys()
-    )
-    replaced = Counter(
-        variant for row, row_forms in zip(rows, planned, strict=True) for variant in planned_otherwise(row, row_forms)
-    )
-    return FormsAdded(
-        rows=len(written),
-        added={variant: added[variant] for variant in Variant if added[variant]},
-        replaced={variant: replaced[variant] for variant in Variant if replaced[variant]},
-        longest=max((max(row.tokens.values()) for row in written), default=0),
-    )
+    targets = drawn_targets(manifest)
+    xmls = {digest: scan_xml(directory, digest) for digest in targets}  # every row's scan recorded, before one planned
+    tasks = (ScanTargets(xml=xmls[digest], targets=pages, settings=settings) for digest, pages in targets.items())
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(prefix=f".{out.name}.", dir=out.parent) as kept:
+        planned = Path(kept)
+        scans = zip(targets, in_processes(planned_forms, tasks, workers), strict=True)
+        for k, (digest, forms) in enumerate(scans, start=1):
+            (planned / f"{digest}.json").write_bytes(PLANNED_FORMS.dump_json(forms))
+            if k % 100 == 0:
+                console.print(f"{k} of {len(targets)} scans planned")
+        partial = planned / "rows.partial"
+        added = write_in_every_form(manifest, partial, forms_reader(planned), replace=replace)
+        partial.rename(out)
+    return added
 
 
 @app.command()
