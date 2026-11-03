@@ -2,12 +2,15 @@
 conversation and in PaddleOCR-VL's (the page as Markdown, or its lines spotted), or a sample per element (its crop,
 recognition prompt and text) for PaddleOCR-VL's recogniser; and from PAGE or ALTO files with their scans, the GT's or
 a drawn run's: a page parsed as Unlimited-OCR 2 parses it (an opening's two pages each cut from it, or shown together)
-or read as MiniCPM-OCR reads it (whole, or element by element), split by the GT's own test lists, less the pages a list
-leaves out, with each sample's meta and each file, scan or page left out recorded."""
+or read as MiniCPM-OCR reads it (whole, element by element, or line by line, a crop past a pixel budget scaled to it),
+split by the GT's own test lists, less the pages a list leaves out, of the collections asked for (one it does not hold
+refused), its scans read in the order a seed shuffles them, with each sample's meta and each file, scan, page or line
+left out recorded."""
 
 from __future__ import annotations
 
 import json
+import random
 from pathlib import Path
 from typing import Any
 
@@ -82,6 +85,9 @@ def _run(run: Path, *elements: PageElement) -> Path:
 def _lines(path: Path) -> list[dict[str, Any]]:
     """A JSON-lines file's objects: a set's samples, their meta or what it left out."""
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+NO_CROP = {"kind": None, "production": None, "element": None, "line": None}  # a page sample's meta: of no crop
 
 
 @pytest.mark.parametrize(
@@ -179,8 +185,12 @@ def test_reader_set_writes_each_element_of_a_page_as_its_crop_recognition_prompt
             "scan": IMAGE,
             "side": None,
             "split": None,
+            "kind": kind,
+            "production": None,
+            "element": k,
+            "line": None,
         }
-        for k in range(3)
+        for k, kind in enumerate(("heading", "table", "body"))
     ]
 
 
@@ -208,6 +218,13 @@ def test_reader_set_writes_each_element_of_a_page_as_its_crop_recognition_prompt
             "paddleocr-vl is fine-tuned on page, spotting, elements",
             id="task",
         ),
+        pytest.param(
+            True,
+            True,
+            ["--run", "run", "--max-crop-pixels", "6000"],
+            "page cuts no crops: give it with elements or lines",
+            id="crop-pixels-of-a-page",
+        ),
         pytest.param(True, True, [], "give the pages as --run or as --xml, one of them", id="no-pages"),
         pytest.param(
             True, True, ["--run", "run", "--xml", "run"], "give the pages as --run or as --xml, one of them", id="both"
@@ -216,10 +233,18 @@ def test_reader_set_writes_each_element_of_a_page_as_its_crop_recognition_prompt
             True,
             True,
             ["--run", "run", "--split-from-gt-test-lists"],
-            "a run's pages are drawn, neither split by the GT's test lists nor left out by a list: give --xml",
+            "a run's pages are drawn, neither split by the GT's test lists, left out by a list nor of collections: "
+            "give --xml",
             id="split-a-run",
         ),
         pytest.param(True, True, ["--xml", "run"], "run gives no PAGE or ALTO file", id="no-xml"),
+        pytest.param(
+            True,
+            True,
+            ["--xml", "gt", "--collection", "GT-elsewhere"],
+            "gt holds no file of GT-elsewhere",
+            id="unknown-collection",
+        ),
     ],
 )
 def test_reader_set_refuses_pages_without_labels_or_images_and_a_task_its_reader_has_not(
@@ -232,6 +257,7 @@ def test_reader_set_refuses_pages_without_labels_or_images_and_a_task_its_reader
 ) -> None:
     monkeypatch.chdir(tmp_path)  # short paths: rich wraps the error panel at 80 columns, inside a long one
     run = _run(tmp_path / "run", LINE)
+    _gt_page(tmp_path / "gt", VOLUME, "a")
     if not elements:
         (run / "000_page_0.elements.json").unlink()
     if not image:
@@ -360,6 +386,7 @@ def test_reader_set_parses_each_page_of_an_opening_as_unlimited_ocr_2_on_the_pag
         True,
     ]
     meta = {"source": "real", "collection": "GT-RA_court_20260101", "volume": "Vol", "scan": "o.jpg", "split": None}
+    meta |= NO_CROP
     assert _lines(tmp_path / "set" / "uocr.meta.jsonl") == [
         {"id": left, **meta, "side": "left"},
         {"id": right, **meta, "side": "right"},
@@ -457,6 +484,137 @@ def test_reader_set_writes_each_element_of_an_opening_as_minicpm_ocr_reads_its_c
     ]
 
 
+def test_reader_set_writes_each_text_line_of_an_opening_as_minicpm_ocr_reads_a_line_crop(tmp_path: Path) -> None:
+    xml = _opening(tmp_path / "gt")
+    out = tmp_path / "set" / "minicpm_lines.jsonl"
+
+    result = CliRunner().invoke(
+        app, ["--xml", str(tmp_path / "gt"), "--model", "minicpm-ocr", "--task", "lines", "--out", str(out)]
+    )
+
+    left, right = _ids(xml, tmp_path / "gt")
+    lines = [  # each line's page, element, place in it, kind, box on the scan and text
+        (left, 0, 0, "page-number", (880, 20, 960, 60), "12"),
+        (left, 1, 0, "heading", (200, 80, 900, 140), "Förteckning öfver gods"),
+        (left, 2, 0, "body", (200, 200, 900, 260), "Anno 1715 den 4 maj"),
+        (left, 2, 1, "body", (200, 260, 900, 320), "kom för rätten"),
+        (left, 3, 0, "marginalia", (20, 200, 180, 260), "Nota"),
+        (right, 0, 0, "body", (1040, 600, 1940, 660), "Summa 2"),
+        (right, 1, 0, "table", (1040, 400, 1490, 460), "Namn"),
+        (right, 1, 1, "table", (1490, 400, 1940, 460), "Ort"),
+        (right, 1, 2, "table", (1040, 460, 1490, 520), "Anders"),
+        (right, 1, 3, "table", (1490, 460, 1940, 520), "Bro"),
+    ]
+    crops = [(tmp_path / "set" / "minicpm_lines_lines" / f"{page}_{k}_{j}.jpg").resolve() for page, k, j, *_ in lines]
+    assert result.exit_code == 0
+    assert _lines(out) == [
+        {
+            "messages": [
+                {"role": "user", "content": "<image>Text Recognition:"},
+                {"role": "assistant", "content": text},
+            ],
+            "images": [str(crop)],
+        }
+        for (*_, text), crop in zip(lines, crops, strict=True)
+    ]
+    scan = load_rgb(tmp_path / "gt" / VOLUME / "o.jpg")
+    assert [load_rgb(crop).size for crop in crops] == [(x1 - x0, y1 - y0) for *_, (x0, y0, x1, y1), _ in lines]
+    assert all(
+        _mean_difference(load_rgb(crop), scan.crop(box)) < 2 for crop, (*_, box, _) in zip(crops, lines, strict=True)
+    )
+    common = {"source": "real", "collection": "GT-RA_court_20260101", "volume": "Vol", "scan": "o.jpg", "split": None}
+    assert _lines(tmp_path / "set" / "minicpm_lines.meta.jsonl") == [
+        {
+            "id": f"{page}_{k}_{j}",
+            **common,
+            "side": "left" if page == left else "right",
+            "kind": kind,
+            "production": "handwritten",
+            "element": k,
+            "line": j,
+        }
+        for page, k, j, kind, *_ in lines
+    ]
+
+
+def test_reader_set_scales_line_crops_to_at_most_max_crop_pixels_and_records_the_lines_it_leaves_out(
+    tmp_path: Path,
+) -> None:
+    body = PageElement(
+        kind=LineKind.BODY,
+        box=(100, 300, 700, 420),
+        lines=[
+            ElementLine(text="Anno 1715 den 4 maj", box=(100, 300, 700, 340)),  # 600 x 40 = 24,000 px
+            ElementLine(text=" ", box=(100, 340, 700, 380)),
+            ElementLine(text="kom för rätten", box=(100, 380, 700, 420), tag="unclear"),
+            ElementLine(text="a stray box", box=(100, 420, 700, 427)),  # 7 px high
+            ElementLine(text="a box with no width", box=(100, 430, 100, 470)),
+        ],
+    )
+    run = _run(tmp_path / "run", body)
+    out = tmp_path / "set" / "lines.jsonl"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--run",
+            str(run),
+            "--model",
+            "minicpm-ocr",
+            "--task",
+            "lines",
+            "--max-crop-pixels",
+            "6000",
+            "--out",
+            str(out),
+        ],
+    )
+
+    crop = (tmp_path / "set" / "lines_lines" / "000_page_0_0_0.jpg").resolve()
+    assert result.exit_code == 0
+    assert [row["images"] for row in _lines(out)] == [[str(crop)]]
+    assert load_rgb(crop).size == (300, 20)  # a quarter of the pixels: half each side
+    assert _lines(tmp_path / "set" / "lines.skipped.jsonl") == [
+        {
+            "labels": str(run / "000_page_0.elements.json"),
+            "side": None,
+            "reason": reason,
+            "error": "",
+            "id": f"000_page_0_0_{j}",
+        }
+        for j, reason in ((1, "empty-line"), (2, "unclear-line"), (3, "small-line"), (4, "small-line"))
+    ]
+
+
+def test_reader_set_scales_an_element_crop_past_max_crop_pixels_and_keeps_one_within_it_as_cut(tmp_path: Path) -> None:
+    note = PageElement(  # 100 x 40 = 4,000 px
+        kind=LineKind.BODY, box=(100, 500, 200, 540), lines=[ElementLine(text="Nota", box=(100, 500, 200, 540))]
+    )
+    run = _run(tmp_path / "run", BODY, note)  # BODY: 600 x 80 = 48,000 px
+    out = tmp_path / "set" / "minicpm.jsonl"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--run",
+            str(run),
+            "--model",
+            "minicpm-ocr",
+            "--task",
+            "elements",
+            "--max-crop-pixels",
+            "12000",
+            "--out",
+            str(out),
+        ],
+    )
+
+    crops = [tmp_path / "set" / "minicpm_crops" / f"000_page_0_{k}.png" for k in range(2)]
+    assert result.exit_code == 0
+    assert [load_rgb(crop).size for crop in crops] == [(300, 40), (100, 40)]  # a quarter of BODY's pixels: half a side
+    assert load_rgb(crops[1]).tobytes() == load_rgb(run / IMAGE).crop(note.box).tobytes()
+
+
 def _gt_page(root: Path, volume: Path, name: str) -> Path:
     """A single page of the GT below ``root``: its PAGE file in ``volume``'s ``page/`` and its 100 x 200 px scan."""
     _scan(root / volume / f"{name}.jpg", (100, 200))
@@ -493,6 +651,7 @@ def test_reader_set_splits_the_gt_by_its_test_lists_its_second_export_counted_an
             "scan": f"{name}.jpg",
             "side": None,
             "split": split,
+            **NO_CROP,
         }
 
     court, kept = "GT-RA_court_20260101", "GT-RA_landskapshandlingar_20260220"
@@ -510,8 +669,94 @@ def test_reader_set_splits_the_gt_by_its_test_lists_its_second_export_counted_an
         [str(gt / volume / f"{name}.jpg")] for name, volume in (("b", VOLUME), ("e", VOLUME), ("d", KEPT))
     ]
     assert _lines(tmp_path / "set" / "gt.skipped.jsonl") == [
-        {"labels": str(twin), "side": None, "reason": "duplicate", "error": ""} for twin in twins
+        {"labels": str(twin), "side": None, "reason": "duplicate", "error": "", "id": ""} for twin in twins
     ]
+
+
+@pytest.mark.parametrize(
+    ("choice", "selection"),
+    [
+        pytest.param(
+            ["--exclude-collection", KEPT.parts[0]],
+            {"include": [], "exclude": [KEPT.parts[0]], "seed": None},
+            id="the-other-left-out",
+        ),
+        pytest.param(
+            ["--collection", VOLUME.parts[0]],
+            {"include": [VOLUME.parts[0]], "exclude": [], "seed": None},
+            id="only-this-one",
+        ),
+    ],
+)
+def test_reader_set_takes_the_collections_it_is_given_caps_their_training_side_and_records_its_options(
+    tmp_path: Path, choice: list[str], selection: dict[str, object]
+) -> None:
+    gt = tmp_path / "gt"
+    court = {name: _gt_page(gt, VOLUME, name) for name in ("a", "b", "c", "x", "y", "z")}
+    (gt / VOLUME / "page" / "test_0100").write_text("x.xml\ny.xml\nz.xml\n", encoding="utf-8")
+    _gt_page(gt, KEPT, "d")
+    out = tmp_path / "set" / "court.jsonl"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--xml",
+            str(gt),
+            "--model",
+            "minicpm-ocr",
+            "--task",
+            "page",
+            "--split-from-gt-test-lists",
+            *choice,
+            "--max-per-collection",
+            "2",
+            "--out",
+            str(out),
+        ],
+    )
+
+    def images(path: Path) -> list[list[str]]:
+        return [row["images"] for row in _lines(path)]
+
+    assert result.exit_code == 0
+    assert images(out) == [[str(gt / VOLUME / f"{name}.jpg")] for name in ("a", "b")]
+    assert images(out.with_name("court.test.jsonl")) == [[str(gt / VOLUME / f"{name}.jpg")] for name in "xyz"]
+    assert _lines(tmp_path / "set" / "court.skipped.jsonl") == [
+        {"labels": str(court["c"]), "side": None, "reason": "capped", "error": "", "id": ""}
+    ]
+    assert json.loads((tmp_path / "set" / "court.options.json").read_text(encoding="utf-8")) == {
+        "model": "minicpm-ocr",
+        "task": "page",
+        "run": None,
+        "xml": str(gt.resolve()),
+        "split_from_gt_test_lists": True,
+        "exclude": None,
+        "selection": selection,
+        "limits": {"max_crop_pixels": None, "max_per_collection": 2},
+        "samples": {"train": 2, "test": 3},
+        "pages": 5,
+        "scans": 5,
+        "skipped": {"capped": 1},
+    }
+
+
+def test_reader_set_reads_the_scans_in_the_order_its_seed_shuffles_them(tmp_path: Path) -> None:
+    gt = tmp_path / "gt"
+    names = ["a", "b", "c", "d", "e", "f"]
+    for name in names:
+        _gt_page(gt, VOLUME, name)
+    out = tmp_path / "set" / "seeded.jsonl"
+
+    result = CliRunner().invoke(
+        app, ["--xml", str(gt), "--model", "minicpm-ocr", "--task", "page", "--seed", "3", "--out", str(out)]
+    )
+
+    shuffled = list(names)  # the files in path order, shuffled by the seed
+    random.Random(3).shuffle(shuffled)
+    assert result.exit_code == 0
+    assert shuffled != names
+    scans = [row["scan"] for row in _lines(tmp_path / "set" / "seeded.meta.jsonl")]
+    assert scans == [f"{name}.jpg" for name in shuffled]
 
 
 def test_reader_set_leaves_out_the_pages_a_list_names_by_path_or_by_page_pair_id(tmp_path: Path) -> None:
@@ -529,8 +774,8 @@ def test_reader_set_leaves_out_the_pages_a_list_names_by_path_or_by_page_pair_id
     assert result.exit_code == 0
     assert [row["id"] for row in _lines(tmp_path / "set" / "uocr.meta.jsonl")] == [left]
     assert _lines(tmp_path / "set" / "uocr.skipped.jsonl") == [
-        {"labels": str(single), "side": None, "reason": "excluded", "error": ""},
-        {"labels": str(opening), "side": "right", "reason": "excluded", "error": ""},
+        {"labels": str(single), "side": None, "reason": "excluded", "error": "", "id": ""},
+        {"labels": str(opening), "side": "right", "reason": "excluded", "error": "", "id": ""},
     ]
 
 
@@ -596,6 +841,7 @@ def test_reader_set_reads_a_drawn_runs_pages_from_their_page_files_and_from_alto
             "scan": f"{page}.jpg",
             "side": None,
             "split": None,
+            **NO_CROP,
         }
         for page, kind in (("p1", "page"), ("p2", "alto"))
     ]
@@ -637,27 +883,15 @@ def test_reader_set_records_each_file_scan_or_page_it_leaves_out_and_why(
     assert result.exit_code == 0
     assert [row["images"] for row in _lines(out)] == [[str(folder / "good.jpg")]]
     assert _lines(tmp_path / "set" / "minicpm.skipped.jsonl") == [
-        {
-            "labels": str(broken),
-            "side": None,
-            "reason": "unreadable",
-            "error": "ParseError: unclosed token: line 1, column 0",
-        },
-        {"labels": str(lonely), "side": None, "reason": "no-scan", "error": ""},
-        {"labels": str(blank), "side": None, "reason": "no-text", "error": ""},
-        {"labels": str(off), "side": None, "reason": "no-text", "error": ""},
-        {
-            "labels": str(sizeless),
-            "side": None,
-            "reason": "unreadable",
-            "error": f"ValueError: {sizeless}: the Page element has no width and height",
-        },
-        {
-            "labels": str(small),
-            "side": None,
-            "reason": "size",
-            "error": "small.jpg is (50, 100) px, its file gives (100, 200)",
-        },
-        {"labels": str(spread), "side": None, "reason": "spread", "error": ""},
-        {"labels": str(torn), "side": None, "reason": "unreadable", "error": f"OSError: {tear.value}"},
+        {"labels": str(labels), "side": None, "reason": reason, "error": error, "id": ""}
+        for labels, reason, error in (
+            (broken, "unreadable", "ParseError: unclosed token: line 1, column 0"),
+            (lonely, "no-scan", ""),
+            (blank, "no-text", ""),
+            (off, "no-text", ""),
+            (sizeless, "unreadable", f"ValueError: {sizeless}: the Page element has no width and height"),
+            (small, "size", "small.jpg is (50, 100) px, its file gives (100, 200)"),
+            (spread, "spread", ""),
+            (torn, "unreadable", f"OSError: {tear.value}"),
+        )
     ]

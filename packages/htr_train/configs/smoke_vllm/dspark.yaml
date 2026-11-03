@@ -1,0 +1,25 @@
+# A DSpark draft for base MiniCPM-OCR (its own target for the smoke only: the real draft is for our fine-tune, at its
+# published commit), one epoch on 200 line responses, vLLM and the trainer sharing one GPU. An x86 smoke: envs/vllm is
+# built for x86_64 first (its aarch64 wheels' GB10 kernels are unverified), so this runs on an x86 Blackwell server or
+# HPC, not in the Spark's smoke queue (launch it with --where slurm there, or by hand with its steps.sh).
+#   htr-train serve-target packages/htr_train/configs/smoke_vllm/dspark.yaml    # the server for its responses
+#   htr-train dspark-set --prompts data/htr/smoke/minicpm_lines.train.jsonl --limit 200 \
+#       --target <its target> --out data/htr/smoke/dspark_responses.jsonl
+name: smoke-dspark
+description: "smoke: DSpark draft for base MiniCPM-OCR, 200 line responses (x86)"
+job:
+  kind: dspark
+  target: {repo: ~/.cache/huggingface/hub/models--openbmb--MiniCPM-OCR-1.0/snapshots/2697d4e93dca82784abf858ae57206a49629cb6b}
+  responses: data/htr/smoke/dspark_responses.jsonl
+  media_root: data/htr/smoke
+  serve_args:
+    - --mm-processor-kwargs
+    - '{"downsample_mode": "4x", "max_slice_nums": 9}'
+    - --trust-request-mm-kwargs
+    - --default-chat-template-kwargs
+    - '{"enable_thinking": false}'
+  vllm_memory: 0.3
+  epochs: 1
+  max_samples: 200
+  seq_length: 1024
+resources: {need_gb: 60, hours: 1}

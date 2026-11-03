@@ -174,14 +174,22 @@ readers, as ms-swift fine-tunes them (`messages` and `images`):
   answered with a `<PAGE>` each.
 - `--model minicpm-ocr` (model type and template `minicpm_ocr`): `--task elements` (the default) a sample per region,
   its crop asked `<image>Text Recognition:` and answered with its lines, a table's asked `<image>Table Recognition:`
-  and answered in OTSL between `<otsl>` and `</otsl>`; `--task page` a sample per page asked
-  `<image>Text Recognition:` and answered with its plain text, a line of the page a line, a blank line between two
-  regions.
+  and answered in OTSL between `<otsl>` and `</otsl>`; `--task lines` a sample per text line of every region (a table
+  cell's too), its box cut into `<out stem>_lines/<page id>_<k>_<j>.jpg` (region `k`, line `j`), asked
+  `<image>Text Recognition:` and answered with the line's text, as OpenBMB fine-tunes it on handwritten lines (a line
+  with no text, a drawn line tagged `unclear` and a box narrower or lower than 8 px are left out and recorded); `--task page` a
+  sample per page asked `<image>Text Recognition:` and answered with its plain text, a line of the page a line, a
+  blank line between two regions. `--max-crop-pixels N` scales a region's or line's crop down to at most N pixels
+  (200,704 = 448 x 448: a MiniCPM-OCR line in one view of 256 visual tokens).
 
 Beside each set `<out stem>.meta.jsonl` gives a line per sample: its id (a page's is the MOSS page-pair sets', the
 digest of its PAGE file's path below the folder given and its side, `<digest>_left`), `source` (`real`, or
-`synthetic` for a page diffu_page drew), its collection (`GT-...`), volume, scan, side of an opening and split. To keep
-the evaluation honest:
+`synthetic` for a page diffu_page drew), its collection (`GT-...`), volume, scan, side of an opening and split; a
+crop's sample also its region's `kind` and place (`element`), a line's its `production` and place in its region
+(`line`). A set is one variant of a reader's data: `--collection` and `--exclude-collection` choose collections,
+`--max-per-collection N` caps a collection's training samples, never its test ones (`--seed` shuffles the scans
+first, so the cap takes from all its volumes), and `<out stem>.options.json` records every option and what the set came to. The readers are
+trained from these sets by `htr-train` ([HTR_TRAIN.md](HTR_TRAIN.md)). To keep the evaluation honest:
 
 ```bash
 uv run diffu-reader-set --xml ~/Desktop/data/GT-Lejonet_HTR_202602 --model unlimited-ocr-2 \

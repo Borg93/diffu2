@@ -4,12 +4,14 @@ and a stand-in print/hand classifier to mark it with, a crop and its training re
 FLUX.2-class VAE and a tiny DiT, random weights), and a reference training on it: a tiny style-pair set in the
 described reference form, its caches (one with look changes for its sample form, one with hand changes), a short
 training run and the MOSS repo of its merged export, which takes a reference image; and a LoRA of one module of either
-model, a NeMo LoRA checkpoint or a MOSS-Image adapter converted from a LyCORIS file."""
+model, a NeMo LoRA checkpoint or a MOSS-Image adapter converted from a LyCORIS file. htr-train's line-set builder is
+its own tests' fixture; its protocol is here, where ``conftest`` resolves for the type checkers."""
 
 from __future__ import annotations
 
 import json
 import shutil
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Protocol
 
@@ -673,3 +675,13 @@ def write_moss_adapter(tmp_path: Path, tiny_moss_dit: Path) -> MossAdapterWriter
         return adapter
 
     return write
+
+
+type SetLine = tuple[str, str, str, str, str | None]  # a line of htr-train's sets: id, text, collection, volume, split
+
+
+class MakeSet(Protocol):
+    """``make_set`` (htr-train's tests): a line set named ``name`` of ``lines``, each a crop of ``size``, as
+    diffu-reader-set writes one; the set's path, its meta beside it."""
+
+    def __call__(self, name: str, lines: Sequence[SetLine], size: tuple[int, int] = ...) -> Path: ...

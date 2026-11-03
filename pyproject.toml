@@ -6,8 +6,9 @@ environments = ["sys_platform == 'linux'"]  # CUDA wheels are Linux-only
 
 [tool.uv.workspace]
 members = ["packages/*"]
-# SGLang's MOSS plugin runs in its own environment (SGLang pins diffusers 0.37 and transformers 5.19)
-exclude = ["packages/sglang_moss"]
+# SGLang's MOSS plugin runs in its own environment (SGLang pins diffusers 0.37 and transformers 5.19), and so do the
+# readers' training tools (htr-train's envs: ms-swift with transformers 5.22 or 4.52, speculators, vLLM)
+exclude = ["packages/sglang_moss", "packages/htr_train/envs/*"]
 
 [tool.uv.sources]
 diffu-core = { workspace = true }
@@ -16,6 +17,7 @@ diffu-page = { workspace = true }
 diffu-flux3 = { workspace = true }
 diffu-runner = { workspace = true }
 diffu-studio = { workspace = true }
+diffu-htr-train = { workspace = true }
 torch = { index = "pytorch-cu130" }
 torchvision = { index = "pytorch-cu130" }
 # FLUX.3 (Flux3Transformer2DModel, its Modular Diffusers blocks and LoRA loader) is on diffusers main only. This is
@@ -50,16 +52,20 @@ ignore = ["E501"]
 "dataclasses.dataclass".msg = "Structured values are pydantic BaseModel (NeMo dataloader configs are the exception)."
 
 [tool.ruff.lint.isort]
-known-first-party = ["diffu_core", "diffu_moss", "diffu_page", "diffu_flux3", "diffu_runner", "diffu_studio", "diffu_sglang_moss"]
+known-first-party = ["diffu_core", "diffu_moss", "diffu_page", "diffu_flux3", "diffu_runner", "diffu_studio", "diffu_sglang_moss", "diffu_htr_train"]
 
 [tool.pytest.ini_options]
 testpaths = ["packages"]
-addopts = "-q --import-mode=importlib"
+addopts = "-q --import-mode=importlib -m 'not envs and not gpu'"  # a lane's own -m, given after, replaces it
+markers = [
+    "envs: needs htr-train's tool environments built (packages/htr_train/README.md); CPU",
+    "gpu: a GPU run through jobs/spark_guard.sh, one at a time; never in the default lane",
+]
 strict = true
 timeout = 3600  # pytest-timeout: a hung test fails; the slowest (the studio's draw test) takes about a minute on CPU
 
 [tool.coverage.run]  # per-test coverage when pruning: production lines only, never the tests'
-source = ["packages/core/src", "packages/moss/src", "packages/page/src", "packages/runner/src", "packages/studio/src", "packages/flux3/src"]
+source = ["packages/core/src", "packages/moss/src", "packages/page/src", "packages/runner/src", "packages/studio/src", "packages/flux3/src", "packages/htr_train/src"]
 omit = ["packages/*/tests/*", "conftest.py"]
 
 # ty, as pyrefly.toml: diffusers, transformers and safetensors are typed as Any (diffusers exports a torch-less dummy

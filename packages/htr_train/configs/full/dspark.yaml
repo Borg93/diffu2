@@ -1,0 +1,21 @@
+# The DSpark draft for our fine-tuned MiniCPM-OCR (its published commit's snapshot; fill in once it is published),
+# from ~300,000 of its own line and region answers (htr-train serve-target, then htr-train dspark-set against it),
+# 3 online epochs, vLLM and the trainer on one node. Trained only once the line model is final and a measurement shows
+# decoding, not image encoding, dominates serving time. The trained draft is served with the target as OpenBMB serves
+# theirs (docs/HTR_TRAIN.md, "Serving a draft").
+name: dspark-minicpm-lines
+description: "DSpark draft for minicpm-lines-scaled's published checkpoint"
+job:
+  kind: dspark
+  target: {repo: ~/.cache/huggingface/hub/models--Gabriel--htr-minicpm-ocr-lines/snapshots/PUBLISHED_COMMIT}
+  responses: data/htr/dspark_responses.jsonl
+  media_root: data/htr
+  serve_args:
+    - --mm-processor-kwargs
+    - '{"downsample_mode": "4x", "max_slice_nums": 9}'
+    - --trust-request-mm-kwargs
+    - --default-chat-template-kwargs
+    - '{"enable_thinking": false}'
+  vllm_memory: 0.35
+  epochs: 3
+resources: {nodes: 1, gpus_per_node: 1, need_gb: 60, hours: 12, cpus_per_task: 32}

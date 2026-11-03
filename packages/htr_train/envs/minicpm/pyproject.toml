@@ -1,0 +1,46 @@
+# htr-train's MiniCPM-OCR and Jev environment: ms-swift at a pinned main commit (the first with minicpm_ocr; release
+# 4.6.0 has neither model) with transformers 5.22.1, the one range both need (minicpm_ocr is native from 5.21,
+# ms-swift caps transformers below 5.23, Jev needs 5.10.4 or later). Its own uv project and lock, not a workspace
+# member: `uv sync --project packages/htr_train/envs/minicpm`, then `.venv/bin/swift` is what htr-train renders.
+[project]
+name = "htr-env-minicpm"
+version = "0"
+requires-python = "==3.12.*"
+dependencies = [
+    "diffu-htr-train",
+    "ms-swift",
+    "torch==2.14.1",
+    "torchvision==0.29.1",
+    "transformers==5.22.1",
+    "flash-linear-attention==0.4.2",  # Qwen3.5's linear attention layers (MiniCPM-OCR's and Jev's language model)
+    "peft<0.21",  # ms-swift's own caps (requirements/framework.txt at ef4953a4)
+    "datasets<4.8.5",
+    "qwen-vl-utils==0.0.14",  # OpenBMB's Jev environment
+    "pillow==12.2.0",  # the Jev renderer's (its version is part of the renderer's): the workspace's
+    "trackio",
+]
+
+[dependency-groups]
+# Several GPUs (the HPC runs): ZeRO-2 for MiniCPM-OCR, ZeRO-3 for Jev, as OpenBMB's recipes run
+multi-gpu = ["deepspeed>=0.19.3,<0.20"]
+# Packing (ms-swift packs only with flash_attn) and Qwen3.5's fast causal conv: x86 wheels; none found for aarch64
+x86 = [
+    "flash-attn==2.8.3; platform_machine == 'x86_64'",
+    "causal-conv1d; platform_machine == 'x86_64'",
+]
+
+[tool.uv]
+package = false
+environments = ["sys_platform == 'linux'"]
+no-build-isolation-package = ["flash-attn", "causal-conv1d"]
+
+[tool.uv.sources]
+diffu-htr-train = { path = "../..", editable = true }
+ms-swift = { git = "https://github.com/modelscope/ms-swift", rev = "ef4953a4dc65ded0f9fd33776ee76f4d96880663" }
+torch = { index = "pytorch-cu130" }
+torchvision = { index = "pytorch-cu130" }
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true

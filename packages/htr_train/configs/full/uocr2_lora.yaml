@@ -1,0 +1,32 @@
+# Unlimited-OCR 2 LoRA on every GT training page (single pages, diffu-reader-set --task parse
+# --split-from-gt-test-lists, then htr-train split-dev), rank 16, one node of 4 GPUs.
+name: uocr2-lora
+description: "LoRA r16 on all GT training pages (single pages), real only"
+job:
+  kind: unlimited-ocr-2
+  model: {repo: baidu/Unlimited-OCR-2, revision: 0480966938291445591f69f08a13b041c073a96a}
+  tuner: lora
+  lora: {rank: 16, alpha: 32, target_modules: all-linear}
+  freeze_vit: true
+  freeze_aligner: true
+  learning_rate: 1.0e-4
+  epochs: 2
+  global_batch: 64
+  warmup_ratio: 0.05
+  lr_scheduler: cosine
+  max_length: 4096
+  dataset_num_proc: 8
+  dataloader_num_workers: 8
+  eval_strategy: steps
+  eval_steps: 200
+  save_strategy: steps
+  save_steps: 200
+  save_total_limit: 3
+  best_by_eval_loss: true
+  per_device_eval_batch_size: 1
+  logging_steps: 10
+  report_to: tensorboard
+data:
+  train: [{path: data/htr/uocr2_pages.train.jsonl}]
+  dev: data/htr/uocr2_pages.dev.jsonl
+resources: {nodes: 1, gpus_per_node: 4, need_gb: 40, hours: 8, cpus_per_task: 32}

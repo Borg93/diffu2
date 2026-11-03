@@ -1,0 +1,30 @@
+# Unlimited-OCR 2 LoRA on single pages (diffu-reader-set --task parse), ms-swift's own example recipe (all linear
+# layers, vision encoder and projector frozen, lr 1e-4) at rank 16, 20 steps of 4 pages on the Spark.
+name: smoke-uocr2-lora
+description: "smoke: LoRA r16 on parsed single pages, real GT pages only"
+job:
+  kind: unlimited-ocr-2
+  model: {repo: baidu/Unlimited-OCR-2, revision: 0480966938291445591f69f08a13b041c073a96a}
+  tuner: lora
+  lora: {rank: 16, alpha: 32, target_modules: all-linear}
+  freeze_vit: true
+  freeze_aligner: true
+  learning_rate: 1.0e-4
+  max_steps: 20
+  global_batch: 4
+  warmup_ratio: 0.05
+  max_length: 4096
+  dataset_num_proc: 2
+  dataloader_num_workers: 2
+  eval_strategy: steps
+  eval_steps: 10
+  save_strategy: steps
+  save_steps: 20
+  save_total_limit: 1
+  per_device_eval_batch_size: 1
+  logging_steps: 1
+  report_to: tensorboard  # transformers 4.52.1 predates TrainingArguments' trackio project field
+data:
+  train: [{path: data/htr/smoke/uocr2_pages.train.jsonl}]
+  dev: data/htr/smoke/uocr2_pages.dev.jsonl
+resources: {need_gb: 40, hours: 1}

@@ -1,0 +1,38 @@
+# htr-train's Unlimited-OCR 2 environment: ms-swift at the same pinned main commit (the first with Unlimited-OCR 2)
+# with transformers 4.52.1, as ms-swift's own Unlimited-OCR 2 example installs it (its remote code needs >= 4.46.3,
+# < 5), and the remote code's imports (easydict, addict). The model's code runs from the Hub at one revision only
+# (baidu/Unlimited-OCR-2@0480966938291445591f69f08a13b041c073a96a; htr-train refuses any other).
+[project]
+name = "htr-env-uocr2"
+version = "0"
+requires-python = "==3.12.*"
+dependencies = [
+    "diffu-htr-train",
+    "ms-swift",
+    "torch==2.14.1",
+    "torchvision==0.29.1",
+    "transformers==4.52.1",
+    "easydict",
+    "addict",
+    "peft<0.21",
+    "datasets<4.8.5",
+    "trackio",
+]
+
+[dependency-groups]
+multi-gpu = ["deepspeed>=0.19.3,<0.20"]
+
+[tool.uv]
+package = false
+environments = ["sys_platform == 'linux'"]
+
+[tool.uv.sources]
+diffu-htr-train = { path = "../..", editable = true }
+ms-swift = { git = "https://github.com/modelscope/ms-swift", rev = "ef4953a4dc65ded0f9fd33776ee76f4d96880663" }
+torch = { index = "pytorch-cu130" }
+torchvision = { index = "pytorch-cu130" }
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true

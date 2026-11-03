@@ -29,6 +29,7 @@ the GT's own: a scan a test list of its volume names is a test page, never a tra
 
 from __future__ import annotations
 
+import random
 import xml.etree.ElementTree as ET
 from collections.abc import Callable, Iterator
 from enum import StrEnum
@@ -41,7 +42,15 @@ from pydantic import BaseModel
 
 from diffu_page.local_run import describe
 from diffu_page.page.labels import ELEMENTS_FILE, LabelFormat, PageElements, layout_elements
-from diffu_page.page.layout import PageSide, ScanPage, is_unsplit_spread, load_xml_layout, scan_pages
+from diffu_page.page.layout import (
+    LineKind,
+    PageSide,
+    Production,
+    ScanPage,
+    is_unsplit_spread,
+    load_xml_layout,
+    scan_pages,
+)
 from diffu_page.page.layout.page_xml import SCAN_SUFFIXES, local_name
 from diffu_page.page.layout.pages import digest, page_id
 
@@ -75,7 +84,9 @@ class Split(StrEnum):
 class SampleMeta(BaseModel):
     """What a set's sidecar records of a sample: its id, whether its page is real or drawn, its collection and volume
     ("" where the input does not give them), its scan's file name, its side of an opening (None: a single page, or an
-    opening shown whole) and its split (None: the set is not split)."""
+    opening shown whole) and its split (None: the set is not split); for an element's crop, its kind and its place in
+    the page's reading order, and for a line's crop also how the line was made and its place in its element (None
+    where the sample is a page)."""
 
     id: str
     source: Source
@@ -84,6 +95,10 @@ class SampleMeta(BaseModel):
     scan: str
     side: PageSide | None = None
     split: Split | None = None
+    kind: LineKind | None = None
+    production: Production | None = None
+    element: int | None = None
+    line: int | None = None
 
 
 class ReaderPage(BaseModel):
@@ -115,16 +130,21 @@ class SkipReason(StrEnum):
     NO_TEXT = "no-text"
     SPREAD = "spread"  # wider than tall, its lines cannot split it
     EXCLUDED = "excluded"
+    EMPTY_LINE = "empty-line"  # a line with no text to read
+    UNCLEAR_LINE = "unclear-line"  # a drawn line that read back badly (tagged unclear)
+    SMALL_LINE = "small-line"  # a line's box too narrow or too low to hold writing
+    CAPPED = "capped"  # its collection already holds the samples a set takes of one
 
 
 class Skipped(BaseModel):
-    """A file, scan or page left out of a set: its label file, its side of an opening (a page alone), why, and the
-    error that made it unreadable."""
+    """A file, scan, page or line left out of a set: its label file, its side of an opening (a page or line alone),
+    why, the error that made it unreadable and, for a line, the id its sample would have had."""
 
     labels: str
     side: PageSide | None = None
     reason: SkipReason
     error: str = ""
+    id: str = ""
 
 
 class LabelFile(BaseModel):
@@ -366,18 +386,49 @@ def label_scans(
         yield ReaderScan(id=digest(below.as_posix()), labels=str(label.path), pages=pages)
 
 
+class Selection(BaseModel):
+    """Which collections a set takes (``include``: only these, none named: all; never those of ``exclude``), and the
+    order its scans are read in: by path, or shuffled by ``seed`` (so a cap on a collection's samples takes scans
+    from all its volumes, not its first ones)."""
+
+    model_config = {"frozen": True}
+
+    include: tuple[str, ...] = ()
+    exclude: tuple[str, ...] = ()
+    seed: int | None = None
+
+    def keeps(self, collection: str) -> bool:
+        """Whether the set takes a scan of ``collection``."""
+        return collection not in self.exclude and (not self.include or collection in self.include)
+
+
 def xml_scans(
-    source: Path, *, split_of: Callable[[Path], Split | None], excluded: frozenset[str]
+    source: Path,
+    *,
+    split_of: Callable[[Path], Split | None],
+    excluded: frozenset[str],
+    selection: Selection | None = None,
 ) -> Iterator[ReaderScan | Skipped]:
     """The scans of the PAGE or ALTO files ``source`` gives (a folder, or a list of them) as their pages to write, each
-    read as it is taken, in path order after the files left out (:func:`label_files`, :func:`label_scans`).
+    read as it is taken, in path order (or ``selection``'s) after the files left out (:func:`label_files`,
+    :func:`label_scans`); a file of a collection ``selection`` does not take is passed over, and so is its record of
+    being left out.
 
     Raises:
-        ValueError: If ``source`` gives no PAGE or ALTO file (none is read when it gives one).
+        ValueError: If ``source`` gives no PAGE or ALTO file (none is read when it gives one), or no file of a
+            collection ``selection`` names.
     """
+    selection = selection or Selection()
     root = source.resolve() if source.is_dir() else source.resolve().parent
     labels, skipped = label_files(source.resolve())
     if not labels and not skipped:
         raise ValueError(f"{source} gives no PAGE or ALTO file")
+    present = {_collection(label.path) for label in labels} | {_collection(Path(item.labels)) for item in skipped}
+    if unknown := sorted(set(selection.include) - present):
+        raise ValueError(f"{source} holds no file of {', '.join(unknown)}")
+    labels = [label for label in labels if selection.keeps(_collection(label.path))]
+    skipped = [item for item in skipped if selection.keeps(_collection(Path(item.labels)))]
+    if selection.seed is not None:
+        random.Random(selection.seed).shuffle(labels)
     scans = (item for label in labels for item in label_scans(label, root, split_of=split_of, excluded=excluded))
     return chain(skipped, scans)

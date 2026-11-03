@@ -1,0 +1,45 @@
+# MiniCPM-OCR-Jev on every GT training line's pairs (htr-train jev-set on minicpm_lines_scaled's training side, with
+# readers' reads once they exist, then htr-train split-dev), OpenBMB's recipe as published (packing 12,000 with flash
+# attention, ZeRO-3, 8 GPUs) for 2 epochs, evaluated by loss on the pairs' dev volumes each 500 steps. On Leonardo:
+# 2 nodes of 4 A100s (x86: flash-attn's wheels). Estimate: ~6-11 h for 1 M pairs, 2 epochs, packed.
+name: jev-lines
+description: "Jev from its checkpoint, all GT training lines' pairs (1 negative a line), real only"
+job:
+  kind: jev
+  model: {repo: openbmb/MiniCPM-OCR-Jev, revision: a0ed278eb6aa1f333a711665ab610055a4a816ab}
+  renderer: htr-train-jev-render-1+ae7b7855e115+pillow-12.2.0+freetype-2.14.3
+  tuner: full
+  freeze_vit: true
+  freeze_aligner: true
+  freeze_llm: false
+  learning_rate: 1.0e-5
+  epochs: 2
+  global_batch: 8
+  lr_scheduler: cosine
+  warmup_ratio: 0.05
+  weight_decay: 0.1
+  max_grad_norm: 1.0
+  seed: 42
+  max_length: 12000
+  packing: true
+  packing_length: 12000
+  packing_num_proc: 8
+  attn_impl: flash_attn
+  deepspeed: zero3
+  gradient_checkpointing: true
+  dataset_num_proc: 16
+  dataloader_num_workers: 4
+  eval_strategy: steps
+  eval_steps: 500
+  save_strategy: steps
+  save_steps: 500
+  save_total_limit: 5
+  save_only_model: true  # OpenBMB's: the best checkpoint is picked by AUROC on the dev pairs after, not loaded at the end
+  per_device_eval_batch_size: 1
+  logging_steps: 10
+  ddp_timeout: 10800
+  env: {IMAGE_MAX_TOKEN_NUM: "2048"}
+data:
+  train: [{path: data/htr/jev_lines.train.jsonl}]
+  dev: data/htr/jev_lines.dev.jsonl
+resources: {nodes: 2, gpus_per_node: 4, need_gb: 60, hours: 24, cpus_per_task: 32}

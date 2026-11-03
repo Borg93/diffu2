@@ -26,8 +26,15 @@ is taught a page whole, as pages will be sent to it.
 - ``minicpm-ocr``: as ms-swift fine-tunes MiniCPM-OCR 1.0 (model type and template ``minicpm_ocr``, which puts a line
   break after each image). ``--task elements`` (the default) a sample per element, its crop asked
   ``<image>Text Recognition:`` and answered with its lines, a table's asked ``<image>Table Recognition:`` and answered
-  in OTSL between ``<otsl>`` and ``</otsl>``; ``--task page`` a sample per page, asked ``<image>Text Recognition:`` and
-  answered with its plain text (:func:`diffu_page.page.labels.to_plain_text`).
+  in OTSL between ``<otsl>`` and ``</otsl>``; ``--task lines`` a sample per text line of every element (a table
+  cell's too), its box cut from its page into ``<out stem>_lines/`` as ``<page id>_<k>_<j>.jpg`` (element ``k``, line
+  ``j``), asked ``<image>Text Recognition:`` and answered with the line's text, as OpenBMB fine-tunes it on
+  handwritten lines; ``--task page`` a sample per page, asked ``<image>Text Recognition:`` and answered with its plain
+  text (:func:`diffu_page.page.labels.to_plain_text`). A line with no text, a drawn line tagged ``unclear`` and a box
+  narrower or lower than :data:`MIN_LINE_SIDE` px are left out and recorded. ``--max-crop-pixels`` scales an element's
+  or a line's crop down to at most that many pixels, its aspect kept (200,704 = 448 x 448 keeps a MiniCPM-OCR line one
+  view of 256 visual tokens); the meta of a crop's sample also gives its element's kind and place, a line's its
+  production and place in its element.
 
 A page that is the whole of its image is shown as that image; a page of an opening is cut from its scan into
 ``<out stem>_pages/<page id>.jpg``. With ``--xml``, ``--split-from-gt-test-lists`` sends every scan its volume's test
@@ -35,21 +42,32 @@ lists name to ``<out stem>.test.jsonl`` (and ``<out stem>.test.meta.jsonl``), ne
 leaves out the pages a file lists (by id, as the MOSS page-pair sets give them, or by path: pages a generator was
 trained on); the GT's second export of a collection is always left out.
 
+A set is one variant of a reader's data, so several can be built and trained on apart: ``--collection`` takes only the
+collections it names, ``--exclude-collection`` leaves some out, ``--max-per-collection`` caps a collection's training
+samples, never its test ones (``--seed`` shuffles the scans first, so a cap takes from all of a collection's volumes),
+and ``--max-crop-pixels`` scales its crops; real and drawn pages are two sets (``--xml`` of the GT, of a
+``diffu-run-export``), mixed when a run trains on both. ``<out stem>.options.json`` records every option and what the
+set came to.
+
     diffu-reader-set --run runs/pages --model deepseek-ocr-2 --out data/readers/deepseek_ocr_2.jsonl
     diffu-reader-set --xml ~/Desktop/data/GT-Lejonet_HTR_202602 --model unlimited-ocr-2 --split-from-gt-test-lists \\
         --exclude data/readers/generator_pages.txt --out data/readers/unlimited_ocr_2.jsonl
+    diffu-reader-set --xml ~/Desktop/data/GT --model minicpm-ocr --task lines --max-crop-pixels 200704 \\
+        --split-from-gt-test-lists --out data/readers/minicpm_lines.jsonl
 """
 
 from __future__ import annotations
 
+import math
 from collections import Counter
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import ExitStack
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, TextIO
 
 import typer
+from PIL import Image
 from pydantic import BaseModel
 
 from diffu_page.data.build_crops import TILE_QUALITY
@@ -57,6 +75,7 @@ from diffu_page.data.reader_pages import (
     ReaderPage,
     ReaderScan,
     SampleMeta,
+    Selection,
     Skipped,
     SkipReason,
     Split,
@@ -74,6 +93,7 @@ from diffu_page.page.labels import (
     PARSE_PROMPT,
     SPOTTING_PROMPT,
     TEXT_PROMPT,
+    ElementLine,
     PageElement,
     PageElements,
     Recognition,
@@ -101,13 +121,14 @@ class Reader(StrEnum):
 class Task(StrEnum):
     """What a set teaches its reader: a whole page grounded (DeepSeek-OCR 2), as Markdown or plain text, its lines
     spotted (PaddleOCR-VL) or parsed into blocks (Unlimited-OCR 2), a scan's pages parsed together (Unlimited-OCR 2's
-    opening), or each element's crop (a recogniser's)."""
+    opening), or each element's or line's crop (a recogniser's)."""
 
     GROUNDED = "grounded"
     MARKDOWN = "markdown"
     PAGE = "page"
     SPOTTING = "spotting"
     ELEMENTS = "elements"
+    LINES = "lines"
     PARSE = "parse"
     OPENING = "opening"
 
@@ -116,8 +137,9 @@ TASKS: dict[Reader, tuple[Task, ...]] = {  # the tasks each reader is fine-tuned
     Reader.DEEPSEEK_OCR_2: (Task.GROUNDED, Task.MARKDOWN),
     Reader.PADDLEOCR_VL: (Task.PAGE, Task.SPOTTING, Task.ELEMENTS),
     Reader.UNLIMITED_OCR_2: (Task.PARSE, Task.OPENING),
-    Reader.MINICPM_OCR: (Task.ELEMENTS, Task.PAGE),
+    Reader.MINICPM_OCR: (Task.ELEMENTS, Task.LINES, Task.PAGE),
 }
+MIN_LINE_SIDE = 8  # px: a line's box narrower or lower than this holds no writing (a transcriber's stray box)
 
 
 class PageFormat(BaseModel):
@@ -199,10 +221,21 @@ SAMPLE_SHAPES: dict[Reader, Callable[[str, str, list[Path]], Sample]] = {
 
 
 class ImageDirs(BaseModel):
-    """Where a set's cut images go: pages cut from their scans, and elements' crops."""
+    """Where a set's cut images go: pages cut from their scans, elements' crops and lines' crops."""
 
     pages: Path
     crops: Path
+    lines: Path
+
+
+def fitted(image: Image.Image, max_pixels: int | None) -> Image.Image:
+    """``image`` scaled down, its aspect kept, to at most ``max_pixels`` pixels (each side at least 1 px); as it is
+    when it holds no more, or when ``max_pixels`` is None."""
+    if max_pixels is None or image.width * image.height <= max_pixels:
+        return image
+    scale = math.sqrt(max_pixels / (image.width * image.height))
+    size = (max(1, math.floor(image.width * scale)), max(1, math.floor(image.height * scale)))
+    return image.resize(size, Image.Resampling.LANCZOS)
 
 
 def page_image(page: ReaderPage, pages: Path) -> Path:
@@ -217,28 +250,79 @@ def page_image(page: ReaderPage, pages: Path) -> Path:
     return path
 
 
-def cut_elements(page: ReaderPage, crops: Path) -> list[Path]:
-    """Each element of ``page`` cut from its image at its box (where the page lies on the image) and saved in ``crops``
-    as ``<page id>_<k>.png`` (``k`` its place in reading order): their paths."""
+def _on_image(box: tuple[int, int, int, int], page: ReaderPage) -> tuple[int, int, int, int]:
+    """``box`` (the page's px) on the image the page is on."""
     left, top = page.rect[:2] if page.rect is not None else (0, 0)
+    x0, y0, x1, y1 = box
+    return x0 + left, y0 + top, x1 + left, y1 + top
+
+
+def cut_elements(page: ReaderPage, crops: Path, max_pixels: int | None = None) -> list[Path]:
+    """Each element of ``page`` cut from its image at its box (where the page lies on the image), scaled to at most
+    ``max_pixels`` (:func:`fitted`) and saved in ``crops`` as ``<page id>_<k>.png`` (``k`` its place in reading order):
+    their paths."""
     paths: list[Path] = []
     with open_scan(page.image) as image:
         for k, element in enumerate(page.elements.elements):
-            x0, y0, x1, y1 = element.box
             path = crops / f"{page.meta.id}_{k}.png"
-            image.crop((x0 + left, y0 + top, x1 + left, y1 + top)).convert("RGB").save(path)
+            fitted(image.crop(_on_image(element.box, page)).convert("RGB"), max_pixels).save(path)
             paths.append(path)
     return paths
 
 
-def element_samples(page: ReaderPage, model: Reader, crops: Path) -> list[tuple[Sample, SampleMeta]]:
+def element_samples(
+    page: ReaderPage, model: Reader, *, crops: Path, max_pixels: int | None = None
+) -> list[tuple[Sample, SampleMeta]]:
     """Each element of ``page`` as ``model``'s recogniser is fine-tuned on it: its crop (:func:`cut_elements`) asked with
-    its recognition prompt and answered with what it reads there; its meta the page's, its id ``<page id>_<k>``."""
+    its recognition prompt and answered with what it reads there; its meta the page's, its id ``<page id>_<k>``, with
+    the element's kind and place."""
     samples: list[tuple[Sample, SampleMeta]] = []
-    for k, (element, crop) in enumerate(zip(page.elements.elements, cut_elements(page, crops), strict=True)):
+    cut = cut_elements(page, crops, max_pixels)
+    for k, (element, crop) in enumerate(zip(page.elements.elements, cut, strict=True)):
         recognition = ELEMENT_FORMATS[model](element)
         sample = chat_sample(f"<image>{recognition.prompt}", recognition.answer, [crop])
-        samples.append((sample, page.meta.model_copy(update={"id": f"{page.meta.id}_{k}"})))
+        meta = page.meta.model_copy(update={"id": f"{page.meta.id}_{k}", "kind": element.kind, "element": k})
+        samples.append((sample, meta))
+    return samples
+
+
+def _line_left_out(line: ElementLine) -> SkipReason | None:
+    """Why a line is no sample: no text, tagged unclear (a drawn line that read back badly), or a box too small to hold
+    writing; None for a line to read."""
+    if not line.text.strip():
+        return SkipReason.EMPTY_LINE
+    if line.tag == "unclear":
+        return SkipReason.UNCLEAR_LINE
+    x0, y0, x1, y1 = line.box
+    if min(x1 - x0, y1 - y0) < MIN_LINE_SIDE:
+        return SkipReason.SMALL_LINE
+    return None
+
+
+def line_samples(
+    page: ReaderPage, labels: str, *, lines: Path, max_pixels: int | None = None
+) -> list[tuple[Sample, SampleMeta] | Skipped]:
+    """Each text line of each element of ``page`` (a table cell's too) as MiniCPM-OCR is fine-tuned on a line: its box
+    cut from the page's image, scaled to at most ``max_pixels`` (:func:`fitted`) and saved in ``lines`` as
+    ``<page id>_<k>_<j>.jpg`` (element ``k``, line ``j``), asked ``<image>Text Recognition:`` and answered with its
+    text; its meta the page's, its id the crop's stem, with its element's kind and place, its production and its place
+    in the element. A line that is no sample (:func:`_line_left_out`) is left out, recorded with ``labels`` (its page's
+    label file)."""
+    samples: list[tuple[Sample, SampleMeta] | Skipped] = []
+    with open_scan(page.image) as image:
+        for k, element in enumerate(page.elements.elements):
+            for j, line in enumerate(element.lines):
+                line_id = f"{page.meta.id}_{k}_{j}"
+                reason = _line_left_out(line)
+                if reason is not None:
+                    samples.append(Skipped(labels=labels, side=page.meta.side, reason=reason, id=line_id))
+                    continue
+                path = lines / f"{line_id}.jpg"
+                crop = fitted(image.crop(_on_image(line.box, page)).convert("RGB"), max_pixels)
+                crop.save(path, quality=TILE_QUALITY)
+                update = {"id": line_id, "kind": element.kind, "production": line.production, "element": k, "line": j}
+                sample = chat_sample(f"<image>{TEXT_PROMPT}", line.text, [path])
+                samples.append((sample, page.meta.model_copy(update=update)))
     return samples
 
 
@@ -253,14 +337,30 @@ def opening_sample(scan: ReaderScan, pages: Path) -> tuple[Sample, SampleMeta]:
     return chat_sample("<image>" * len(images) + PARSE_PROMPT, answer, images), meta
 
 
-def scan_samples(scan: ReaderScan, *, model: Reader, task: Task, dirs: ImageDirs) -> list[tuple[Sample, SampleMeta]]:
-    """A scan's samples for ``model``'s ``task``, each with its meta: its pages in one (``opening``), a sample per
-    element of each page (``elements``), else a sample per page."""
+type SampleOrSkipped = tuple[Sample, SampleMeta] | Skipped  # a sample with its meta, or a line left out
+
+
+def scan_samples(
+    scan: ReaderScan, *, model: Reader, task: Task, dirs: ImageDirs, max_crop_pixels: int | None = None
+) -> list[SampleOrSkipped]:
+    """A scan's samples for ``model``'s ``task``, each with its meta, and the lines left out: its pages in one
+    (``opening``), a sample per element of each page (``elements``) or per line (``lines``), else a sample per page;
+    a crop scaled to at most ``max_crop_pixels``."""
     match task:
         case Task.OPENING:
             return [opening_sample(scan, dirs.pages)]
         case Task.ELEMENTS:
-            return [sample for page in scan.pages for sample in element_samples(page, model, dirs.crops)]
+            return [
+                sample
+                for page in scan.pages
+                for sample in element_samples(page, model, crops=dirs.crops, max_pixels=max_crop_pixels)
+            ]
+        case Task.LINES:
+            return [
+                sample
+                for page in scan.pages
+                for sample in line_samples(page, scan.labels, lines=dirs.lines, max_pixels=max_crop_pixels)
+            ]
         case _:
             page_format, shape = PAGE_FORMATS[(model, task)], SAMPLE_SHAPES[model]
             return [
@@ -280,24 +380,54 @@ def set_files(out: Path, split: Split | None) -> tuple[Path, Path]:
     return out, out.with_name(f"{out.stem}.meta.jsonl")
 
 
-type ScanSamples = tuple[ReaderScan, list[tuple[Sample, SampleMeta]]]  # a scan and its samples, each with its meta
+type ScanSamples = tuple[ReaderScan, list[SampleOrSkipped]]  # a scan, its samples with their meta, its lines left out
+
+
+class Limits(BaseModel):
+    """How much of its input a set takes: a crop's pixels at most (None: as cut), and a collection's training (or
+    unsplit) samples (None: all), a collection taking no more scans once it holds that many (its last scan's are all
+    kept); the test side is never capped, so every variant of a set is tested on the same pages."""
+
+    model_config = {"frozen": True}
+
+    max_crop_pixels: int | None = None
+    max_per_collection: int | None = None
 
 
 def scans_written(
-    items: Iterable[ReaderScan | Skipped], *, model: Reader, task: Task, dirs: ImageDirs
+    items: Iterable[ReaderScan | Skipped],
+    *,
+    model: Reader,
+    task: Task,
+    dirs: ImageDirs,
+    limits: Limits | None = None,
 ) -> Iterator[ScanSamples | Skipped]:
     """Each scan of ``items`` with its samples (:func:`scan_samples`), its images written, and each item left out: one
-    whose image cannot be read whole (a torn file whose size still reads) is left out too, not the set."""
+    whose image cannot be read whole (a torn file whose size still reads) is left out too, not the set, and one whose
+    collection already holds ``limits.max_per_collection`` samples of its split."""
+    limits = limits or Limits()
+    held: Counter[tuple[str, Split | None]] = Counter()
     for item in items:
         match item:
             case Skipped():
                 yield item
             case ReaderScan():
+                first = item.pages[0].meta
+                if (
+                    limits.max_per_collection is not None
+                    and first.split is not Split.TEST  # the test side is never capped: variants share their test set
+                    and held[first.collection, first.split] >= limits.max_per_collection
+                ):
+                    yield Skipped(labels=item.labels, reason=SkipReason.CAPPED)
+                    continue
                 try:
-                    samples = scan_samples(item, model=model, task=task, dirs=dirs)
+                    samples = scan_samples(
+                        item, model=model, task=task, dirs=dirs, max_crop_pixels=limits.max_crop_pixels
+                    )
                 except OSError as error:
                     yield Skipped(labels=item.labels, reason=SkipReason.UNREADABLE, error=describe(error))
                     continue
+                held[first.collection, first.split] += sum(1 for sample in samples if not isinstance(sample, Skipped))
                 yield item, samples
 
 
@@ -311,40 +441,70 @@ class Written(BaseModel):
     skipped: dict[str, int]
 
 
+class _SetWriter:
+    """A set's open files as it is written, and what went where: each split's set and meta files (:func:`set_files`),
+    the record of what is left out, the samples by split and the left out by why."""
+
+    def __init__(self, files: dict[Split | None, tuple[TextIO, TextIO]], left_out: TextIO) -> None:
+        self._files = files
+        self._left_out = left_out
+        self.samples: Counter[Split | None] = Counter()
+        self.skipped: Counter[str] = Counter()
+
+    def write(self, entry: SampleOrSkipped) -> None:
+        """A sample and its meta written to its split's files, or an item or line left out to the record."""
+        match entry:
+            case Skipped():
+                self._left_out.write(f"{entry.model_dump_json()}\n")
+                self.skipped[entry.reason] += 1
+            case (sample, meta):
+                set_file, meta_file = self._files[meta.split]
+                set_file.write(f"{sample.model_dump_json(exclude_none=True)}\n")
+                meta_file.write(f"{meta.model_dump_json()}\n")
+                self.samples[meta.split] += 1
+
+
 def write_set(
-    items: Iterable[ReaderScan | Skipped], out: Path, *, model: Reader, task: Task, splits: tuple[Split | None, ...]
+    items: Iterable[ReaderScan | Skipped],
+    out: Path,
+    *,
+    model: Reader,
+    task: Task,
+    splits: tuple[Split | None, ...],
+    limits: Limits | None = None,
 ) -> Written:
     """Each scan of ``items`` as ``model``'s ``task`` samples, written to its split's set files (:func:`set_files`, one
-    pair for each of ``splits``) as it is taken, its images beside them; and each item left out, in
-    ``<out stem>.skipped.jsonl``."""
+    pair for each of ``splits``) as it is taken, its images beside them, within ``limits``; and each item or line left
+    out, in ``<out stem>.skipped.jsonl``."""
     dirs = ImageDirs(
-        pages=(out.parent / f"{out.stem}_pages").resolve(), crops=(out.parent / f"{out.stem}_crops").resolve()
+        pages=(out.parent / f"{out.stem}_pages").resolve(),
+        crops=(out.parent / f"{out.stem}_crops").resolve(),
+        lines=(out.parent / f"{out.stem}_lines").resolve(),
     )
-    if task is Task.ELEMENTS:
-        dirs.crops.mkdir(parents=True, exist_ok=True)
-    samples: Counter[Split | None] = Counter()
-    skipped: Counter[str] = Counter()
+    crop_dirs = {Task.ELEMENTS: dirs.crops, Task.LINES: dirs.lines}
+    if task in crop_dirs:
+        crop_dirs[task].mkdir(parents=True, exist_ok=True)
     pages = scans = 0
     with ExitStack() as stack:
-        files = {
-            split: [stack.enter_context(path.open("w", encoding="utf-8")) for path in set_files(out, split)]
-            for split in splits
-        }
+        files: dict[Split | None, tuple[TextIO, TextIO]] = {}
+        for split in splits:
+            set_path, meta_path = set_files(out, split)
+            files[split] = (
+                stack.enter_context(set_path.open("w", encoding="utf-8")),
+                stack.enter_context(meta_path.open("w", encoding="utf-8")),
+            )
         left_out = stack.enter_context(out.with_name(f"{out.stem}.skipped.jsonl").open("w", encoding="utf-8"))
-        for outcome in scans_written(items, model=model, task=task, dirs=dirs):
+        writer = _SetWriter(files, left_out)
+        for outcome in scans_written(items, model=model, task=task, dirs=dirs, limits=limits):
             match outcome:
                 case Skipped():
-                    left_out.write(f"{outcome.model_dump_json()}\n")
-                    skipped[outcome.reason] += 1
-                case (scan, scan_lines):
-                    for sample, meta in scan_lines:
-                        set_file, meta_file = files[meta.split]
-                        set_file.write(f"{sample.model_dump_json(exclude_none=True)}\n")
-                        meta_file.write(f"{meta.model_dump_json()}\n")
-                        samples[meta.split] += 1
+                    writer.write(outcome)
+                case (scan, entries):
+                    for entry in entries:
+                        writer.write(entry)
                     pages += len(scan.pages)
                     scans += 1
-    return Written(samples=dict(samples), pages=pages, scans=scans, skipped=dict(skipped))
+    return Written(samples=dict(writer.samples), pages=pages, scans=scans, skipped=dict(writer.skipped))
 
 
 def _run_items(run: Path) -> list[ReaderScan]:
@@ -360,7 +520,7 @@ def _run_items(run: Path) -> list[ReaderScan]:
 
 
 def _xml_items(
-    xml: Path, *, split_of: Callable[[Path], Split | None], excluded: frozenset[str]
+    xml: Path, *, split_of: Callable[[Path], Split | None], excluded: frozenset[str], selection: Selection
 ) -> Iterable[ReaderScan | Skipped]:
     """The scans of the PAGE or ALTO files ``xml`` gives, and what of them is left out (:func:`xml_scans`).
 
@@ -368,9 +528,27 @@ def _xml_items(
         typer.BadParameter: If ``xml`` gives no PAGE or ALTO file.
     """
     try:
-        return xml_scans(xml, split_of=split_of, excluded=excluded)
+        return xml_scans(xml, split_of=split_of, excluded=excluded, selection=selection)
     except ValueError as error:
         raise typer.BadParameter(str(error), param_hint="--xml") from error
+
+
+class SetOptions(BaseModel):
+    """``<out stem>.options.json``: what a set was built from and with, so the variants of one reader's sets are told
+    apart and a run's manifest can name them; and what it came to."""
+
+    model: Reader
+    task: Task
+    run: str | None
+    xml: str | None
+    split_from_gt_test_lists: bool
+    exclude: str | None
+    selection: Selection
+    limits: Limits
+    samples: dict[str, int]  # by split ("all": the set is not split)
+    pages: int
+    scans: int
+    skipped: dict[str, int]
 
 
 @app.command()
@@ -379,8 +557,8 @@ def reader_set(
     out: Annotated[
         Path,
         typer.Option(
-            help="the JSON-lines file to write; its meta, test split, left-out record, cut pages (<out stem>_pages) "
-            "and crops (<out stem>_crops) go beside it"
+            help="the JSON-lines file to write; its meta, test split, left-out record, cut pages (<out stem>_pages), "
+            "crops (<out stem>_crops) and line crops (<out stem>_lines) go beside it"
         ),
     ],
     run: Annotated[
@@ -400,7 +578,16 @@ def reader_set(
             help="deepseek-ocr-2: grounded (the grounded Markdown; default) or markdown (Free OCR: the Markdown alone); "
             "paddleocr-vl: page (OCR: the Markdown; default), spotting (each line's text and box) or elements (each "
             "element's crop, for its recogniser); unlimited-ocr-2: parse (a page's blocks; default) or opening (a "
-            "scan's pages in one sample); minicpm-ocr: elements (each element's crop; default) or page (its plain text)"
+            "scan's pages in one sample); minicpm-ocr: elements (each element's crop; default), lines (each text "
+            "line's crop, in <out stem>_lines) or page (its plain text)"
+        ),
+    ] = None,
+    max_crop_pixels: Annotated[
+        int | None,
+        typer.Option(
+            min=1,
+            help="elements, lines: scale each crop down to at most this many pixels, its aspect kept (200704 = 448 x "
+            "448: a MiniCPM-OCR line in one view)",
         ),
     ] = None,
     split_from_gt_test_lists: Annotated[
@@ -419,26 +606,69 @@ def reader_set(
             "path of its PAGE file or scan, whole or its last parts",
         ),
     ] = None,
+    collection: Annotated[
+        list[str] | None,
+        typer.Option(help="--xml: take only this collection (GT-...); give it again for more. None given: all"),
+    ] = None,
+    exclude_collection: Annotated[
+        list[str] | None, typer.Option(help="--xml: leave this collection out; give it again for more")
+    ] = None,
+    max_per_collection: Annotated[
+        int | None,
+        typer.Option(
+            min=1,
+            help="take no more training scans of a collection once it holds this many samples (with --seed, from all "
+            "its volumes); the test split is never capped",
+        ),
+    ] = None,
+    seed: Annotated[
+        int | None, typer.Option(help="--xml: read the scans in an order shuffled by this seed, not by path")
+    ] = None,
 ) -> None:
     """Write the pages of a run, or of PAGE or ALTO files, as a page reader's fine-tuning set."""
     task = task or TASKS[model][0]
     if task not in TASKS[model]:
         raise typer.BadParameter(f"{model} is fine-tuned on {', '.join(TASKS[model])}", param_hint="--task")
+    if max_crop_pixels is not None and task not in (Task.ELEMENTS, Task.LINES):
+        raise typer.BadParameter(
+            f"{task} cuts no crops: give it with elements or lines", param_hint="--max-crop-pixels"
+        )
+    selection = Selection(
+        include=tuple(sorted(set(collection or ()))), exclude=tuple(sorted(set(exclude_collection or ()))), seed=seed
+    )
     if run is not None and xml is None:
-        if split_from_gt_test_lists or exclude is not None:
+        if split_from_gt_test_lists or exclude is not None or selection != Selection():
             raise typer.BadParameter(
-                "a run's pages are drawn, neither split by the GT's test lists nor left out by a list: give --xml",
-                param_hint="--split-from-gt-test-lists, --exclude",
+                "a run's pages are drawn, neither split by the GT's test lists, left out by a list nor of collections: "
+                "give --xml",
+                param_hint="--split-from-gt-test-lists, --exclude, --collection, --exclude-collection, --seed",
             )
         items = _run_items(run)
     elif xml is not None and run is None:
         excluded = read_exclusions(exclude) if exclude is not None else frozenset[str]()
-        items = _xml_items(xml, split_of=gt_split if split_from_gt_test_lists else unsplit, excluded=excluded)
+        split_of = gt_split if split_from_gt_test_lists else unsplit
+        items = _xml_items(xml, split_of=split_of, excluded=excluded, selection=selection)
     else:
         raise typer.BadParameter("give the pages as --run or as --xml, one of them", param_hint="--run, --xml")
     out.parent.mkdir(parents=True, exist_ok=True)
     splits = (Split.TRAIN, Split.TEST) if split_from_gt_test_lists else (None,)
-    written = write_set(items, out, model=model, task=task, splits=splits)
+    limits = Limits(max_crop_pixels=max_crop_pixels, max_per_collection=max_per_collection)
+    written = write_set(items, out, model=model, task=task, splits=splits, limits=limits)
+    options = SetOptions(
+        model=model,
+        task=task,
+        run=str(run.resolve()) if run else None,
+        xml=str(xml.resolve()) if xml else None,
+        split_from_gt_test_lists=split_from_gt_test_lists,
+        exclude=str(exclude.resolve()) if exclude else None,
+        selection=selection,
+        limits=limits,
+        samples={str(split or "all"): count for split, count in written.samples.items()},
+        pages=written.pages,
+        scans=written.scans,
+        skipped=written.skipped,
+    )
+    out.with_name(f"{out.stem}.options.json").write_text(options.model_dump_json(indent=1) + "\n", encoding="utf-8")
     for split in splits:
         console.print(f"{written.samples.get(split, 0)} samples -> {set_files(out, split)[0]}")
     console.print(f"from {written.pages} pages of {written.scans} scans")

@@ -90,6 +90,19 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
       the box grid (0-1000 as its post-processing clamps; v1's documentation says 0-999), whether `<PAGE>` follows the
       last block with no line break, and whether a paragraph's line breaks are kept.
 - [ ] A reader set of the whole GT (~30,000 scans, about 1.7 hours on one core).
+- [ ] htr-train ([docs/HTR_TRAIN.md](docs/HTR_TRAIN.md)) GPU smoke runs on the Spark, one guarded job at a time, after
+      the smoke sets (10-20 training scans of at least 3 volumes: `diffu-reader-set --task lines|elements|parse`,
+      `htr-train split-dev`, `htr-train jev-set`): `htr-train smoke` queues MiniCPM-OCR lines and regions, Jev and the
+      Unlimited-OCR 2 LoRA in `~/diffu_queue/htr_smoke.sh`; each passes when a checkpoint is written and the eval loss
+      is finite and falls. Check Jev's load log for a newly initialised `score` (its head must load).
+- [ ] htr-train's envs on HPC (login node), the models staged (`HF_HUB_OFFLINE=1`), a one-node smoke of each full
+      spec, then the full runs: MiniCPM-OCR lines and regions -> Jev -> Unlimited-OCR 2 -> the DSpark draft.
+- [ ] Scaled or native line crops for MiniCPM-OCR: the same 2,000 test lines read by the base model both ways.
+- [ ] The vllm env (x86 first; vLLM at or after #64105, its full commit) and the DSpark smoke
+      (`configs/smoke_vllm/dspark.yaml`), only after a measurement shows decoding dominates line serving time.
+- [ ] htr-train evaluation: predictions (`swift infer`; our generate-only loop for Unlimited-OCR 2), CER/WER by slice,
+      Jev's AUROC, a Jev judge stage beside the read-back (its threshold a setting, default 0.5), publishing
+      checkpoints private under `Gabriel/`.
 - [ ] Does the TrOCR read-back reject correct lines? Measure the share of real held-out lines it tags unclear (CPU, ~10
       minutes); above 20 %, a line-verification judge (a VLM asked whether a line shows exactly its text) is worth
       building.

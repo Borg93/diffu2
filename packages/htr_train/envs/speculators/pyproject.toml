@@ -1,0 +1,31 @@
+# htr-train's draft-training environment: speculators at main 560f0465 (0.9.0 plus #1317, which stops prepare-data
+# silently dropping conversations when the render route is missing), which trains DSpark drafts against a target served
+# by vLLM (vLLM itself runs in envs/vllm). speculators pins transformers <= 5.19.0, but it loads the target's config and
+# processor with transformers' Auto classes and minicpm_ocr is native only from 5.21 (the checkpoint ships no remote
+# code), so transformers is overridden to MiniCPM-OCR's 5.22.1: untested by speculators, checked by the envs lane's
+# `speculators train --dry-run` against a tiny MiniCPM-OCR.
+[project]
+name = "htr-env-speculators"
+version = "0"
+requires-python = "==3.12.*"
+# hs-connectors is speculators' own workspace member, which a git build of speculators asks for as a nightly
+# release: taken from the same commit instead; torchvision and torchaudio from torch's index
+dependencies = ["diffu-htr-train", "speculators", "hs-connectors", "torch==2.14.1", "torchvision", "torchaudio", "trackio"]
+
+[tool.uv]
+package = false
+environments = ["sys_platform == 'linux'"]
+override-dependencies = ["transformers==5.22.1"]
+
+[tool.uv.sources]
+speculators = { git = "https://github.com/vllm-project/speculators", rev = "560f0465f680bdb4564d903ac246c324643d82f5" }
+hs-connectors = { git = "https://github.com/vllm-project/speculators", rev = "560f0465f680bdb4564d903ac246c324643d82f5", subdirectory = "hs_connectors" }
+diffu-htr-train = { path = "../..", editable = true }
+torch = { index = "pytorch-cu130" }
+torchvision = { index = "pytorch-cu130" }
+torchaudio = { index = "pytorch-cu130" }
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true

@@ -1,0 +1,50 @@
+# MiniCPM-OCR on text lines, OpenBMB's full recipe (vision encoder and language model trained, projector frozen,
+# lr 5e-6, cosine) for 30 steps of 8 lines on the Spark: does it train, evaluate and save. Its set: the lines of the
+# smoke pages (packages/htr_train/README.md), scaled to one 448 x 448 view, dev cut by volume.
+name: smoke-minicpm-lines
+description: "smoke: lines, scaled to 448^2 px, real GT pages only"
+job:
+  kind: minicpm-ocr
+  model: {repo: openbmb/MiniCPM-OCR-1.0, revision: 2697d4e93dca82784abf858ae57206a49629cb6b}
+  tuner: full
+  freeze_vit: false
+  freeze_aligner: true
+  freeze_llm: false
+  learning_rate: 5.0e-6
+  max_steps: 30
+  global_batch: 8
+  lr_scheduler: cosine
+  warmup_ratio: 0.05
+  optim: adamw_torch_fused
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  adam_epsilon: 1.0e-8
+  weight_decay: 0.1
+  max_grad_norm: 1.0
+  seed: 42
+  data_seed: 42
+  max_length: 4096
+  packing: false
+  padding_free: false
+  attn_impl: sdpa
+  gradient_checkpointing: true
+  vit_gradient_checkpointing: true
+  gradient_checkpointing_kwargs: {use_reentrant: false}
+  dataset_num_proc: 2
+  dataloader_num_workers: 2
+  load_from_cache_file: false
+  dataset_shuffle: true  # each part's #N is drawn at random; false takes its first N rows
+  train_dataloader_shuffle: true
+  eval_strategy: steps
+  eval_steps: 10
+  save_strategy: steps
+  save_steps: 30
+  save_total_limit: 1
+  save_only_model: false
+  per_device_eval_batch_size: 1
+  logging_steps: 1
+  env: {DOWNSAMPLE_MODE: 4x}
+data:
+  train: [{path: data/htr/smoke/minicpm_lines.train.jsonl, samples: 300}]
+  dev: data/htr/smoke/minicpm_lines.dev.jsonl
+resources: {need_gb: 40, hours: 1}

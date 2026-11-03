@@ -1,0 +1,19 @@
+# htr-train's vLLM environment: designed, not built yet (built last, on x86 first). It serves the fine-tuned MiniCPM-OCR
+# for a DSpark draft's responses and hidden states (and later fast evaluation). MiniCPM-OCR in vLLM needs the fix of
+# vllm-project/vllm#64105 (merged 2026-10-29; not in v0.33.0rc3: with transformers >= 5.21 the model fails with a
+# missing 'downsample_mode'), so vLLM is main at OpenBMB's pin (fa3b9d13, 2026-10-29), or the first release that
+# carries the fix once there is one (a wheel instead of a source build). Before building on aarch64, find out whether
+# vLLM's aarch64 wheels carry GB10 (sm_121) kernels; OpenBMB's MiniCPM-OCR route is x86_64 only.
+[project]
+name = "htr-env-vllm"
+version = "0"
+requires-python = "==3.12.*"
+dependencies = ["diffu-htr-train", "vllm"]
+
+[tool.uv]
+package = false
+environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+
+[tool.uv.sources]
+diffu-htr-train = { path = "../..", editable = true }
+vllm = { git = "https://github.com/vllm-project/vllm", rev = "fa3b9d1377219247060d3c8b49eae199c9e7e154" }
