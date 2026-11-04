@@ -1,6 +1,6 @@
 """The sets htr-train builds: a dev split of whole volumes (or another split's volumes), with each side's options; Jev's
 pairs from a line set's lines of one side (the GT text, one wrong candidate drawn from the rules and a swapped line,
-and readers' reads, positive where they are the GT; each rendered by our frozen renderer, in OpenBMB's prompt bytes),
+and readers' reads, positive where they are the GT; each rendered by our frozen renderer, in our English prompt),
 refusing a line of the other side and a read of a line the set does not hold, a line whose crop cannot be read recorded
 and left out; and a draft's responses from its served target, a failed prompt recorded and the rest kept, a set whose
 prompts mostly fail refused. The CLI splits a set (refusing a share of no volume) and builds pairs (crops as cut at
@@ -21,7 +21,7 @@ from PIL import Image
 from typer.testing import CliRunner
 
 from diffu_htr_train.cli import app
-from diffu_htr_train.jev.prompt import PROMPT_MD5, model_prompt, prompt_digest, sample_prompt
+from diffu_htr_train.jev.prompt import INSTRUCTION, model_prompt, prompt_digest, sample_prompt
 from diffu_htr_train.jev.render import render_text, renderer_version
 from diffu_htr_train.sets import SetRefused
 from diffu_htr_train.sets.dev_split import split_dev, volumes_of
@@ -139,11 +139,13 @@ def test_split_dev_cli_refuses_a_share_of_no_volume(make_set: MakeSet) -> None:
     assert (result.exit_code, lines.with_name("lines.dev.jsonl").exists()) == (2, False)
 
 
-def test_jev_prompt_is_openbmbs_byte_for_byte() -> None:
-    assert (prompt_digest(), model_prompt("x").count("<|vision_start|>"), sample_prompt("x").count("<image>\n")) == (
-        PROMPT_MD5,
-        2,
-        2,
+def test_jev_prompt_puts_the_text_between_the_crop_and_its_rendering_then_the_english_instruction() -> None:
+    assert (
+        sample_prompt("Anno 1715"),
+        model_prompt("x").endswith("<|im_start|>assistant\n<think>\n\n</think>\n\n"),
+    ) == (
+        f"<image>\nOCR text:\nAnno 1715\n<image>\n{INSTRUCTION}",
+        True,
     )
 
 
@@ -207,8 +209,8 @@ def test_build_pairs_writes_the_gt_text_one_wrong_candidate_and_the_reads_for_ea
     assert [row["images"] for row in rows] == [
         [str(crops / f"{line}.jpg"), str(renders / f"{line}_{n}.png")] for line in ("p_0_0", "p_0_1") for n in range(3)
     ]
-    assert [(meta["source"], meta["page"], meta["volume"], meta["renderer"]) for meta in metas] == [
-        ("real", "p", "V1", renderer_version(jev_font))
+    assert [(meta["source"], meta["page"], meta["volume"], meta["renderer"], meta["prompt"]) for meta in metas] == [
+        ("real", "p", "V1", renderer_version(jev_font), prompt_digest())
     ] * 6
     assert [metas[k]["cer"] for k in (2, 5)] == [round(1 / 9, 4), round(1 / 9, 4)]
     assert [_size(crops / f"{line}.jpg") for line in ("p_0_0", "p_0_1")] == [(200, 40), (200, 40)]

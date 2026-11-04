@@ -72,8 +72,9 @@ last word cut) and another line of the same page (closest in length); and reader
 they are the GT after NFC and whitespace normalisation, negative where not, each with its CER to the GT. Every
 candidate is drawn by our renderer (one line, black on white, at the crop's size, FreeType's basic layout; DejaVu Sans
 by default, `HTR_TRAIN_JEV_FONT`), whose version (`htr-train-jev-render-1+<font digest>+pillow-<v>+freetype-<v>`)
-each pair records; a Jev run refuses pairs of another. The prompt is OpenBMB's, byte for byte: its md5 with `{text}` is
-`9aab68e8ba8ab4da17ba9752bddb199c`. Jev outputs a probability; the accept threshold is a setting of the judge (to come,
+each pair records; a Jev run refuses pairs of another. The prompt is ours, in English (`diffu_htr_train.jev.prompt`:
+the crop, "OCR text:" and the candidate, its rendering, then the instruction to judge whether they match); each pair
+records its fingerprint, and a Jev run refuses pairs built in another wording. Jev outputs a probability; the accept threshold is a setting of the judge (to come,
 default 0.5), not calibrated here.
 
 Our renderer is not OpenBMB's. Theirs (in their Docker image and render service) draws a candidate with a pinned
@@ -157,7 +158,7 @@ On Slurm, `htr-train launch --where slurm` writes an sbatch of one srun task a n
 - Jev is served by vLLM as a classifier: `--runner pooling --convert classify --hf-overrides '{"num_labels": 2}'`
   (its `config.json` has no `num_labels`), `--chat-template-content-format openai` (with the default, the images and
   text go in another order than in training, and the scores still look plausible), `--limit-mm-per-prompt
-  '{"image": 2}'`; `prob_1` is `softmax(logits)[1]`; the prompt's md5 is `9aab68e8...` and its last token id 271. No
+  '{"image": 2}'`; `prob_1` is `softmax(logits)[1]`; the prompt is ours (`diffu_htr_train.jev.prompt`), its last token id 271. No
   `IMAGE_MAX_TOKEN_NUM` at evaluation: the checkpoint's own image budget, as OpenBMB's guide says.
 - Jev's metric is AUROC on test pairs (`htr-train jev-set --side test`); a threshold, if one is ever needed, is chosen
   on labelled samples of our own pages by the accept rate and the accuracy of what is accepted.

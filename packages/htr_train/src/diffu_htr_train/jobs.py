@@ -20,6 +20,7 @@ from typing import Annotated, Literal, Self
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from diffu_htr_train.jev.prompt import prompt_digest
 from diffu_htr_train.output import validation_problems
 from diffu_htr_train.records import Sample, SampleMeta, meta_path, read_jsonl, read_meta, target_record_path
 
@@ -463,18 +464,24 @@ def check_data(data: DataRef) -> None:
             )
 
 
-def check_jev_renderer(job: JevJob, data: DataRef) -> None:
-    """A Jev run's pairs were all rendered by the job's renderer.
+def check_jev_pairs(job: JevJob, data: DataRef) -> None:
+    """A Jev run's pairs were all rendered by the job's renderer and built in this package's prompt.
 
     Raises:
-        JobRefused: If a training or dev pair's meta names another renderer, or none.
+        JobRefused: If a training or dev pair's meta names another renderer or prompt, or none.
     """
+    prompt = prompt_digest()
     for path in [part.path for part in data.train] + ([data.dev] if data.dev is not None else []):
         for meta in read_meta(meta_path(path)):
             if meta.renderer != job.renderer:
                 raise JobRefused(
                     f"{path}: {meta.id} was rendered by {meta.renderer or 'no renderer'}, the job trains on "
                     f"{job.renderer}: a new renderer is a new input, rebuild the pairs"
+                )
+            if meta.prompt != prompt:
+                raise JobRefused(
+                    f"{path}: {meta.id} was built in the prompt {meta.prompt or 'of no record'}, Jev trains in "
+                    f"{prompt} (diffu_htr_train.jev.prompt): rebuild the pairs"
                 )
 
 
@@ -525,7 +532,7 @@ def check_responses(job: DSparkJob) -> None:
 
 
 def check_run(spec: RunSpec) -> None:
-    """Every check a run passes before it is planned: its data (:func:`check_data`), a Jev run's renderer, a DSpark
+    """Every check a run passes before it is planned: its data (:func:`check_data`), a Jev run's renderer and prompt, a DSpark
     run's responses, and a local model that exists.
 
     Raises:
@@ -539,7 +546,7 @@ def check_run(spec: RunSpec) -> None:
             raise JobRefused(f"{spec.name} trains on no data")
         check_data(spec.data)
         if isinstance(spec.job, JevJob):
-            check_jev_renderer(spec.job, spec.data)
+            check_jev_pairs(spec.job, spec.data)
         model = spec.job.model
     if model.is_local and not Path(model.repo).expanduser().is_dir():
         raise JobRefused(f"{model.repo} is no model folder")

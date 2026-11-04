@@ -25,7 +25,7 @@ from typing import Literal
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
-from diffu_htr_train.jev.prompt import sample_prompt
+from diffu_htr_train.jev.prompt import prompt_digest, sample_prompt
 from diffu_htr_train.jev.render import render_text, renderer_version
 from diffu_htr_train.records import (
     Sample,
@@ -74,7 +74,7 @@ class Candidate(BaseModel):
 
 class PairMeta(BaseModel):
     """A pair's meta: its id, its line, page, collection and volume, its page's source and split, its candidate's
-    origin and CER to the GT text, and the renderer's version."""
+    origin and CER to the GT text, the renderer's version and the prompt's fingerprint."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -88,6 +88,7 @@ class PairMeta(BaseModel):
     candidate: str
     cer: float
     renderer: str
+    prompt: str
 
 
 class PairSettings(BaseModel):
@@ -125,7 +126,7 @@ class Built(BaseModel):
 
 class PairOptions(BaseModel):
     """``<out stem>.options.json`` of a pair set: the line set it was built from and that set's own options, the reads
-    used, the settings, the renderer's version and what it came to."""
+    used, the settings, the renderer's version, the prompt's fingerprint and what it came to."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -134,6 +135,7 @@ class PairOptions(BaseModel):
     reads: list[str]
     settings: PairSettings
     renderer: str
+    prompt: str
     built: Built
 
 
@@ -295,6 +297,7 @@ def _line_pairs(
             candidate=candidate.origin,
             cer=cer(candidate.text, line.text),
             renderer=version,
+            prompt=prompt_digest(),
         )
         pairs.append((sample, meta))
     return pairs
@@ -347,6 +350,7 @@ def build_pairs(lines_set: Path, out: Path, *, settings: PairSettings, reads: li
         reads=[str(path.resolve()) for path in reads],
         settings=settings,
         renderer=version,
+        prompt=prompt_digest(),
         built=built,
     )
     options_path(out).write_text(record.model_dump_json(indent=1) + "\n", encoding="utf-8")

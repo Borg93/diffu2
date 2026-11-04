@@ -1,8 +1,10 @@
-"""MiniCPM-OCR-Jev's prompt: the bytes its checkpoint was trained on, which a fine-tune keeps (a changed byte changes
-what its scores mean). In a training sample (:func:`sample_prompt`) the two images are ms-swift's ``<image>``
-placeholders, each followed by a line break; the model reads the turn as :func:`model_prompt` gives it, whose digest
-with ``{text}`` for the text is the one OpenBMB publishes (``scripts/minicpm-ocr-jev/infer_vllm.py``: original image,
-the candidate text, its rendering, the instruction, then the empty assistant turn whose last token is pooled)."""
+"""MiniCPM-OCR-Jev's prompt, ours in English: the crop, the candidate text, its rendering, then the instruction to
+judge whether they match. Jev is fine-tuned on pairs in this prompt; its fingerprint (:func:`prompt_digest`) is in
+every pair's meta, and a Jev run refuses pairs built in another wording, which would change what the scores mean.
+
+In a training sample (:func:`sample_prompt`) the two images are ms-swift's ``<image>`` placeholders, each followed by a
+line break; the model reads the turn as :func:`model_prompt` gives it (original image, the candidate text, its
+rendering, the instruction, then the empty assistant turn whose last token is pooled)."""
 
 from __future__ import annotations
 
@@ -10,14 +12,13 @@ import hashlib
 
 IMAGE = "<image>"  # ms-swift's placeholder; the qwen3_5 template shows it as QWEN_IMAGE
 QWEN_IMAGE = "<|vision_start|><|image_pad|><|vision_end|>"
-TEXT_LABEL = "OCR文本："
-INSTRUCTION = (
-    "第一张图是原图，第二张图是上述 OCR 文本渲染得到的图片。\n"
-    "请判断该 OCR 文本及其对应渲染图是否与原图内容一致。\n"
-    "这是一个二分类任务：一致标为 1，不一致标为 0。"
-)
 ASSISTANT_TURN = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
-PROMPT_MD5 = "9aab68e8ba8ab4da17ba9752bddb199c"  # OpenBMB's, of model_prompt("{text}")
+TEXT_LABEL = "OCR text:"
+INSTRUCTION = (
+    "The first image is the original; the second image is the OCR text above rendered as an image.\n"
+    "Judge whether the OCR text and its rendering match the content of the original exactly.\n"
+    "This is a binary classification: label 1 if they match, 0 if they do not."
+)
 
 
 def _turn(text: str, image: str) -> str:
@@ -37,5 +38,6 @@ def model_prompt(text: str) -> str:
 
 
 def prompt_digest() -> str:
-    """The md5 of :func:`model_prompt` with ``{text}`` for the text, to compare with :data:`PROMPT_MD5`."""
-    return hashlib.md5(model_prompt("{text}").encode("utf-8")).hexdigest()
+    """The prompt's fingerprint: the first 12 hex digits of the md5 of :func:`model_prompt` with ``{text}`` for the
+    text."""
+    return hashlib.md5(model_prompt("{text}").encode("utf-8")).hexdigest()[:12]

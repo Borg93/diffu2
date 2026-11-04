@@ -1,9 +1,10 @@
-# htr-train's vLLM environment: designed, not built yet (built last, on x86 first). It serves the fine-tuned MiniCPM-OCR
-# for a DSpark draft's responses and hidden states (and later fast evaluation). MiniCPM-OCR in vLLM needs the fix of
-# vllm-project/vllm#64105 (merged 2026-10-29; not in v0.33.0rc3: with transformers >= 5.21 the model fails with a
-# missing 'downsample_mode'), so vLLM is main at OpenBMB's pin (fa3b9d13, 2026-10-29), or the first release that
-# carries the fix once there is one (a wheel instead of a source build). Before building on aarch64, find out whether
-# vLLM's aarch64 wheels carry GB10 (sm_121) kernels; OpenBMB's MiniCPM-OCR route is x86_64 only.
+# htr-train's vLLM environment: serves MiniCPM-OCR for a DSpark draft's responses and hidden states, and for measuring
+# OpenBMB's released draft against our target. MiniCPM-OCR in vLLM needs the fix of vllm-project/vllm#64105 (merged
+# 2026-10-29; not in v0.33.0rc3: with transformers >= 5.21 the model fails with a missing 'downsample_mode'), so vLLM is
+# main at OpenBMB's pin (fa3b9d13, 2026-10-29) as vLLM's own prebuilt wheels of that commit, one for aarch64 (the
+# Spark) and one for x86_64. That vLLM declares transformers < 5.21 while minicpm_ocr is native only from 5.21, so
+# transformers is overridden to MiniCPM-OCR's 5.22.1 (as in envs/minicpm), as OpenBMB's installer adjusts vLLM's
+# requirement for its pinned transformers (their docs/SKILL_en.md section 4).
 [project]
 name = "htr-env-vllm"
 version = "0"
@@ -12,8 +13,12 @@ dependencies = ["diffu-htr-train", "vllm"]
 
 [tool.uv]
 package = false
-environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+environments = ["sys_platform == 'linux' and platform_machine == 'aarch64'", "sys_platform == 'linux' and platform_machine == 'x86_64'"]
+override-dependencies = ["transformers==5.22.1"]
 
 [tool.uv.sources]
 diffu-htr-train = { path = "../..", editable = true }
-vllm = { git = "https://github.com/vllm-project/vllm", rev = "fa3b9d1377219247060d3c8b49eae199c9e7e154" }
+vllm = [
+    { url = "https://wheels.vllm.ai/fa3b9d1377219247060d3c8b49eae199c9e7e154/vllm-0.33.0rc1.dev234%2Bgfa3b9d137-cp38-abi3-manylinux_2_28_aarch64.whl", marker = "platform_machine == 'aarch64'" },
+    { url = "https://wheels.vllm.ai/fa3b9d1377219247060d3c8b49eae199c9e7e154/vllm-0.33.0rc1.dev234%2Bgfa3b9d137-cp38-abi3-manylinux_2_28_x86_64.whl", marker = "platform_machine == 'x86_64'" },
+]

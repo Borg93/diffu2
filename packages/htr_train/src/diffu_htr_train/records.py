@@ -16,7 +16,7 @@ from diffu_htr_train.output import validation_problems
 class SampleMeta(BaseModel):
     """One sample's meta: its id, whether its page is ``real`` or ``synthetic`` (drawn), its collection and volume (""
     where its input gives none), its split (``train``, ``test``, or None for an unsplit set) and, for a Jev pair, the
-    renderer its candidate was rendered with. Other fields (side, kind, production, a pair's candidate) are kept as
+    renderer its candidate was rendered with and the prompt it was built in. Other fields (side, kind, production, a pair's candidate) are kept as
     written."""
 
     model_config = ConfigDict(frozen=True, extra="allow")
@@ -27,6 +27,7 @@ class SampleMeta(BaseModel):
     volume: str = ""
     split: Literal["train", "test"] | None = None
     renderer: str = ""
+    prompt: str = ""
 
     def is_of(self, side: str) -> bool:
         """Whether the sample may be used as one of ``side``: a drawn one always; a real one only when its set was split

@@ -16,6 +16,7 @@ import pytest
 import yaml
 from pydantic import JsonValue
 
+from diffu_htr_train.jev.prompt import prompt_digest
 from diffu_htr_train.jobs import JobRefused, ModelRef, RunSpec, Where, load_run_spec
 from diffu_htr_train.launch import plan_run
 from diffu_htr_train.settings import Settings
@@ -282,16 +283,35 @@ def load_run_spec_from(folder: Path, spec: dict[str, Any]) -> RunSpec:
     return load_run_spec(path)
 
 
-def _pairs_by(renderer: str, make_set: MakeSet) -> Path:
+def _pairs_by(renderer: str, prompt: str, make_set: MakeSet) -> Path:
     pairs = make_set("pairs", [("a_0_0_0", "Anno", "GT-A", "V1", "train")])
     meta = pairs.with_name("pairs.meta.jsonl")
     row = json.loads(meta.read_text(encoding="utf-8"))
-    meta.write_text(json.dumps({**row, "renderer": renderer}) + "\n", encoding="utf-8")
+    meta.write_text(json.dumps({**row, "renderer": renderer, "prompt": prompt}) + "\n", encoding="utf-8")
     return pairs
 
 
-def test_plan_run_refuses_jev_pairs_of_another_renderer(tmp_path: Path, make_set: MakeSet, settings: Settings) -> None:
-    pairs = _pairs_by("htr-train-jev-render-1+111111111111", make_set)
+@pytest.mark.parametrize(
+    ("renderer", "prompt", "refusal"),
+    [
+        pytest.param(
+            "htr-train-jev-render-1+111111111111",
+            prompt_digest(),
+            "rendered by htr-train-jev-render-1\\+111111111111, the job trains on",
+            id="another-renderer",
+        ),
+        pytest.param(
+            "htr-train-jev-render-1+222222222222",
+            "0123456789ab",
+            "was built in the prompt 0123456789ab, Jev trains in",
+            id="another-prompt",
+        ),
+    ],
+)
+def test_plan_run_refuses_jev_pairs_of_another_renderer_or_prompt(
+    tmp_path: Path, make_set: MakeSet, settings: Settings, renderer: str, prompt: str, refusal: str
+) -> None:
+    pairs = _pairs_by(renderer, prompt, make_set)
     model = tmp_path / "jev"
     model.mkdir()
     spec = load_run_spec_from(
@@ -310,7 +330,7 @@ def test_plan_run_refuses_jev_pairs_of_another_renderer(tmp_path: Path, make_set
         },
     )
 
-    with pytest.raises(JobRefused, match="rendered by htr-train-jev-render-1\\+111111111111, the job trains on"):
+    with pytest.raises(JobRefused, match=refusal):
         plan_run(spec, Where.SPARK, settings)
 
 
