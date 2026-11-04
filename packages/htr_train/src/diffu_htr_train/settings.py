@@ -26,6 +26,8 @@ class Settings(BaseSettings):
         trackio_project: The trackio project ms-swift's runs log to (local, never a Space).
         slurm_partition: The Slurm partition a run is submitted to (None: the site's default).
         slurm_account: The Slurm account a run is billed to (None: the user's default).
+        local_gpus: The GPUs a local run takes (``--where local``), their ids comma-separated (``1,2``); none set:
+            no local run.
         jev_font: The font the Jev renderer draws candidate texts in; its digest is part of the renderer's version.
     """
 
@@ -41,6 +43,7 @@ class Settings(BaseSettings):
     trackio_project: str = "diffu"
     slurm_partition: str | None = None
     slurm_account: str | None = None
+    local_gpus: str = ""
     jev_font: Path = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
 
     def guard_floor(self) -> int:
@@ -55,3 +58,14 @@ class Settings(BaseSettings):
         if not text.isdigit():
             raise ValueError(f"{self.floor_file} holds {text!r}, not the guard's floor in whole GB")
         return int(text)
+
+    def local_gpu_ids(self) -> tuple[int, ...]:
+        """The GPU ids ``local_gpus`` names, in its order.
+
+        Raises:
+            ValueError: If it names something that is not a GPU id, or one twice.
+        """
+        given = [part.strip() for part in self.local_gpus.split(",") if part.strip()]
+        if not all(part.isdigit() for part in given) or len(set(given)) != len(given):
+            raise ValueError(f"HTR_TRAIN_LOCAL_GPUS is {self.local_gpus!r}: GPU ids, comma-separated, each once")
+        return tuple(int(part) for part in given)

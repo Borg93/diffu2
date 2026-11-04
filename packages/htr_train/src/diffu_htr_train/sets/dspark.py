@@ -131,12 +131,14 @@ class UserTurn(BaseModel):
 
 
 class AssistantTurn(BaseModel):
-    """A speculators conversation's answer: the target's."""
+    """A speculators conversation's answer: the target's, as one text part (speculators loads the responses with
+    ``datasets``' JSON loader, whose ``content`` column reads a bare-number string such as ``"897"`` as a number, and
+    that conversation then fails; a list of parts, as the prompt's, keeps it text, the same token ids and loss mask)."""
 
     model_config = ConfigDict(frozen=True)
 
     role: Literal["assistant"] = "assistant"
-    content: str
+    content: list[TextPart]
 
 
 class Conversation(BaseModel):
@@ -217,7 +219,7 @@ def conversation(prompt: Prompted, answer: str) -> Conversation:
     return Conversation(
         conversations=(
             UserTurn(content=[ImagePath(path=str(prompt.image)), TextPart(text=prompt.text)]),
-            AssistantTurn(content=answer),
+            AssistantTurn(content=[TextPart(text=answer)]),
         )
     )
 

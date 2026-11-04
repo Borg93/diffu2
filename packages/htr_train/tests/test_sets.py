@@ -366,7 +366,7 @@ def test_write_responses_answers_each_prompt_with_the_served_target_and_records_
                     "role": "user",
                     "content": [{"type": "image", "path": str(crop)}, {"type": "text", "text": "Text Recognition:"}],
                 },
-                {"role": "assistant", "content": "good"},
+                {"role": "assistant", "content": [{"type": "text", "text": "good"}]},
             ]
         }
     ]

@@ -312,6 +312,7 @@ def test_render_gives_speculators_dspark_example_for_our_target_served_by_vllm(t
         str(tool / "vllm" / ".venv" / "bin" / "vllm"),
         "serve",
         str(target),
+        "--enable-scale-out",
         "--served-model-name",
         str(target),
         "--port",

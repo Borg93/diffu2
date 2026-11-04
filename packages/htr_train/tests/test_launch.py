@@ -2,8 +2,9 @@
 Spark its steps run under the memory guard with the guard's floor and the run's memory, the tool called in its own
 environment; on Slurm an sbatch file runs one task a node with ms-swift's multi-node variables; a draft's served model
 is started, waited for and stopped around its steps, and a target that dies before it answers fails them; a queue runs
-Spark runs one after another, waiting out a busy GPU; the smoke command writes each smoke run and queues them; a
-queued Slurm run and a served target for a run that serves none are refused."""
+Spark runs one after another, waiting out a busy GPU; a local run takes the server's GPUs its settings name, as many
+as it asks for, with ms-swift's process a GPU; the smoke command writes each smoke run and queues them; a queued Slurm
+run and a served target for a run that serves none are refused."""
 
 from __future__ import annotations
 
@@ -354,3 +355,40 @@ def test_serve_target_refuses_a_run_that_serves_no_target(
     assert "refused: spec.yaml is a minicpm-ocr run: only a dspark run serves a target" in " ".join(
         result.output.split()
     )
+
+
+def test_plan_run_runs_a_local_run_on_the_gpus_its_settings_name_with_a_process_a_gpu(
+    make_set: MakeSet, settings: Settings
+) -> None:
+    spec = _spec(make_set, gpus_per_node=2)
+
+    plan = plan_run(spec, Where.LOCAL, settings.model_copy(update={"local_gpus": "1, 2"}))
+
+    root = (settings.runs / "lines").resolve()
+    steps = plan.scripts["steps.sh"].splitlines()
+    assert steps[3:6] == [
+        "export CUDA_VISIBLE_DEVICES=1,2",
+        "export OMP_NUM_THREADS=8",
+        'export PYTORCH_ALLOC_CONF="${PYTORCH_ALLOC_CONF:-expandable_segments:True}"',
+    ]
+    assert plan.commands[0].environ["NPROC_PER_NODE"] == "2"
+    assert "--gradient_accumulation_steps 4" in shlex.join(plan.commands[0].argv)
+    assert plan.scripts["command.sh"] == f"#!/bin/bash\nset -euo pipefail\nexec bash {root / 'steps.sh'}\n"
+    assert plan.start == ["bash", str(root / "command.sh")]
+
+
+@pytest.mark.parametrize(
+    ("gpus", "resources", "refusal"),
+    [
+        pytest.param("", {}, "names 0 \\(none\\)", id="none-named"),
+        pytest.param("1", {"gpus_per_node": 2}, "asks for 2 GPUs and HTR_TRAIN_LOCAL_GPUS names 1", id="too-few"),
+        pytest.param("1,2", {"nodes": 2, "gpus_per_node": 2}, "asks for 2 nodes", id="two-nodes"),
+        pytest.param("1,x", {}, "GPU ids, comma-separated", id="not-an-id"),
+        pytest.param("1,1", {"gpus_per_node": 2}, "each once", id="named-twice"),
+    ],
+)
+def test_plan_run_refuses_a_local_run_its_named_gpus_do_not_fit(
+    make_set: MakeSet, settings: Settings, gpus: str, resources: dict[str, JsonValue], refusal: str
+) -> None:
+    with pytest.raises(JobRefused, match=refusal):
+        plan_run(_spec(make_set, **resources), Where.LOCAL, settings.model_copy(update={"local_gpus": gpus}))

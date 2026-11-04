@@ -250,14 +250,16 @@ def _prepared(paths: RunPaths) -> Path:
     return (paths.root / "data").resolve()
 
 
-def vllm_serve(job: DSparkJob, paths: RunPaths, *, extra: list[Flag]) -> Command:
-    """vLLM serving a draft's target, in the background: by its path, under that name (the name its responses
-    record), reading local images below the job's ``media_root`` only, with ``extra`` flags and the job's own."""
+def vllm_serve(job: DSparkJob, paths: RunPaths, *, extra: list[Flag], switches: tuple[str, ...] = ()) -> Command:
+    """vLLM serving a draft's target, in the background: by its path (``vllm serve`` takes it first), then
+    ``switches``, under that name (the name its responses record), reading local images below the job's
+    ``media_root`` only, with ``extra`` flags and the job's own."""
     target = _target(job)
     argv = [
         paths.tool(ToolEnv.VLLM, "vllm"),
         "serve",
         target,
+        *switches,
         *flags(
             [
                 ("--served-model-name", target),
@@ -280,7 +282,9 @@ def render_responses_server(job: DSparkJob, paths: RunPaths) -> Command:
 
 def _dspark_serve(job: DSparkJob, paths: RunPaths) -> Command:
     """vLLM serving a draft's target with the hidden states of ``target_layer_ids`` and of its last layer (as
-    speculators' launcher asks for it) extracted into the run's folder for speculators."""
+    speculators' launcher asks for it) extracted into the run's folder for speculators; its render endpoints on
+    (``--enable-scale-out``, which speculators' ``prepare-data`` renders each conversation through, and which answer
+    403 without it; speculators' own launcher always adds it)."""
     layers = [*job.target_layer_ids, job.target_layers]
     speculative = {
         "method": "extract_hidden_states",
@@ -297,7 +301,7 @@ def _dspark_serve(job: DSparkJob, paths: RunPaths) -> Command:
         ("--speculative_config", speculative),
         ("--kv_transfer_config", transfer),
     ]
-    return vllm_serve(job, paths, extra=extra)
+    return vllm_serve(job, paths, extra=extra, switches=("--enable-scale-out",))
 
 
 def _dspark_prepare(job: DSparkJob, paths: RunPaths) -> Command:

@@ -59,10 +59,12 @@ class ToolEnv(StrEnum):
 
 
 class Where(StrEnum):
-    """Where a run is launched: the DGX Spark, through its memory guard, or a Slurm cluster."""
+    """Where a run is launched: the DGX Spark, through its memory guard, a Slurm cluster, or a server's own GPUs (one
+    node, the GPUs ``HTR_TRAIN_LOCAL_GPUS`` names)."""
 
     SPARK = "spark"
     SLURM = "slurm"
+    LOCAL = "local"
 
 
 class ModelRef(BaseModel):
@@ -552,12 +554,27 @@ def check_run(spec: RunSpec) -> None:
         raise JobRefused(f"{model.repo} is no model folder")
 
 
-def check_where(spec: RunSpec, where: Where, *, memory_gb: int, floor_gb: int) -> None:
-    """A run fits where it is launched: on the Spark, one GPU, and its memory plus the guard's floor within the box's.
+def check_where(
+    spec: RunSpec, where: Where, *, memory_gb: int, floor_gb: int, local_gpus: tuple[int, ...] = ()
+) -> None:
+    """A run fits where it is launched: on the Spark, one GPU, and its memory plus the guard's floor within the box's;
+    on a server's own GPUs (``local_gpus``), one node and as many GPUs as it names.
 
     Raises:
-        JobRefused: If a Spark run asks for more than one GPU or more memory than the box has.
+        JobRefused: If a Spark run asks for more than one GPU or more memory than the box has, or a local run for
+            more than one node or another number of GPUs than are named.
     """
+    if where is Where.LOCAL:
+        if spec.resources.nodes != 1:
+            raise JobRefused(
+                f"{spec.name} asks for {spec.resources.nodes} nodes: a local run has one; launch it on slurm"
+            )
+        if len(local_gpus) != spec.resources.gpus_per_node:
+            raise JobRefused(
+                f"{spec.name} asks for {spec.resources.gpus_per_node} GPUs and HTR_TRAIN_LOCAL_GPUS names "
+                f"{len(local_gpus)} ({','.join(map(str, local_gpus)) or 'none'}): name as many as it takes"
+            )
+        return
     if where is not Where.SPARK:
         return
     if spec.resources.gpus != 1:

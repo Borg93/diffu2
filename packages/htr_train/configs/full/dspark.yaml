@@ -16,6 +16,8 @@ job:
     - --trust-request-mm-kwargs
     - --default-chat-template-kwargs
     - '{"enable_thinking": false}'
+    - --limit-mm-per-prompt  # video off: vLLM's start-up probe of MiniCPM-OCR's video path fails on transformers 5.22.1
+    - '{"image": 4, "video": 0}'
   vllm_memory: 0.35
   epochs: 3
 resources: {nodes: 1, gpus_per_node: 1, need_gb: 60, hours: 12, cpus_per_task: 32}

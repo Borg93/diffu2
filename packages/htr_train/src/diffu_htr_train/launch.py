@@ -1,8 +1,8 @@
 """A run planned (:func:`plan_run`: its spec checked, its commands rendered, its scripts written out as text) and then
-written and started where it runs (:data:`LAUNCHERS`): on the Spark under its memory guard, or on a Slurm cluster by
-sbatch. Every run's folder ``<runs>/<name>/`` holds the validated spec (``job.yaml``), what it was run from
+written and started where it runs (:data:`LAUNCHERS`): on the Spark under its memory guard, on a Slurm cluster by
+sbatch, or on a server's own GPUs by bash. Every run's folder ``<runs>/<name>/`` holds the validated spec (``job.yaml``), what it was run from
 (``manifest.json``) and its scripts: ``steps.sh`` (its commands, in order) and the launcher's (``command.sh``, the
-guard's call, or ``job.sbatch``).
+guard's call or the steps' on a server, or ``job.sbatch``).
 """
 
 from __future__ import annotations
@@ -27,7 +27,8 @@ READY_SECONDS = 1800  # how long a served model may take to answer its health ch
 MASTER_PORT = 29500
 
 # What each launcher's steps set before the commands: the Spark's one GPU and capped CPU threads (a training shares
-# the box); on Slurm, ms-swift's multi-node variables from the task's own (one srun task a node), the models staged
+# the box); on Slurm, ms-swift's multi-node variables from the task's own (one srun task a node), the models staged;
+# on a server, its named GPUs (:func:`preamble`) and capped CPU threads (ms-swift starts a process a GPU)
 PREAMBLES: dict[Where, list[str]] = {
     Where.SPARK: [
         "export CUDA_VISIBLE_DEVICES=0",
@@ -40,7 +41,20 @@ PREAMBLES: dict[Where, list[str]] = {
         f"export MASTER_PORT={MASTER_PORT}",
         "export HF_HUB_OFFLINE=1 OMP_NUM_THREADS=8",
     ],
+    Where.LOCAL: [
+        "export OMP_NUM_THREADS=8",
+        'export PYTORCH_ALLOC_CONF="${PYTORCH_ALLOC_CONF:-expandable_segments:True}"',
+    ],
 }
+
+
+def preamble(where: Where, settings: Settings) -> list[str]:
+    """What the steps set before the commands (:data:`PREAMBLES`); a local run's GPUs first, as the settings name
+    them."""
+    if where is Where.LOCAL:
+        gpus = ",".join(map(str, settings.local_gpu_ids()))
+        return [f"export CUDA_VISIBLE_DEVICES={gpus}", *PREAMBLES[where]]
+    return PREAMBLES[where]
 
 
 class Plan(BaseModel):
@@ -79,14 +93,16 @@ def _serve_lines(command: Command, *, ready: str, log: Path) -> list[str]:
     ]
 
 
-def steps_script(spec: RunSpec, *, where: Where, commands: list[Command], paths: RunPaths) -> str:
-    """The run's commands as a bash script, in order, after its launcher's preamble; a served model started in the
-    background and waited for."""
+def steps_script(
+    spec: RunSpec, *, where: Where, commands: list[Command], paths: RunPaths, setup: list[str] | None = None
+) -> str:
+    """The run's commands as a bash script, in order, after its launcher's preamble (``setup``; None:
+    :data:`PREAMBLES`'s); a served model started in the background and waited for."""
     lines = [
         "#!/bin/bash",
         f"# htr-train run {spec.name} ({spec.job.kind}), written by htr-train launch --where {where}.",
         "set -euo pipefail",
-        *PREAMBLES[where],
+        *(PREAMBLES[where] if setup is None else setup),
     ]
     for command in commands:
         match command:
@@ -185,7 +201,17 @@ def _slurm(spec: RunSpec, paths: RunPaths, *, settings: Settings, floor_gb: int)
     return Launch(name=script.name, text=slurm_script(spec, paths), start=["sbatch", *flags(site), str(script)])
 
 
-LAUNCHERS: dict[Where, Launcher] = {Where.SPARK: _spark, Where.SLURM: _slurm}
+def _local(spec: RunSpec, paths: RunPaths, *, settings: Settings, floor_gb: int) -> Launch:
+    """The steps, run with bash on the server's own GPUs (their preamble names them); no guard: the GPUs are the
+    run's."""
+    script = paths.root / "command.sh"
+    text = "\n".join(
+        ["#!/bin/bash", "set -euo pipefail", f"exec bash {shlex.quote(str((paths.root / 'steps.sh').resolve()))}"]
+    )
+    return Launch(name=script.name, text=text + "\n", start=["bash", str(script)])
+
+
+LAUNCHERS: dict[Where, Launcher] = {Where.SPARK: _spark, Where.SLURM: _slurm, Where.LOCAL: _local}
 
 
 def plan_run(spec: RunSpec, where: Where, settings: Settings) -> Plan:
@@ -199,15 +225,17 @@ def plan_run(spec: RunSpec, where: Where, settings: Settings) -> Plan:
     check_run(spec)
     try:
         floor = settings.guard_floor()
+        local_gpus = settings.local_gpu_ids()
     except ValueError as error:
         raise JobRefused(str(error)) from error
-    check_where(spec, where, memory_gb=settings.memory_gb, floor_gb=floor)
+    check_where(spec, where, memory_gb=settings.memory_gb, floor_gb=floor, local_gpus=local_gpus)
     paths = RunPaths(
         root=settings.runs.resolve() / spec.name, envs=settings.envs.resolve(), trackio_project=settings.trackio_project
     )
     commands = render(spec, paths)
     launch = LAUNCHERS[where](spec, paths, settings=settings, floor_gb=floor)
-    scripts = {"steps.sh": steps_script(spec, where=where, commands=commands, paths=paths), launch.name: launch.text}
+    steps = steps_script(spec, where=where, commands=commands, paths=paths, setup=preamble(where, settings))
+    scripts = {"steps.sh": steps, launch.name: launch.text}
     return Plan(spec=spec, where=where, paths=paths, commands=commands, scripts=scripts, start=launch.start)
 
 

@@ -4,8 +4,9 @@ One app with subcommands rather than the repo's one ``diffu-*`` script a command
 run spec and its sets) and one set of machine settings, and are asked for as ``htr-train render|launch|smoke``.
 
 - ``render SPEC``: the run checked and its commands and scripts printed; nothing written or started.
-- ``launch SPEC --where spark|slurm``: the run's folder written (spec, manifest, scripts) and the run started (on the
-  Spark under its memory guard; on Slurm submitted by sbatch); ``--queue`` (the Spark only) writes it and adds it to
+- ``launch SPEC --where spark|slurm|local``: the run's folder written (spec, manifest, scripts) and the run started (on
+  the Spark under its memory guard; on Slurm submitted by sbatch; locally on this server's GPUs that
+  ``HTR_TRAIN_LOCAL_GPUS`` names, in the foreground); ``--queue`` (the Spark only) writes it and adds it to
   a queue script in ``~/diffu_queue`` instead of starting it.
 - ``smoke [CONFIGS]``: every smoke spec planned for the Spark, written, and queued one after another in
   ``~/diffu_queue/htr_smoke.sh`` (not started).
@@ -45,7 +46,12 @@ app = typer.Typer(add_completion=False, rich_markup_mode="rich", no_args_is_help
 SMOKE_CONFIGS = Path(__file__).parents[2] / "configs" / "smoke"
 
 SpecArgument = Annotated[Path, typer.Argument(exists=True, dir_okay=False, help="a run spec (YAML)")]
-WhereOption = Annotated[Where, typer.Option(help="spark (one GPU, under the memory guard) or slurm")]
+WhereOption = Annotated[
+    Where,
+    typer.Option(
+        help="spark (one GPU, under the memory guard), slurm, or local (this server's GPUs: HTR_TRAIN_LOCAL_GPUS)"
+    ),
+]
 
 
 def _refused(error: Exception) -> typer.Exit:
