@@ -17,12 +17,13 @@ each other and with the workspace's (transformers 5.22 vs 4.52.1 vs speculators'
 | `envs/minicpm` | MiniCPM-OCR, Jev | Python 3.12, torch 2.14.1 (cu130), ms-swift @ `ef4953a4`, transformers 5.22.1, flash-linear-attention 0.4.2, peft < 0.21, datasets < 4.8.5, qwen-vl-utils 0.0.14, trackio; groups `multi-gpu` (deepspeed >= 0.19.3, < 0.20) and `x86` (flash-attn 2.8.3, causal-conv1d: packing) |
 | `envs/uocr2` | Unlimited-OCR 2 | Python 3.12, torch 2.14.1, ms-swift @ `ef4953a4`, transformers 4.52.1, easydict, addict, peft < 0.21, datasets < 4.8.5, trackio; group `multi-gpu`. Its remote code runs from `baidu/Unlimited-OCR-2@0480966938291445591f69f08a13b041c073a96a` only |
 | `envs/speculators` | the DSpark draft | Python 3.12, speculators @ `560f0465` (0.9.0 + the prepare-data render-route fix), torch 2.14.1, transformers overridden to 5.22.1 (speculators pins <= 5.19.0; `minicpm_ocr` is native from 5.21) |
-| `envs/vllm` | serving the target for the draft | designed, not built: vLLM main at or after #64105 (OpenBMB pins `fa3b9d13`), x86 first |
+| `envs/vllm` | serving the target for the draft | vLLM at OpenBMB's pin `fa3b9d13` from vLLM's own prebuilt wheels (linux aarch64 and x86_64), transformers overridden to 5.22.1; built and run on the Spark (GB10) |
 
 ```bash
 uv sync --project packages/htr_train/envs/minicpm             # one at a time; --group multi-gpu on a cluster
 uv sync --project packages/htr_train/envs/uocr2
 uv sync --project packages/htr_train/envs/speculators
+uv sync --project packages/htr_train/envs/vllm
 ```
 
 htr-train calls each tool by its path, `envs/<env>/.venv/bin/<tool>`, never imports it.

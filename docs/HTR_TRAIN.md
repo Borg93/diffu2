@@ -13,6 +13,8 @@ fine-tuned MiniCPM-OCR needs its own.
 [README](../packages/htr_train/README.md) has the commands. Evaluation (predictions, CER, Jev's AUROC, the judge
 stage) is the next step and not built yet.
 
+State as of 4 Nov 2026, what broke in the first real runs, and the run order on other hardware: [HTR_HANDOVER.md](HTR_HANDOVER.md).
+
 ## One tool where it fits
 
 - **ms-swift** (`swift sft`) trains the three models: MiniCPM-OCR full, Unlimited-OCR 2 LoRA or full, Jev as a
