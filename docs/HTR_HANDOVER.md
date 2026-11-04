@@ -19,8 +19,14 @@ lines a collection, scaled to one 448 x 448 view; dev 5 % by volume; Jev pairs b
 OpenBMB's released DSpark draft against base MiniCPM-OCR on our lines: 4.2 % of draft tokens accepted, 325 vs 341
 tokens/s without it (no gain). A draft must be trained on the target's own answers.
 
-Nothing here has run on x86 Blackwell yet. The environments are locked for linux x86_64 and aarch64; only aarch64
-(the Spark) has been built and run.
+On 4 Nov evening the envs were built on dmlpai01 (x86_64, RTX PRO 6000 Blackwell, 96 GB a GPU) and every route ran
+there in small: MiniCPM-OCR and Jev on two GPUs (ZeRO-2, ZeRO-3, `--where local`), and DSpark end to end (vLLM with
+hidden-state extraction, speculators' preparation and training, the trained draft served beside its target). The full
+GT-Lejonet runs, matched to the TrOCR baseline, are `packages/htr_train/lion_data_prep/` (its README).
+
+**Packing is off.** In `envs/minicpm`, Qwen3.5's linear attention carries state from one packed sample into the next:
+a sample packed second differs by 0.82 relative from the same sample run alone (the first by 0.03), even with
+`cu_seq_lens` passed. Packing would train on mixed lines, so MiniCPM-OCR and Jev train unpacked (sdpa).
 
 ## Run order on the new machine
 
@@ -40,15 +46,15 @@ Nothing here has run on x86 Blackwell yet. The environments are locked for linux
 7. **DSpark draft** against the final MiniCPM-OCR: answers first (`htr-train serve-target`, `htr-train dspark-set`),
    then `configs/full/dspark.yaml` with the target's path filled in. Score acceptance served.
 
-Every job is launched with `htr-train launch SPEC --where spark|slurm`, which writes `runs/htr/<name>/` (the job,
-its `steps.sh`, the `command.sh` that runs it, the manifest of its sets). There is no target for a plain multi-GPU
-server: on one, run the written `steps.sh` by hand (and set `CUDA_VISIBLE_DEVICES` and, for ms-swift,
-`NPROC_PER_NODE`).
+Every job is launched with `htr-train launch SPEC --where spark|slurm|local`, which writes `runs/htr/<name>/` (the
+job, its `steps.sh`, the `command.sh` that runs it, the manifest of its sets). `local` runs it on this server's GPUs
+that `HTR_TRAIN_LOCAL_GPUS` names (`1,2`), as many as the spec's `gpus_per_node`, ms-swift a process a GPU.
 
 ## Faults found in the first real runs (4 Nov), and the workaround until each is fixed in the code
 
-The DSpark pipeline had only run in tests before 4 Nov; these all came up then. Each is to be fixed in `htr-train`;
-until then, edit the run's `steps.sh` (or the set) as described.
+The DSpark pipeline had only run in tests before 4 Nov; these all came up then. 2, 3 and 5 are fixed in `htr-train`
+since (the draft's server gets `--enable-scale-out`, answers are written as text parts, the DSpark specs serve with
+video off); for the others, edit the run's `steps.sh` (or the set) as described.
 
 1. **Environment paths.** `steps.sh` points at `packages/htr_train/envs/<env>/.venv` under the checkout `htr-train`
    was run from; if the envs were built in another checkout (a worktree), the run stops at once ("No such file or

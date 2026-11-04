@@ -1,0 +1,45 @@
+# MiniCPM-OCR-Jev from its checkpoint on every GT-Lejonet training line's pairs (1 negative a line, from the lines
+# lion_data_prep/build_sets.sh cuts), real only, on one server's two GPUs after minicpm-all (htr-train launch --where
+# local, HTR_TRAIN_LOCAL_GPUS). OpenBMB's recipe (docs/finetune_jev_en.md: lr 1e-5, ZeRO-3, 2 epochs) but unpacked and
+# sdpa, 32 pairs a GPU, 2 accumulated (128 a step, about what their 8 packs of 12,000 tokens hold): in envs/minicpm,
+# Qwen3.5's linear attention carries state from one packed sample into the next (see minicpm_all.yaml), as the Spark
+# pilot was trained. Eval and save every 1,000 steps.
+name: jev-all
+description: "Jev from its checkpoint, all GT training lines' pairs (1 negative a line), real only, 2 GPUs"
+job:
+  kind: jev
+  model: {repo: openbmb/MiniCPM-OCR-Jev, revision: a0ed278eb6aa1f333a711665ab610055a4a816ab}
+  renderer: htr-train-jev-render-1+ae7b7855e115+pillow-12.2.0+freetype-2.14.3
+  tuner: full
+  freeze_vit: true
+  freeze_aligner: true
+  freeze_llm: false
+  learning_rate: 1.0e-5
+  epochs: 2
+  global_batch: 128
+  per_device_batch: 32
+  lr_scheduler: cosine
+  warmup_ratio: 0.05
+  weight_decay: 0.1
+  max_grad_norm: 1.0
+  seed: 42
+  max_length: 4096
+  packing: false
+  attn_impl: sdpa
+  deepspeed: zero3
+  gradient_checkpointing: true
+  dataset_num_proc: 16
+  dataloader_num_workers: 8
+  eval_strategy: steps
+  eval_steps: 1000
+  save_strategy: steps
+  save_steps: 1000
+  save_total_limit: 3
+  save_only_model: true
+  per_device_eval_batch_size: 16
+  logging_steps: 10
+  env: {IMAGE_MAX_TOKEN_NUM: "2048"}
+data:
+  train: [{path: data/htr/jev_lines.train.jsonl}]
+  dev: data/htr/jev_lines.dev.jsonl
+resources: {gpus_per_node: 2, need_gb: 60, hours: 60}

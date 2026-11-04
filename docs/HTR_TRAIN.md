@@ -167,6 +167,9 @@ On Slurm, `htr-train launch --where slurm` writes an sbatch of one srun task a n
 
 ## Not known yet
 
+- Whether packing can be made safe for Qwen3.5 here: in `envs/minicpm` a packed sample's linear-attention state leaks
+  into the next (HTR_HANDOVER.md), so every run is unpacked until a check of the same sample packed and alone agrees.
+
 - Whether flash-attn and causal-conv1d build for aarch64 / sm_121 (plan: `sdpa`, no packing, on the Spark).
 - Whether vLLM's aarch64 wheels carry GB10 kernels; OpenBMB's MiniCPM-OCR vLLM route is x86_64 only.
 - speculators with transformers 5.22.1 (its pin says <= 5.19.0): the envs lane's dry run.

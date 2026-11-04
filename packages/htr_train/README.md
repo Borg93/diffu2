@@ -84,6 +84,7 @@ divide, packing without flash attention, and a Spark run of more than its one GP
 htr-train render packages/htr_train/configs/smoke/minicpm_lines.yaml        # the scripts, nothing started
 htr-train launch packages/htr_train/configs/smoke/minicpm_lines.yaml --where spark
 htr-train launch packages/htr_train/configs/full/minicpm_lines_scaled.yaml --where slurm
+HTR_TRAIN_LOCAL_GPUS=1,2 htr-train launch packages/htr_train/lion_data_prep/configs/minicpm_all.yaml --where local
 htr-train smoke                                                             # every smoke run, queued in ~/diffu_queue
 ```
 
@@ -99,3 +100,10 @@ from `HTR_TRAIN_*` variables (`diffu_htr_train.settings`): `HTR_TRAIN_RUNS`, `HT
 - `envs` lane (`pytest packages/htr_train -m envs`, the envs built): a real `swift sft` of two steps on tiny models, on
   CPU.
 - `gpu` lane (`-m gpu`): the smoke runs, through the guard, one at a time.
+
+## GT-Lejonet
+
+[`lion_data_prep/`](lion_data_prep/README.md) holds the sets and runs for the full GT-Lejonet HTR export, matched one
+to one to the TrOCR model trained on it (the same test pages, lines cut and kept as it cuts and keeps them): its
+`build_sets.sh` cuts every line and region and starts `train.sh`, which trains MiniCPM-OCR and then Jev on two GPUs
+from its `configs/`.

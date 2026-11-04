@@ -1,0 +1,40 @@
+# jev-all's setup in small on two GPUs (--where local): unpacked, sdpa, ZeRO-3, 16 pairs a GPU.
+name: smoke-jev-2gpu
+description: "smoke: Jev from its checkpoint, line pairs (1 negative a line), real only"
+job:
+  kind: jev
+  model: {repo: openbmb/MiniCPM-OCR-Jev, revision: a0ed278eb6aa1f333a711665ab610055a4a816ab}
+  renderer: htr-train-jev-render-1+ae7b7855e115+pillow-12.2.0+freetype-2.14.3
+  tuner: full
+  freeze_vit: true
+  freeze_aligner: true
+  freeze_llm: false
+  learning_rate: 1.0e-5
+  max_steps: 15
+  global_batch: 32
+  per_device_batch: 16
+  lr_scheduler: cosine
+  warmup_ratio: 0.05
+  weight_decay: 0.1
+  max_grad_norm: 1.0
+  seed: 42
+  max_length: 4096
+  packing: false
+  attn_impl: sdpa
+  deepspeed: zero3
+  gradient_checkpointing: true
+  dataset_num_proc: 2
+  dataloader_num_workers: 2
+  eval_strategy: steps
+  eval_steps: 10
+  save_strategy: steps
+  save_steps: 30
+  save_total_limit: 1
+  save_only_model: true
+  per_device_eval_batch_size: 16
+  logging_steps: 1
+  env: {IMAGE_MAX_TOKEN_NUM: "2048"}
+data:
+  train: [{path: data/htr/smoke/jev_lines.train.jsonl}]
+  dev: data/htr/smoke/jev_lines.dev.jsonl
+resources: {gpus_per_node: 2, need_gb: 60, hours: 1}

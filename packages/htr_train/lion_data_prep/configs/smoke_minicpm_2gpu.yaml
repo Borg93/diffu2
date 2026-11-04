@@ -1,0 +1,50 @@
+# minicpm-all's setup in small on two GPUs (--where local): unpacked, sdpa, ZeRO-2, 8 samples a GPU,
+# lines and every smoke region (the longest samples) mixed, to measure speed and peak memory.
+name: smoke-minicpm-2gpu
+description: "smoke: lines + regions, unpacked, 8 a GPU, 2 GPUs"
+job:
+  kind: minicpm-ocr
+  model: {repo: openbmb/MiniCPM-OCR-1.0, revision: 2697d4e93dca82784abf858ae57206a49629cb6b}
+  tuner: full
+  freeze_vit: false
+  freeze_aligner: true
+  freeze_llm: false
+  learning_rate: 5.0e-6
+  max_steps: 20
+  global_batch: 16
+  per_device_batch: 8
+  lr_scheduler: cosine
+  warmup_ratio: 0.05
+  optim: adamw_torch_fused
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  adam_epsilon: 1.0e-8
+  weight_decay: 0.1
+  max_grad_norm: 1.0
+  seed: 42
+  data_seed: 42
+  max_length: 4096
+  packing: false
+  padding_free: false
+  attn_impl: sdpa
+  deepspeed: zero2
+  gradient_checkpointing: true
+  vit_gradient_checkpointing: true
+  gradient_checkpointing_kwargs: {use_reentrant: false}
+  dataset_num_proc: 4
+  dataloader_num_workers: 4
+  load_from_cache_file: false
+  dataset_shuffle: true
+  train_dataloader_shuffle: true
+  eval_strategy: steps
+  eval_steps: 20
+  save_strategy: "no"
+  per_device_eval_batch_size: 16
+  logging_steps: 1
+  env: {DOWNSAMPLE_MODE: 4x}
+data:
+  train:
+    - {path: data/htr/smoke/minicpm_lines.train.jsonl, samples: 300}
+    - {path: data/htr/smoke/minicpm_regions.train.jsonl}
+  dev: data/htr/smoke/minicpm_lines.dev.jsonl
+resources: {gpus_per_node: 2, need_gb: 40, hours: 1}

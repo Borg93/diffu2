@@ -1,0 +1,60 @@
+# MiniCPM-OCR on every GT-Lejonet training line (scaled to 448^2 px; masked to its outline, test_0050 held out and
+# TrOCR's line rules, as lion_data_prep/build_sets.sh cuts them) and every training region (paragraph, scaled to at
+# most 9 x 448^2 px, the most its 9 slices see), real only, on one server's two GPUs (htr-train launch --where local,
+# HTR_TRAIN_LOCAL_GPUS). OpenBMB's recipe (docs/swift_minicpm_ocr_french_en.md: unpacked, sdpa, lr 5e-6, AdamW fused,
+# cosine, ZeRO-2, global batch 128, 3 epochs, the best by eval loss), 4 samples a GPU, 16 accumulated (8 a GPU peaked
+# at 86 of 96 GB with regions in the smoke). Not packed: in envs/minicpm, Qwen3.5's linear attention carries state
+# from one packed sample into the next (a sample packed second differs by 0.82 relative from the same sample alone),
+# so packing would train on mixed lines. Eval and save every 1,000 steps, so a crash loses hours, not an epoch.
+name: minicpm-all
+description: "all GT training lines (scaled) + all regions (<= 9 x 448^2 px), real only, 2 GPUs"
+job:
+  kind: minicpm-ocr
+  model: {repo: openbmb/MiniCPM-OCR-1.0, revision: 2697d4e93dca82784abf858ae57206a49629cb6b}
+  tuner: full
+  freeze_vit: false
+  freeze_aligner: true
+  freeze_llm: false
+  learning_rate: 5.0e-6
+  epochs: 3
+  global_batch: 128
+  per_device_batch: 4
+  lr_scheduler: cosine
+  warmup_ratio: 0.05
+  optim: adamw_torch_fused
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  adam_epsilon: 1.0e-8
+  weight_decay: 0.1
+  max_grad_norm: 1.0
+  seed: 42
+  data_seed: 42
+  max_length: 4096
+  packing: false
+  padding_free: false
+  attn_impl: sdpa
+  deepspeed: zero2
+  gradient_checkpointing: true
+  vit_gradient_checkpointing: true
+  gradient_checkpointing_kwargs: {use_reentrant: false}
+  dataset_num_proc: 16
+  dataloader_num_workers: 8
+  load_from_cache_file: false
+  dataset_shuffle: true
+  train_dataloader_shuffle: true
+  eval_strategy: steps
+  eval_steps: 1000
+  save_strategy: steps
+  save_steps: 1000
+  save_total_limit: 3
+  save_only_model: false
+  best_by_eval_loss: true
+  per_device_eval_batch_size: 16
+  logging_steps: 10
+  env: {DOWNSAMPLE_MODE: 4x}
+data:
+  train:
+    - {path: data/htr/minicpm_lines_scaled.train.jsonl}
+    - {path: data/htr/minicpm_regions.train.jsonl}
+  dev: data/htr/minicpm_lines_scaled.dev.jsonl
+resources: {gpus_per_node: 2, need_gb: 60, hours: 60}
