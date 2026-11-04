@@ -1,8 +1,8 @@
 # Jev pilot on the Spark: does fine-tuning teach Jev our historical hands? (Published Jev on our smoke pairs ranks a
 # correct text above a wrong one 66 % of the time.) The smoke recipe for 2,000 steps on data/htr/pilot's pairs
 # (htr-train jev-set on <=2,000 training lines a collection, dev 5 % by volume), evaluated every 500 steps.
-name: pilot-jev-lines
-description: "pilot: Jev from its checkpoint, 2,000 steps of 8 pairs from <=2,000 GT training lines a collection, real only"
+name: pilot-jev-lines-en
+description: "pilot: Jev from its checkpoint, our English prompt, 2,000 steps of 8 pairs from <=2,000 GT training lines a collection, real only"
 job:
   kind: jev
   model: {repo: openbmb/MiniCPM-OCR-Jev, revision: a0ed278eb6aa1f333a711665ab610055a4a816ab}
@@ -35,6 +35,6 @@ job:
   logging_steps: 10
   env: {IMAGE_MAX_TOKEN_NUM: "2048"}
 data:
-  train: [{path: data/htr/pilot/jev_lines.train.jsonl}]
-  dev: data/htr/pilot/jev_lines.dev.jsonl
+  train: [{path: data/htr/pilot/jev_en.train.jsonl}]
+  dev: data/htr/pilot/jev_en.dev.jsonl
 resources: {need_gb: 60, hours: 4}
