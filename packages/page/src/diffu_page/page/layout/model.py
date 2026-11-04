@@ -74,13 +74,15 @@ class TextLine(BaseModel):
     if its template says (None: it does not, and the line is drawn as handwriting) and, in a table, its cell.
 
     A line given without a text holds none (refill writes one into it); without a baseline, its baseline is its box's
-    bottom, as an ALTO line's without a ``BASELINE``.
+    bottom, as an ALTO line's without a ``BASELINE``. ``polygon`` is its outline (page px) where its file gives one (a
+    PAGE ``Coords``), else empty.
     """
 
     model_config = {"frozen": True}
 
     text: str = ""
     box: PageBox
+    polygon: tuple[tuple[float, float], ...] = ()
     baseline_y: float
     kind: LineKind = LineKind.BODY
     block: str = ""  # the PAGE TextRegion / TableCell or ALTO TextBlock it came from: its id, else its place

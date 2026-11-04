@@ -81,6 +81,7 @@ def _text_line(
     return TextLine(
         text=line.text,
         box=(min(xs), min(ys), max(xs), max(ys)),
+        polygon=tuple(line.polygon),
         baseline_y=line.baseline_y,
         kind=kind,
         block=block,

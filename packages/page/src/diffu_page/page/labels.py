@@ -448,12 +448,13 @@ PARSE_PROMPT = "Multi page parsing."  # Unlimited-OCR 2's after its pages' image
 
 
 class ElementLine(BaseModel):
-    """One line of a page element: its text, its box (page px: x0, y0, x1, y1), how it was made, its tag (``unclear``
-    when it read back badly) and, in a table, its cell, counted from the first row and column of the table in the
-    image."""
+    """One line of a page element: its text, its box (page px: x0, y0, x1, y1), its outline (page px; empty where
+    unknown), how it was made, its tag (``unclear`` when it read back badly) and, in a table, its cell, counted from
+    the first row and column of the table in the image."""
 
     text: str
     box: Rect
+    polygon: list[Point] = Field(default_factory=list)
     production: Production = Production.HANDWRITTEN
     tag: str = ""
     cell: CellRef | None = None
@@ -546,7 +547,14 @@ def _element_line(line: LineLabel, row0: int, column0: int) -> ElementLine:
         if line.cell is None
         else line.cell.model_copy(update={"row": line.cell.row - row0, "column": line.cell.column - column0})
     )
-    return ElementLine(text=line.text, box=_region_rect([line]), production=line.production, tag=line.tag, cell=cell)
+    return ElementLine(
+        text=line.text,
+        box=_region_rect([line]),
+        polygon=list(line.polygon),
+        production=line.production,
+        tag=line.tag,
+        cell=cell,
+    )
 
 
 def page_elements(labels: PageLabels) -> PageElements:
@@ -579,17 +587,19 @@ def layout_elements(layout: Layout, image: str) -> PageElements:
     """A layout's page (``image`` its image's name) as the page readers read it, its elements made as a drawn page's
     are (:func:`page_elements`): each text region one, each table one, in the layout's reading order. Each line's box
     is cut to the page, a line with nothing on it left out (a transcriber's box may run over the scan's edge or the
-    gutter of an opening); a line its file does not say how it was made counts as handwritten."""
+    gutter of an opening); a line its file does not say how it was made counts as handwritten. A line keeps its outline
+    where its file gives one, cut to the page as its box is (so the outline's box is the line's), else its box."""
     lines: list[LineLabel] = []
     for order, line in enumerate(layout.lines):
         box = _on_page(line.box, layout.width, layout.height)
         if box is None:
             continue
         x0, y0, x1, y1 = box
+        outline = [(round(min(max(x, 0), layout.width)), round(min(max(y, 0), layout.height))) for x, y in line.polygon]
         lines.append(
             LineLabel(
                 text=line.text,
-                polygon=[(x0, y0), (x1, y0), (x1, y1), (x0, y1)],
+                polygon=outline if len(outline) >= 3 else [(x0, y0), (x1, y0), (x1, y1), (x0, y1)],
                 region=line.kind,
                 block=line.block,
                 order=order,

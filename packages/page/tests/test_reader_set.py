@@ -586,6 +586,44 @@ def test_reader_set_scales_line_crops_to_at_most_max_crop_pixels_and_records_the
     ]
 
 
+def test_reader_set_masks_a_line_to_its_outline_and_leaves_out_doubts_and_small_lines_as_the_trocr_baseline_does(
+    tmp_path: Path,
+) -> None:
+    outline = [(100, 300), (700, 300), (100, 340)]  # the box's upper left half
+    body = PageElement(
+        kind=LineKind.BODY,
+        box=(100, 300, 700, 460),
+        lines=[
+            ElementLine(text="Anno 1715 den 4 maj", box=(100, 300, 700, 340), polygon=outline),
+            ElementLine(text="hwilket (?) bewistes", box=(100, 340, 700, 380)),
+            ElementLine(text="Nilsson ibidem. Desse bekänn[e]r", box=(100, 380, 700, 420)),
+            ElementLine(text="nine px high", box=(100, 420, 700, 429)),
+        ],
+    )
+    run = _run(tmp_path / "run", body)
+    out = tmp_path / "set" / "lines.jsonl"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            *("--run", str(run), "--model", "minicpm-ocr", "--task", "lines", "--out", str(out)),
+            *("--mask-lines", "--reject-uncertain", "--min-line-side", "10"),
+        ],
+    )
+
+    crop = load_rgb(tmp_path / "set" / "lines_lines" / "000_page_0_0_0.jpg")
+    page = load_rgb(run / IMAGE).crop((100, 300, 700, 340))
+    assert result.exit_code == 0
+    assert crop.size == (600, 40)
+    assert all(abs(a - b) < 40 for a, b in zip(crop.getpixel((20, 5)), page.getpixel((20, 5)), strict=True))
+    assert crop.getpixel((580, 35)) == pytest.approx((255, 255, 255), abs=8)  # below the outline: white
+    assert [row["reason"] for row in _lines(tmp_path / "set" / "lines.skipped.jsonl")] == [
+        "uncertain-line",
+        "uncertain-line",
+        "small-line",
+    ]
+
+
 def test_reader_set_scales_an_element_crop_past_max_crop_pixels_and_keeps_one_within_it_as_cut(tmp_path: Path) -> None:
     note = PageElement(  # 100 x 40 = 4,000 px
         kind=LineKind.BODY, box=(100, 500, 200, 540), lines=[ElementLine(text="Nota", box=(100, 500, 200, 540))]
@@ -673,6 +711,51 @@ def test_reader_set_splits_the_gt_by_its_test_lists_its_second_export_counted_an
     ]
 
 
+def test_reader_set_masks_a_gt_line_to_the_outline_its_page_file_gives(tmp_path: Path) -> None:
+    gt = tmp_path / "gt"
+    _scan(gt / VOLUME / "a.jpg", (100, 200))
+    triangle = (  # the box (10, 10, 90, 40)'s upper left half: its lower right corner lies outside
+        '<TextRegion id="r"><TextLine id="r_0"><Coords points="10,10 90,10 10,40"/>'
+        "<TextEquiv><Unicode>Anno 1715</Unicode></TextEquiv></TextLine></TextRegion>"
+    )
+    _page_xml(gt / VOLUME / "page" / "a.xml", (100, 200), triangle)
+    out = tmp_path / "set" / "lines.jsonl"
+
+    result = CliRunner().invoke(
+        app, ["--xml", str(gt), "--model", "minicpm-ocr", "--task", "lines", "--mask-lines", "--out", str(out)]
+    )
+
+    crop = load_rgb(Path(_lines(out)[0]["images"][0]))
+    assert result.exit_code == 0
+    assert crop.size == (80, 30)
+    assert crop.getpixel((77, 27)) == pytest.approx((255, 255, 255), abs=8)
+    assert crop.getpixel((3, 3)) != pytest.approx((255, 255, 255), abs=8)
+
+
+def test_reader_set_splits_the_gt_by_the_test_list_it_is_given_alone(tmp_path: Path) -> None:
+    gt = tmp_path / "gt"
+    for name in ("a", "b", "e"):
+        _gt_page(gt, VOLUME, name)
+    (gt / VOLUME / "page" / "test_0050").write_text("b.xml\n", encoding="utf-8")  # nested: 0050 in 0100
+    (gt / VOLUME / "page" / "test_0100").write_text("b.xml\ne.xml", encoding="utf-8")
+    out = tmp_path / "set" / "gt.jsonl"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            *("--xml", str(gt), "--model", "minicpm-ocr", "--task", "page", "--out", str(out)),
+            *("--split-from-gt-test-lists", "--gt-test-list", "test_0050"),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert [row["scan"] for row in _lines(tmp_path / "set" / "gt.meta.jsonl")] == ["a.jpg", "e.jpg"]
+    assert [row["scan"] for row in _lines(tmp_path / "set" / "gt.test.meta.jsonl")] == ["b.jpg"]
+    assert (
+        json.loads((tmp_path / "set" / "gt.options.json").read_text(encoding="utf-8"))["gt_test_lists"] == "test_0050"
+    )
+
+
 @pytest.mark.parametrize(
     ("choice", "selection"),
     [
@@ -730,9 +813,14 @@ def test_reader_set_takes_the_collections_it_is_given_caps_their_training_side_a
         "run": None,
         "xml": str(gt.resolve()),
         "split_from_gt_test_lists": True,
+        "gt_test_lists": "test_*",
         "exclude": None,
         "selection": selection,
-        "limits": {"max_crop_pixels": None, "max_per_collection": 2},
+        "limits": {
+            "max_crop_pixels": None,
+            "max_per_collection": 2,
+            "line_rules": {"mask": False, "min_side": 8, "reject_uncertain": False},
+        },
         "samples": {"train": 2, "test": 3},
         "pages": 5,
         "scans": 5,

@@ -133,6 +133,7 @@ class SkipReason(StrEnum):
     EMPTY_LINE = "empty-line"  # a line with no text to read
     UNCLEAR_LINE = "unclear-line"  # a drawn line that read back badly (tagged unclear)
     SMALL_LINE = "small-line"  # a line's box too narrow or too low to hold writing
+    UNCERTAIN_LINE = "uncertain-line"  # a transcriber's doubt or comment in its text (??, (?), [...])
     CAPPED = "capped"  # its collection already holds the samples a set takes of one
 
 
@@ -269,27 +270,29 @@ def label_files(source: Path) -> tuple[list[LabelFile], list[Skipped]]:
 
 
 @cache
-def _test_names(folder: Path) -> frozenset[str]:
-    """The file names the GT's test lists in ``folder`` name (every ``test_*`` file's lines), none where it has none."""
+def _test_names(folder: Path, lists: str = TEST_LISTS) -> frozenset[str]:
+    """The file names the GT's test lists in ``folder`` name (the lines of every file ``lists`` matches: all of them by
+    default), none where it has none."""
     return frozenset(
         name.strip()
-        for listing in folder.glob(TEST_LISTS)
+        for listing in folder.glob(lists)
         if listing.is_file()
         for name in listing.read_text(encoding="utf-8").splitlines()
         if name.strip()
     )
 
 
-def gt_split(path: Path) -> Split:
-    """A scan's split by the GT's own test lists, given its label file (an absolute path): a test page when a list in
-    its volume's ``page/`` folder names its file (the union of its lists: they are nested), or a list of the same folder
-    in the export the GT holds of it again (:data:`DUPLICATE_EXPORTS`), else a training page."""
+def gt_split(path: Path, lists: str = TEST_LISTS) -> Split:
+    """A scan's split by the GT's own test lists, given its label file (an absolute path): a test page when a list
+    ``lists`` matches in its volume's ``page/`` folder names its file (by default the union of its lists: they are
+    nested, so ``test_0050`` takes the 5 % the GT's TrOCR baseline was tested on), or such a list of the same folder in
+    the export the GT holds of it again (:data:`DUPLICATE_EXPORTS`), else a training page."""
     folders = [path.parent, path.parent.parent / "page"]
     for left_out, kept in DUPLICATE_EXPORTS.items():
         if kept in path.parts:
             twin = Path(*(left_out if part == kept else part for part in path.parts))
             folders += [twin.parent, twin.parent.parent / "page"]
-    return Split.TEST if any(path.name in _test_names(folder) for folder in folders) else Split.TRAIN
+    return Split.TEST if any(path.name in _test_names(folder, lists) for folder in folders) else Split.TRAIN
 
 
 def unsplit(_: Path) -> None:
