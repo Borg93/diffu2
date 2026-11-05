@@ -1,7 +1,7 @@
 #!/bin/bash
-# GT-Lejonet's readers trained on one server's GPUs (lion_data_prep/configs): MiniCPM-OCR on every line and
-# region, Jev's pairs built meanwhile on the CPU, then Jev; both on the GPUs $GPUS names, each waiting until no
-# process computes on them.
+# GT-Lejonet's MiniCPM-OCR trained on one server's GPUs (lion_data_prep/configs/minicpm_all.yaml): every line and
+# region, on the GPUs $GPUS names, once no process computes on them; then after_minicpm.sh (read only then, so it can
+# change while this trains): the trained model's scores and reads, Jev's pairs with those reads, Jev.
 # Each step leaves a .done marker in $MARKERS: run it again to resume after the last finished step (a training that
 # stopped is resumed by hand from the last checkpoint in its run folder). A file $HOLD holds the trainings back.
 #
@@ -32,15 +32,5 @@ gpus_free() {  # until no process computes on the GPUs $GPUS names (a smoke run 
 }
 while [ -f "$HOLD" ]; do log "held: remove $HOLD to train"; sleep 60; done
 
-(   # Jev's pairs from the training lines and its dev split; test pairs to score it on
-  step jev_pairs uv run htr-train jev-set --lines "$D/minicpm_lines_scaled.train.jsonl" --out "$D/jev_lines.jsonl" &&
-  step jev_dev uv run htr-train split-dev "$D/jev_lines.jsonl" --share 0.02 &&
-  step jev_test_pairs uv run htr-train jev-set --side test --lines "$D/minicpm_lines_scaled.test.jsonl" \
-      --out "$D/jev_lines.test.jsonl"
-) > runs/htr/pipeline_jev_pairs.log 2>&1 &
-PAIRS=$!
-
 gpus_free; step minicpm_train uv run htr-train launch $SPECS/minicpm_all.yaml --where local || exit 1
-wait $PAIRS || { log "FAILED Jev's pairs (runs/htr/pipeline_jev_pairs.log)"; exit 1; }
-gpus_free; step jev_train uv run htr-train launch $SPECS/jev_all.yaml --where local || exit 1
-log "training finished"
+exec bash packages/htr_train/lion_data_prep/after_minicpm.sh

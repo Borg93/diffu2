@@ -264,27 +264,47 @@ def _on_image(box: tuple[int, int, int, int], page: ReaderPage) -> tuple[int, in
     return x0 + left, y0 + top, x1 + left, y1 + top
 
 
-def cut_elements(page: ReaderPage, crops: Path, max_pixels: int | None = None) -> list[Path]:
-    """Each element of ``page`` cut from its image at its box (where the page lies on the image), scaled to at most
-    ``max_pixels`` (:func:`fitted`) and saved in ``crops`` as ``<page id>_<k>.png`` (``k`` its place in reading order):
-    their paths."""
+def _region_crop(image: Image.Image, element: PageElement, page: ReaderPage) -> Image.Image:
+    """``element`` as OpenBMB's SDK cuts a layout region for MiniCPM-OCR (PaddleX's ``CropByBoxes``): the box of its
+    region's outline, white outside the outline; its lines' outlines kept too, so a region drawn tighter than its
+    writing hides none of it."""
+    shapes = [element.polygon, *(line.polygon for line in element.lines if len(line.polygon) >= 3)]
+    xs = [x for shape in shapes for x, _ in shape] + [element.box[0], element.box[2]]
+    ys = [y for shape in shapes for _, y in shape] + [element.box[1], element.box[3]]
+    x0, y0, x1, y1 = min(xs), min(ys), max(xs), max(ys)
+    crop = image.crop(_on_image((x0, y0, x1, y1), page)).convert("RGB")
+    mask = Image.new("L", crop.size, 0)
+    draw = ImageDraw.Draw(mask)
+    for shape in shapes:
+        draw.polygon([(x - x0, y - y0) for x, y in shape], fill=255)
+    return Image.composite(crop, Image.new("RGB", crop.size, (255, 255, 255)), mask)
+
+
+def cut_elements(page: ReaderPage, crops: Path, max_pixels: int | None = None, mask: bool = False) -> list[Path]:
+    """Each element of ``page`` cut from its image at its box (where the page lies on the image), or, with ``mask``,
+    a text region with an outline as OpenBMB's SDK cuts it (:func:`_region_crop`); scaled to at most ``max_pixels``
+    (:func:`fitted`) and saved in ``crops`` as ``<page id>_<k>.png`` (``k`` its place in reading order): their paths."""
     paths: list[Path] = []
     with open_scan(page.image) as image:
         for k, element in enumerate(page.elements.elements):
             path = crops / f"{page.meta.id}_{k}.png"
-            fitted(image.crop(_on_image(element.box, page)).convert("RGB"), max_pixels).save(path)
+            if mask and len(element.polygon) >= 3:
+                crop = _region_crop(image, element, page)
+            else:
+                crop = image.crop(_on_image(element.box, page)).convert("RGB")
+            fitted(crop, max_pixels).save(path)
             paths.append(path)
     return paths
 
 
 def element_samples(
-    page: ReaderPage, model: Reader, *, crops: Path, max_pixels: int | None = None
+    page: ReaderPage, model: Reader, *, crops: Path, max_pixels: int | None = None, mask: bool = False
 ) -> list[tuple[Sample, SampleMeta]]:
     """Each element of ``page`` as ``model``'s recogniser is fine-tuned on it: its crop (:func:`cut_elements`) asked with
     its recognition prompt and answered with what it reads there; its meta the page's, its id ``<page id>_<k>``, with
     the element's kind and place."""
     samples: list[tuple[Sample, SampleMeta]] = []
-    cut = cut_elements(page, crops, max_pixels)
+    cut = cut_elements(page, crops, max_pixels, mask)
     for k, (element, crop) in enumerate(zip(page.elements.elements, cut, strict=True)):
         recognition = ELEMENT_FORMATS[model](element)
         sample = chat_sample(f"<image>{recognition.prompt}", recognition.answer, [crop])
@@ -297,13 +317,15 @@ class LineRules(BaseModel):
     """How a line is cut and which lines are kept: masked to its outline (white outside it, as the GT's TrOCR baseline
     cuts its lines and its out-of-domain test lines are cut) or its box as it is; its box's shorter side at least
     ``min_side`` px; and, with ``reject_uncertain``, a line whose text holds a transcriber's doubt or comment
-    (:data:`UNCERTAIN_MARKS`) left out, as the baseline leaves it out."""
+    (:data:`UNCERTAIN_MARKS`) left out, as the baseline leaves it out. ``mask_regions``: a text region cut as OpenBMB's
+    SDK cuts a layout region (:func:`_region_crop`), not at its lines' box."""
 
     model_config = {"frozen": True}
 
     mask: bool = False
     min_side: int = MIN_LINE_SIDE
     reject_uncertain: bool = False
+    mask_regions: bool = False
 
 
 def _line_left_out(line: ElementLine, rules: LineRules) -> SkipReason | None:
@@ -396,7 +418,13 @@ def scan_samples(
             return [
                 sample
                 for page in scan.pages
-                for sample in element_samples(page, model, crops=dirs.crops, max_pixels=max_crop_pixels)
+                for sample in element_samples(
+                    page,
+                    model,
+                    crops=dirs.crops,
+                    max_pixels=max_crop_pixels,
+                    mask=rules is not None and rules.mask_regions,
+                )
             ]
         case Task.LINES:
             return [
@@ -714,6 +742,13 @@ def reader_set(
             "line's box as it is)"
         ),
     ] = False,
+    mask_regions: Annotated[
+        bool,
+        typer.Option(
+            help="elements: a text region cut to its outline's box, white outside the outline (its lines kept), as "
+            "OpenBMB's SDK cuts a layout region for MiniCPM-OCR (default: its lines' box as it is)"
+        ),
+    ] = False,
     min_line_side: Annotated[
         int, typer.Option(min=1, help="lines: leave out a line whose box is narrower or lower than this (px)")
     ] = MIN_LINE_SIDE,
@@ -760,7 +795,9 @@ def reader_set(
         raise typer.BadParameter("give the pages as --run or as --xml, one of them", param_hint="--run, --xml")
     out.parent.mkdir(parents=True, exist_ok=True)
     splits = (Split.TRAIN, Split.TEST) if split_from_gt_test_lists else (None,)
-    rules = LineRules(mask=mask_lines, min_side=min_line_side, reject_uncertain=reject_uncertain)
+    rules = LineRules(
+        mask=mask_lines, min_side=min_line_side, reject_uncertain=reject_uncertain, mask_regions=mask_regions
+    )
     limits = Limits(max_crop_pixels=max_crop_pixels, max_per_collection=max_per_collection, line_rules=rules)
     written = write_set(items, out, model=model, task=task, splits=splits, limits=limits, workers=workers)
     options = SetOptions(

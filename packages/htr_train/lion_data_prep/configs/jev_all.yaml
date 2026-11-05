@@ -1,9 +1,9 @@
 # MiniCPM-OCR-Jev from its checkpoint on every GT-Lejonet training line's pairs (1 negative a line, from the lines
 # lion_data_prep/build_sets.sh cuts), real only, on one server's two GPUs after minicpm-all (htr-train launch --where
-# local, HTR_TRAIN_LOCAL_GPUS). OpenBMB's recipe (docs/finetune_jev_en.md: lr 1e-5, ZeRO-3, 2 epochs) but unpacked and
-# sdpa, 32 pairs a GPU, 2 accumulated (128 a step, about what their 8 packs of 12,000 tokens hold): in envs/minicpm,
-# Qwen3.5's linear attention carries state from one packed sample into the next (see minicpm_all.yaml), as the Spark
-# pilot was trained. Eval and save every 1,000 steps.
+# local, HTR_TRAIN_LOCAL_GPUS). OpenBMB's recipe (docs/finetune_jev_en.md: lr 1e-5, ZeRO-3) but 2 epochs, not its 3
+# (time), unpacked and sdpa, 32 pairs a GPU, 2 accumulated (128 a step, about what their 8 packs of 12,000 tokens
+# hold): in envs/minicpm, Qwen3.5's linear attention carries state from one packed sample into the next (see
+# minicpm_all.yaml), as the Spark pilot was trained. Eval and save every 1,000 steps.
 name: jev-all
 description: "Jev from its checkpoint, all GT training lines' pairs (1 negative a line), real only, 2 GPUs"
 job:

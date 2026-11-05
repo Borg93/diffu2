@@ -163,6 +163,19 @@ def _page_lines(root: ET.Element) -> list[TextLine]:
     return text + [line for k, table in enumerate(tables) for line in _table_lines(table, _key(table, "table", k))]
 
 
+def _page_outlines(root: ET.Element) -> dict[str, tuple[tuple[float, float], ...]]:
+    """Each text region's outline (its ``Coords``, three points or more) by its lines' block, tables' left out."""
+    in_table = {id(element) for table in iter_local(root, "TableRegion") for element in table.iter()}
+    text_regions = [element for element in iter_local(root, "TextRegion") if id(element) not in in_table]
+    outlines = {}
+    for position, element in enumerate(text_regions):
+        coords = child(element, "Coords")
+        points = parse_points(coords.get("points", "")) if coords is not None else []
+        if len(points) >= 3:
+            outlines[_key(element, "region", position)] = tuple(points)
+    return outlines
+
+
 def _page_rules(root: ET.Element) -> list[Rule]:
     """The page's ruled lines: every ``SeparatorRegion``'s box."""
     rules = []
@@ -250,4 +263,6 @@ def _layout(root: ET.Element) -> Layout:
     if local_name(root.tag) == "alto":
         _require_pixels(root)
         return Layout(width=width, height=height, lines=_alto_lines(root))
-    return Layout(width=width, height=height, lines=_page_lines(root), rules=_page_rules(root))
+    return Layout(
+        width=width, height=height, lines=_page_lines(root), rules=_page_rules(root), outlines=_page_outlines(root)
+    )

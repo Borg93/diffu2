@@ -138,9 +138,11 @@ class TextLine(BaseModel):
 
 
 class Layout(BaseModel):
-    """A page's size (px), its text lines in reading order and its ruled lines."""
+    """A page's size (px), its text lines in reading order, its ruled lines and its text regions' outlines (page px)
+    by their lines' block, where its file gives them (a PAGE ``TextRegion``'s ``Coords``)."""
 
     width: int
     height: int
     lines: list[TextLine] = Field(default_factory=list)
     rules: list[Rule] = Field(default_factory=list)
+    outlines: dict[str, tuple[tuple[float, float], ...]] = Field(default_factory=dict)

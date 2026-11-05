@@ -732,6 +732,31 @@ def test_reader_set_masks_a_gt_line_to_the_outline_its_page_file_gives(tmp_path:
     assert crop.getpixel((3, 3)) != pytest.approx((255, 255, 255), abs=8)
 
 
+def test_reader_set_cuts_a_gt_region_as_openbmbs_sdk_does_white_outside_its_outline_its_lines_kept(
+    tmp_path: Path,
+) -> None:
+    gt = tmp_path / "gt"
+    _scan(gt / VOLUME / "a.jpg", (100, 200))
+    region = (  # the region's outline: a triangle over the page's top left; its line runs past it on the right
+        '<TextRegion id="r"><Coords points="0,0 60,0 0,100"/>'
+        '<TextLine id="r_0"><Coords points="10,10 90,10 90,30 10,30"/>'
+        "<TextEquiv><Unicode>Anno 1715</Unicode></TextEquiv></TextLine></TextRegion>"
+    )
+    _page_xml(gt / VOLUME / "page" / "a.xml", (100, 200), region)
+    out = tmp_path / "set" / "regions.jsonl"
+
+    result = CliRunner().invoke(
+        app, ["--xml", str(gt), "--model", "minicpm-ocr", "--task", "elements", "--mask-regions", "--out", str(out)]
+    )
+
+    crop = load_rgb(Path(_lines(out)[0]["images"][0]))
+    assert result.exit_code == 0, result.output
+    assert crop.size == (90, 100)  # the outline's box and the line's: (0, 0) to (90, 100)
+    assert crop.getpixel((85, 90)) == (255, 255, 255)  # outside both: white
+    assert crop.getpixel((85, 20)) != (255, 255, 255)  # the line past the outline: kept
+    assert crop.getpixel((5, 50)) != (255, 255, 255)  # inside the outline: kept
+
+
 def test_reader_set_splits_the_gt_by_the_test_list_it_is_given_alone(tmp_path: Path) -> None:
     gt = tmp_path / "gt"
     for name in ("a", "b", "e"):
@@ -819,7 +844,7 @@ def test_reader_set_takes_the_collections_it_is_given_caps_their_training_side_a
         "limits": {
             "max_crop_pixels": None,
             "max_per_collection": 2,
-            "line_rules": {"mask": False, "min_side": 8, "reject_uncertain": False},
+            "line_rules": {"mask": False, "min_side": 8, "reject_uncertain": False, "mask_regions": False},
         },
         "samples": {"train": 2, "test": 3},
         "pages": 5,

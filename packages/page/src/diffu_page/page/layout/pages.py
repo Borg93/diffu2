@@ -123,7 +123,8 @@ def scan_pages(layout: Layout) -> list[ScanPage]:
 
 def _page(layout: Layout, side: PageSide, span: tuple[int, int], lines: list[TextLine]) -> ScanPage:
     """The page of the scan between the x of ``span``, holding ``lines``, in its own coordinates: its lines moved by
-    its left edge (box and outline), the scan's ruled lines cut to it and moved with them."""
+    its left edge (box and outline), the scan's ruled lines cut to it and moved with them, and the outlines of its
+    lines' regions moved too."""
     left, right = span
     moved = [
         line.model_copy(
@@ -139,8 +140,12 @@ def _page(layout: Layout, side: PageSide, span: tuple[int, int], lines: list[Tex
         for rule in layout.rules
         if rule.x0 < right and rule.x1 > left
     ]
+    blocks = {line.block for line in lines}
+    outlines = {
+        block: tuple((x - left, y) for x, y in outline) for block, outline in layout.outlines.items() if block in blocks
+    }
     return ScanPage(
         side=side,
         rect=(float(left), 0.0, float(right), float(layout.height)),
-        layout=Layout(width=right - left, height=layout.height, lines=moved, rules=rules),
+        layout=Layout(width=right - left, height=layout.height, lines=moved, rules=rules, outlines=outlines),
     )

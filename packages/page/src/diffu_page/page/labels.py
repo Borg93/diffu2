@@ -490,13 +490,15 @@ def _otsl_table(grid: TableGrid) -> str:
 
 
 class PageElement(BaseModel):
-    """One element of a page as a page reader reads it: a text region, or a whole table; its kind, its box (page px)
-    and its lines in reading order (a table's cell by cell). As JSON it also gives its PaddleOCR-VL category, the
-    prompt PaddleOCR-VL's recogniser reads its crop with and the text it reads there."""
+    """One element of a page as a page reader reads it: a text region, or a whole table; its kind, its box (page px),
+    its lines in reading order (a table's cell by cell) and its region's outline (page px) where its file gives one
+    (empty for a table and a drawn page). As JSON it also gives its PaddleOCR-VL category, the prompt PaddleOCR-VL's
+    recogniser reads its crop with and the text it reads there."""
 
     kind: LineKind
     box: Rect
     lines: list[ElementLine]
+    polygon: list[Point] = Field(default_factory=list)
 
     @computed_field
     @property
@@ -557,12 +559,15 @@ def _element_line(line: LineLabel, row0: int, column0: int) -> ElementLine:
     )
 
 
-def page_elements(labels: PageLabels) -> PageElements:
+def page_elements(labels: PageLabels, outlines: dict[str, list[Point]] | None = None) -> PageElements:
     """The page's elements in reading order: each text region one, each table one (its cells together, where its first
-    cell is read), as PAGE and ALTO write their regions, so every format holds the same blocks."""
+    cell is read), as PAGE and ALTO write their regions, so every format holds the same blocks; a text region with its
+    outline where ``outlines`` gives one for its lines' block."""
+    outlines = outlines or {}
     elements: list[PageElement] = []
     for group in _top_level(_ordered_regions(labels)):
         lines = [line for region in group for line in region.lines]
+        outline = outlines.get(lines[0].block, []) if len(group) == 1 and group[0].cell is None else []
         refs = [line.cell for line in lines if line.cell is not None]
         row0, column0 = min((ref.row for ref in refs), default=0), min((ref.column for ref in refs), default=0)
         elements.append(
@@ -570,6 +575,7 @@ def page_elements(labels: PageLabels) -> PageElements:
                 kind=group[0].kind,
                 box=_region_rect(lines),
                 lines=[_element_line(line, row0, column0) for line in lines],
+                polygon=outline,
             )
         )
     return PageElements(image=labels.image, width=labels.width, height=labels.height, elements=elements)
@@ -588,7 +594,8 @@ def layout_elements(layout: Layout, image: str) -> PageElements:
     are (:func:`page_elements`): each text region one, each table one, in the layout's reading order. Each line's box
     is cut to the page, a line with nothing on it left out (a transcriber's box may run over the scan's edge or the
     gutter of an opening); a line its file does not say how it was made counts as handwritten. A line keeps its outline
-    where its file gives one, cut to the page as its box is (so the outline's box is the line's), else its box."""
+    where its file gives one, cut to the page as its box is (so the outline's box is the line's), else its box; a text
+    region keeps its outline where its file gives one, cut to the page."""
     lines: list[LineLabel] = []
     for order, line in enumerate(layout.lines):
         box = _on_page(line.box, layout.width, layout.height)
@@ -607,7 +614,11 @@ def layout_elements(layout: Layout, image: str) -> PageElements:
                 cell=line.cell,
             )
         )
-    return page_elements(PageLabels(width=layout.width, height=layout.height, image=image, lines=lines))
+    outlines = {
+        block: [(round(min(max(x, 0), layout.width)), round(min(max(y, 0), layout.height))) for x, y in outline]
+        for block, outline in layout.outlines.items()
+    }
+    return page_elements(PageLabels(width=layout.width, height=layout.height, image=image, lines=lines), outlines)
 
 
 def _on_grid(box: Rect, page: PageElements, scale: int) -> Rect:

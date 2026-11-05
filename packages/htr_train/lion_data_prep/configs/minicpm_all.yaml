@@ -6,6 +6,7 @@
 # at 86 of 96 GB with regions in the smoke). Not packed: in envs/minicpm, Qwen3.5's linear attention carries state
 # from one packed sample into the next (a sample packed second differs by 0.82 relative from the same sample alone),
 # so packing would train on mixed lines. Eval and save every 1,000 steps, so a crash loses hours, not an epoch.
+# chosen by runs/htr/sweep (fastest variant passing its worst-case run): b4-llmck-vitck-zero2, 11.0 samples/s
 name: minicpm-all
 description: "all GT training lines (scaled) + all regions (<= 9 x 448^2 px), real only, 2 GPUs"
 job:
