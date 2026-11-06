@@ -14,7 +14,8 @@ from typing import TYPE_CHECKING
 import pytest
 from pydantic import JsonValue
 
-from diffu_htr_train.jobs import RunSpec, ToolEnv
+from diffu_htr_train.evaluate.in_training import CerSet, at_start, cer_sets
+from diffu_htr_train.jobs import MiniCPMOCRJob, RunSpec, ToolEnv
 from diffu_htr_train.render import RunPaths, render
 
 if TYPE_CHECKING:
@@ -382,3 +383,42 @@ def test_render_logs_a_run_left_to_trackio_to_the_local_project_under_its_name(
         "--project": ["diffu"],
         "--run_name": ["lines"],
     }
+
+
+def test_render_has_a_run_with_cer_sets_read_them_through_the_plugin_in_its_checkout(
+    tmp_path: Path, make_set: MakeSet
+) -> None:
+    train = make_set("train", [("a_0_0", "Anno 1715", "GT-A", "V1", "train")])
+    lines = tmp_path / "dev_lines.jsonl"
+    lines.write_text("", encoding="utf-8")
+    job = {**FRENCH_SPEC, "model": {"repo": str(tmp_path)}, "cer_sets": {"dev_lines": {"lines": str(lines)}}}
+    spec = RunSpec.model_validate(
+        {
+            "name": "lines",
+            "job": {**job, "cer_at_start": True},
+            "data": {"train": [{"path": str(train)}]},
+            "resources": {"gpus_per_node": 2, "need_gb": 40, "hours": 1},
+        }
+    )
+    checkout = Path(__file__).resolve().parents[1]
+
+    [command] = render(spec, RunPaths(root=tmp_path / "r", envs=checkout / "envs", trackio_project="diffu"))
+
+    given = _flags(command.argv[2:])
+    assert given["--callbacks"] == ["cer"]
+    assert Path(str(given["--external_plugins"][0])).is_file()
+    assert cer_sets(command.environ) == {"dev_lines": CerSet(lines=lines.resolve())}
+    assert at_start(command.environ)
+
+
+def test_a_run_reading_cer_sets_without_evaluating_is_refused(tmp_path: Path) -> None:
+    job = {
+        **FRENCH_SPEC,
+        "model": {"repo": str(tmp_path)},
+        "eval_strategy": "no",
+        "best_by_eval_loss": False,
+        "cer_sets": {"dev": {"lines": str(tmp_path / "l.jsonl")}},
+    }
+
+    with pytest.raises(ValueError, match="cer_sets are read at each evaluation"):
+        MiniCPMOCRJob.model_validate(job)

@@ -20,6 +20,7 @@ dependencies = [
 
 [project.scripts]
 htr-train = "diffu_htr_train.cli:app"  # render, launch and queue reader trainings; build their dev splits, Jev pairs and draft data
+htr-eval = "diffu_htr_train.evaluate.cli:app"  # score the readers: line sets, readings through vLLM or transformers, CER as each side scores itself
 
 [build-system]
 requires = ["hatchling"]

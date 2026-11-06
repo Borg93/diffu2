@@ -51,6 +51,14 @@ htr-train jev-set --side test --lines data/htr/minicpm_lines_scaled.test.jsonl -
 htr-train dspark-set --prompts data/htr/minicpm_lines_scaled.train.jsonl --target <snapshot> --out data/htr/dspark_responses.jsonl
 ```
 
+### Scoring
+
+`htr-eval` (run from `envs/minicpm/.venv/bin/`: it reads with that environment's torch and transformers) scores the
+readers: `set-lines` and `ood-set` give lines to score, `draw` a fixed draw of them, `read` a reader's predictions
+and speed (MiniCPM-OCR through vLLM as OpenBMB asks it; the Swedish Lion TrOCR through transformers), `cer` their error
+rates as each side scores itself. A spec's `cer_sets` has ms-swift read draws like these at each evaluation, with the
+model in training (`evaluate/swift_plugin.py`, passed as `--external_plugins` with `--callbacks cer`).
+
 ### Smoke sets
 
 The smoke runs (`configs/smoke/`) train on three small collections, five volumes and about 55 pages, the GT's test

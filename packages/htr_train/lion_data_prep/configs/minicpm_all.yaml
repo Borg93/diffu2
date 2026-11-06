@@ -52,10 +52,17 @@ job:
   best_by_eval_loss: true
   per_device_eval_batch_size: 16
   logging_steps: 10
+  # CER at each evaluation, as the trend to watch (scores against the baseline come from read on a checkpoint):
+  # 1,000 dev lines, 200 dev regions (4,096 tokens, as OpenBMB's SDK reads a text block), 500 out-of-domain lines
+  cer_sets:
+    dev_lines: {lines: data/htr/eval/in_training/dev_lines.jsonl, max_tokens: 512, batch: 16}
+    dev_regions: {lines: data/htr/eval/in_training/dev_regions.jsonl, max_tokens: 4096, batch: 8}
+    ood: {lines: data/htr/eval/in_training/ood.jsonl, max_tokens: 512, batch: 16}
+  cer_at_start: true
   env: {DOWNSAMPLE_MODE: 4x}
 data:
   train:
     - {path: data/htr/minicpm_lines_scaled.train.jsonl}
-    - {path: data/htr/minicpm_regions.train.jsonl}
+    - {path: data/htr/minicpm_regions_masked.train.jsonl}
   dev: data/htr/minicpm_lines_scaled.dev.jsonl
 resources: {gpus_per_node: 2, need_gb: 60, hours: 60}

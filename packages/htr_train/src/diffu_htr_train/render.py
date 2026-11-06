@@ -17,6 +17,7 @@ from typing import Literal, Self, assert_never
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from diffu_htr_train.evaluate.in_training import AT_START_ENV, CER_SETS_ENV
 from diffu_htr_train.jobs import (
     DataRef,
     DSparkJob,
@@ -177,16 +178,32 @@ def swift_sft_argv(job: SwiftSFT, spec: RunSpec, paths: RunPaths) -> list[str]:
                 ("--report_to", job.report_to),
                 ("--project", paths.trackio_project if trackio else None),
                 ("--run_name", spec.name if trackio else None),
+                ("--external_plugins", cer_plugin(paths) if job.cer_sets else None),
+                ("--callbacks", "cer" if job.cer_sets else None),
             ]
         ),
         *dataset_args(data),
     ]
 
 
+def cer_plugin(paths: RunPaths) -> Path:
+    """The ms-swift plugin registering the ``cer`` callback, in the checkout the tool environments sit in."""
+    return (paths.envs.parent / "src" / "diffu_htr_train" / "evaluate" / "swift_plugin.py").resolve()
+
+
 def sft_environ(job: SwiftSFT, spec: RunSpec) -> dict[str, str]:
-    """A run's environment: its template's settings, and ``NPROC_PER_NODE`` when ms-swift starts a process a GPU."""
+    """A run's environment: its template's settings, ``NPROC_PER_NODE`` when ms-swift starts a process a GPU, and the
+    sets the ``cer`` callback reads (their lines' paths absolute)."""
     gpus = spec.resources.gpus_per_node
-    return {**job.env, **({"NPROC_PER_NODE": str(gpus)} if gpus > 1 or spec.resources.nodes > 1 else {})}
+    cer = {
+        name: cer_set.model_copy(update={"lines": cer_set.lines.resolve()}).model_dump(mode="json")
+        for name, cer_set in job.cer_sets.items()
+    }
+    return {
+        **job.env,
+        **({"NPROC_PER_NODE": str(gpus)} if gpus > 1 or spec.resources.nodes > 1 else {}),
+        **({CER_SETS_ENV: json.dumps(cer), AT_START_ENV: str(job.cer_at_start).lower()} if cer else {}),
+    }
 
 
 SWIFT_ENVS: dict[Kind, ToolEnv] = {  # the environment each ms-swift job runs in

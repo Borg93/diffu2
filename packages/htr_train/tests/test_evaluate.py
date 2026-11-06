@@ -16,9 +16,10 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from typer.testing import CliRunner
 
-from diffu_htr_train.evaluate.__main__ import app
 from diffu_htr_train.evaluate.cer import by_subset, trocr_normalize, whitespace
-from diffu_htr_train.evaluate.lines import read_lines
+from diffu_htr_train.evaluate.cli import app
+from diffu_htr_train.evaluate.in_training import Reading, answer, metrics, write_readings
+from diffu_htr_train.evaluate.lines import EvalLine, read_lines
 
 if TYPE_CHECKING:
     from conftest import MakeSet
@@ -161,3 +162,26 @@ def test_the_cer_command_scores_each_predictions_file_as_each_side_scores_itself
     all_row = next(line for line in result.output.splitlines() if "│ all" in line)
     # mean CER (1/10 + 1/4) / 2; OpenBMB's CER 2 edits of 14 characters, WER 2 of 3 words; normalised „ drops: 1/4 / 2
     assert [cell.strip() for cell in all_row.split("│")[2:-1]] == ["2", "17.50%", "14.29%", "66.67%", "12.50%", "1"]
+
+
+def test_readings_in_training_score_as_the_cer_command_scores_them_written(tmp_path: Path) -> None:
+    lines = [
+        EvalLine(id="a", subset="V1", image="a.png", text="„Anno 1715"),
+        EvalLine(id="b", subset="V2", image="b.png", text="abcd"),
+    ]
+    readings = [
+        Reading(prediction=answer("<think>\n\n</think>\n\nAnno 1715"), finished="stop"),
+        Reading(prediction=answer("abcf"), finished="length"),
+    ]
+    written = tmp_path / "cer" / "step-10.dev.jsonl"
+
+    logged = metrics("dev", lines, readings)
+    write_readings(written, lines, readings)
+    result = CliRunner().invoke(app, ["cer", str(written)], env={"COLUMNS": "200"})
+
+    assert readings[0].prediction == "Anno 1715"
+    assert logged == pytest.approx(
+        {"cer_dev": (1 / 10 + 1 / 4) / 2, "cer_corpus_dev": 2 / 14, "cer_norm_dev": 1 / 8, "cut_dev": 1.0}
+    )
+    all_row = next(line for line in result.output.splitlines() if "│ all" in line)
+    assert [cell.strip() for cell in all_row.split("│")[2:4]] == ["2", f"{logged['cer_dev']:.2%}"]

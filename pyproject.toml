@@ -80,6 +80,7 @@ replace-imports-with-any = [
     "nemo_automodel.**", "nemo_automodel",
     "torchdata.**", "torchdata",
     "sglang.**", "sglang",
+    "swift.**", "swift",  # ms-swift: only in packages/htr_train/envs (its training plugin imports it)
 ]
 
 [tool.ty.terminal]

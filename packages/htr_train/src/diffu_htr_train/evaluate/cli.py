@@ -1,5 +1,5 @@
-"""``python -m diffu_htr_train.evaluate`` (run with ``envs/minicpm``'s Python): the lines to score (``ood-set``,
-``set-lines``), a reader's predictions and its speed (``read``), their error rates (``cer``), and a reader's
+"""``htr-eval`` (run from ``envs/minicpm``, whose torch and transformers it reads with): the lines to score
+(``ood-set``, ``set-lines``, ``draw``), a reader's predictions and its speed (``read``), their error rates (``cer``), and a reader's
 predictions as reads for Jev's pairs (``as-reads``)."""
 
 from __future__ import annotations
@@ -73,6 +73,19 @@ def set_lines_command(
 ) -> None:
     """The lines of one of our line sets (or a draw of them), as lines to read or score."""
     lines = sampled(list(set_lines(samples)), sample, seed)
+    write_lines(lines, out)
+    console.print(f"{len(lines)} lines -> {out}")
+
+
+@app.command()
+def draw(
+    lines_path: Annotated[Path, typer.Argument(exists=True, help="lines to draw from (a lines.jsonl)")],
+    count: Annotated[int, typer.Option(help="how many lines")],
+    out: Annotated[Path, typer.Option(help="the lines.jsonl to write")],
+    seed: Annotated[int, typer.Option(help="the draw's seed")] = 0,
+) -> None:
+    """A fixed draw of lines to read (the out-of-domain lines the ``cer`` callback reads at each evaluation)."""
+    lines = sampled(read_lines(lines_path), count, seed)
     write_lines(lines, out)
     console.print(f"{len(lines)} lines -> {out}")
 

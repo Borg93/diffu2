@@ -18,8 +18,9 @@ from pathlib import Path
 from typing import Annotated, Literal, Self
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, model_validator
 
+from diffu_htr_train.evaluate.in_training import CerSet
 from diffu_htr_train.jev.prompt import prompt_digest
 from diffu_htr_train.output import validation_problems
 from diffu_htr_train.records import Sample, SampleMeta, meta_path, read_jsonl, read_meta, target_record_path
@@ -206,6 +207,10 @@ class SwiftSFT(BaseModel):
     logging_steps: int | None = Field(default=None, gt=0)
     ddp_timeout: int | None = Field(default=None, gt=0)
     report_to: Literal["trackio", "tensorboard", "none"] = "trackio"
+    # samples the model in training reads at each evaluation, their CER logged as eval_cer_<name>
+    # (diffu_htr_train.evaluate.in_training); cer_at_start reads them once when training starts or resumes too
+    cer_sets: dict[Annotated[str, StringConstraints(pattern=r"^[a-z0-9_]+$")], CerSet] = Field(default_factory=dict)
+    cer_at_start: bool = False
     env: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -218,6 +223,8 @@ class SwiftSFT(BaseModel):
             raise ValueError("ms-swift packs sequences only with attn_impl flash_attn")
         if self.best_by_eval_loss:
             self._check_best_by_eval_loss()
+        if self.cer_sets and self.eval_strategy in (None, "no") and not self.cer_at_start:
+            raise ValueError("cer_sets are read at each evaluation: give an eval_strategy that evaluates")
         return self
 
     def _check_best_by_eval_loss(self) -> None:
