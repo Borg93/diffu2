@@ -36,5 +36,8 @@ step ood_set $E ood-set --out "$D/eval/ood.jsonl" || exit 1
 step cer_sets bash -c "$E set-lines $D/minicpm_lines_scaled.dev.jsonl --sample 1000 --seed 0 --out $C/dev_lines.jsonl \
   && $E set-lines $D/minicpm_regions_masked.dev.jsonl --sample 200 --seed 0 --out $C/dev_regions.jsonl \
   && $E draw $D/eval/ood.jsonl --count 500 --seed 0 --out $C/ood.jsonl" || exit 1
+# 5,000 test_0050 lines to score both readers on, and 1,000 of them for the callback
+step test_sets bash -c "$E set-lines $D/minicpm_lines_scaled.test.jsonl --sample 5000 --seed 0 --out $D/eval/test5000.jsonl \
+  && $E draw $D/eval/test5000.jsonl --count 1000 --seed 0 --out $C/test_lines.jsonl" || exit 1
 log "sets ready"
 [ -n "${NO_TRAIN:-}" ] || exec bash packages/htr_train/lion_data_prep/train.sh

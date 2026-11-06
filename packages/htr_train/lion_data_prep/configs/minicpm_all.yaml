@@ -53,11 +53,13 @@ job:
   per_device_eval_batch_size: 16
   logging_steps: 10
   # CER at each evaluation, as the trend to watch (scores against the baseline come from read on a checkpoint):
-  # 1,000 dev lines, 200 dev regions (4,096 tokens, as OpenBMB's SDK reads a text block), 500 out-of-domain lines
+  # 1,000 dev lines, 200 dev regions (4,096 tokens, as OpenBMB's SDK reads a text block), 500 out-of-domain lines,
+  # 1,000 test_0050 lines (the baseline's test pages; watched, never chosen on)
   cer_sets:
     dev_lines: {lines: data/htr/eval/in_training/dev_lines.jsonl, max_tokens: 512, batch: 16}
     dev_regions: {lines: data/htr/eval/in_training/dev_regions.jsonl, max_tokens: 4096, batch: 8}
     ood: {lines: data/htr/eval/in_training/ood.jsonl, max_tokens: 512, batch: 16}
+    test_lines: {lines: data/htr/eval/in_training/test_lines.jsonl, max_tokens: 512, batch: 16}
   cer_at_start: true
   env: {DOWNSAMPLE_MODE: 4x}
 data:
