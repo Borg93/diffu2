@@ -44,6 +44,11 @@ an archive, years or hand), which a page-pair manifest's rows must hold (``diffu
 them); the default, ``named``, draws them as before. A cache records its mix, and how its pairs' samples were sized
 (``sample_size``, which every pair must share: a training records it beside its checkpoints, and drawing sizes a
 sample by it), each left out when it is the first (``named``, ``half``).
+
+``--shard i --shards n`` caches only the entries at the places ``i``, ``i + n``, ... of the plan, into ``--out`` as a
+whole run would name them, and writes neither ``entries.jsonl`` nor ``cache.json``: ``n`` such runs, one a GPU, fill
+one cache directory between them, and a run without ``--shard`` over the same directory then finds every file written,
+caches any a stopped shard left, and writes both, so the cache is the one a single run writes.
 """
 
 from __future__ import annotations
@@ -58,7 +63,7 @@ import torch
 import typer
 from diffusers.modular_pipelines import ModularPipeline, SequentialPipelineBlocks
 from PIL import Image
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from rich.console import Console
 from safetensors import safe_open
 from safetensors.torch import load_file, save_file
@@ -249,7 +254,8 @@ def cache_entry(
 
 class CacheSettings(BaseModel):
     """Which pairs a cache holds, in which mix of prompt forms or in every form of the mix, which shares of the entries
-    in the sample form take a look change and a hand change, and where it is encoded."""
+    in the sample form take a look change and a hand change, where it is encoded, and which share of the plan this run
+    caches (``shard`` of ``shards``: the places ``shard``, ``shard + shards``, ...; one shard is the whole plan)."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -261,6 +267,14 @@ class CacheSettings(BaseModel):
     hand_restyle_share: float = Field(default=0.0, ge=0, le=1)
     latents_only: bool = False
     device: str = "cuda"
+    shard: int = Field(default=0, ge=0)
+    shards: int = Field(default=1, ge=1)
+
+    @model_validator(mode="after")
+    def _shard_within_shards(self) -> CacheSettings:
+        if self.shard >= self.shards:
+            raise ValueError(f"shard {self.shard} is not one of the {self.shards} shards (0 to {self.shards - 1})")
+        return self
 
 
 def _sample_places(variants: list[Variant]) -> list[int]:
@@ -335,12 +349,13 @@ def shared_sample_size(manifest: Path, planned: list[PlannedEntry]) -> SampleSiz
     return rules.pop() if rules else SampleSize.HALF
 
 
-def write_cache(model: Path, manifest: Path, out: Path, settings: CacheSettings) -> CacheRecord:
+def write_cache(model: Path, manifest: Path, out: Path, settings: CacheSettings) -> CacheRecord | None:
     """The pairs of ``manifest`` cached into ``out`` by the MOSS model directory ``model``'s encoders (the module's
-    docstring), resuming the entries a stopped run wrote.
+    docstring), resuming the entries a stopped run wrote; with more than one shard, only ``settings.shard``'s.
 
     Returns:
-        The cache's record.
+        The cache's record, or None for a run of one shard of several (the cache is not finished: a run without
+        shards over ``out`` finishes it).
 
     Raises:
         ValueError: If ``out`` holds a finished cache already, a pair lacks the form it is planned in, the pairs'
@@ -358,6 +373,8 @@ def write_cache(model: Path, manifest: Path, out: Path, settings: CacheSettings)
     out.mkdir(parents=True, exist_ok=True)
     entries = []
     for index, plan in enumerate(planned):
+        if index % settings.shards != settings.shard:
+            continue
         file = f"{index:06d}_{plan.variant}.safetensors"
         if (out / file).exists():
             with safe_open(str(out / file), framework="pt") as written:
@@ -370,6 +387,8 @@ def write_cache(model: Path, manifest: Path, out: Path, settings: CacheSettings)
         entries.append(entry)
         if (index + 1) % 100 == 0:
             console.print(f"{index + 1} of {len(planned)} entries cached")
+    if settings.shards > 1:
+        return None
     (out / ENTRIES).write_text("".join(f"{entry.model_dump_json()}\n" for entry in entries), encoding="utf-8")
     forms = MIXES[settings.mix].forms
     counts = {variant.value: sum(entry.variant is variant for entry in entries) for variant in forms}
@@ -506,22 +525,39 @@ def main(
         ),
     ] = False,
     device: Annotated[str, typer.Option(help="where the encoders run")] = "cuda",
+    shard: Annotated[
+        int,
+        typer.Option(min=0, help="cache only this shard of --shards: the plan's places shard, shard + shards, ..."),
+    ] = 0,
+    shards: Annotated[
+        int,
+        typer.Option(
+            min=1,
+            help="split the plan into this many shards, each cached by its own run into --out (one a GPU); a run "
+            "without --shards over --out then finishes the cache",
+        ),
+    ] = 1,
 ) -> None:
     """Cache style pairs for a reference training: each pair's prompt embeddings and latents."""
-    settings = CacheSettings(
-        limit=limit,
-        seed=seed,
-        mix=mix,
-        every_form=every_form,
-        restyle_share=restyle_share,
-        hand_restyle_share=hand_restyle_share,
-        latents_only=latents_only,
-        device=device,
-    )
     try:
+        settings = CacheSettings(
+            limit=limit,
+            seed=seed,
+            mix=mix,
+            every_form=every_form,
+            restyle_share=restyle_share,
+            hand_restyle_share=hand_restyle_share,
+            latents_only=latents_only,
+            device=device,
+            shard=shard,
+            shards=shards,
+        )
         record = write_cache(model, pairs, out, settings)
     except ValueError as error:  # the arguments' fault: a finished cache, a manifest without the mix's forms, ...
         raise typer.BadParameter(str(error)) from error
+    if record is None:
+        console.print(f"shard {shard} of {shards} cached into {out}; run again without --shards to finish the cache")
+        return
     left_out = f"{record.pairs_sharing_lines} of {record.pairs_read} pairs left out for sharing a line"
     console.print(f"{json.dumps(record.entries)} entries ({left_out}) -> {out}")
     if record.hand_restyle_share:

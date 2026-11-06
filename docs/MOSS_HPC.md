@@ -42,11 +42,12 @@ be ~2.3 TB: more than `$WORK` or `$FAST` hold (1 TB each; the project's `$FAST` 
 bfloat16 tensors at 1 MP), ~450 GB in all, and the trainer encodes each prompt in the step (`--encode-text`, the text
 encoder's 16.8 GB on every GPU: ~47 GB a GPU on 4 GPUs, below the A100's 64 GB).
 
-Building it: on the Spark the pilot cached 12,000 rows in ~5.5 h with prompt embeddings, so the full set would take
-days there. `diffu_moss.train.cache` runs on one device and has no sharding yet, and the trainer reads one `--cache`:
-caching on Leonardo's four GPUs at once needs either a shard option in the cache builder (and the trainer reading
-several caches) or one process caching all of it. **To build before the run**: shard support, or a measured
-latents-only rate on the Spark that makes one process enough.
+Building it: on the Spark the pilot cached 12,000 rows in ~5.5 h with prompt embeddings (latents alone: 300 rows in
+340 s, 1.8 MB a row), so the full set would take days there. On Leonardo, `$WORK` holds 21 TB (checked 6 Nov), so the
+cache keeps its prompt embeddings (~1.4 TB for the ~135,000 rows of the 30,983 scans' set) and the training needs no
+text encoder. `diffu-moss-cache-pairs --shard i --shards 4` caches a quarter of the plan into the same directory, one
+run a GPU; a run without `--shards` over that directory then finds every file, caches any a stopped shard left, and
+writes `entries.jsonl` and `cache.json`: the cache a single run writes (tested on the tiny model, file for file).
 
 ## 3. On Leonardo (login node: internet, ≤ 10 min CPU a command)
 
@@ -75,7 +76,6 @@ latents-only rate on the Spark that makes one process enough.
 
 ## Still open (none of it tested)
 
-- The cache's shards (section 2) and the trainer reading more than one cache.
 - The repo's environment with torch from the cu126 index on Leonardo (section 3; torch alone is tested).
 - The submit script on real GPUs: tested on CPU only (gloo, world size 2, tiny models).
 - Seconds a step on an A100, so the walltime and the number of jobs are estimates until the smoke test.

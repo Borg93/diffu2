@@ -272,6 +272,38 @@ def test_cache_without_look_changes_writes_its_entries_and_record_as_before(tiny
     assert list(json.loads((tiny_pair_cache / CACHE_RECORD).read_text(encoding="utf-8"))) == RECORD_KEYS
 
 
+def test_cache_shard_caches_only_its_places_of_the_plan_and_leaves_the_cache_unfinished(
+    tiny_moss: Path, tiny_pairs: Path, tiny_pair_cache: Path, tmp_path: Path
+) -> None:
+    whole = [entry.file for entry in read_entries(tiny_pair_cache)]
+
+    record = write_cache(
+        tiny_moss, tiny_pairs / "train.jsonl", tmp_path, CacheSettings(device="cpu", shard=1, shards=3)
+    )
+
+    assert record is None
+    assert sorted(path.name for path in tmp_path.iterdir()) == whole[1::3]  # no entries.jsonl, no cache.json
+
+
+def test_cache_shards_then_a_run_without_shards_write_the_cache_a_single_run_writes(
+    tiny_moss: Path, tiny_pairs: Path, tiny_pair_cache: Path, tmp_path: Path
+) -> None:
+    manifest = tiny_pairs / "train.jsonl"
+    for shard in (0, 2):  # shard 1 left unrun: the finishing run caches its entries itself
+        write_cache(tiny_moss, manifest, tmp_path, CacheSettings(device="cpu", shard=shard, shards=3))
+
+    write_cache(tiny_moss, manifest, tmp_path, CacheSettings(device="cpu"))
+
+    assert (tmp_path / ENTRIES).read_text(encoding="utf-8") == (tiny_pair_cache / ENTRIES).read_text(encoding="utf-8")
+    assert (tmp_path / CACHE_RECORD).read_text(encoding="utf-8") == (tiny_pair_cache / CACHE_RECORD).read_text(
+        encoding="utf-8"
+    )
+    for entry in read_entries(tiny_pair_cache):
+        sharded, single = load_file(str(tmp_path / entry.file)), load_file(str(tiny_pair_cache / entry.file))
+        assert sharded.keys() == single.keys()
+        assert all(torch.equal(sharded[name], single[name]) for name in single)
+
+
 def test_cache_gives_exactly_its_share_of_the_sample_forms_entries_a_look_change_and_the_rest_none(
     tiny_pair_cache: Path, tiny_restyled_cache: Path
 ) -> None:
