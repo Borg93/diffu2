@@ -37,7 +37,7 @@ Disk: the pilot's set is 17 GB for 3,623 scans, so ~250 GB (estimate); the Spark
 ## 2. The cache: where and how big
 
 A cache entry with its prompt's embeddings is 10.5 MB (the pilot's: 126 GB for 12,002 rows), so the full cache would
-be ~2.3 TB: more than `$WORK` or `$FAST` hold (1 TB each), and `$SCRATCH` (20 TB) deletes files after 40 days. With
+be ~2.3 TB: more than `$WORK` or `$FAST` hold (1 TB each; the project's `$FAST` was empty on 6 Nov), and `$SCRATCH` (no quota shown) deletes files after 40 days. With
 `--latents-only` an entry holds the target's and the sample's latents only (~2 MB, estimate: two `[1, 128, 63, 63]`
 bfloat16 tensors at 1 MP), ~450 GB in all, and the trainer encodes each prompt in the step (`--encode-text`, the text
 encoder's 16.8 GB on every GPU: ~47 GB a GPU on 4 GPUs, below the A100's 64 GB).
@@ -50,10 +50,14 @@ latents-only rate on the Spark that makes one process enough.
 
 ## 3. On Leonardo (login node: internet, ≤ 10 min CPU a command)
 
-1. **Code and environment** in `$WORK`: clone the repo; `uv sync` (uv installed to `~/.local/bin`). The repo pins torch
-   2.14.1 built for **CUDA 13.0**, which needs an NVIDIA driver of 580 or newer: check the compute nodes' driver first
-   (`srun ... nvidia-smi` in the debug QOS). If it is older, the run needs torch's cu126 or cu128 build (a second index
-   in `pyproject.toml` for Leonardo, or a container).
+1. **Code and environment** in `$WORK`: clone the repo; `uv sync` (uv from PyPI into `~/.local/bin`: `module load
+   python/3.11.7; python3 -m pip install --user uv`; uv fetches Python 3.12 itself, with `UV_PYTHON_INSTALL_DIR` and
+   `UV_CACHE_DIR` in `$WORK`). **Leonardo's compute nodes run driver 535.274 (CUDA 12.2)** (checked 6 Nov), so the
+   repo's torch 2.14.1 built for CUDA 13.0 (driver 580 or newer) does not run there. torch **2.14.1+cu126** does:
+   tested on 4 A100-SXM-64GB in the debug QOS (bf16 matmul, `scaled_dot_product_attention`, `torch.compile`, NCCL
+   `all_reduce` across the 4 GPUs under `torch.distributed.run`). **To build**: the environment on Leonardo resolved
+   against the cu126 index (a Leonardo variant of `pyproject.toml`'s torch index, or `uv pip install` of the locked
+   set with torch from cu126), then the trainer's own smoke below.
 2. **The model**: MOSS-Image Base at `85975793d8b3d432f1b6e27f352abaa4c2a4c0d3` into `$FAST` (`hf download` on the
    login node; the compute nodes have no internet, so runs set `HF_HUB_OFFLINE=1`), then `python -m diffu_moss.init
    --base <snapshot> --out $FAST/moss/base` (the model directory `--encode-text` reads).
@@ -72,6 +76,6 @@ latents-only rate on the Spark that makes one process enough.
 ## Still open (none of it tested)
 
 - The cache's shards (section 2) and the trainer reading more than one cache.
-- Leonardo's GPU driver against torch's CUDA 13 build (section 3).
+- The repo's environment with torch from the cu126 index on Leonardo (section 3; torch alone is tested).
 - The submit script on real GPUs: tested on CPU only (gloo, world size 2, tiny models).
 - Seconds a step on an A100, so the walltime and the number of jobs are estimates until the smoke test.

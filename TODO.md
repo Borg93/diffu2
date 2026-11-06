@@ -28,8 +28,8 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
       DiffSynth's template design) as the next research step.
 - [ ] The full training set with that recipe: the page pairs of the whole GT (~59,000 single pages; the duplicate
       collection left out), their content forms and legible samples (`page_pair_forms`, `page_pair_samples`).
-- [ ] An HPC runbook (written, not run: `docs/MOSS_HPC.md`; open there: the cache's size and shards, Leonardo's driver
-      against torch's CUDA 13 build, the smoke test): the environment, the Base snapshot and the data on a filesystem every node reads (Leonardo's
+- [ ] An HPC runbook (written, not run: `docs/MOSS_HPC.md`; open there: the cache's size and shards, the environment
+      with torch from cu126 (Leonardo's driver is 535: CUDA 13 does not run, cu126 does), the smoke test): the environment, the Base snapshot and the data on a filesystem every node reads (Leonardo's
       compute nodes have no internet), the submit script, a 1-node smoke test; `--ema` and `--save-state` there only.
       `jobs/moss/hpc_full.sbatch.example` is tested on CPU only (gloo, world size 2, tiny models). Estimates for one
       pass over 200,000 pages: ~23 h on 8 A100s or ~9 h on 3 B200s at 1 MP, ~51 h / ~19 h at 2 MP; ~30 GB a GPU on 4
