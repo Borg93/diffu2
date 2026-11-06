@@ -67,8 +67,11 @@ class CerCallback(TrainerCallback):
         self.at_start = at_start()
         logger.info(f"cer callback: {', '.join(f'{n} ({len(s[1])} lines)' for n, s in self.sets.items()) or 'no sets'}")
 
-    def on_train_begin(self, args: Any, state: Any, control: Any, **kwargs: Any) -> None:
+    def on_step_begin(self, args: Any, state: Any, control: Any, **kwargs: Any) -> None:
+        # the start's read waits for the first step: at on_train_begin ms-swift's progress callback, which logs,
+        # has not begun yet
         if self.at_start:
+            self.at_start = False
             self._read_sets(args, state)
 
     def on_evaluate(self, args: Any, state: Any, control: Any, **kwargs: Any) -> None:
@@ -119,7 +122,10 @@ class CerCallback(TrainerCallback):
         if was_training:
             trainer.model.train()
         if logs:
-            trainer.log(logs)
+            try:
+                trainer.log(logs)
+            except Exception as error:  # noqa: BLE001 - nor must its logging (the readings are written already)
+                logger.warning(f"cer callback: rates at step {state.global_step} not logged: {error!r}: {logs}")
 
 
 callbacks_map["cer"] = CerCallback

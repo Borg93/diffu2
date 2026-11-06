@@ -49,8 +49,8 @@ marker a step (`runs/htr/pipeline_markers`), so a second run resumes after the l
 - **4 samples a GPU** for MiniCPM-OCR: 8 peaked at 86 of 96 GB with regions in the batch.
 - **Regions at most 9 x 448^2 px**: MiniCPM-OCR sees no more of an image (9 slices of 448^2 px); at the scans'
   resolution the region crops alone would take ~375 GB.
-- **CER while it trains** (`cer_sets`): at each evaluation, and once at a start or resume, the model in training
-  reads 1,000 dev lines, 200 dev regions and 500 out-of-domain lines greedily (~4-5 min on the two GPUs), logged as
+- **CER while it trains** (`cer_sets`): at each evaluation, and once before the first step of a start or resume, the model in training
+  reads 1,000 dev lines, 200 dev regions and 500 out-of-domain lines greedily (about 4 min on the two GPUs: 21 s, 188 s and 25 s at step 14,000), logged as
   `eval_cer_<set>` (per-line mean), `eval_cer_corpus_<set>`, `eval_cer_norm_<set>` (the baseline's `normalize()`)
   and `eval_cut_<set>` beside the eval loss; the readings go to `output/cer/step-<n>.<set>.jsonl`. It shows the
   trend; the scores against the baseline come from `htr-eval read` on a checkpoint through vLLM, and the checkpoint
