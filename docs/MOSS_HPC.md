@@ -1,0 +1,77 @@
+# MOSS-Image's full fine-tune on Leonardo: the runbook
+
+Not run yet. This page is what has to be true, in order, before the HPC run is submitted, and the commands for each
+step; every number is measured on the Spark (GB10) unless it says "estimate". [MOSS.md](MOSS.md) has the model and
+the trainer; `jobs/moss/run_content_pilot.sh` the pilot this run scales up.
+
+## 0. Before anything
+
+- **The recipe is decided** (TODO.md, "To the HPC run"). Evidence so far (6 Nov): the pilot's look follows the sample
+  (swap test at step 2,000: L1 6/6, L2 5/7, L3 3/3); its hand does not, even from the page's own sample (writer ID on
+  the six swap pages, drawn with their own sample vs their real windows at the same size: Trolldomskommissionen 0.00
+  vs 0.94, Krigsarkivet 0.00 vs 0.94, Svea hovrätt koncept 0.00 vs 0.79, Svea hovrätt renskrivna 0.53 vs 0.89); the
+  VAE keeps the hand (47 held-out pages, 874 lines: 0.59 of the real lines named as their own hand, 0.57 of the same
+  windows encoded and decoded). Whether the hand improves with steps (own-sample writer ID at steps 500-2,000) decides
+  between training the sample form as it is and training look and text only, with hands from per-hand adapters.
+- **Budget and account**: `saldo -b` on a login node; `export SBATCH_ACCOUNT=<project>` in the cluster's `~/.bashrc`
+  (never in this repo). One pass over ~226,000 rows is estimated at ~23 h on 8 A100s (TODO.md's arithmetic, not
+  measured on an A100).
+- **Login**: `step ssh login`, then `ssh login.leonardo.cineca.it` (the `cineca-hpc` skill has the setup).
+
+## 1. The full training set (on the Spark, CPU)
+
+The pilot's set (`data_flux3/page_pairs_many_1mp`) read 80 scans a collection (3,623 scans, 15,745 training rows); the
+GT has ~52,500 PAGE files, so the full set is ~226,000 rows (estimate, at the pilot's rows a scan). Same commands as
+the pilot, without `--max-scans`, each CPU step capped as `run_content_pilot.sh` caps it:
+
+```bash
+D=data_flux3/page_pairs_full_1mp
+.venv/bin/python -m diffu_page.data.page_pairs --gt-root <GT folder> --model runs/moss/base --out $D \
+    --megapixels 1.0 --windows-per-page 2 --val-volumes 0.1 --workers 6 --seed 0
+# then, as run_content_pilot.sh steps 1-2 do: leave out GT-RA_landskapshandlingar_20260227 (the same scans as
+# _20260220), the content forms (diffu_page.data.page_pair_forms), the legible samples (diffu_page.data.page_pair_samples)
+```
+
+Disk: the pilot's set is 17 GB for 3,623 scans, so ~250 GB (estimate); the Spark has 1.8 TB free.
+
+## 2. The cache: where and how big
+
+A cache entry with its prompt's embeddings is 10.5 MB (the pilot's: 126 GB for 12,002 rows), so the full cache would
+be ~2.3 TB: more than `$WORK` or `$FAST` hold (1 TB each), and `$SCRATCH` (20 TB) deletes files after 40 days. With
+`--latents-only` an entry holds the target's and the sample's latents only (~2 MB, estimate: two `[1, 128, 63, 63]`
+bfloat16 tensors at 1 MP), ~450 GB in all, and the trainer encodes each prompt in the step (`--encode-text`, the text
+encoder's 16.8 GB on every GPU: ~47 GB a GPU on 4 GPUs, below the A100's 64 GB).
+
+Building it: on the Spark the pilot cached 12,000 rows in ~5.5 h with prompt embeddings, so the full set would take
+days there. `diffu_moss.train.cache` runs on one device and has no sharding yet, and the trainer reads one `--cache`:
+caching on Leonardo's four GPUs at once needs either a shard option in the cache builder (and the trainer reading
+several caches) or one process caching all of it. **To build before the run**: shard support, or a measured
+latents-only rate on the Spark that makes one process enough.
+
+## 3. On Leonardo (login node: internet, ≤ 10 min CPU a command)
+
+1. **Code and environment** in `$WORK`: clone the repo; `uv sync` (uv installed to `~/.local/bin`). The repo pins torch
+   2.14.1 built for **CUDA 13.0**, which needs an NVIDIA driver of 580 or newer: check the compute nodes' driver first
+   (`srun ... nvidia-smi` in the debug QOS). If it is older, the run needs torch's cu126 or cu128 build (a second index
+   in `pyproject.toml` for Leonardo, or a container).
+2. **The model**: MOSS-Image Base at `85975793d8b3d432f1b6e27f352abaa4c2a4c0d3` into `$FAST` (`hf download` on the
+   login node; the compute nodes have no internet, so runs set `HF_HUB_OFFLINE=1`), then `python -m diffu_moss.init
+   --base <snapshot> --out $FAST/moss/base` (the model directory `--encode-text` reads).
+3. **The data**: the cache and the validation cache copied to `$FAST` (`rsync -a --partial`, from the Spark).
+
+## 4. The smoke test, then the run
+
+- **Smoke** (debug QOS, 30 min, one node): `jobs/moss/hpc_full.sbatch.example` with `STEPS=20 SAVE_EVERY=10` on the
+  validation cache. Passes if: the loss is finite and falls, a checkpoint is written and reloads (`--resume`), the
+  peak GPU memory is under 64 GB, and seconds a step is measured (to replace the estimate above).
+- **The run** (production QOS): the same script with the full cache, `--ema` and `--save-state`, checkpoints every
+  ~1,000 steps; a job's walltime is capped, so the run resumes job to job from its last `--save-state` checkpoint.
+- **Checked after**: the swap test and held-out pages (`~/diffu_queue/weekend`: `draw_swap.py`, `score_swap.py`,
+  `draw_heldout.py`) on the Spark against a checkpoint copied back, beside the real scans.
+
+## Still open (none of it tested)
+
+- The cache's shards (section 2) and the trainer reading more than one cache.
+- Leonardo's GPU driver against torch's CUDA 13 build (section 3).
+- The submit script on real GPUs: tested on CPU only (gloo, world size 2, tiny models).
+- Seconds a step on an A100, so the walltime and the number of jobs are estimates until the smoke test.

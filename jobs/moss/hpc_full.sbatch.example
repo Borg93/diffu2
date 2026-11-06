@@ -1,13 +1,15 @@
 #!/bin/bash
 # MOSS-Image's full fine-tune over several GPUs on a Slurm cluster: FSDP2 (diffu_moss.train.distributed) launched by
-# torchrun, one node or several. A template: copy it, fill in the partition, account and paths your site needs (none are
-# set here), and submit with sbatch. Tested on CPU only (gloo, world size 2, tiny models): no run on real GPUs yet.
+# torchrun, one node or several. Set for Leonardo's Booster (partition, QOS, 4 A100 64 GB a node); the account comes
+# from SBATCH_ACCOUNT and the paths from the environment (REPO, MOSS_BASE, CACHE, OUT). The debug QOS allows a short
+# walltime only: submit the smoke test with --time=00:30:00 on the command line. docs/MOSS_HPC.md is the runbook.
+# Tested on CPU only (gloo, world size 2, tiny models): no run on real GPUs yet.
 #
 # Memory, estimated per GPU before any run (one sample a micro-batch, a 1 MP target and a 0.5 MP reference, ~2k prompt
 # tokens): the float32 weights, gradients, Muon momentum and AdamW moments sharded over N GPUs, 62.2 / N GB; ~8 GB of
 # activations; ~1.5 GB of bfloat16 blocks gathered for the forward and backward and of float32 gradients being
 # reduced; ~0.5 GB of one matrix gathered whole for Muon; ~4 GB for CUDA and NCCL; with --encode-text the text
-# encoder's 16.8 GB on every GPU; with --ema 62.2 -> 82.5 / N GB. On 80 GB A100s:
+# encoder's 16.8 GB on every GPU; with --ema 62.2 -> 82.5 / N GB. On A100s (Leonardo's are 64 GB, so every row below fits):
 #   4 GPUs (one node):  ~30 GB, ~47 GB with --encode-text, ~52 GB with both
 #   8 GPUs (two nodes): ~22 GB, ~39 GB with --encode-text, ~42 GB with both
 # A checkpoint is gathered whole to the main rank's host memory one file at a time, each held only while it is written
@@ -20,15 +22,17 @@
 #SBATCH --job-name=moss-full
 #SBATCH --nodes=1                 # 2 for 8 GPUs on 4-GPU nodes
 #SBATCH --ntasks-per-node=1       # one torchrun per node; it starts a process per GPU
-#SBATCH --gpus-per-node=4
+#SBATCH --gres=gpu:4               # a Leonardo Booster node: 4 A100 64 GB, 32 cores
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=0                   # the node's memory: each rank loads the DiT on the CPU before sharding it
 #SBATCH --time=24:00:00
 #SBATCH --output=moss-full-%j.out
-# #SBATCH --partition=<partition>
-# #SBATCH --account=<account>
+#SBATCH --partition=boost_usr_prod  # Leonardo's GPU partition (its default partition is CPU-only)
+#SBATCH --qos=boost_qos_dbg         # the smoke test; boost_qos_bprod for the run
+# the account comes from SBATCH_ACCOUNT in the cluster's ~/.bashrc, never from this file
 
 set -euo pipefail
+export HF_HUB_OFFLINE=1          # compute nodes have no internet: the models are staged before
 
 REPO="${REPO:?set REPO to the repository checkout on the cluster}"
 BASE="${MOSS_BASE:?set MOSS_BASE to the MOSS-Image Base snapshot}"
