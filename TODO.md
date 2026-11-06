@@ -23,9 +23,12 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
       `~/diffu_queue/VERIFY_SAMPLE.md`: the sample's hand +0.30 over the page's own sample on at least half the swaps,
       the look kept (L1 4/5, L2 + L3 at least r6b's), and the pages beside the scans. Before it, r6b: L1 4/5, L2 3/5,
       L2 + L3 78 %, H1 1/12; r6c (r6b trained on) regressed (L2 0/5, H1 0/12).
-- [ ] The recipe from the pilot's result: if it passes, the HPC run trains it on all collections; if not, look and text
-      only, hands from per-hand adapters, and a separate path for the sample (a frozen base with a reference encoder,
-      DiffSynth's template design) as the next research step.
+- [x] The recipe (6 Nov): **B**, look and text from the sample page, hands from per-hand adapters afterwards. The pilot's
+      hand did not follow the sample at any checkpoint (one page drawn with four samples keeps the same hand letter
+      for letter, only its paper changes), though the VAE keeps the hand (writer ID 0.59 real, 0.57 decoded, 47 pages);
+      published reference-hand methods add a writer signal or train on very many styles. The HPC cache: the content mix,
+      look changes for half the sample-form entries, no hand changes. The sample's hand stays a research track (the
+      reference off the target's RoPE grid, writer supervision, more styles).
 - [ ] The full training set with that recipe: the page pairs of the whole GT (~59,000 single pages; the duplicate
       collection left out), their content forms and legible samples (`page_pair_forms`, `page_pair_samples`).
 - [ ] An HPC runbook (written, not run: `docs/MOSS_HPC.md`; open there: the cache's size and shards, the environment
