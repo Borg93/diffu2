@@ -333,6 +333,11 @@ def test_full_fine_tune_averages_the_weights_after_each_step_by_the_ema_formula(
             FULL_RUN.model_copy(update={"full": FULL.model_copy(update={"gradient_checkpointing": False})}),
             id="without-gradient-checkpointing",
         ),
+        # the last of the tiny DiT's 3 blocks keeps its activations, the first two are recomputed
+        pytest.param(
+            FULL_RUN.model_copy(update={"full": FULL.model_copy(update={"uncheckpointed_blocks": 1})}),
+            id="the-last-block-uncheckpointed",
+        ),
     ],
 )
 def test_full_fine_tune_resumed_from_a_checkpoints_state_goes_on_exactly_as_the_run_went(

@@ -79,7 +79,9 @@ class FullSettings(BaseModel):
     """How a full fine-tune steps (the module's docstring): its optimizers' settings (Muon's momentum kept in
     ``momentum_dtype``), the decay of the average of its weights (None: no average), whether each checkpoint keeps
     the state a run resumes from, and whether the joint blocks' activations are recomputed in the backward pass
-    (``gradient_checkpointing``: less memory, more compute; off where a GPU has the memory to keep them), and, sharded,
+    (``gradient_checkpointing``: less memory, more compute; off where a GPU has the memory to keep them; with it, the
+    last ``uncheckpointed_blocks`` blocks still keep theirs, the memory a GPU has left buying back part of the
+    recompute), and, sharded,
     whether each block's gathered weights are dropped after its forward pass and gathered again for its backward
     (``reshard_after_forward``, FSDP2's default) or kept, about 10 GB a GPU more for half the gathers; the training is
     the same either way."""
@@ -95,16 +97,20 @@ class FullSettings(BaseModel):
     ema: float | None = Field(default=None, gt=0, lt=1)
     save_state: bool = False
     gradient_checkpointing: bool = True
+    uncheckpointed_blocks: int = Field(default=0, ge=0)
     reshard_after_forward: bool = True
 
 
-def full_transformer(folder: Path, *, device: str, checkpointing: bool = True) -> MossTransformer:
+def full_transformer(
+    folder: Path, *, device: str, checkpointing: bool = True, uncheckpointed_blocks: int = 0
+) -> MossTransformer:
     """The DiT at ``folder`` (a diffusers-format folder) in float32 on ``device``, every weight trained, its joint
-    blocks checkpointed unless ``checkpointing`` is off."""
+    blocks checkpointed unless ``checkpointing`` is off, all but the last ``uncheckpointed_blocks``."""
     transformer = MossTransformer.from_pretrained(str(folder), torch_dtype=torch.float32)
     transformer.requires_grad_(True)
     if checkpointing:
         transformer.enable_gradient_checkpointing()
+        transformer.uncheckpointed_blocks = uncheckpointed_blocks
     return transformer.to(device).train()
 
 
@@ -279,6 +285,7 @@ class FullTraining:
             base if state is None else state,
             device="cpu" if mesh else device,
             checkpointing=settings.gradient_checkpointing,
+            uncheckpointed_blocks=settings.uncheckpointed_blocks,
         )
         if mesh is not None:
             shard(self.transformer, mesh, reshard_after_forward=settings.reshard_after_forward)

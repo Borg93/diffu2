@@ -45,6 +45,7 @@ VAL_EVERY="${VAL_EVERY:-$SAVE_EVERY}"
 EMA="${EMA:-}"            # e.g. 0.999: an average of the weights saved beside each checkpoint
 RESUME="${RESUME:-}"      # a checkpoint saved with --save-state, or "latest": the newest whole one under $OUT
 GRADIENT_CHECKPOINTING="${GRADIENT_CHECKPOINTING:-1}"  # 0: keep the blocks' activations (faster; ~40 GB free a GPU on 8 A100 64 GB)
+UNCHECKPOINTED_BLOCKS="${UNCHECKPOINTED_BLOCKS:-0}"  # with checkpointing: the last N of the 42 blocks keep their activations
 PROFILE_DIR="${PROFILE_DIR:-}"  # a folder: steps 4 to 6 recorded by torch's profiler, a trace a rank (diagnostic)
 RESHARD_AFTER_FORWARD="${RESHARD_AFTER_FORWARD:-1}"  # 0: keep each block's gathered weights for its backward (~10 GB a GPU, half the gathers)
 GPUS_PER_NODE="${GPUS_PER_NODE:-4}"
@@ -61,6 +62,7 @@ options=(--full --transformer "$BASE/transformer" --cache "$CACHE" --out "$OUT" 
 [ -n "$VAL_CACHE" ] && options+=(--val-cache "$VAL_CACHE")
 [ -n "$EMA" ] && options+=(--ema "$EMA")
 [ "$GRADIENT_CHECKPOINTING" = 0 ] && options+=(--no-gradient-checkpointing)
+[ "$UNCHECKPOINTED_BLOCKS" != 0 ] && options+=(--uncheckpointed-blocks "$UNCHECKPOINTED_BLOCKS")
 [ -n "$PROFILE_DIR" ] && options+=(--profile-dir "$PROFILE_DIR")
 [ "$RESHARD_AFTER_FORWARD" = 0 ] && options+=(--no-reshard-after-forward)
 # a cache of latents alone (diffu-moss-cache-pairs --latents-only): encode the prompts in the step

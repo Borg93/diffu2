@@ -256,6 +256,7 @@ class MossTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, CacheMixin):
         self.final_linear_video = nn.Linear(dim, latent_channels, bias=False)
         self.video_head_modulation = nn.Linear(dim, 2 * dim)
         self.gradient_checkpointing = False
+        self.uncheckpointed_blocks = 0  # with gradient checkpointing: the last blocks that keep their activations
 
     def forward(
         self,
@@ -340,10 +341,11 @@ class MossTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, CacheMixin):
                 ),
                 1,
             )
+        recomputed = len(self.layers) - self.uncheckpointed_blocks
         for index, layer in enumerate(self.layers):
             if index in skip_layers:
                 continue
-            if torch.is_grad_enabled() and self.gradient_checkpointing:
+            if torch.is_grad_enabled() and self.gradient_checkpointing and index < recomputed:
                 x = self._gradient_checkpointing_func(layer, x, rope, modulation)
             else:
                 x = layer(x, rope, modulation)
