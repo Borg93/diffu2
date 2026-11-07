@@ -36,6 +36,12 @@ same 55 collections at 80 scans each): the look follows the sample, the hand doe
   cancelled the trial waiting on it (`afterok`, 63745127) and the run's first job (63744194); the trial was submitted
   again without a dependency (63750935), the job that waited on the cancelled one (63744195) is now the run's first,
   63750939 its second. The A and N cache jobs (`build_cache.sbatch`) exit with the cache's own status.
+- 7 Nov, throughput on 8 A100 64 GB (recipe B's cache, 2 nodes, 16 samples a step, debug QOS): with gradient
+  checkpointing (as B runs) 11.57 s a step, 20.0 GB a GPU at most; without it every GPU ran out of memory in step 1's
+  first forward pass (a 1 MP page and its 1 MP sample, ~9,000 tokens, keep more activations than the ~44 GB left), one
+  rank then hung and the rest timed out in FSDP's all-gather after 10 min. So the free memory buys speed only in part:
+  checkpointing some blocks rather than all, or keeping the gathered weights from the forward to the backward pass; a
+  profile of the current setting (job 63806582) decides which.
 
 ## Results
 
