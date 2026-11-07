@@ -28,7 +28,7 @@
 #SBATCH --time=24:00:00
 #SBATCH --output=moss-full-%j.out
 #SBATCH --partition=boost_usr_prod  # Leonardo's GPU partition (its default partition is CPU-only)
-#SBATCH --qos=boost_qos_dbg         # the smoke test; boost_qos_bprod for the run
+#SBATCH --qos=boost_qos_dbg         # the smoke test; normal for a run of a few nodes (boost_qos_bprod has a minimum size)
 # the account comes from SBATCH_ACCOUNT in the cluster's ~/.bashrc, never from this file
 
 set -euo pipefail
