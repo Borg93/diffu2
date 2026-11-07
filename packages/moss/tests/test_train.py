@@ -764,6 +764,18 @@ def test_training_lowers_the_loss_of_the_sample_it_trains_on(
     assert losses[1] < 0.9 * losses[0]
 
 
+def test_training_with_a_profile_dir_writes_its_ranks_trace_of_steps_4_to_6(
+    tiny_moss_dit: Path, tiny_pair_cache: Path, tmp_path: Path
+) -> None:
+    settings = TrainSettings(steps=6, save_every=6, device="cpu")
+
+    train(tiny_moss_dit, tiny_pair_cache, tmp_path / "run", settings, profile_dir=tmp_path / "profile")
+
+    events = json.loads((tmp_path / "profile" / "trace_rank0.json").read_text(encoding="utf-8"))["traceEvents"]
+    profiled = sorted({event["name"] for event in events if str(event.get("name", "")).startswith("ProfilerStep#")})
+    assert profiled == ["ProfilerStep#3", "ProfilerStep#4", "ProfilerStep#5"]  # the profiler counts from 0
+
+
 def test_training_refuses_a_cache_without_entries_before_it_loads_the_dit(tiny_moss: Path, tmp_path: Path) -> None:
     (tmp_path / "train.jsonl").write_text("", encoding="utf-8")
     write_cache(tiny_moss, tmp_path / "train.jsonl", tmp_path / "empty", CacheSettings(device="cpu"))

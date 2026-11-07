@@ -58,6 +58,7 @@ from safetensors.torch import save_file
 from torch import Tensor, nn
 from torch.nn import functional as F
 from torch.optim.lr_scheduler import LambdaLR
+from torch.profiler import ProfilerActivity, profile, schedule
 
 from diffu_moss.train.cache import (
     CachedSample,
@@ -94,6 +95,8 @@ LORA_TARGETS = (
 LOG = "train_log.jsonl"
 CHECKPOINTS = "checkpoints"
 VALIDATION_SEED = 0  # every run scores at the same noise, so runs of different seeds compare
+# a profiled run records its fourth to sixth steps: the first two warm up the kernels and the cache, the third the profiler
+PROFILE_WAIT, PROFILE_WARMUP, PROFILE_ACTIVE = 2, 1, 3
 # what a resumed run may change: how long it runs, how often it saves and scores, where, whether it saves its state,
 # whether it encodes its prompts (the same embeddings as cached), and whether it recomputes the blocks' activations
 RESUMABLE_CHANGES = {
@@ -484,12 +487,15 @@ def train(
     resume: Path | None = None,
     model: Path | None = None,
     ranks: Ranks | None = None,
+    profile_dir: Path | None = None,
 ) -> Path:
     """The DiT at ``base`` trained from the cache at ``cache`` (the module's docstring): a LoRA, or with
     ``settings.full`` every weight, from the start or from ``out``'s checkpoint ``resume``; with
     ``settings.encode_text`` its prompts encoded by the text encoder of :func:`prompt_encoder` (``model``'s). Over
     several ``ranks`` (a ``torchrun`` launch, :mod:`diffu_moss.train.distributed`) a full fine-tune is sharded by
-    FSDP2, each step's samples shared out among the ranks, and the main rank writes the log and checkpoints.
+    FSDP2, each step's samples shared out among the ranks, and the main rank writes the log and checkpoints. With
+    ``profile_dir``, steps 4 to 6 of this run are recorded by torch's profiler (CPU and, on a GPU, CUDA), each rank's
+    trace written to ``profile_dir/trace_rank<rank>.json`` (a diagnostic: the training is the same).
 
     Returns:
         The last checkpoint's directory.
@@ -543,6 +549,7 @@ def train(
         if ranks.main:
             _cut_log(out, done)
     device = torch.device(settings.device)
+    profiler = None if profile_dir is None else _profiler(profile_dir, device, ranks.rank)
     checkpoint = out
     for step in range(done + 1, settings.steps + 1):
         started = time.monotonic()
@@ -590,7 +597,26 @@ def train(
             training.save(checkpoint, _progress(step, settings, generator, order))
         if val_cache is not None and (step % settings.val_every == 0 or step == settings.steps):
             _validate(training, val_cache, out, step, settings, encoder, ranks)
+        if profiler is not None:
+            profiler.step()
+    if profiler is not None:
+        profiler.stop()
     return checkpoint
+
+
+def _profiler(folder: Path, device: torch.device, rank: int) -> profile:
+    """A started profiler recording a run's steps 4 to 6 (:data:`PROFILE_WAIT` ...) on ``device``, its trace written
+    to ``folder/trace_rank<rank>.json``."""
+    folder.mkdir(parents=True, exist_ok=True)
+    trace = folder / f"trace_rank{rank}.json"
+    activities = [ProfilerActivity.CPU] + ([ProfilerActivity.CUDA] if device.type == "cuda" else [])
+    profiler = profile(
+        activities=activities,
+        schedule=schedule(wait=PROFILE_WAIT, warmup=PROFILE_WARMUP, active=PROFILE_ACTIVE, repeat=1),
+        on_trace_ready=lambda done: done.export_chrome_trace(str(trace)),
+    )
+    profiler.start()
+    return profiler
 
 
 @app.command()
@@ -693,6 +719,13 @@ def main(
         ),
     ] = 1.0,
     seed: Annotated[int, typer.Option(help="the sample order, noise levels, noise and the LoRA's start")] = 0,
+    profile_dir: Annotated[
+        Path | None,
+        typer.Option(
+            help="record steps 4 to 6 with torch's profiler (CPU and CUDA), each rank's trace written here as "
+            "trace_rank<rank>.json (a diagnostic: the training is the same)"
+        ),
+    ] = None,
     device: Annotated[str, typer.Option(help="where the DiT trains")] = "cuda",
 ) -> None:
     """Train MOSS-Image's DiT to draw from a reference image: a LoRA, or every weight (--full); under torchrun, every
@@ -734,7 +767,15 @@ def main(
             {**run, "seed": seed, "device": device, "full": fine_tune, **({} if full else rate)}
         )
         checkpoint = train(
-            transformer, cache, out, settings, val_cache=val_cache, resume=resume, model=model, ranks=ranks
+            transformer,
+            cache,
+            out,
+            settings,
+            val_cache=val_cache,
+            resume=resume,
+            model=model,
+            ranks=ranks,
+            profile_dir=profile_dir,
         )
     except ValueError as error:  # an unfinished cache, a used run directory, a checkpoint not to resume: the arguments'
         raise typer.BadParameter(str(error)) from error
