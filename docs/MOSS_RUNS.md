@@ -22,9 +22,9 @@ each checkpoint's `state/progress.json` the training settings). How to run them:
 
 | Run | Question | Cache (`moss/cache_full_*`) | Validation | Jobs | Folder | State |
 |---|---|---|---|---|---|---|
-| **B** | Look and text from the sample page, hands from per-hand adapters afterwards (the chosen recipe) | `b`: content mix (sample alone 60 %, sample with look words 20 %, no sample 20 %; nothing named), a look change for half the sample-form entries, no hand changes | `cache_full_b_val`, `_heldout` (content mix) | cache 63698295, trial 63750935 (100 steps, debug QOS), run 63744195 then 63750939 | `moss/runs/full_b` (trial: `trial_b`) | cache done 10:22 (143,379 entries, 1.5 TB); trial passed 10:51 (below); run queued |
-| **A** | Does scale alone make the sample's hand follow? (the pilot's recipe at full scale) | `a`: content mix, a look change and a hand change for half the sample-form entries each (as the content pilot) | B's (same mix) | cache 63750290, run 63750297 then 63750306 | `moss/runs/full_a` | queued |
-| **N** | Hand by name: the collection named in the prompt, the look from the sample | `n`: named mix (archive named in 60 %: no sample 20 %, sample plus archive 20 %, sample plus archive and look words 20 %; sample alone 40 %), a look change for half the sample-form entries, no hand changes | `cache_full_n_val`, `_heldout` (named mix) | cache 63750293, run 63750311 then 63750316 | `moss/runs/full_n` | queued |
+| **B** | Look and text from the sample page, hands from per-hand adapters afterwards (the chosen recipe) | `b`: content mix (sample alone 60 %, sample with look words 20 %, no sample 20 %; nothing named), a look change for half the sample-form entries, no hand changes | `cache_full_b_val`, `_heldout` (content mix) | cache 63698295, trial 63750935 (100 steps, debug QOS), run 63744195 then 63750939 | `moss/runs/full_b` (trial: `trial_b`) | cache done 10:22 (143,379 entries, 1.5 TB); trial passed 10:51 (below); run started 7 Nov ~18:15 after 7.8 h in the queue |
+| **A** | Does scale alone make the sample's hand follow? (the pilot's recipe at full scale) | `a`: content mix, a look change and a hand change for half the sample-form entries each (as the content pilot) | B's (same mix) | cache 63750290, run 63750297 then 63750306 | `moss/runs/full_a` | cache started 7 Nov ~18:15 (time limit lowered to 10 h) |
+| **N** | Hand by name: the collection named in the prompt, the look from the sample | `n`: named mix (archive named in 60 %: no sample 20 %, sample plus archive 20 %, sample plus archive and look words 20 %; sample alone 40 %), a look change for half the sample-form entries, no hand changes | `cache_full_n_val`, `_heldout` (named mix) | cache 63750293, run 63750311 then 63750316 | `moss/runs/full_n` | cache started 7 Nov ~18:15 (time limit lowered to 10 h) |
 
 Before these: the content pilot (`runs/moss_content_pilot/full_c1` on the Spark, 2,500 steps of one sample from the
 same 55 collections at 80 scans each): the look follows the sample, the hand does not (TODO.md, the recipe).
@@ -42,5 +42,8 @@ same 55 collections at 80 scans each): the look follows the sample, the hand doe
 - **B trial** (7 Nov, 2 nodes, 100 steps of 16 on cache `b`): training loss 0.837 at step 1, 0.751 at 10, 0.60-0.65
   from 40 to 100; gradient norm from 3.3 to 0.2-0.5; validation loss at step 50 0.686 in every form; 10-17 GB a GPU;
   11.8 s a step (1.36 samples/s, 1.7x one node's), so the run's 9,000 steps take ~30 h; checkpoints at 50 and 100.
+
+- **B, first 250 steps** (7 Nov): training loss 0.837 at step 1, 0.639 over 11-50, 0.617 over 201-250; gradient norm
+  0.29-0.68 after step 10; ~21 GB a GPU with the EMA; 11.9 s a step, ~29 h for the 9,000.
 
 (Filled in as each run is judged: validation loss by form, the swap test, held-out pages beside the scans.)
