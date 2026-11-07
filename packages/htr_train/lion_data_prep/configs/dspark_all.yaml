@@ -2,9 +2,11 @@
 # runs/htr/minicpm-all/best), from its own answers to 250,000 training lines and 50,000 training regions, each a
 # seeded draw (htr-train serve-target, then htr-train dspark-set against it); 3 online epochs, vLLM and the trainer on
 # one GPU (htr-train launch --where local, HTR_TRAIN_LOCAL_GPUS one GPU). configs/full/dspark.yaml's recipe.
-# Trained because it was asked for, before a measurement favours it: base MiniCPM-OCR's line serving read about 24,500
-# prompt (mostly image) tokens a second against 400 generated (runs/htr/eval/vllm_base.log), which a draft does not
-# speed up. It is kept only if the same lines read faster with it than without.
+# OpenBMB's draft makes MiniCPM-OCR 55 % faster end to end on whole pages (OmniDocBench v1.6, one page at a time, RTX
+# 5090; its reproduction commands are still to come): long answers, where a draft speeds up the decoding. Our regions
+# are like that (about 250 tokens an answer); our lines are not: base MiniCPM-OCR's line serving read about 24,500
+# prompt (mostly image) tokens a second against 400 generated (runs/htr/eval/vllm_base.log). So the draft is measured
+# on the same lines and regions with it and without it, and kept for what it speeds up.
 name: dspark-all
 description: "DSpark draft for minicpm-all's best checkpoint, 250,000 line and 50,000 region answers"
 job:
