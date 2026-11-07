@@ -86,11 +86,12 @@ def left() -> None:
         dist.destroy_process_group()
 
 
-def shard(transformer: MossTransformer, mesh: DeviceMesh) -> None:
+def shard(transformer: MossTransformer, mesh: DeviceMesh, *, reshard_after_forward: bool = True) -> None:
     """``transformer`` sharded in place over ``mesh`` (the module's docstring): each joint block a unit, then the
-    root; its weights moved to the mesh's device."""
+    root; its weights moved to the mesh's device. Without ``reshard_after_forward`` a block keeps its gathered weights
+    from its forward pass to its backward instead of gathering them again (more memory, fewer collectives)."""
     for block in transformer.layers:
-        fully_shard(block, mesh=mesh, mp_policy=MIXED_PRECISION)
+        fully_shard(block, mesh=mesh, mp_policy=MIXED_PRECISION, reshard_after_forward=reshard_after_forward)
     fully_shard(transformer, mesh=mesh, mp_policy=MIXED_PRECISION)
 
 

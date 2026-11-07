@@ -97,15 +97,23 @@ def test_full_fine_tune_at_world_size_2_logs_trains_and_checkpoints_exactly_as_a
         assert [name for name in states[0] if not torch.equal(states[0][name], states[1][name])] == []
 
 
+@pytest.mark.parametrize(
+    "options",
+    [
+        pytest.param((), id="as-trained"),
+        # each block's gathered weights kept from its forward to its backward pass: fewer gathers, the same training
+        pytest.param(("--no-reshard-after-forward",), id="without-resharding-after-forward"),
+    ],
+)
 def test_full_fine_tune_resumed_at_world_size_2_from_a_world_size_1_state_goes_on_exactly_as_the_run_went(
-    tiny_moss_dit: Path, tiny_pair_cache: Path, world_runs: dict[int, Path], tmp_path: Path
+    tiny_moss_dit: Path, tiny_pair_cache: Path, world_runs: dict[int, Path], tmp_path: Path, options: tuple[str, ...]
 ) -> None:
     resumed = tmp_path / "run"
     shutil.copytree(world_runs[1], resumed)
     for step in range(2, STEPS + 1):
         shutil.rmtree(_checkpoint(resumed, step))
 
-    _torchrun(2, resumed, tiny_moss_dit, tiny_pair_cache, "--resume", str(_checkpoint(resumed, 1)))
+    _torchrun(2, resumed, tiny_moss_dit, tiny_pair_cache, "--resume", str(_checkpoint(resumed, 1)), *options)
 
     assert _log(resumed) == _log(world_runs[1])
     tensors = _tensors(_checkpoint(resumed, STEPS)), _tensors(_checkpoint(world_runs[1], STEPS))

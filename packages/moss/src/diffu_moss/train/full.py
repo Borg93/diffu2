@@ -79,8 +79,10 @@ class FullSettings(BaseModel):
     """How a full fine-tune steps (the module's docstring): its optimizers' settings (Muon's momentum kept in
     ``momentum_dtype``), the decay of the average of its weights (None: no average), whether each checkpoint keeps
     the state a run resumes from, and whether the joint blocks' activations are recomputed in the backward pass
-    (``gradient_checkpointing``: less memory, more compute; off where a GPU has the memory to keep them, the same
-    training either way)."""
+    (``gradient_checkpointing``: less memory, more compute; off where a GPU has the memory to keep them), and, sharded,
+    whether each block's gathered weights are dropped after its forward pass and gathered again for its backward
+    (``reshard_after_forward``, FSDP2's default) or kept, about 10 GB a GPU more for half the gathers; the training is
+    the same either way."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -93,6 +95,7 @@ class FullSettings(BaseModel):
     ema: float | None = Field(default=None, gt=0, lt=1)
     save_state: bool = False
     gradient_checkpointing: bool = True
+    reshard_after_forward: bool = True
 
 
 def full_transformer(folder: Path, *, device: str, checkpointing: bool = True) -> MossTransformer:
@@ -278,7 +281,7 @@ class FullTraining:
             checkpointing=settings.gradient_checkpointing,
         )
         if mesh is not None:
-            shard(self.transformer, mesh)
+            shard(self.transformer, mesh, reshard_after_forward=settings.reshard_after_forward)
         self.parameters: list[nn.Parameter] = list(self.transformer.parameters())
         self.optimizer = FullOptimizer(self.transformer, settings, schedule=schedule)
         self.average: WeightAverage | None = None

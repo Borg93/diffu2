@@ -98,14 +98,15 @@ VALIDATION_SEED = 0  # every run scores at the same noise, so runs of different 
 # a profiled run records its fourth to sixth steps: the first two warm up the kernels and the cache, the third the profiler
 PROFILE_WAIT, PROFILE_WARMUP, PROFILE_ACTIVE = 2, 1, 3
 # what a resumed run may change: how long it runs, how often it saves and scores, where, whether it saves its state,
-# whether it encodes its prompts (the same embeddings as cached), and whether it recomputes the blocks' activations
+# whether it encodes its prompts (the same embeddings as cached), whether it recomputes the blocks' activations, and
+# whether a sharded block gathers its weights again for its backward pass
 RESUMABLE_CHANGES = {
     "steps": True,
     "save_every": True,
     "val_every": True,
     "device": True,
     "encode_text": True,
-    "full": {"save_state": True, "gradient_checkpointing": True},
+    "full": {"save_state": True, "gradient_checkpointing": True, "reshard_after_forward": True},
 }
 
 
@@ -688,6 +689,15 @@ def main(
             "compute); --no-gradient-checkpointing keeps them, where a GPU has the memory (the same training)",
         ),
     ] = True,
+    reshard_after_forward: Annotated[
+        bool,
+        typer.Option(
+            "--reshard-after-forward/--no-reshard-after-forward",
+            help="with --full under torchrun: drop each block's gathered weights after its forward pass and gather them "
+            "again for its backward (FSDP2's default); --no-reshard-after-forward keeps them (about 10 GB a GPU more for "
+            "the 5 B DiT, half the gathers; the same training)",
+        ),
+    ] = True,
     muon_momentum_dtype: Annotated[
         MomentumDtype,
         typer.Option(
@@ -736,10 +746,11 @@ def main(
         or resume is not None
         or muon_momentum_dtype is not MomentumDtype.FLOAT32
         or not gradient_checkpointing
+        or not reshard_after_forward
     ):
         raise typer.BadParameter(
-            "--ema, --save-state, --resume, --muon-momentum-dtype and --no-gradient-checkpointing are a full "
-            "fine-tune's: give --full"
+            "--ema, --save-state, --resume, --muon-momentum-dtype, --no-gradient-checkpointing and "
+            "--no-reshard-after-forward are a full fine-tune's: give --full"
         )
     if model is not None and not encode_text:
         raise typer.BadParameter("--model gives the text encoder of --encode-text: give --encode-text")
@@ -751,6 +762,7 @@ def main(
             "save_state": save_state,
             "momentum_dtype": muon_momentum_dtype,
             "gradient_checkpointing": gradient_checkpointing,
+            "reshard_after_forward": reshard_after_forward,
             **rate,
         }
         fine_tune = FullSettings.model_validate(full_settings) if full else None

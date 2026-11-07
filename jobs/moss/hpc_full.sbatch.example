@@ -46,6 +46,7 @@ EMA="${EMA:-}"            # e.g. 0.999: an average of the weights saved beside e
 RESUME="${RESUME:-}"      # a checkpoint saved with --save-state, or "latest": the newest whole one under $OUT
 GRADIENT_CHECKPOINTING="${GRADIENT_CHECKPOINTING:-1}"  # 0: keep the blocks' activations (faster; ~40 GB free a GPU on 8 A100 64 GB)
 PROFILE_DIR="${PROFILE_DIR:-}"  # a folder: steps 4 to 6 recorded by torch's profiler, a trace a rank (diagnostic)
+RESHARD_AFTER_FORWARD="${RESHARD_AFTER_FORWARD:-1}"  # 0: keep each block's gathered weights for its backward (~10 GB a GPU, half the gathers)
 GPUS_PER_NODE="${GPUS_PER_NODE:-4}"
 SAMPLES_PER_STEP="${SAMPLES_PER_STEP:-$((SLURM_NNODES * GPUS_PER_NODE * 2))}"  # two rounds of one sample a GPU
 
@@ -61,6 +62,7 @@ options=(--full --transformer "$BASE/transformer" --cache "$CACHE" --out "$OUT" 
 [ -n "$EMA" ] && options+=(--ema "$EMA")
 [ "$GRADIENT_CHECKPOINTING" = 0 ] && options+=(--no-gradient-checkpointing)
 [ -n "$PROFILE_DIR" ] && options+=(--profile-dir "$PROFILE_DIR")
+[ "$RESHARD_AFTER_FORWARD" = 0 ] && options+=(--no-reshard-after-forward)
 # a cache of latents alone (diffu-moss-cache-pairs --latents-only): encode the prompts in the step
 # options+=(--encode-text --model "$REPO/runs/moss/base")
 # go on from a checkpoint saved with --save-state, on any number of GPUs; "latest" takes the newest whole one (its
