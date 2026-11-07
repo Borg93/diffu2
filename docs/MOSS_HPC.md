@@ -2,7 +2,7 @@
 
 Not run yet. This page is what has to be true, in order, before the HPC run is submitted, and the commands for each
 step; every number is measured on the Spark (GB10) unless it says "estimate". [MOSS.md](MOSS.md) has the model and
-the trainer; `jobs/moss/run_content_pilot.sh` the pilot this run scales up.
+the trainer; [MOSS_RUNS.md](MOSS_RUNS.md) logs every run; `jobs/moss/run_content_pilot.sh` the pilot this run scales up.
 
 ## 0. Before anything
 
