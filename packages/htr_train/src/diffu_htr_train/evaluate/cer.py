@@ -1,7 +1,8 @@
 """Error rates as each side scores itself: the Swedish Lion TrOCR's (``jiwer.cer`` a line, whitespace normalised, the
 mean over the lines) and OpenBMB's (``docs/swift_minicpm_ocr_french_en.md``: NFC, the ends trimmed, inner spaces kept;
-the corpus CER and WER, edits over reference characters or words); and the baseline's training normalisation
-(:func:`trocr_normalize`) to score both sides with too."""
+the corpus CER and WER, edits over reference characters or words); the baseline's training normalisation
+(:func:`trocr_normalize`) to score both sides with too; and a reading's looping tail cut (:func:`cut_loop`), to score
+every reader with as well."""
 
 from __future__ import annotations
 
@@ -65,6 +66,23 @@ def trocr_normalize(text: str) -> str:
     text = re.sub(r"\s+", " ", text)
     text = text.strip("— ")
     return unicodedata.normalize("NFKC", text)
+
+
+_LOOP_REVERSED = re.compile(r"\s*(.{2,60}?)(?:\s*\1){2,}", re.DOTALL)  # matched on the reversed text: its tail
+LOOP_SPAN = 10
+
+
+def cut_loop(text: str, *, cut_off: bool = False) -> str:
+    """``text`` with a looping tail (greedy decoding repeating itself: ``damn. damn. damn.``) cut to one copy of its
+    unit: a unit of 2 to 60 characters repeated 3 or more times at the end over at least :data:`LOOP_SPAN` characters.
+    A reading that ended on its own loses it only where the unit holds a letter (a number's zeros or a row of dots are
+    written so); one ``cut_off`` at the token limit loses it whatever the unit (``. . . .`` until the limit)."""
+    match = _LOOP_REVERSED.match(text[::-1])
+    if match is None or len(match.group(0).strip()) < LOOP_SPAN:
+        return text
+    if not cut_off and not any(char.isalpha() for char in match.group(1)):
+        return text
+    return text[: len(text) - match.end()] + match.group(1)[::-1]
 
 
 class Scored(BaseModel):

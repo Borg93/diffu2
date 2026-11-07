@@ -242,13 +242,23 @@ def dspark_set(
         "data/htr/dspark_responses.jsonl"
     ),
     max_tokens: Annotated[int, typer.Option(min=1, help="an answer's length at most")] = 512,
-    limit: Annotated[int | None, typer.Option(min=1, help="prompt only this many samples")] = None,
+    limit: Annotated[
+        int | None, typer.Option(min=1, help="prompt only this many samples (the first ones, or a draw by --seed)")
+    ] = None,
+    seed: Annotated[int | None, typer.Option(help="draw the --limit samples by this seed, from the whole set")] = None,
+    concurrency: Annotated[int, typer.Option(min=1, help="prompts asked at once")] = 1,
     max_failed: Annotated[float, typer.Option(min=0.0, max=0.99, help="the share of prompts that may fail")] = 0.01,
 ) -> None:
     """Answer a set's prompts with the served target and write them as a draft's training data."""
     try:
         settings = ResponsesSettings(
-            target=target.resolve(), endpoint=endpoint, max_tokens=max_tokens, limit=limit, max_failed=max_failed
+            target=target.resolve(),
+            endpoint=endpoint,
+            max_tokens=max_tokens,
+            limit=limit,
+            seed=seed,
+            concurrency=concurrency,
+            max_failed=max_failed,
         )
     except ValidationError as error:
         raise _refused(JobRefused(validation_problems(error, "settings"))) from error

@@ -9,7 +9,10 @@ prompts fail (or every one) is refused.
 
 from __future__ import annotations
 
+import random
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
+from functools import partial
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
@@ -37,7 +40,8 @@ class Prompted(BaseModel):
 class ResponsesSettings(BaseModel):
     """How a response set is made: the served target (its folder, served under its path), the server (an http or https
     URL, kept without a trailing slash, so the API's paths join it), the answers' length, how long a request may take,
-    how many prompts to send (None: all) and the share that may fail."""
+    how many prompts to send (None: all; the set's first ones, or a draw of them by ``seed``), how many are asked at
+    once and the share that may fail."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -46,6 +50,8 @@ class ResponsesSettings(BaseModel):
     max_tokens: int = Field(default=512, gt=0)
     timeout: float = Field(default=120.0, gt=0)
     limit: int | None = Field(default=None, gt=0)
+    seed: int | None = None
+    concurrency: int = Field(default=1, gt=0)
     max_failed: float = Field(default=0.01, ge=0, lt=1)
 
     @field_validator("endpoint")
@@ -179,8 +185,9 @@ class _Completion(BaseModel):
     choices: list[_Choice] = Field(min_length=1)
 
 
-def prompts(path: Path, limit: int | None) -> list[Prompted]:
-    """The prompts of a set: each sample's first image and its user turn less its image placeholders.
+def prompts(path: Path, limit: int | None, seed: int | None = None) -> list[Prompted]:
+    """The prompts of a set: each sample's first image and its user turn less its image placeholders; of ``limit``
+    samples only (where given), the first ones or, with a ``seed``, a draw of them in the set's order.
 
     Raises:
         SetRefused: If the set or its meta cannot be read, they differ in length, a sample is a real one not of the
@@ -194,8 +201,12 @@ def prompts(path: Path, limit: int | None) -> list[Prompted]:
         raise SetRefused(f"{meta_path(path)} has {len(metas)} lines for {len(samples)} samples in {path.name}")
     if leaked := next((meta for meta in metas if not meta.is_of("train")), None):
         raise SetRefused(f"{path} holds {leaked.id}, a real sample not of the GT's training side: prompt training sets")
+    chosen = range(len(samples)) if limit is None or limit >= len(samples) else range(limit)
+    if seed is not None and len(chosen) < len(samples):
+        chosen = sorted(random.Random(seed).sample(range(len(samples)), len(chosen)))
     made: list[Prompted] = []
-    for number, sample in enumerate(samples[:limit], start=1):
+    for number in (index + 1 for index in chosen):
+        sample = samples[number - 1]
         if len(sample.images) != 1:
             raise SetRefused(f"{path}:{number} shows {len(sample.images)} images: a draft's prompt shows one crop")
         text = sample.messages[0].content.replace(PLACEHOLDER, "").strip()
@@ -239,30 +250,37 @@ def answer(client: httpx.Client, prompt: Prompted, settings: ResponsesSettings) 
         raise ValueError(f"the server's reply is not a chat completion: {error}") from error
 
 
+def _answered(client: httpx.Client, prompt: Prompted, settings: ResponsesSettings) -> str | Failed:
+    try:
+        return answer(client, prompt, settings)
+    except (httpx.HTTPError, ValueError) as error:
+        return Failed(number=prompt.number, error=f"{type(error).__name__}: {error}")
+
+
 def write_responses(prompts_set: Path, out: Path, settings: ResponsesSettings) -> Responses:
-    """Each prompt of ``prompts_set`` answered by the served target, written to ``out`` as speculators conversations;
-    the target recorded in ``<out stem>.target.json``, the prompts left out in ``<out stem>.skipped.jsonl``.
+    """Each prompt of ``prompts_set`` answered by the served target (``concurrency`` asked at once), written to ``out``
+    in the prompts' order as speculators conversations; the target recorded in ``<out stem>.target.json``, the prompts
+    left out in ``<out stem>.skipped.jsonl``.
 
     Raises:
         SetRefused: If the prompts cannot be read (:func:`prompts`), or more than ``max_failed`` of them (or all)
             failed: the set is written and recorded, to look at, but not fit to train on.
     """
-    asked = prompts(prompts_set, settings.limit)
+    asked = prompts(prompts_set, settings.limit, settings.seed)
     out.parent.mkdir(parents=True, exist_ok=True)
     answered = failed = 0
     with ExitStack() as stack:
-        client = stack.enter_context(httpx.Client(timeout=settings.timeout))
+        limits = httpx.Limits(max_connections=settings.concurrency, max_keepalive_connections=settings.concurrency)
+        client = stack.enter_context(httpx.Client(timeout=settings.timeout, limits=limits))
+        pool = stack.enter_context(ThreadPoolExecutor(settings.concurrency))
         written = stack.enter_context(out.open("w", encoding="utf-8"))
         left_out = stack.enter_context(skipped_path(out).open("w", encoding="utf-8"))
-        for prompt in asked:
-            try:
-                text = answer(client, prompt, settings)
-            except (httpx.HTTPError, ValueError) as error:
-                left_out.write(Failed(number=prompt.number, error=f"{type(error).__name__}: {error}").model_dump_json())
-                left_out.write("\n")
+        for prompt, got in zip(asked, pool.map(partial(_answered, client, settings=settings), asked), strict=True):
+            if isinstance(got, Failed):
+                left_out.write(got.model_dump_json() + "\n")
                 failed += 1
                 continue
-            written.write(conversation(prompt, text).model_dump_json() + "\n")
+            written.write(conversation(prompt, got).model_dump_json() + "\n")
             answered += 1
     record = ResponsesMeta(
         target=str(settings.target.resolve()),

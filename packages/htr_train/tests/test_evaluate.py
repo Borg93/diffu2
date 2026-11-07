@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from typer.testing import CliRunner
 
-from diffu_htr_train.evaluate.cer import by_subset, trocr_normalize, whitespace
+from diffu_htr_train.evaluate.cer import by_subset, cut_loop, trocr_normalize, whitespace
 from diffu_htr_train.evaluate.cli import app
 from diffu_htr_train.evaluate.in_training import Reading, answer, metrics, write_readings
 from diffu_htr_train.evaluate.lines import EvalLine, read_lines
@@ -161,7 +161,42 @@ def test_the_cer_command_scores_each_predictions_file_as_each_side_scores_itself
     assert result.exit_code == 0, result.output
     all_row = next(line for line in result.output.splitlines() if "│ all" in line)
     # mean CER (1/10 + 1/4) / 2; OpenBMB's CER 2 edits of 14 characters, WER 2 of 3 words; normalised „ drops: 1/4 / 2
-    assert [cell.strip() for cell in all_row.split("│")[2:-1]] == ["2", "17.50%", "14.29%", "66.67%", "12.50%", "1"]
+    assert [cell.strip() for cell in all_row.split("│")[2:-1]] == [
+        "2", "17.50%", "14.29%", "66.67%", "12.50%", "1", "17.50%", "14.29%", "0",
+    ]  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("reading", "cut_off", "kept"),
+    [  # the loops the in-training readings of steps 14,000-21,000 held, and what a loop is not
+        pytest.param("Hl.r Chronander, damn. damn. damn.", False, "Hl.r Chronander, damn.", id="words"),
+        pytest.param("lag at förfaras.\nP.\nP.\nP.\nP.\nP.", True, "lag at förfaras.\nP.", id="lines"),
+        pytest.param("Summa" + " ." * 40, True, "Summa .", id="dots-to-the-limit"),
+        pytest.param("Herr ...........", False, "Herr ...........", id="dots"),
+        pytest.param("utsatt af 450,000", False, "utsatt af 450,000", id="zeros"),
+        pytest.param("Item 2 tunnor 2 tunnor", False, "Item 2 tunnor 2 tunnor", id="twice"),
+    ],
+)
+def test_a_looping_tail_is_cut_to_one_copy_and_nothing_else_is(reading: str, cut_off: bool, kept: str) -> None:
+    assert cut_loop(reading, cut_off=cut_off) == kept
+
+
+def test_the_cer_command_scores_the_readings_with_their_loops_cut_too(tmp_path: Path) -> None:
+    predictions = tmp_path / "read.jsonl"
+    rows = [
+        {"id": "a", "subset": "V1", "text": "damn.", "prediction": "damn. damn. damn. damn.", "finished": "stop"},
+        {"id": "b", "subset": "V1", "text": "abcd", "prediction": "abcf", "finished": "stop"},
+    ]
+    predictions.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["cer", str(predictions)], env={"COLUMNS": "250"})
+
+    assert result.exit_code == 0, result.output
+    all_row = next(line for line in result.output.splitlines() if "│ all" in line)
+    # as read: (18/5 + 1/4) / 2 and 19 edits of 9; loops cut: (0 + 1/4) / 2 and 1 of 9, one reading cut
+    assert [cell.strip() for cell in all_row.split("│")[3:5] + all_row.split("│")[8:-1]] == [
+        "192.50%", "211.11%", "12.50%", "11.11%", "1",
+    ]  # fmt: skip
 
 
 def test_readings_in_training_score_as_the_cer_command_scores_them_written(tmp_path: Path) -> None:

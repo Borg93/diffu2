@@ -34,10 +34,21 @@ GT=/mnt/work/GT-Lejonet_HTR_202602 WORKERS=56 GPUS=1,2 bash packages/htr_train/l
 
 `build_sets.sh` cuts with every core given (`WORKERS`, ~500 lines/s on dmlpai01's network disk: ~1 h for the
 ~1.5 M lines) into `data/htr` (`SETS`), then runs `train.sh` (`NO_TRAIN=1` stops after the sets). `train.sh` trains
-`configs/minicpm_all.yaml` and then `configs/jev_all.yaml` with `htr-train launch --where local`, building
-Jev's pairs on the CPU meanwhile; each waits until no other process computes on its GPUs. Both scripts leave a
-marker a step (`runs/htr/pipeline_markers`), so a second run resumes after the last finished one; a file
-`runs/htr/HOLD` holds the trainings back. Run them in tmux: they outlive the login.
+`configs/minicpm_all.yaml` with `htr-train launch --where local`, then hands over to `after_minicpm.sh`:
+- **The model scored:** the checkpoint of least eval loss (linked as `runs/htr/minicpm-all/best`) is read through vLLM
+  with OpenBMB's flags on all 6,358 out-of-domain lines and the 5,000 `test_0050` lines. The readings are scored beside
+  the Swedish Lion TrOCR's greedy readings of the same lines in `runs/htr/final/result.txt`: as read, and with each
+  reading's looping tail cut (`htr-eval cer`).
+- **Jev's reads and pairs:** the same model reads 100,000 training lines and every test line, Jev's real errors
+  beside its rule ones. Jev's pairs, dev split and test pairs follow on the CPU, about 4.5 h for the training lines.
+- **The draft's responses:** meanwhile, on the second GPU, the same model answers 300,000 prompts drawn from the
+  training lines and regions together, the DSpark draft's responses.
+- **Jev, then the draft:** `configs/jev_all.yaml` trains on both GPUs, then `configs/dspark_all.yaml` on the first
+  (`DSPARK=0` stops before the draft).
+
+Each waits until no other process computes on its GPUs. The scripts leave a marker a step
+(`runs/htr/pipeline_markers`), so a second run resumes after the last finished one; a file `runs/htr/HOLD` holds the
+trainings back. Run them in tmux: they outlive the login.
 
 `configs/smoke_*_2gpu.yaml` are the same setups in small on the smoke sets, to check a machine first (minutes).
 
@@ -55,3 +66,10 @@ marker a step (`runs/htr/pipeline_markers`), so a second run resumes after the l
   and `eval_cut_<set>` beside the eval loss; the readings go to `output/cer/step-<n>.<set>.jsonl`. It shows the
   trend; the scores against the baseline come from `htr-eval read` on a checkpoint through vLLM, and the checkpoint
   kept is still the one of least eval loss. The draws are `build_sets.sh`'s `cer_sets` step.
+- **Loops cut when scored, both readers alike** (`cut_loop`): greedy decoding sometimes repeats itself to the end
+  (`damn. damn. damn.`, `. . . .` until the token limit), so `htr-eval cer` also scores each reading with a looping
+  tail cut to one copy. The rule: a unit of 2 to 60 characters repeated 3 or more times over 10 or more characters,
+  holding a letter unless the reading hit the token limit. It cut 8 of 43,316 saved readings (ours from steps 6,000 and
+  14,000-21,000, and TrOCR's), each closer to its reference afterwards, none further, and none of TrOCR's.
+  Published OCR work treats such loops the same way: LightOnOCR detects them and trains them away, and DeepSeek-OCR
+  blocks repeated n-grams when serving.

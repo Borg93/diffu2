@@ -395,6 +395,25 @@ def test_write_responses_answers_each_prompt_with_the_served_target_and_records_
     assert [row["number"] for row in _rows(out.with_name("responses.skipped.jsonl"))] == [2]
 
 
+def test_write_responses_asks_a_seeded_draw_at_once_and_writes_it_in_the_sets_order(
+    tmp_path: Path, make_set: MakeSet, served_target: str
+) -> None:
+    names = [f"line{k}" for k in range(8)]
+    prompts = make_set("lines", [(name, "Anno", "GT-A", "V1", "train") for name in names])
+    target = tmp_path / "target"
+    target.mkdir()
+    out = tmp_path / "responses.jsonl"
+    settings = ResponsesSettings(target=target, endpoint=served_target, limit=3, seed=1, concurrency=3)
+
+    made = write_responses(prompts, out, settings)
+
+    answers = [row["conversations"][1]["content"][0]["text"] for row in _rows(out)]
+    assert made.answered == 3
+    assert answers == sorted(answers, key=names.index)
+    assert answers != names[:3]  # a draw from the whole set, not its first lines
+    assert answers == [names[k] for k in sorted(random.Random(1).sample(range(8), 3))]
+
+
 def test_write_responses_refuses_a_set_whose_prompts_fail_past_its_share(
     tmp_path: Path, make_set: MakeSet, served_target: str
 ) -> None:

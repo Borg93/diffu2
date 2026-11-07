@@ -4,6 +4,7 @@ predictions as reads for Jev's pairs (``as-reads``)."""
 
 from __future__ import annotations
 
+from collections import Counter
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Literal
@@ -12,7 +13,7 @@ import typer
 from pydantic import BaseModel
 from rich.table import Table
 
-from diffu_htr_train.evaluate.cer import by_subset, nfc_trimmed, trocr_normalize, whitespace
+from diffu_htr_train.evaluate.cer import by_subset, cut_loop, nfc_trimmed, trocr_normalize, whitespace
 from diffu_htr_train.evaluate.lines import OOD_REPO, ood_lines, read_lines, sampled, set_lines, write_lines
 from diffu_htr_train.evaluate.readers import (
     MiniCPMSettings,
@@ -146,19 +147,25 @@ def cer(
 ) -> None:
     """Each predictions file's error rates as each side scores itself: the Swedish Lion's per-line mean CER (whitespace
     normalised), OpenBMB's corpus CER and WER (NFC, ends trimmed), the per-line mean CER with the baseline's training
-    normalisation on both sides, and the lines cut off at the token limit."""
+    normalisation on both sides, and the lines cut off at the token limit; then both CERs again with each reading's
+    looping tail cut (``cut_loop``), and the readings it cut."""
     for path in predictions:
         rows = _predictions(path)
         triples = [(row.subset, row.text, row.prediction) for row in rows]
+        unlooped = [(row.subset, row.text, cut_loop(row.prediction, cut_off=row.finished == "length")) for row in rows]
         lion, openbmb = by_subset(triples, whitespace), by_subset(triples, nfc_trimmed)
         normalised = by_subset(triples, trocr_normalize)
-        cut: dict[str, int] = {"all": 0}
-        for row in rows:
-            if row.finished == "length":
-                cut["all"] += 1
-                cut[row.subset] = cut.get(row.subset, 0) + 1
+        lion_unlooped, openbmb_unlooped = by_subset(unlooped, whitespace), by_subset(unlooped, nfc_trimmed)
+        cut: Counter[str] = Counter()
+        looped: Counter[str] = Counter()
+        for row, (_, _, unlooped_prediction) in zip(rows, unlooped, strict=True):
+            cut.update(["all", row.subset] if row.finished == "length" else [])
+            looped.update(["all", row.subset] if unlooped_prediction != row.prediction else [])
         table = Table(title=str(path))
-        columns = ("subset", "lines", "mean CER", "CER (OpenBMB)", "WER (OpenBMB)", "mean CER, norm.", "cut off")
+        columns = (
+            "subset", "lines", "mean CER", "CER (OpenBMB)", "WER (OpenBMB)", "mean CER, norm.", "cut off",
+            "mean CER, loops cut", "CER (OpenBMB), loops cut", "loops cut",
+        )  # fmt: skip
         for column in columns:
             table.add_column(column, justify="left" if column == "subset" else "right")
         for subset in ["all", *(name for name in lion if name != "all")] if subsets else ["all"]:
@@ -169,7 +176,10 @@ def cer(
                 f"{openbmb[subset].corpus_cer:.2%}",
                 f"{openbmb[subset].corpus_wer:.2%}",
                 f"{normalised[subset].mean_cer:.2%}",
-                str(cut.get(subset, 0)),
+                str(cut[subset]),
+                f"{lion_unlooped[subset].mean_cer:.2%}",
+                f"{openbmb_unlooped[subset].corpus_cer:.2%}",
+                str(looped[subset]),
             )
         console.print(table)
 

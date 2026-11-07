@@ -47,8 +47,9 @@ htr-train split-dev data/htr/minicpm_regions.jsonl --like data/htr/minicpm_lines
 htr-train jev-set --lines data/htr/minicpm_lines_scaled.train.jsonl --out data/htr/jev_lines.jsonl
 # Jev's test pairs (to evaluate it on), from the test lines
 htr-train jev-set --side test --lines data/htr/minicpm_lines_scaled.test.jsonl --out data/htr/jev_lines.test.jsonl
-# a draft's responses: the target served by vLLM (htr-train serve-target SPEC prints the command) answers every prompt
-htr-train dspark-set --prompts data/htr/minicpm_lines_scaled.train.jsonl --target <snapshot> --out data/htr/dspark_responses.jsonl
+# a draft's responses: the target served by vLLM (htr-train serve-target SPEC prints the command) answers the prompts
+htr-train dspark-set --prompts data/htr/minicpm_lines_scaled.train.jsonl --target <snapshot> --limit 300000 --seed 0 \
+    --concurrency 64 --out data/htr/dspark_responses.jsonl  # a seeded draw of the set, 64 asked at once
 ```
 
 ### Scoring
@@ -56,7 +57,7 @@ htr-train dspark-set --prompts data/htr/minicpm_lines_scaled.train.jsonl --targe
 `htr-eval` (run from `envs/minicpm/.venv/bin/`: it reads with that environment's torch and transformers) scores the
 readers: `set-lines` and `ood-set` give lines to score, `draw` a fixed draw of them, `read` a reader's predictions
 and speed (MiniCPM-OCR through vLLM as OpenBMB asks it; the Swedish Lion TrOCR through transformers), `cer` their error
-rates as each side scores itself. A spec's `cer_sets` has ms-swift read draws like these at each evaluation, with the
+rates as each side scores itself, as read and with each reading's looping tail cut. A spec's `cer_sets` has ms-swift read draws like these at each evaluation, with the
 model in training (`evaluate/swift_plugin.py`, passed as `--external_plugins` with `--callbacks cer`).
 
 ### Smoke sets

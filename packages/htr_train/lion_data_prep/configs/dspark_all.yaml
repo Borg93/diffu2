@@ -1,0 +1,25 @@
+# The DSpark draft for minicpm-all's checkpoint of least eval loss (after_minicpm.sh links it as
+# runs/htr/minicpm-all/best), from its own answers to 250,000 training lines and 50,000 training regions, each a
+# seeded draw (htr-train serve-target, then htr-train dspark-set against it); 3 online epochs, vLLM and the trainer on
+# one GPU (htr-train launch --where local, HTR_TRAIN_LOCAL_GPUS one GPU). configs/full/dspark.yaml's recipe.
+# Trained because it was asked for, before a measurement favours it: base MiniCPM-OCR's line serving read about 24,500
+# prompt (mostly image) tokens a second against 400 generated (runs/htr/eval/vllm_base.log), which a draft does not
+# speed up. It is kept only if the same lines read faster with it than without.
+name: dspark-all
+description: "DSpark draft for minicpm-all's best checkpoint, 250,000 line and 50,000 region answers"
+job:
+  kind: dspark
+  target: {repo: ./runs/htr/minicpm-all/best}
+  responses: data/htr/dspark_responses.jsonl
+  media_root: data/htr
+  serve_args:
+    - --mm-processor-kwargs
+    - '{"downsample_mode": "4x", "max_slice_nums": 9}'
+    - --trust-request-mm-kwargs
+    - --default-chat-template-kwargs
+    - '{"enable_thinking": false}'
+    - --limit-mm-per-prompt  # video off: vLLM's start-up probe of MiniCPM-OCR's video path fails on transformers 5.22.1
+    - '{"image": 4, "video": 0}'
+  vllm_memory: 0.35
+  epochs: 3
+resources: {nodes: 1, gpus_per_node: 1, need_gb: 60, hours: 12, cpus_per_task: 32}
