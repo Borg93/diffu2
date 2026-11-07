@@ -49,6 +49,11 @@ same 55 collections at 80 scans each): the look follows the sample, the hand doe
   gain); keeping each block's gathered weights for its backward (--no-reshard-after-forward) 11.48 s (-0.8 %) at 28.9 GB
   a GPU. The step is bound by compute, a quarter of it the recompute of gradient checkpointing; checkpointing some
   blocks instead of all is the trade left for the free memory.
+- 7 Nov, partial checkpointing (--uncheckpointed-blocks, 30 steps, 2 nodes): the last 12 of the 42 blocks keeping their
+  activations 11.23 s a step (-2.9 %) at 49.2 GB a GPU, the allocator already retrying after out-of-memory; 24 blocks ran
+  out of memory. A kept block costs ~2.4 GB a GPU for ~0.25 % of the step. Decision: A, N and B's second job keep B's
+  setting (all blocks checkpointed, 20 GB a GPU, 11.6 s a step): the fastest that is safe, and the runs stay
+  comparable. torch.compile (elementwise kernels ~8-10 % of GPU time) is the lever left, for a later run.
 
 ## Results
 
