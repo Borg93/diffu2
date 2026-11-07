@@ -324,15 +324,26 @@ def test_full_fine_tune_averages_the_weights_after_each_step_by_the_ema_formula(
     assert [name for name in start if not torch.equal(drawn[name], second[name].to(torch.bfloat16))] == []
 
 
+@pytest.mark.parametrize(
+    "settings",
+    [
+        pytest.param(FULL_RUN, id="as-trained"),
+        # the blocks' activations kept rather than recomputed: the same training, and a change a resume may make
+        pytest.param(
+            FULL_RUN.model_copy(update={"full": FULL.model_copy(update={"gradient_checkpointing": False})}),
+            id="without-gradient-checkpointing",
+        ),
+    ],
+)
 def test_full_fine_tune_resumed_from_a_checkpoints_state_goes_on_exactly_as_the_run_went(
-    bfloat16_dit: Path, tiny_pair_cache: Path, full_run: Path, tmp_path: Path
+    bfloat16_dit: Path, tiny_pair_cache: Path, full_run: Path, tmp_path: Path, settings: TrainSettings
 ) -> None:
     resumed = tmp_path / "run"
     shutil.copytree(full_run, resumed)
     for step in (2, 3):
         shutil.rmtree(_checkpoint(resumed, step))
 
-    train(bfloat16_dit, tiny_pair_cache, resumed, FULL_RUN, resume=_checkpoint(resumed, 1))
+    train(bfloat16_dit, tiny_pair_cache, resumed, settings, resume=_checkpoint(resumed, 1))
 
     state, ran = _checkpoint(resumed, 3) / STATE, _checkpoint(full_run, 3) / STATE
     weights, expected = _weights(state), _weights(ran)

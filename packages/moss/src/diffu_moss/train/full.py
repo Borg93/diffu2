@@ -77,8 +77,10 @@ class MomentumDtype(StrEnum):
 
 class FullSettings(BaseModel):
     """How a full fine-tune steps (the module's docstring): its optimizers' settings (Muon's momentum kept in
-    ``momentum_dtype``), the decay of the average of its weights (None: no average), and whether each checkpoint keeps
-    the state a run resumes from."""
+    ``momentum_dtype``), the decay of the average of its weights (None: no average), whether each checkpoint keeps
+    the state a run resumes from, and whether the joint blocks' activations are recomputed in the backward pass
+    (``gradient_checkpointing``: less memory, more compute; off where a GPU has the memory to keep them, the same
+    training either way)."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -90,14 +92,16 @@ class FullSettings(BaseModel):
     weight_decay: float = 0.01
     ema: float | None = Field(default=None, gt=0, lt=1)
     save_state: bool = False
+    gradient_checkpointing: bool = True
 
 
-def full_transformer(folder: Path, *, device: str) -> MossTransformer:
+def full_transformer(folder: Path, *, device: str, checkpointing: bool = True) -> MossTransformer:
     """The DiT at ``folder`` (a diffusers-format folder) in float32 on ``device``, every weight trained, its joint
-    blocks checkpointed."""
+    blocks checkpointed unless ``checkpointing`` is off."""
     transformer = MossTransformer.from_pretrained(str(folder), torch_dtype=torch.float32)
     transformer.requires_grad_(True)
-    transformer.enable_gradient_checkpointing()
+    if checkpointing:
+        transformer.enable_gradient_checkpointing()
     return transformer.to(device).train()
 
 
@@ -268,7 +272,11 @@ class FullTraining:
         self._ranks = Ranks() if ranks is None else ranks
         mesh = self._ranks.mesh
         state = None if resume is None else resume / STATE
-        self.transformer = full_transformer(base if state is None else state, device="cpu" if mesh else device)
+        self.transformer = full_transformer(
+            base if state is None else state,
+            device="cpu" if mesh else device,
+            checkpointing=settings.gradient_checkpointing,
+        )
         if mesh is not None:
             shard(self.transformer, mesh)
         self.parameters: list[nn.Parameter] = list(self.transformer.parameters())

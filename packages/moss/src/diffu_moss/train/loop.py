@@ -94,15 +94,15 @@ LORA_TARGETS = (
 LOG = "train_log.jsonl"
 CHECKPOINTS = "checkpoints"
 VALIDATION_SEED = 0  # every run scores at the same noise, so runs of different seeds compare
-# what a resumed run may change: how long it runs, how often it saves and scores, where, whether it saves its state, and
-# whether it encodes its prompts (the same embeddings as cached)
+# what a resumed run may change: how long it runs, how often it saves and scores, where, whether it saves its state,
+# whether it encodes its prompts (the same embeddings as cached), and whether it recomputes the blocks' activations
 RESUMABLE_CHANGES = {
     "steps": True,
     "save_every": True,
     "val_every": True,
     "device": True,
     "encode_text": True,
-    "full": {"save_state": True},
+    "full": {"save_state": True, "gradient_checkpointing": True},
 }
 
 
@@ -654,6 +654,14 @@ def main(
     resume: Annotated[
         Path | None, typer.Option(help="with --full: go on from a checkpoint of --out saved with --save-state")
     ] = None,
+    gradient_checkpointing: Annotated[
+        bool,
+        typer.Option(
+            "--gradient-checkpointing/--no-gradient-checkpointing",
+            help="with --full: recompute the joint blocks' activations in the backward pass (less memory, more "
+            "compute); --no-gradient-checkpointing keeps them, where a GPU has the memory (the same training)",
+        ),
+    ] = True,
     muon_momentum_dtype: Annotated[
         MomentumDtype,
         typer.Option(
@@ -690,17 +698,28 @@ def main(
     """Train MOSS-Image's DiT to draw from a reference image: a LoRA, or every weight (--full); under torchrun, every
     weight sharded over the ranks by FSDP2."""
     if not full and (
-        ema is not None or save_state or resume is not None or muon_momentum_dtype is not MomentumDtype.FLOAT32
+        ema is not None
+        or save_state
+        or resume is not None
+        or muon_momentum_dtype is not MomentumDtype.FLOAT32
+        or not gradient_checkpointing
     ):
         raise typer.BadParameter(
-            "--ema, --save-state, --resume and --muon-momentum-dtype are a full fine-tune's: give --full"
+            "--ema, --save-state, --resume, --muon-momentum-dtype and --no-gradient-checkpointing are a full "
+            "fine-tune's: give --full"
         )
     if model is not None and not encode_text:
         raise typer.BadParameter("--model gives the text encoder of --encode-text: give --encode-text")
     rate = {} if learning_rate is None else {"learning_rate": learning_rate}  # else each kind's own default
     ranks, device = joined(device)
     try:  # a ValidationError (an --ema outside (0, 1)) is a ValueError too
-        full_settings = {"ema": ema, "save_state": save_state, "momentum_dtype": muon_momentum_dtype, **rate}
+        full_settings = {
+            "ema": ema,
+            "save_state": save_state,
+            "momentum_dtype": muon_momentum_dtype,
+            "gradient_checkpointing": gradient_checkpointing,
+            **rate,
+        }
         fine_tune = FullSettings.model_validate(full_settings) if full else None
         run = {
             "steps": steps,
