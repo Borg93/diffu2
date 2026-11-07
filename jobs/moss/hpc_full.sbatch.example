@@ -41,6 +41,9 @@ VAL_CACHE="${VAL_CACHE:-}"
 OUT="${OUT:?set OUT to the run directory}"
 STEPS="${STEPS:-500}"
 SAVE_EVERY="${SAVE_EVERY:-250}"
+VAL_EVERY="${VAL_EVERY:-$SAVE_EVERY}"
+EMA="${EMA:-}"            # e.g. 0.999: an average of the weights saved beside each checkpoint
+RESUME="${RESUME:-}"      # a checkpoint saved with --save-state, or "latest": the newest whole one under $OUT
 GPUS_PER_NODE="${GPUS_PER_NODE:-4}"
 SAMPLES_PER_STEP="${SAMPLES_PER_STEP:-$((SLURM_NNODES * GPUS_PER_NODE * 2))}"  # two rounds of one sample a GPU
 
@@ -51,12 +54,25 @@ HEAD_NODE="$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)"
 export OMP_NUM_THREADS=8
 
 options=(--full --transformer "$BASE/transformer" --cache "$CACHE" --out "$OUT" --steps "$STEPS"
-    --samples-per-step "$SAMPLES_PER_STEP" --save-every "$SAVE_EVERY" --val-every "$SAVE_EVERY" --save-state)
+    --samples-per-step "$SAMPLES_PER_STEP" --save-every "$SAVE_EVERY" --val-every "$VAL_EVERY" --save-state)
 [ -n "$VAL_CACHE" ] && options+=(--val-cache "$VAL_CACHE")
+[ -n "$EMA" ] && options+=(--ema "$EMA")
 # a cache of latents alone (diffu-moss-cache-pairs --latents-only): encode the prompts in the step
 # options+=(--encode-text --model "$REPO/runs/moss/base")
-# go on from a checkpoint saved with --save-state, on any number of GPUs:
-# options+=(--resume "$OUT/checkpoints/step_000250")
+# go on from a checkpoint saved with --save-state, on any number of GPUs; "latest" takes the newest whole one (its
+# state's progress.json is written last), so a chain of jobs (sbatch --dependency=afterany:<previous>) goes on job to
+# job, and the first job of a chain, finding none, starts from Base:
+if [ "$RESUME" = latest ]; then
+    for checkpoint in $(ls -d "$OUT"/checkpoints/step_* 2>/dev/null | sort -r); do
+        if [ -f "$checkpoint/state/progress.json" ]; then
+            options+=(--resume "$checkpoint")
+            break
+        fi
+    done
+elif [ -n "$RESUME" ]; then
+    options+=(--resume "$RESUME")
+fi
+echo "options: ${options[*]}"
 
 srun "$PY" -m torch.distributed.run \
     --nnodes "$SLURM_NNODES" --nproc-per-node "$GPUS_PER_NODE" \

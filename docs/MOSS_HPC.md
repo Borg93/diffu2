@@ -69,8 +69,12 @@ writes `entries.jsonl` and `cache.json`: the cache a single run writes (tested o
 - **Smoke** (debug QOS, 30 min, one node): `jobs/moss/hpc_full.sbatch.example` with `STEPS=20 SAVE_EVERY=10` on the
   validation cache. Passes if: the loss is finite and falls, a checkpoint is written and reloads (`--resume`), the
   peak GPU memory is under 64 GB, and seconds a step is measured (to replace the estimate above).
-- **The run** (production QOS): the same script with the full cache, `--ema` and `--save-state`, checkpoints every
-  ~1,000 steps; a job's walltime is capped, so the run resumes job to job from its last `--save-state` checkpoint.
+- **The run** (production QOS, `boost_qos_bprod`, 24 h a job): recipe B's cache (143,379 rows), 2 nodes (8 A100),
+  16 samples a step, so one pass is ~8,960 steps; `STEPS=9000 SAVE_EVERY=1000 VAL_EVERY=500 EMA=0.999 RESUME=latest`,
+  submitted as a chain (`sbatch --dependency=afterany:<previous>`), each job going on from the newest whole checkpoint.
+  The learning rate is the trainer's default for a full fine-tune (5e-5, constant after its warmup), as in the pilot
+  and the smoke test. EMA 0.999 rather than the MOSS report's 0.9999, whose ~10,000-step horizon outlasts one pass.
+  A checkpoint with its state and EMA is ~72 GB (state 42, DiT 10, EMA 20), ~650 GB for the pass on `$WORK`.
 - **Checked after**: the swap test and held-out pages (`~/diffu_queue/weekend`: `draw_swap.py`, `score_swap.py`,
   `draw_heldout.py`) on the Spark against a checkpoint copied back, beside the real scans.
 
