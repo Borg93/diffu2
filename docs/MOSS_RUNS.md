@@ -22,12 +22,20 @@ each checkpoint's `state/progress.json` the training settings). How to run them:
 
 | Run | Question | Cache (`moss/cache_full_*`) | Validation | Jobs | Folder | State |
 |---|---|---|---|---|---|---|
-| **B** | Look and text from the sample page, hands from per-hand adapters afterwards (the chosen recipe) | `b`: content mix (sample alone 60 %, sample with look words 20 %, no sample 20 %; nothing named), a look change for half the sample-form entries, no hand changes | `cache_full_b_val`, `_heldout` (content mix) | cache 63698295, trial 63745127 (100 steps, debug QOS), run 63744194 then 63744195 | `moss/runs/full_b` (trial: `trial_b`) | cache finishing |
+| **B** | Look and text from the sample page, hands from per-hand adapters afterwards (the chosen recipe) | `b`: content mix (sample alone 60 %, sample with look words 20 %, no sample 20 %; nothing named), a look change for half the sample-form entries, no hand changes | `cache_full_b_val`, `_heldout` (content mix) | cache 63698295, trial 63750935 (100 steps, debug QOS), run 63744195 then 63750939 | `moss/runs/full_b` (trial: `trial_b`) | cache done 10:22 (143,379 entries, 1.5 TB); trial queued |
 | **A** | Does scale alone make the sample's hand follow? (the pilot's recipe at full scale) | `a`: content mix, a look change and a hand change for half the sample-form entries each (as the content pilot) | B's (same mix) | cache 63750290, run 63750297 then 63750306 | `moss/runs/full_a` | queued |
 | **N** | Hand by name: the collection named in the prompt, the look from the sample | `n`: named mix (archive named in 60 %: no sample 20 %, sample plus archive 20 %, sample plus archive and look words 20 %; sample alone 40 %), a look change for half the sample-form entries, no hand changes | `cache_full_n_val`, `_heldout` (named mix) | cache 63750293, run 63750311 then 63750316 | `moss/runs/full_n` | queued |
 
 Before these: the content pilot (`runs/moss_content_pilot/full_c1` on the Spark, 2,500 steps of one sample from the
 same 55 collections at 80 scans each): the look follows the sample, the hand does not (TODO.md, the recipe).
+
+## Notes
+
+- 7 Nov, B: the cache job is marked FAILED (exit 1) though its cache is whole (`cache.json` written, 86,027 + 28,676 +
+  28,676 entries, the look changes 14,338 of each kind): its last line, a `tail -1` of several logs, failed. Slurm then
+  cancelled the trial waiting on it (`afterok`, 63745127) and the run's first job (63744194); the trial was submitted
+  again without a dependency (63750935), the job that waited on the cancelled one (63744195) is now the run's first,
+  63750939 its second. The A and N cache jobs (`build_cache.sbatch`) exit with the cache's own status.
 
 ## Results
 
