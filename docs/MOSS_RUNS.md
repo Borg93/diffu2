@@ -42,6 +42,13 @@ same 55 collections at 80 scans each): the look follows the sample, the hand doe
   rank then hung and the rest timed out in FSDP's all-gather after 10 min. So the free memory buys speed only in part:
   checkpointing some blocks rather than all, or keeping the gathered weights from the forward to the backward pass; a
   profile of the current setting (job 63806582) decides which.
+- 7 Nov, profile of the B setting (job 63806582, ranks 0 and 4, steps 4-6, torch.profiler): the GPUs busy 84-98 % of
+  each 11.5 s step; compute kernels 7.3-9.4 s; NCCL 4-10 s in all, 1.4-4.5 s of it not under compute (weights gathered,
+  AllGather, ~885 calls a step; gradients reduced in float32, ReduceScatter); idle 0.3-1.9 s. Inter-node traffic goes
+  over InfiniBand with GPUDirect RDMA (NCCL's log). Tested (30 steps, 2 nodes): NCCL_PROTO=Simple 11.64 s a step (no
+  gain); keeping each block's gathered weights for its backward (--no-reshard-after-forward) 11.48 s (-0.8 %) at 28.9 GB
+  a GPU. The step is bound by compute, a quarter of it the recompute of gradient checkpointing; checkpointing some
+  blocks instead of all is the trade left for the free memory.
 
 ## Results
 
