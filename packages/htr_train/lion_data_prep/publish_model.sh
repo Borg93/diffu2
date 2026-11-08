@@ -41,6 +41,22 @@ with open(path, "w", encoding="utf-8") as file:
     file.write("\n")
 EOF
 fi
+if [ "$kind" = jev ]; then
+  # ms-swift saves Jev as Qwen3_5ForSequenceClassification, which vLLM builds without its vision tower; its weights
+  # are laid out as OpenBMB's released Jev's, whose config names Qwen3_5ForConditionalGeneration, so it is written so
+  # and the published Jev is served by OpenBMB's own vLLM command (--runner pooling --convert classify)
+  python3 - "$stage/config.json" <<'EOF'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as file:
+    config = json.load(file)
+config["architectures"] = ["Qwen3_5ForConditionalGeneration"]
+with open(sys.argv[1], "w", encoding="utf-8") as file:
+    json.dump(config, file, indent=2)
+    file.write("\n")
+EOF
+fi
 python3 - "$here/model_cards/$kind.md" "$stage/README.md" "REPO=$repo" "NAME=${repo##*/}" "$@" <<'EOF'
 import re
 import sys
