@@ -17,10 +17,13 @@ is stored back rounded to bfloat16 (to nearest even). The update is cast to bflo
 way, so the only difference is the rounding of the momentum carried to the next step. A checkpoint's state keeps it in
 bfloat16, and a resumed run reads it back so (:meth:`Muon.load_state_dict`).
 
-A matrix sharded by FSDP2 (:mod:`diffu_moss.train.distributed`) takes its momentum and decay on each rank's rows; its
-update is gathered whole (in bfloat16, which the Newton-Schulz steps cast it to first) and orthogonalised on every rank,
-each keeping its own rows: exactly the step of one process, at the cost of every rank orthogonalising every matrix
-(about 3.7e14 FLOPs a step on the real DiT, ~1.5 s on an A100) and gathering 9.5 GB of updates.
+A matrix sharded by FSDP2 (:mod:`diffu_moss.train.distributed`) takes its momentum and decay on each rank's rows. Its
+update is orthogonalised by one rank, its owner (the ``k``-th sharded matrix of a step is rank ``k % world``'s): every
+rank sends its rows of the update to the owner (in bfloat16, which the Newton-Schulz steps cast it to first), the owner
+orthogonalises it whole, and sends each rank its rows back; every gather of a step is under way before any owner
+computes, and every owner computes its matrices before the rows go back. That is exactly the step of one process, the
+same bits, with each rank orthogonalising a world's share of the matrices (the real DiT's ~3.7e14 FLOPs a step, ~1.5 s
+on an A100, spread over the ranks) and sending its share of the updates once, not gathering all 9.5 GB of them.
 """
 
 from __future__ import annotations
@@ -30,10 +33,10 @@ from collections.abc import Iterable
 from typing import Any
 
 import torch
+import torch.distributed as dist
 from torch import Tensor
+from torch.distributed.tensor import DTensor
 from torch.optim import Optimizer
-
-from diffu_moss.train.distributed import sharded_like, whole
 
 NEWTON_SCHULZ = (3.4445, -4.7750, 2.0315)
 NEWTON_SCHULZ_STEPS = 5
@@ -104,11 +107,20 @@ class Muon(Optimizer):
 
     @torch.no_grad()
     def step(self, closure: None = None) -> None:  # ty: ignore[invalid-method-override]  no closure: one loss a step
-        """Every matrix with a gradient stepped (the module's docstring)."""
+        """Every matrix with a gradient stepped (the module's docstring): a sharded one's update orthogonalised by its
+        owner rank, any other's here."""
+        sharded: list[tuple[DTensor, DTensor, dict[str, Any]]] = []
         for group in self.param_groups:
             for parameter in group["params"]:
-                if parameter.grad is not None:
-                    self._step(parameter, parameter.grad, group)
+                if parameter.grad is None:
+                    continue
+                update = self._momentum_update(parameter, parameter.grad, group)
+                if isinstance(parameter, DTensor) and isinstance(update, DTensor):
+                    sharded.append((parameter, update, group))
+                else:
+                    self._apply(parameter, self._orthogonal(update.bfloat16(), group), group)
+        if sharded:
+            self._step_sharded(sharded)
 
     def load_state_dict(self, state_dict: dict[str, Any]) -> None:
         """``state_dict`` loaded, every momentum in :attr:`momentum_dtype`: torch casts each floating-point state to its
@@ -118,7 +130,8 @@ class Muon(Optimizer):
             if MOMENTUM_BUFFER in state:
                 state[MOMENTUM_BUFFER] = state[MOMENTUM_BUFFER].to(self.momentum_dtype)
 
-    def _step(self, parameter: Tensor, grad: Tensor, group: dict[str, Any]) -> None:
+    def _momentum_update(self, parameter: Tensor, grad: Tensor, group: dict[str, Any]) -> Tensor:
+        """The parameter's momentum moved towards ``grad`` and its (Nesterov) update, on this rank's rows when sharded."""
         state = self.state[parameter]
         if MOMENTUM_BUFFER not in state:
             state[MOMENTUM_BUFFER] = torch.zeros_like(
@@ -130,11 +143,79 @@ class Muon(Optimizer):
         else:  # read in float32, stored back rounded; the update takes it unrounded
             momentum = buffer.float().lerp_(grad, 1 - group["momentum"])
             buffer.copy_(momentum)
-        update = grad.lerp(momentum, group["momentum"]) if group["nesterov"] else momentum
-        splits = group["splits"]
-        update = whole(update.bfloat16())  # what the Newton-Schulz steps read first: the same bits, half the traffic
-        blocks = [orthogonalised(block, group["ns_steps"]) for block in update.chunk(splits, 0)]
-        orthogonal = sharded_like(torch.cat(blocks) if splits > 1 else blocks[0], parameter)
-        rate = rms_matched_rate(group["lr"], parameter.shape[0] // splits, parameter.shape[1])
+        return grad.lerp(momentum, group["momentum"]) if group["nesterov"] else momentum
+
+    @staticmethod
+    def _orthogonal(update: Tensor, group: dict[str, Any]) -> Tensor:
+        """A whole matrix's update orthogonalised, each of its ``splits`` row blocks on its own."""
+        blocks = [orthogonalised(block, group["ns_steps"]) for block in update.chunk(group["splits"], 0)]
+        return torch.cat(blocks) if len(blocks) > 1 else blocks[0]
+
+    @staticmethod
+    def _apply(parameter: Tensor, orthogonal: Tensor, group: dict[str, Any]) -> None:
+        """The decoupled weight decay and the RMS-matched step of ``orthogonal`` on ``parameter``."""
+        rate = rms_matched_rate(group["lr"], parameter.shape[0] // group["splits"], parameter.shape[1])
         parameter.mul_(1 - group["lr"] * group["weight_decay"])
         parameter.add_(orthogonal, alpha=-rate)
+
+    def _step_sharded(self, matrices: list[tuple[DTensor, DTensor, dict[str, Any]]]) -> None:
+        """The sharded matrices' updates (each a DTensor of this rank's rows) orthogonalised by their owners and their
+        rows sent back (the module's docstring); every matrix shares one mesh, sharded on its rows."""
+        mesh = matrices[0][0].device_mesh
+        group, world = mesh.get_group(), mesh.size()
+        rank = dist.get_rank(group)
+        sent = []
+        for index, (parameter, update, _) in enumerate(matrices):
+            owner = index % world
+            rows = _row_counts(parameter.shape[0], world)
+            local = _padded(update.to_local().bfloat16(), max(rows))
+            parts = [torch.empty_like(local) for _ in range(world)] if rank == owner else None
+            work = _started(
+                dist.gather(local, parts, dst=dist.get_global_rank(group, owner), group=group, async_op=True)
+            )
+            sent.append((owner, rows, parts, work))
+        returned = []
+        for (parameter, _, settings), (owner, rows, parts, work) in zip(matrices, sent, strict=True):
+            work.wait()
+            pieces = None
+            if parts is not None:  # this rank's matrix: whole, orthogonalised, cut back into each rank's rows
+                whole = torch.cat([part[:count] for part, count in zip(parts, rows, strict=True)])
+                orthogonal = self._orthogonal(whole, settings)
+                pieces = [_padded(piece, max(rows)) for piece in orthogonal.split(rows)]
+            mine = torch.empty(max(rows), parameter.shape[1], dtype=torch.bfloat16, device=parameter.to_local().device)
+            work = _started(
+                dist.scatter(mine, pieces, src=dist.get_global_rank(group, owner), group=group, async_op=True)
+            )
+            returned.append((mine, rows, work))
+        for (parameter, _, settings), (mine, rows, work) in zip(matrices, returned, strict=True):
+            work.wait()
+            local = mine[: rows[rank]]
+            orthogonal = DTensor.from_local(
+                local, parameter.device_mesh, parameter.placements, shape=parameter.shape, stride=parameter.stride()
+            )
+            self._apply(parameter, orthogonal, settings)
+
+
+def _started(work: dist.Work | None) -> dist.Work:
+    """An asynchronous collective's handle, which a rank of its group always gets.
+
+    Raises:
+        RuntimeError: If there is none: this rank is not in the mesh's group.
+    """
+    if work is None:
+        raise RuntimeError("an asynchronous collective gave no handle: this rank is not in the mesh's group")
+    return work
+
+
+def _row_counts(rows: int, world: int) -> list[int]:
+    """How many of a matrix's ``rows`` each of ``world`` ranks holds, sharded on its rows as FSDP2 shards them
+    (``torch.chunk``, which may give fewer chunks than ranks: the last ranks then hold none)."""
+    counts = [len(chunk) for chunk in torch.arange(rows).chunk(world)]
+    return counts + [0] * (world - len(counts))
+
+
+def _padded(rows: Tensor, count: int) -> Tensor:
+    """``rows`` with zero rows after them up to ``count``: every rank sends and receives the same shape."""
+    if rows.shape[0] == count:
+        return rows.contiguous()
+    return torch.cat([rows, rows.new_zeros(count - rows.shape[0], *rows.shape[1:])])
