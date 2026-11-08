@@ -49,10 +49,12 @@ This has not yet been measured on JevOCRBench, nor as a label filter on machine-
 Score a line with the inputs made exactly as in training, or the scores shift:
 - the crop: the line's bounding box, white outside its polygon, 48 pixels high;
 - the prompt: diffu's own, in English (`diffu_htr_train.jev.prompt.model_prompt`), not OpenBMB's;
-- the rendering: diffu's renderer `@RENDERER@` (`diffu_htr_train.jev.render.render_text`, DejaVu Sans).
+- the rendering: diffu's renderer `@RENDERER@` (`diffu_htr_train.jev.render.render_text`, DejaVu Sans, drawn with the
+  Pillow that string names).
 
 So OpenBMB's Jev services, which render and prompt their own way, do not fit this model. Install the two functions
-with `pip install "git+https://github.com/Borg93/diffu2#subdirectory=packages/htr_train"` and run it in vLLM:
+with `pip install "git+https://github.com/Borg93/diffu2#subdirectory=packages/htr_train" "pillow==12.2.0"` and run it
+in vLLM:
 
 ```python
 import math

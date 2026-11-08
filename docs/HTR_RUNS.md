@@ -55,6 +55,18 @@ script again resumes after the last finished step.
    lines and 5,000 `test_0050` lines, beside TrOCR. Result: `runs/htr/final/result.txt`.
 2. **Publish the reader:** `Gabriel/diffu-minicpm-ocr-htr` (private). **Done 8 Nov 22:42:** checkpoint-28000, its
    weights (3.1 GB) and configs, commit `7735d9ed`.
+   - **Checked as its card says** (`runs/htr/verify/`): downloaded from the Hub, served with the card's command, asked
+     with the card's request. 200 drawn test lines read at 4.19 % corpus CER, 10 dev regions at 3.58 %, and the three
+     dotted leader lines end with `finish_reason=length` as the card says.
+   - **Readings depend on batching by a few near-tie characters.** The same server read the same 200 lines 16 at a time
+     and one at a time and differed on 9 (corpus CER 4.15 % and 4.40 %; the queue, 64 at a time, 4.33 %): vLLM is not
+     batch-invariant. Scores on a few hundred lines carry about 0.2 points of this noise.
+   - **Jev's card, checked without a GPU:** its `pip install` works in a clean environment, but pulls Pillow 13.0.0
+     against the pairs' 12.2.0, so the card pins Pillow; both draw the same pixels (25 renders checked). The card's
+     recipe redraws 200 of 200 smoke pairs' renderings pixel for pixel.
+   - **Jev and the draft are checked the same way once published**, by `runs/htr/verify/watch.sh` (tmux `htr:verify`):
+     Jev on 2,000 test pairs (AUROC, renders redrawn), the draft served beside the reader against the reader alone
+     (identical readings, spec_decode counters, speed). Results in `runs/htr/verify/check_*.log`.
 3. **Jev's sets.**
    - On the first GPU, the reader reads 100,000 training lines and every test line; the pairs follow on the CPU (about
      4.5 h).
