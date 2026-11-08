@@ -109,4 +109,11 @@ same 55 collections at 80 scans each): the look follows the sample, the hand doe
 - **B, first 250 steps** (7 Nov): training loss 0.837 at step 1, 0.639 over 11-50, 0.617 over 201-250; gradient norm
   0.29-0.68 after step 10; ~21 GB a GPU with the EMA; 11.9 s a step, ~29 h for the 9,000.
 
+- **B, first job** (63744195, ended 8 Nov 18:12 at its 24 h limit, as planned): step 7,050, the last whole checkpoint
+  step 7,000 (with its state); training loss ~0.59-0.62 and gradient norm ~0.1 at the end, 12.7-13.3 s a step;
+  validation loss flat from step 6,000 (sample form 0.6584-0.6585, with look words 0.6583-0.6586, no sample
+  0.6598-0.6606). The second job (63750939, `RESUME=latest`) goes on from step 7,000; on 8 Nov 19:30 it and every
+  queued MOSS job waited on priority (~135,000-137,000, the median of 10,613 jobs pending on `boost_usr_prod`), Slurm
+  giving no start time.
+
 (Filled in as each run is judged: validation loss by form, the swap test, held-out pages beside the scans.)
