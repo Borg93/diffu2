@@ -41,10 +41,19 @@ GT=/mnt/work/GT-Lejonet_HTR_202602 WORKERS=56 GPUS=1,2 bash packages/htr_train/l
   reading's looping tail cut (`htr-eval cer`).
 - **Jev's reads and pairs:** the same model reads 100,000 training lines and every test line, Jev's real errors
   beside its rule ones. Jev's pairs, dev split and test pairs follow on the CPU, about 4.5 h for the training lines.
-- **The draft's responses:** meanwhile, on the second GPU, the same model answers 300,000 prompts drawn from the
-  training lines and regions together, the DSpark draft's responses.
+- **The draft's responses:** meanwhile, on the second GPU, the same model answers 250,000 training lines and 50,000
+  training regions, each a seeded draw: the DSpark draft's responses. A draw of the two together would hold only about
+  16,000 regions, and regions' long answers are where a draft speeds decoding up.
 - **Jev, then the draft:** `configs/jev_all.yaml` trains on both GPUs, then `configs/dspark_all.yaml` on the first
   (`DSPARK=0` stops before the draft).
+- **Each model to the Hub:** `publish_model.sh` uploads each model as soon as it is made. The reader goes up after its
+  scoring as `Gabriel/diffu-minicpm-ocr-htr` (`READER_REPO`), and Jev and the draft after their training as its
+  `-jev` and `-dspark`.
+  - Only the weights and configs are uploaded, not the optimizer or trainer state. The card comes from
+    `model_cards/` with the run's own numbers, and an upload is refused if a file names a local path.
+  - A new repo is private unless `HF_PUBLIC=1`.
+  - A failed upload is logged and the pipeline goes on; a second run retries it.
+  - `DRY_RUN=1 bash publish_model.sh ...` stages and renders without uploading.
 
 Each waits until no other process computes on its GPUs. The scripts leave a marker a step
 (`runs/htr/pipeline_markers`), so a second run resumes after the last finished one; a file `runs/htr/HOLD` holds the

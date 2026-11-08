@@ -9,9 +9,12 @@
 #     and with loops cut: $OUT/result.txt); then its reads of 100,000 training lines and of every test line, Jev's real
 #     errors beside its rule ones (as OpenBMB's finetune_jev_en.md asks), and Jev's pairs, dev split and test pairs.
 #     On the second, meanwhile, vLLM serving it as the DSpark run serves its target (htr-train serve-target): its
-#     answers to 300,000 prompts drawn from the training lines and regions together, the draft's responses.
+#     answers to 250,000 training lines and 50,000 training regions (each a seeded draw), the draft's responses.
 #  3. Jev trained on both GPUs (configs/jev_all.yaml), then the DSpark draft on the first (configs/dspark_all.yaml;
 #     DSPARK=0 stops before it).
+#  4. Each model to the Hugging Face Hub once it is made (publish_model.sh, its card from model_cards/): the reader
+#     after its scoring as $READER_REPO, Jev and the draft after their training as $READER_REPO-jev and -dspark; a new
+#     repo private unless HF_PUBLIC=1. A failed upload is logged and the pipeline goes on; run again to retry it.
 #
 #   GPUS=1,2 bash packages/htr_train/lion_data_prep/after_minicpm.sh
 set -uo pipefail
@@ -30,6 +33,10 @@ FIRST=${HTR_TRAIN_LOCAL_GPUS%%,*}
 SECOND=${HTR_TRAIN_LOCAL_GPUS##*,}
 SCORING=http://localhost:8031
 TARGET=http://localhost:8000  # dspark_all.yaml's port
+export READER_REPO=${READER_REPO:-Gabriel/diffu-minicpm-ocr-htr}  # publish_model.sh reads it for the draft
+PUBLISH=packages/htr_train/lion_data_prep/publish_model.sh
+JEV_RUN=runs/htr/jev-all  # jev_all.yaml's name
+DSPARK_RUN=runs/htr/dspark-all  # dspark_all.yaml's name
 mkdir -p "$M" "$O"
 log() { echo "[$(date '+%F %T')] $*"; }
 step() {  # step NAME CMD...: run once, stop on failure
@@ -100,10 +107,25 @@ jev_sets() {
     step jev_test_pairs uv run htr-train jev-set --side test --lines $D/minicpm_lines_scaled.test.jsonl \
       --reads $O/reads_test.jsonl --out $D/jev_lines.test.jsonl
 }
-prompts_set() {  # the training lines and regions as one set, to draw the draft's prompts from in the training's mix
-  cat $D/minicpm_lines_scaled.train.jsonl $D/minicpm_regions_masked.train.jsonl > $D/dspark_prompts.jsonl &&
-    cat $D/minicpm_lines_scaled.train.meta.jsonl $D/minicpm_regions_masked.train.meta.jsonl \
-      > $D/dspark_prompts.meta.jsonl
+prompts_set() {  # the draft's prompts: 250,000 training lines and 50,000 training regions, each a seeded draw (a mix
+  # of the whole set would hold about 16,000 regions: 5 % of the samples), each row beside its meta row
+  python3 - "$D" <<'EOF'
+import random
+import sys
+from pathlib import Path
+
+sets = Path(sys.argv[1])
+with (sets / "dspark_prompts.jsonl").open("w", encoding="utf-8") as prompts, \
+        (sets / "dspark_prompts.meta.jsonl").open("w", encoding="utf-8") as metas:
+    for stem, count in [("minicpm_lines_scaled.train", 250_000), ("minicpm_regions_masked.train", 50_000)]:
+        rows = (sets / f"{stem}.jsonl").read_text(encoding="utf-8").splitlines(keepends=True)
+        meta = (sets / f"{stem}.meta.jsonl").read_text(encoding="utf-8").splitlines(keepends=True)
+        if len(rows) != len(meta):
+            sys.exit(f"{stem}: {len(rows)} rows, {len(meta)} meta rows")
+        for index in sorted(random.Random(0).sample(range(len(rows)), min(count, len(rows)))):
+            prompts.write(rows[index])
+            metas.write(meta[index])
+EOF
 }
 second_gpu() {
   [ "${DSPARK:-1}" = 0 ] && return 0
@@ -119,14 +141,59 @@ second_gpu() {
   return $status
 }
 
+count() { python3 -c 'import sys; print(f"{int(sys.argv[1]):,}")' "$(wc -l < "$1")"; }
+lines_per_second() { python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["lines_per_second"])' "$1"; }
+jev_eval() {  # Jev's last evaluation on its dev pairs
+  python3 - "$JEV_RUN/output/logging.jsonl" <<'EOF'
+import json
+import sys
+
+last = [row for row in map(json.loads, open(sys.argv[1], encoding="utf-8")) if "eval_acc" in row][-1]
+print(f"accuracy {last['eval_acc']:.1%}, loss {last['eval_loss']:.4f} (step {last['global_step/max_steps']})")
+EOF
+}
+dspark_val() {  # the draft's validation at its best epoch
+  python3 - "$1/val_metrics.json" <<'EOF'
+import json
+import sys
+
+val = json.load(open(sys.argv[1], encoding="utf-8"))
+print(f"{val['accept_len_epoch']:.2f} tokens accepted a step on average, acceptance rate {val['accept_rate_epoch']:.1%}")
+EOF
+}
+publish_reader() {
+  local best; best=$(readlink -f $RUN/best)
+  bash $PUBLISH reader "$best" "$READER_REPO" STEP="$(basename "$best")" \
+    LINES="$(count $D/minicpm_lines_scaled.train.jsonl)" REGIONS="$(count $D/minicpm_regions_masked.train.jsonl)" \
+    RESULTS=file:$O/result.txt SPEED="$(lines_per_second $O/test_minicpm.speed.json)" \
+    TROCR_SPEED="$(lines_per_second "${TROCR_TEST%.jsonl}.speed.json")"
+}
+publish_jev() {
+  local last; last=$(ls -d $JEV_RUN/output/checkpoint-* | sort -V | tail -1)
+  bash $PUBLISH jev "$last" "$READER_REPO-jev" STEP="$(basename "$last")" READER_REPO="$READER_REPO" \
+    READER_NAME="${READER_REPO##*/}" RENDERER="$(sed -n 's/^ *renderer: *//p' $SPECS/jev_all.yaml)" EVAL="$(jev_eval)"
+}
+publish_dspark() {
+  local best; best=$(readlink -f $DSPARK_RUN/output/checkpoint_best)
+  bash $PUBLISH dspark "$best" "$READER_REPO-dspark" STEP="$(basename "$best")" \
+    READER_REPO="$READER_REPO" READER_NAME="${READER_REPO##*/}" VAL="$(dspark_val "$best")"
+}
+published() {  # published NAME: step NAME, its failure logged, not fatal
+  step "$1" "$1" || log "$1 failed: see above; run this script again to retry it"
+}
+
 gpus_free
 step best link_best || exit 1
 second_gpu > $O/second_gpu.log 2>&1 &
 SECOND_JOB=$!
 log "the draft's responses on GPU $SECOND: $O/second_gpu.log"
 first_gpu || exit 1
+published publish_reader
 jev_sets || exit 1
 wait $SECOND_JOB || { log "the draft's responses failed: see $O/second_gpu.log"; exit 1; }
 gpus_free; step jev_train uv run htr-train launch $SPECS/jev_all.yaml --where local || exit 1
+published publish_jev
 [ "${DSPARK:-1}" = 0 ] && { log "DSPARK=0: stopping before the draft"; exit 0; }
-gpus_free; step dspark_train env HTR_TRAIN_LOCAL_GPUS=$FIRST uv run htr-train launch $SPECS/dspark_all.yaml --where local
+gpus_free; step dspark_train env HTR_TRAIN_LOCAL_GPUS=$FIRST uv run htr-train launch $SPECS/dspark_all.yaml --where local \
+  || exit 1
+published publish_dspark
