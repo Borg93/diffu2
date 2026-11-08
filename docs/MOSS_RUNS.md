@@ -22,6 +22,7 @@ Tested:
 | The hand over training steps (the pilot's checkpoints) | No trend toward the sample's hand at any checkpoint | 8 Nov, `~/diffu_queue/hand_diag/hand_trend` |
 | Reference guidance 2 (a third pass toward the sample at drawing time), B at step 1,000 on the swap set | **The look follows better, the hand not at all**: L1 6/6 (5/6 without), L2 7/7, L3 3/3, H1 1/18 (1/18 without); by eye the grey microfilm page now comes out grey from its own sample (beige without), and every page keeps one tidy cursive letter for letter whatever the sample | 8 Nov, Spark, `~/diffu_queue/eval_b/show_rg2` |
 | Reference guidance 3, the same | **The hand still not**: L1 6/6, L2 7/7, L3 3/3, H1 3/18; by eye the three passes keep the same cursive letter for letter as without guidance (a big loose sample hand gives the same tidy hand, the ink darker): the writer identifier is swayed by ink and paper tone, so H1 alone overstates | 8 Nov, Spark, `~/diffu_queue/eval_b/show_rg3` |
+| An adapter's hand with a sample page's look (recipe B's plan), the adapter as it is: the 1715 clerk's (`Gabriel/diffu-moss-hand-overstathallarambetet-1715`, trained on Base) loaded onto B at step 1,000; two swap windows (Trolldomskommissionen, Svea hovrätt koncept), each with its own sample and 3 others, from the same noise as B's swap test | **The hand comes, the look mostly stays**: the writer identifier names 80 of 124 drawn lines (65 %) the clerk's against 3 of 124 for B alone (6/14 to 17/17 a drawing, whatever the sample); by eye a thinner pen, more slant, longer looped strokes, a lighter brown ink, toward the clerk's but larger and heavier than his. The look: colour samples give colour pages (all), grey samples grey pages in 2 of 5 strictly (B alone 2 of 5), one grey sample drawn beige that B drew grey; a few words and abbreviations scribbled that B wrote clean | 8 Nov, Spark, `runs/moss_full_b/swap_step1000_lora1715`, `~/diffu_queue/eval_b/lora_on_b.sh` |
 
 Not tested yet:
 
@@ -29,8 +30,7 @@ Not tested yet:
 |---|---|---|
 | A sample by the same scribe (A′) | Was the sample, often another scribe's page, the cause? | queued on Leonardo |
 | Hand by the collection's name at full scale (N) | Does naming carry the hand for more collections with all the data? | queued on Leonardo |
-| An adapter's hand with a sample page's look (recipe B's plan), first as is | The 1715 clerk's adapter (trained on Base) loaded onto B at step 1,000, two swap windows (Svea hovrätt koncept, Trolldomskommissionen) with their own sample and 3 others, from the same noise as B's swap test: the clerk's hand and each sample's look? | drawing on the Spark (`~/diffu_queue/eval_b/lora_on_b.sh`, 8 Nov) |
-| The same with an adapter trained on top of B | If the adapter trained on Base does not sit well on B | not run |
+| The same with an adapter trained on top of B, in B's sample form | Does an adapter made for B give the whole hand, its words clean, without pulling the paper toward its own volume's? | not run |
 | The sample beside the page (its own position grid) | Does the hand follow when the sample's tokens no longer share the page's (row, column) positions? | not built |
 | Training weighted toward low noise (`--sigma-shift`, `ea9fd2e`) | Does the hand carry when more steps fall where the letter strokes are decided? | code only, no run recorded |
 | Writer-ID supervision | Does an explicit writer signal in training make the hand follow? | not built |
