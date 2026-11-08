@@ -24,7 +24,7 @@ live only on that disk.
     gradient checkpointing in the language model and the vision encoder, lr 5e-6 cosine, 3 epochs = 36,681 steps.
   - **Checkpoints:** eval and save every 1,000 steps; the one of least eval loss is kept as the result.
 - **Folder:** `runs/htr/minicpm-all/output`; its log is `runs/htr/pipeline.log`.
-- **State (8 Nov 13:00):** step ~25,540 of 36,681 (epoch 2.09), about 11.8 s a step, ending around **01:30 Tue
+- **State (8 Nov 17:45):** step 27,000 of 36,681 (epoch 2.21), about 11.9 s a step, ending around **01:45 Tue
   10 Nov**. First started 4 Nov 23:07.
 - **Hangs:** GPU 2 hung twice with Xid 8 ("GPU is probably locked", CUDA error 702), 7 Nov 21:38 and 8 Nov 04:36.
   It is a known, unfixed fault of RTX PRO 6000 Blackwell under sustained load (NVIDIA forum thread 382055: power limits,
@@ -82,7 +82,8 @@ column applies TrOCR's training normalisation to both sides; it changes the test
 | 18,000 | 0.2349 | 5.00 % | 4.93 % | 7.53 % | 8.79 % |
 | 21,000 | 0.2275 | 5.02 % | 4.97 % | 6.83 % | 4.46 % |
 | 24,000 | 0.2235 | 4.91 % | 4.87 % | 7.07 % | 5.08 % |
-| 25,000 | 0.2290 | 5.00 % | | 6.80 % | 4.92 % |
+| 25,000 | 0.2290 | 5.00 % | 4.95 % | 6.80 % | 4.92 % |
+| 26,000 | 0.2272 | 4.84 % | 4.79 % | 7.04 % | 5.21 % |
 
 - **Eval loss** still falls, but more slowly: down 0.0093 over steps 15-18k, 0.0074 over 18-21k and 0.0040 over 21-24k.
 - **Test CER** gains about 0.04 points a 1,000 steps.
