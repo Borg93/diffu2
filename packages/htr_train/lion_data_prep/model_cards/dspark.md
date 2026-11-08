@@ -32,8 +32,7 @@ and the weights), and the config names [@READER_REPO@](https://huggingface.co/@R
 
 ## Use
 
-Serve the reader with this draft beside it, as OpenBMB serves MiniCPM-OCR with its DSpark draft (their
-`docs/vllm_deploy_en.md`), with the reader's own flags and vLLM version (its card):
+Serve the reader with this draft beside it. It fits this reader only: a draft learns its target's own answers.
 
 ```bash
 vllm serve @READER_REPO@ --served-model-name htr --max-model-len 8192 \
@@ -43,13 +42,8 @@ vllm serve @READER_REPO@ --served-model-name htr --max-model-len 8192 \
   --speculative-config '{"method": "dspark", "model": "@REPO@", "num_speculative_tokens": 15, "enable_adaptive_verification": false}'
 ```
 
-Requests are the reader's, unchanged. Greedy decoding gives the same text with the draft as without it, only faster
-where the draft guesses well.
-
-- **This draft fits this reader only.** A draft learns its target's own answers, so serve it with this checkpoint and
-  no other.
-- **Check that it is used:** vLLM's `/metrics` `spec_decode_num_*` counters rise with each request when it is.
-- **Measure the gain on your own material:** the same reader, data, hardware and settings, with and without the draft.
+Requests are the reader's, and greedy decoding gives the same text. vLLM's `spec_decode_num_*` metrics rise when the
+draft is used.
 
 ## Evaluation
 

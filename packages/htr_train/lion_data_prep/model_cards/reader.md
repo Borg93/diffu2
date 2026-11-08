@@ -39,18 +39,10 @@ Its proof-reader is [@NAME@-jev](https://huggingface.co/@REPO@-jev) and its DSpa
 
 ## Use
 
-**vLLM version.** MiniCPM-OCR needs the fix of [vllm-project/vllm#64105](https://github.com/vllm-project/vllm/pull/64105)
-(merged 2026-10-29, not in v0.33.0rc3): vLLM at commit `fa3b9d13`, the commit OpenBMB's installer builds
-(`bash scripts/install.sh vllm` in [OpenBMB/MiniCPM-OCR](https://github.com/OpenBMB/MiniCPM-OCR), see its
-`docs/minicpm_ocr_tutorial_en.md`). This model was scored with vLLM's own wheel of that commit
-(`vllm-0.33.0rc1.dev234+gfa3b9d137`) and transformers 5.22.1.
-
-**The crop, as in training.** For a line: its bounding box cut from the scan, white outside the line's polygon, scaled
-down (aspect kept) to at most 200,704 pixels, one 448 x 448 view. For a region: the same, at most 1,806,336 pixels (9
-views); the reading comes back one line of text a line. The scores below are for crops made this way.
-
-Serve it with OpenBMB's flags for MiniCPM-OCR (`--trust-request-mm-kwargs` and `enable_thinking: false` are needed:
-without them requests fail or come back empty), the settings these scores were measured with:
+Needs vLLM at commit `fa3b9d13` or later (MiniCPM-OCR support, [vllm#64105](https://github.com/vllm-project/vllm/pull/64105)),
+as OpenBMB's installer builds it ([OpenBMB/MiniCPM-OCR](https://github.com/OpenBMB/MiniCPM-OCR)). Crop as in training:
+a line's or region's bounding box, white outside its polygon, scaled down to at most 448 x 448 pixels' worth (200,704;
+a region up to 9 times that).
 
 ```bash
 vllm serve @REPO@ --served-model-name htr --max-model-len 8192 \
@@ -58,9 +50,6 @@ vllm serve @REPO@ --served-model-name htr --max-model-len 8192 \
   --mm-processor-kwargs '{"downsample_mode": "4x", "max_slice_nums": 9}' --trust-request-mm-kwargs \
   --default-chat-template-kwargs '{"enable_thinking": false}'
 ```
-
-Each line or region crop is sent as the image, followed by the prompt `Text Recognition:`, with OpenBMB's near-greedy
-sampling:
 
 ```python
 from openai import OpenAI
@@ -78,20 +67,8 @@ reply = client.chat.completions.create(
 print(reply.choices[0].message.content)
 ```
 
-**Loops.** On a few lines of dotted leaders (`1: Ducats . . . . .`) the reading repeats the dots up to the token limit
-(3 of the 5,000 test lines below). `finish_reason == "length"` marks such a reading. Cut its repeated tail as these
-scores' `loops cut` columns do: `diffu_htr_train.evaluate.cer.cut_loop` in [diffu](https://github.com/Borg93/diffu2)
-(`packages/htr_train`).
-
-**Only text was trained.** The fine-tune taught `Text Recognition:` on handwritten lines and regions. OpenBMB's other
-prompts (tables, formulas, seals, charts, field extraction) are untested here and may have lost ground.
-
-**Whole pages.** OpenBMB's SDK (`pip install minicpm-ocr`, the command `minicpmvocr parse --server-url
-http://localhost:8000 --model htr`) finds the text regions of a page with PP-DocLayoutV3 (blocks such as a paragraph or
-a marginal note, several lines each, never single lines) and sends each region's crop to this server. The model was
-trained on regions too, but the SDK's crops are rectangles, not masked to their outlines as in training, and the SDK
-route has not been scored here. During training, 200 held-out regions, masked as in training, read at 4.29 % corpus
-CER (the checkpoint's own evaluation); the scores below are for lines.
+Only `Text Recognition:` was trained. A reading that ends with `finish_reason == "length"` has looped (dotted leader
+lines do); cut its repeated tail, as the `loops cut` columns below do.
 
 ## Evaluation
 
