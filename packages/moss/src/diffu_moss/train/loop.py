@@ -50,6 +50,7 @@ from statistics import fmean
 from typing import Annotated, Self
 
 import torch
+import torch.distributed as dist
 import typer
 from peft import LoraConfig, get_peft_model_state_dict
 from pydantic import BaseModel, ConfigDict, Field
@@ -369,7 +370,8 @@ def accumulate_gradients(
     """
     ranks = Ranks() if ranks is None else ranks
     owned = len(samples) // ranks.world
-    losses, sigmas = [0.0] * len(samples), []
+    # the losses kept on the device and read once, after the last backward: no wait for the GPU between samples
+    losses, sigmas = torch.zeros(len(samples), dtype=torch.float64, device=device), []
     for index, entry in enumerate(samples):
         if not ranks.owns(index):  # its level and noise drawn all the same, so every rank's generator goes on alike
             sigmas.append(draw_sigmas(1, generator, sigma_shift).item())
@@ -380,9 +382,11 @@ def accumulate_gradients(
         noise = torch.randn(sample.target.shape, generator=generator).to(device)
         loss = flow_matching_loss(transformer, sample, sigma, noise, compute_dtype=compute_dtype)
         (loss / owned).backward()
-        losses[index] = loss.item()
+        losses[index] = loss.detach().double()
         sigmas.append(sigma)
-    return ranks.summed(losses, device), sigmas
+    if ranks.mesh is not None:
+        dist.all_reduce(losses)
+    return losses.tolist(), sigmas
 
 
 def _validate(

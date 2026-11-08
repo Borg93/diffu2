@@ -38,6 +38,8 @@ from torch import Tensor
 from torch.distributed.tensor import DTensor
 from torch.optim import Optimizer
 
+from diffu_moss.train.distributed import shard_rows
+
 NEWTON_SCHULZ = (3.4445, -4.7750, 2.0315)
 NEWTON_SCHULZ_STEPS = 5
 NORM_EPS = 1e-7
@@ -167,7 +169,7 @@ class Muon(Optimizer):
         sent = []
         for index, (parameter, update, _) in enumerate(matrices):
             owner = index % world
-            rows = _row_counts(parameter.shape[0], world)
+            rows = shard_rows(parameter.shape[0], world)
             local = _padded(update.to_local().bfloat16(), max(rows))
             parts = [torch.empty_like(local) for _ in range(world)] if rank == owner else None
             work = _started(
@@ -205,13 +207,6 @@ def _started(work: dist.Work | None) -> dist.Work:
     if work is None:
         raise RuntimeError("an asynchronous collective gave no handle: this rank is not in the mesh's group")
     return work
-
-
-def _row_counts(rows: int, world: int) -> list[int]:
-    """How many of a matrix's ``rows`` each of ``world`` ranks holds, sharded on its rows as FSDP2 shards them
-    (``torch.chunk``, which may give fewer chunks than ranks: the last ranks then hold none)."""
-    counts = [len(chunk) for chunk in torch.arange(rows).chunk(world)]
-    return counts + [0] * (world - len(counts))
 
 
 def _padded(rows: Tensor, count: int) -> Tensor:

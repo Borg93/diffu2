@@ -24,7 +24,7 @@ from pydantic import BaseModel, ConfigDict
 from torch import Tensor
 from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 from torch.distributed.fsdp import MixedPrecisionPolicy, fully_shard
-from torch.distributed.tensor import DTensor, Shard, distribute_tensor
+from torch.distributed.tensor import DTensor, distribute_tensor
 
 from diffu_moss.transformer import MossTransformer
 
@@ -145,17 +145,46 @@ def clip_sharded_gradients(parameters: Iterable[Tensor], max_norm: float) -> flo
     Raises:
         ValueError: If a gradient is not sharded (one process: use torch's).
     """
-    grads = [parameter.grad for parameter in parameters if parameter.grad is not None]
-    rows = []
-    for grad in grads:
-        if not isinstance(grad, DTensor):
+    grads: list[DTensor] = []
+    for parameter in parameters:
+        if parameter.grad is None:
+            continue
+        if not isinstance(parameter.grad, DTensor):
             raise ValueError("clip_sharded_gradients clips sharded gradients: one process clips with torch's")
-        local = grad.to_local().float()
-        squares = local.reshape(local.shape[0], -1).square().sum(1) if local.ndim > 1 else local.square()
-        shape, stride = torch.Size((grad.shape[0],)), (1,)
-        rows.append(DTensor.from_local(squares, grad.device_mesh, [Shard(0)], shape=shape, stride=stride).full_tensor())
-    norm = torch.cat(rows).double().sum().sqrt().float()
-    scale = torch.clamp(max_norm / (norm + 1e-6), max=1.0).item()
+        grads.append(parameter.grad)
+    if not grads:
+        return 0.0
+    mesh = grads[0].device_mesh
+    group, world = mesh.get_group(), mesh.size()
+    counts = [shard_rows(grad.shape[0], world) for grad in grads]
+    mine = []
     for grad in grads:
-        grad.mul_(scale)
-    return norm.item()
+        local = grad.to_local().float()
+        mine.append(local.reshape(local.shape[0], -1).square().sum(1) if local.ndim > 1 else local.square())
+    # every rank's row sums in one gather (not one a gradient), each gradient's then put back together in rank order:
+    # the very rows a gather of each gives, so the norm is summed in the same order as before
+    longest = max(sum(count[rank] for count in counts) for rank in range(world))
+    local_rows = torch.cat(mine)
+    flat = torch.cat([local_rows, local_rows.new_zeros(longest - local_rows.shape[0])])
+    gathered = flat.new_empty(world * longest)
+    dist.all_gather_into_tensor(gathered, flat, group=group)
+    by_rank = gathered.view(world, longest)
+    starts = [0] * world
+    rows = []
+    for count in counts:
+        pieces = [by_rank[rank, starts[rank] : starts[rank] + count[rank]] for rank in range(world)]
+        starts = [start + count[rank] for rank, start in enumerate(starts)]
+        rows.append(torch.cat(pieces))
+    norm = torch.cat(rows).double().sum().sqrt().float()
+    scale = torch.clamp(max_norm / (norm + 1e-6), max=1.0)
+    norm_value, scale_value = torch.stack((norm, scale)).tolist()  # one wait for the GPU, not two
+    for grad in grads:
+        grad.mul_(scale_value)
+    return norm_value
+
+
+def shard_rows(rows: int, world: int) -> list[int]:
+    """How many of a tensor's ``rows`` (its first dimension) each of ``world`` ranks holds, sharded on them as FSDP2
+    shards (``torch.chunk``, which may give fewer chunks than ranks: the last ranks then hold none)."""
+    counts = [len(chunk) for chunk in torch.arange(rows).chunk(world)]
+    return counts + [0] * (world - len(counts))
