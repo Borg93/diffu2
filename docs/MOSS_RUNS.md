@@ -23,7 +23,8 @@ each checkpoint's `state/progress.json` the training settings). How to run them:
 | Run | Question | Cache (`moss/cache_full_*`) | Validation | Jobs | Folder | State |
 |---|---|---|---|---|---|---|
 | **B** | Look and text from the sample page, hands from per-hand adapters afterwards (the chosen recipe) | `b`: content mix (sample alone 60 %, sample with look words 20 %, no sample 20 %; nothing named), a look change for half the sample-form entries, no hand changes | `cache_full_b_val`, `_heldout` (content mix) | cache 63698295, trial 63750935 (100 steps, debug QOS), run 63744195 then 63750939 | `moss/runs/full_b` (trial: `trial_b`) | cache done 10:22 (143,379 entries, 1.5 TB); trial passed 10:51 (below); run started 7 Nov ~18:15 after 7.8 h in the queue |
-| **A** | Does scale alone make the sample's hand follow? (the pilot's recipe at full scale) | `a`: content mix, a look change and a hand change for half the sample-form entries each (as the content pilot) | B's (same mix) | cache 63750290, run 63750297 then 63750306 | `moss/runs/full_a` | cache started 7 Nov ~18:15 (time limit lowered to 10 h) |
+| **A** | (cancelled 8 Nov before training: its samples, any page of the volume, are often another scribe's, so a hand that does not follow would say little; replaced by A′) | `a` (built, unused) | — | cache 63750290 (done), runs 63750297/63750306 cancelled | — | cancelled |
+| **A′** | Does scale make the sample's hand follow when the sample is the same scribe's? (the pilot's recipe at full scale on nearest samples) | `a2`: the set rebuilt with `--sample-pick nearest` (`moss/page_pairs_full_1mp_near`: the other page of the opening, else the closest scan), content mix, a look change and a hand change for half the sample-form entries each | `cache_full_a2_val`, `_heldout` | set 63853412, cache 63853413, run 63853414 then 63853415 | `moss/runs/full_a2` | queued 8 Nov |
 | **N** | Hand by name: the collection named in the prompt, the look from the sample | `n`: named mix (archive named in 60 %: no sample 20 %, sample plus archive 20 %, sample plus archive and look words 20 %; sample alone 40 %), a look change for half the sample-form entries, no hand changes | `cache_full_n_val`, `_heldout` (named mix) | cache 63750293, run 63750311 then 63750316 | `moss/runs/full_n` | cache started 7 Nov ~18:15 (time limit lowered to 10 h) |
 
 Before these: the content pilot (`runs/moss_content_pilot/full_c1` on the Spark, 2,500 steps of one sample from the
@@ -54,6 +55,15 @@ same 55 collections at 80 scans each): the look follows the sample, the hand doe
   out of memory. A kept block costs ~2.4 GB a GPU for ~0.25 % of the step. Decision: A, N and B's second job keep B's
   setting (all blocks checkpointed, 20 GB a GPU, 11.6 s a step): the fastest that is safe, and the runs stay
   comparable. torch.compile (elementwise kernels ~8-10 % of GPU time) is the lever left, for a later run.
+- 8 Nov, B at step 1,000 on the pilot's swap set (6 held-out pages, own sample and 3 others): L1 5/6, L2 7/7, L3 3/3,
+  H1 1/18 (the pilot at step 2,000: 6/6, 5/7, 3/3, 2/18). By eye: text and layout exact and legible, the look follows on
+  the colour pages (a grey microfilm page drawn beige even from its own sample), the hand one tidy cursive whatever the
+  sample, neater than any real hand, no blots. Reference guidance 2 and 3 on the same set is drawing on the Spark.
+- 8 Nov, why the hand may not follow (from reading the MOSS-Image report, its repo, KohakuMossTrainer and DiffSynth): a
+  page's sample was any page of its volume (often another scribe's), and the sample's tokens share the drawn page's
+  (row, column) positions (MOSS's reference axis turns only ~8 of 128 head dimensions at index 1), favouring the same
+  place (paper, ink) over the same letters elsewhere. A′ tests the first; a pilot with the sample beside the page, the
+  second.
 
 ## Results
 
