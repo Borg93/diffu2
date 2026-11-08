@@ -63,7 +63,7 @@ up() {  # up NAME URL CMD...: a server started in the background (its log $O/NAM
 
 link_best() {
   local newest best
-  newest=$(ls -d $RUN/output/checkpoint-* | sort -t- -k2 -n | tail -1)
+  newest=$(ls -d $RUN/output/checkpoint-* | sort -V | tail -1)
   best=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["best_model_checkpoint"])' \
     "$newest/trainer_state.json") && [ -d "$best" ] && ln -sfn "$best" $RUN/best && log "best: $best"
 }
