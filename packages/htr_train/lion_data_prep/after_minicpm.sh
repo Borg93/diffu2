@@ -10,8 +10,9 @@
 #     errors beside its rule ones (as OpenBMB's finetune_jev_en.md asks), and Jev's pairs, dev split and test pairs.
 #     On the second, meanwhile, vLLM serving it as the DSpark run serves its target (htr-train serve-target): its
 #     answers to 250,000 training lines and 50,000 training regions (each a seeded draw), the draft's responses.
-#  3. Jev trained on both GPUs (configs/jev_all.yaml), then the DSpark draft on the first (configs/dspark_all.yaml;
-#     DSPARK=0 stops before it).
+#  3. Jev trained on both GPUs (configs/jev_all.yaml; if it stops, started again up to $RETRIES times, resuming from
+#     its newest whole checkpoint), then the DSpark draft on the first (configs/dspark_all.yaml; DSPARK=0 stops
+#     before it).
 #  4. Each model to the Hugging Face Hub once it is made (publish_model.sh, its card from model_cards/): the reader
 #     after its scoring as $READER_REPO, Jev and the draft after their training as $READER_REPO-jev and -dspark; a new
 #     repo private unless HF_PUBLIC=1. A failed upload is logged and the pipeline goes on; run again to retry it.
@@ -24,6 +25,8 @@ M=${MARKERS:-runs/htr/pipeline_markers}
 O=${OUT:-runs/htr/final}
 RUN=runs/htr/minicpm-all
 SPECS=packages/htr_train/lion_data_prep/configs
+RUNS=${HTR_TRAIN_RUNS:-runs/htr}
+RETRIES=${RETRIES:-10}
 E=packages/htr_train/envs/minicpm/.venv/bin/htr-eval
 V=packages/htr_train/envs/vllm/.venv/bin/vllm
 TROCR_OOD=runs/htr/eval/ood_trocr_greedy.jsonl  # the Swedish Lion's greedy readings (runs/htr/eval_trocr.sh)
@@ -54,6 +57,27 @@ gpus_free() {  # until no process computes on the GPUs $GPUS names
         [ "$busy" -gt 0 ]; do
     log "GPUs $HTR_TRAIN_LOCAL_GPUS busy ($busy processes): waiting"; sleep 60
   done
+}
+trained() {  # trained SPEC NAME: SPEC launched as run NAME, or that run started again if it was launched before. A
+  # training that stops (GPU 2 hangs now and then with Xid 8) is started again up to $RETRIES times, 2 minutes apart,
+  # from its own command.sh: htr-train's steps resume from the newest whole checkpoint and skip the batches it trained
+  local spec=$1 name=$2 run=$RUNS/$2 attempt
+  if [ ! -f "$run/manifest.json" ]; then
+    uv run htr-train launch "$spec" --where local && return 0
+    [ -f "$run/manifest.json" ] || return 1  # refused before it started
+  elif ! grep -q '^RESUME=()' "$run/steps.sh"; then
+    log "$run/steps.sh predates resuming: it would train from the start into the same folder; resume it by hand"
+    return 1
+  else
+    bash "$run/command.sh" && return 0
+  fi
+  for attempt in $(seq "$RETRIES"); do
+    log "$name stopped: starting it again ($attempt of $RETRIES) in 2 minutes, from its newest checkpoint"
+    sleep 120; gpus_free
+    bash "$run/command.sh" && return 0
+  done
+  log "$name stopped $RETRIES times more: giving up"
+  return 1
 }
 SERVERS=()
 trap '[ ${#SERVERS[@]} -gt 0 ] && kill "${SERVERS[@]}" 2>/dev/null' EXIT
@@ -191,7 +215,7 @@ first_gpu || exit 1
 published publish_reader
 jev_sets || exit 1
 wait $SECOND_JOB || { log "the draft's responses failed: see $O/second_gpu.log"; exit 1; }
-gpus_free; step jev_train uv run htr-train launch $SPECS/jev_all.yaml --where local || exit 1
+gpus_free; step jev_train trained $SPECS/jev_all.yaml jev-all || exit 1
 published publish_jev
 [ "${DSPARK:-1}" = 0 ] && { log "DSPARK=0: stopping before the draft"; exit 0; }
 gpus_free; step dspark_train env HTR_TRAIN_LOCAL_GPUS=$FIRST uv run htr-train launch $SPECS/dspark_all.yaml --where local \

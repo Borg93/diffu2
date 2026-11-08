@@ -38,7 +38,8 @@ type Flag = tuple[str, object]  # a flag and its value; None leaves the flag out
 class Command(BaseModel):
     """One process a run starts: in which tool environment, with which argv and extra environment. A ``serve``
     command runs in the background for the commands after it and is ready when ``ready`` answers (a URL); a ``run``
-    command has none."""
+    command has none. A command with ``resume_from`` (ms-swift's output folder) resumes from the newest whole
+    checkpoint there when its steps run again, so a stopped training is continued by running its steps again."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -47,6 +48,7 @@ class Command(BaseModel):
     environ: dict[str, str] = Field(default_factory=dict)
     role: Literal["run", "serve"] = "run"
     ready: str | None = None
+    resume_from: Path | None = None
 
     @model_validator(mode="after")
     def _ready_when_served(self) -> Self:
@@ -214,10 +216,13 @@ SWIFT_ENVS: dict[Kind, ToolEnv] = {  # the environment each ms-swift job runs in
 
 
 def _swift_sft(model: list[Flag], *, job: SwiftJob, spec: RunSpec, paths: RunPaths) -> Command:
-    """A ``swift sft`` command: the model and its own flags, then every run's (:func:`swift_sft_argv`)."""
+    """A ``swift sft`` command: the model and its own flags, then every run's (:func:`swift_sft_argv`). It resumes
+    from its output folder when run again, unless its checkpoints hold the model only (no optimizer state to resume
+    from)."""
     env = SWIFT_ENVS[job.kind]
     argv = [paths.tool(env, "swift"), "sft", *flags(model), *swift_sft_argv(job, spec, paths)]
-    return Command(env=env, argv=argv, environ=sft_environ(job, spec))
+    resume = None if job.save_only_model else paths.output.resolve()
+    return Command(env=env, argv=argv, environ=sft_environ(job, spec), resume_from=resume)
 
 
 def render_minicpm_ocr(job: MiniCPMOCRJob, spec: RunSpec, paths: RunPaths) -> list[Command]:

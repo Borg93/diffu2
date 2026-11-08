@@ -102,7 +102,11 @@ htr-train smoke                                                             # ev
 ```
 
 `runs/htr/<name>/` holds `job.yaml`, `manifest.json` (the commit, each env's lock digest, the models, every set's
-digest, lines and options, the commands), `steps.sh` and `command.sh` (the guard's call) or `job.sbatch`. Settings come
+digest, lines and options, the commands), `steps.sh` and `command.sh` (the guard's call) or `job.sbatch`. A
+`launch` refuses a folder that holds a run already. To resume a training that stopped, run its `command.sh` (or
+`job.sbatch`) again: the steps resume an ms-swift training from the newest checkpoint holding its
+`trainer_state.json`, and the trainer skips the batches it trained (`--ignore_data_skip` is never passed: it would
+train them again). A run whose checkpoints hold the model only cannot be resumed: run again, it starts from the beginning. Settings come
 from `HTR_TRAIN_*` variables (`diffu_htr_train.settings`): `HTR_TRAIN_RUNS`, `HTR_TRAIN_ENVS`, `HTR_TRAIN_GUARD`,
 `HTR_TRAIN_FLOOR_FILE`, `HTR_TRAIN_SLURM_PARTITION`, `HTR_TRAIN_SLURM_ACCOUNT`, `HTR_TRAIN_JEV_FONT`.
 

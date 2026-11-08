@@ -60,15 +60,20 @@ Each waits until no other process computes on its GPUs. The scripts leave a mark
 (`runs/htr/pipeline_markers`), so a second run resumes after the last finished one; a file `runs/htr/HOLD` holds the
 trainings back. Run them in tmux: they outlive the login.
 
-**A training that stopped** (on dmlpai01, GPU 2 hangs now and then with Xid 8, "GPU is probably locked") is resumed
-by hand:
-1. Take the newest checkpoint that holds its `trainer_state.json`. The trainer writes that file last, so a crash while
-   saving leaves a checkpoint without one.
-2. Run the run's own `swift sft` command (in `runs/htr/<name>/steps.sh`) with `--resume_from_checkpoint <checkpoint>
-   --ignore_data_skip true`, so the batches already trained in that epoch are not replayed to find the place.
-3. When it finishes, `touch runs/htr/pipeline_markers/minicpm_train.done` and start `after_minicpm.sh`.
+**A training that stops** (on dmlpai01, GPU 2 hangs now and then with Xid 8, "GPU is probably locked") is started
+again by `train.sh` (MiniCPM-OCR) and `after_minicpm.sh` (Jev): up to `RETRIES` times (10), 2 minutes apart, each
+once the GPUs are free, from the run's own `command.sh`. Running a run's `command.sh` again is also the way to resume
+one by hand.
+- Its `steps.sh` (htr-train's) resumes from the newest checkpoint that holds its `trainer_state.json`. The trainer
+  writes that file last, so a crash while saving leaves a checkpoint without it.
+- The trainer then skips the batches already trained. **Never resume with `--ignore_data_skip true`**: it restarts the
+  epoch's pass at its first batch, so those batches train again. minicpm-all's resumes from checkpoints 3,000 and
+  6,000 did that ([docs/HTR_RUNS.md](../../../docs/HTR_RUNS.md), "Is it overfitting?").
+- A run written before htr-train resumed this way (its `steps.sh` without the `RESUME=()` line) is refused: run again,
+  it would train from the start into the same folder.
 
-The loop that did this unattended on dmlpai01 is in [docs/HTR_RUNS.md](../../../docs/HTR_RUNS.md), "How it survives".
+minicpm-all itself was written before that: the loop that keeps it going is in
+[docs/HTR_RUNS.md](../../../docs/HTR_RUNS.md), "How it survives".
 
 `configs/smoke_*_2gpu.yaml` are the same setups in small on the smoke sets, to check a machine first (minutes).
 

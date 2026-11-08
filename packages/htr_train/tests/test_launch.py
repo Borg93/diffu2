@@ -183,13 +183,14 @@ def test_plan_run_writes_an_sbatch_of_one_task_a_node_with_ms_swifts_multi_node_
         "set -euo pipefail\n"
         f"srun bash {root / 'steps.sh'}\n"
     )
-    assert plan.scripts["steps.sh"].splitlines()[3:] == [
+    steps = plan.scripts["steps.sh"].splitlines()
+    assert steps[3:7] == [
         "export NNODES=$SLURM_NNODES NODE_RANK=$SLURM_NODEID",
         'export MASTER_ADDR="$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)"',
         "export MASTER_PORT=29500",
         "export HF_HUB_OFFLINE=1 OMP_NUM_THREADS=8",
-        f"env DOWNSAMPLE_MODE=4x NPROC_PER_NODE=4 {shlex.join(plan.commands[0].argv)}",
     ]
+    assert steps[-1] == f'env DOWNSAMPLE_MODE=4x NPROC_PER_NODE=4 {shlex.join(plan.commands[0].argv)} "${{RESUME[@]}}"'
     assert plan.start == ["sbatch", "--partition", "boost_usr_prod", "--account", "proj", str(root / "job.sbatch")]
 
 
@@ -228,6 +229,46 @@ def _run_steps(plan: Plan, tmp_path: Path, *, vllm: str) -> tuple[subprocess.Com
     result = subprocess.run(["bash", str(steps)], env=environ, capture_output=True, text=True, timeout=60, check=False)
 
     return result, calls.read_text(encoding="utf-8").splitlines()
+
+
+@pytest.mark.parametrize(
+    ("checkpoints", "save_only_model", "resumed_from"),
+    [
+        ([], None, None),  # a first start
+        (["checkpoint-2", "checkpoint-10", "checkpoint-11/partial"], None, "checkpoint-10"),  # 11: crashed saving
+        (["checkpoint-10"], True, None),  # model-only checkpoints: no optimizer state to resume from
+    ],
+)
+def test_steps_run_again_resume_a_training_from_its_newest_whole_checkpoint_without_training_its_batches_again(
+    tmp_path: Path,
+    make_set: MakeSet,
+    settings: Settings,
+    checkpoints: list[str],
+    save_only_model: bool | None,
+    resumed_from: str | None,
+) -> None:
+    given = _spec(make_set).model_dump(mode="json")
+    spec = RunSpec.model_validate({**given, "job": {**given["job"], "save_only_model": save_only_model}})
+    plan = plan_run(spec, Where.LOCAL, settings.model_copy(update={"local_gpus": "1"}))
+    calls = tmp_path / "calls"
+    _executable(Path(plan.paths.tool(ToolEnv.MINICPM, "swift")), f'#!/bin/bash\necho "$*" >> {calls}\n')
+    output = plan.paths.output.resolve()
+    for checkpoint in checkpoints:
+        whole = not checkpoint.endswith("/partial")
+        folder = output / checkpoint.removesuffix("/partial")
+        folder.mkdir(parents=True)
+        if whole:
+            (folder / "trainer_state.json").write_text("{}\n", encoding="utf-8")
+    steps = plan.paths.root / "steps.sh"
+    steps.parent.mkdir(parents=True, exist_ok=True)
+    steps.write_text(plan.scripts["steps.sh"], encoding="utf-8")
+
+    result = subprocess.run(["bash", str(steps)], capture_output=True, text=True, timeout=60, check=False)
+
+    resume = ["--resume_from_checkpoint", str(output / resumed_from)] if resumed_from else []
+    assert result.returncode == 0, result.stderr
+    assert calls.read_text(encoding="utf-8").splitlines() == [" ".join([*plan.commands[0].argv[1:], *resume])]
+    assert "--ignore_data_skip" not in plan.scripts["steps.sh"]
 
 
 def test_steps_start_a_drafts_served_target_wait_for_its_health_and_stop_it_after_the_steps(

@@ -129,7 +129,9 @@ shuffle at its first batch. The resumes since (14,000, 15,000, 21,000, 23,000) s
   65 % of it seen before). It dropped again at 24,454.
 - **Exposure before epoch 3,** counting each shuffle once: 5 % of the samples in neither, 39 % in one, 56 % in both. A
   quarter of the samples (epoch 1's first 3,000 batches, 384,000 samples) count three times in epoch 1's.
-- **For the next run:** resume only without `--ignore_data_skip`, as `resume.sh` does.
+- **Fixed for the next runs (8 Nov):** htr-train's `steps.sh` resumes a training from its newest whole checkpoint
+  whenever it runs again, never with `--ignore_data_skip`; `train.sh` and `after_minicpm.sh` start a stopped training
+  again up to 10 times (`trained`). Jev is the first run to use it; minicpm-all keeps its own loop (`resume.sh`).
 
 ### Against TrOCR on the same lines (step 24,000)
 

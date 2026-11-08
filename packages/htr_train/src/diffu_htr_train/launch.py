@@ -93,11 +93,28 @@ def _serve_lines(command: Command, *, ready: str, log: Path) -> list[str]:
     ]
 
 
+def _resume_lines(output: Path) -> list[str]:
+    """``RESUME`` set to ms-swift's flag for the newest whole checkpoint in ``output`` (one holding its
+    ``trainer_state.json``, which the trainer writes last: a crash while saving leaves a checkpoint without it), or
+    left empty. The trainer then skips the batches the checkpoint's steps trained; ``--ignore_data_skip`` is never
+    passed, since it restarts the epoch's pass at its first batch and trains those batches again."""
+    newest = f"ls -d {shlex.quote(str(output))}/checkpoint-*/trainer_state.json 2>/dev/null | sort -V | tail -n 1"
+    return [
+        "RESUME=()",
+        f"CHECKPOINT=$({newest} || true)",
+        'if [ -n "$CHECKPOINT" ]; then',
+        '    RESUME=(--resume_from_checkpoint "${CHECKPOINT%/trainer_state.json}")',
+        '    echo "htr-train: resuming from ${RESUME[1]}" >&2',
+        "fi",
+    ]
+
+
 def steps_script(
     spec: RunSpec, *, where: Where, commands: list[Command], paths: RunPaths, setup: list[str] | None = None
 ) -> str:
     """The run's commands as a bash script, in order, after its launcher's preamble (``setup``; None:
-    :data:`PREAMBLES`'s); a served model started in the background and waited for."""
+    :data:`PREAMBLES`'s); a served model started in the background and waited for, a training resumed from its newest
+    whole checkpoint when the steps run again (:func:`_resume_lines`)."""
     lines = [
         "#!/bin/bash",
         f"# htr-train run {spec.name} ({spec.job.kind}), written by htr-train launch --where {where}.",
@@ -108,6 +125,8 @@ def steps_script(
         match command:
             case Command(role="serve", ready=str() as ready):
                 lines += _serve_lines(command, ready=ready, log=paths.root / "serve.log")
+            case Command(resume_from=Path() as output):
+                lines += [*_resume_lines(output), f'{shell(command)} "${{RESUME[@]}}"']
             case _:
                 lines.append(shell(command))
     return "\n".join(lines) + "\n"
