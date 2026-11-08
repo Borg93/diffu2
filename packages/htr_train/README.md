@@ -6,6 +6,8 @@ shows a text) and a DSpark draft for our fine-tuned MiniCPM-OCR. The tools (ms-s
 their own environment under `envs/`; this package is a light workspace member that checks a spec, renders the tools'
 exact commands, launches them on the Spark (under `jobs/spark_guard.sh`) or on Slurm, and builds the sets they train
 on. The design, with every recipe and pin cited, and the hardware estimates: [docs/HTR_TRAIN.md](../../docs/HTR_TRAIN.md).
+The runs on all of GT-Lejonet (what runs, what is queued, the results against the TrOCR baseline):
+[docs/HTR_RUNS.md](../../docs/HTR_RUNS.md).
 
 ## The environments
 
@@ -57,8 +59,10 @@ htr-train dspark-set --prompts data/htr/minicpm_lines_scaled.train.jsonl --targe
 `htr-eval` (run from `envs/minicpm/.venv/bin/`: it reads with that environment's torch and transformers) scores the
 readers: `set-lines` and `ood-set` give lines to score, `draw` a fixed draw of them, `read` a reader's predictions
 and speed (MiniCPM-OCR through vLLM as OpenBMB asks it; the Swedish Lion TrOCR through transformers), `cer` their error
-rates as each side scores itself, as read and with each reading's looping tail cut. A spec's `cer_sets` has ms-swift read draws like these at each evaluation, with the
-model in training (`evaluate/swift_plugin.py`, passed as `--external_plugins` with `--callbacks cer`).
+rates as each side scores itself, as read and with each reading's looping tail cut, and `as-reads` a reader's
+predictions as Jev's reads. A spec's `cer_sets` has ms-swift read draws like these at each evaluation, with the model
+in training (`evaluate/swift_plugin.py`, passed as `--external_plugins` with `--callbacks cer`). Jev's AUROC and a
+draft's served acceptance are not commands yet ([docs/HTR_HANDOVER.md](../../docs/HTR_HANDOVER.md), "Scoring").
 
 ### Smoke sets
 
@@ -114,5 +118,7 @@ from `HTR_TRAIN_*` variables (`diffu_htr_train.settings`): `HTR_TRAIN_RUNS`, `HT
 
 [`lion_data_prep/`](lion_data_prep/README.md) holds the sets and runs for the full GT-Lejonet HTR export, matched one
 to one to the TrOCR model trained on it (the same test pages, lines cut and kept as it cuts and keeps them): its
-`build_sets.sh` cuts every line and region and starts `train.sh`, which trains MiniCPM-OCR and then Jev on two GPUs
-from its `configs/`.
+`build_sets.sh` cuts every line and region and starts `train.sh`, which trains MiniCPM-OCR on two GPUs from its
+`configs/`, then hands over to `after_minicpm.sh`: the reader scored beside TrOCR, Jev's reads and pairs and the
+draft's responses, then Jev and the DSpark draft, each model published to the Hugging Face Hub as it is made. Where
+those runs stand: [docs/HTR_RUNS.md](../../docs/HTR_RUNS.md).

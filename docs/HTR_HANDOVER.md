@@ -42,7 +42,8 @@ a sample packed second differs by 0.82 relative from the same sample run alone (
 4. **Smoke runs** (minutes each), to prove the environments on this hardware: `configs/smoke/minicpm_lines.yaml`,
    `configs/smoke/jev.yaml`, then the DSpark smoke (`configs/smoke_vllm/dspark.yaml`) with the fixes below.
 5. **MiniCPM-OCR lines, full**: `configs/full/minicpm_lines_scaled.yaml` (all GT training lines, OpenBMB's recipe,
-   3 epochs, global batch 128). Score it (below) against base (59 % CER on the pilot dev lines).
+   3 epochs, global batch 128). Score it (below) against base (59 % CER on the pilot dev lines). On dmlpai01 the full
+   run is `lion_data_prep`'s instead (lines and regions, matched to the TrOCR baseline; [HTR_RUNS.md](HTR_RUNS.md)).
 6. **Jev, full**: `configs/full/jev_lines.yaml`, on pairs in the English prompt. Score AUROC on test pairs.
 7. **DSpark draft** against the final MiniCPM-OCR: answers first (`htr-train serve-target`, `htr-train dspark-set`),
    then `configs/full/dspark.yaml` with the target's path filled in. Score acceptance served.
@@ -92,16 +93,21 @@ The sets are built by `diffu-reader-set` from the GT's PAGE/ALTO exports and sca
 then `htr-train split-dev` and `htr-train jev-set` (HTR_TRAIN.md, "Data, and variants of it"). The JSONL rows hold
 **absolute image paths** of the machine that built them, so a set copied elsewhere does not load; rebuild the sets on
 the new machine from the GT (or rewrite the paths' prefix consistently in every set file, `*.options.json` included,
-and check a few rows). Only the pilot and smoke variants exist so far; the full variants the `configs/full` specs name
-are not built yet.
+and check a few rows). On the Spark only the pilot and smoke variants exist. On dmlpai01,
+`lion_data_prep/build_sets.sh` built the full GT-Lejonet sets (`data/htr/minicpm_lines_scaled.*` with 1,481,877
+training lines, which `configs/full/minicpm_lines_scaled.yaml` names too, and `minicpm_regions_masked.*`). Jev's
+pairs from the reader's reads are built by its queue after the training; the capped and drawn-line variants are not
+built.
 
 Before training on real lines, check the set was split by the GT's test lists: runs, dev splits and Jev pair sets
 refuse one that was not.
 
-## Scoring (not in `htr-train` yet)
+## Scoring
 
-The pilot numbers above were measured with throwaway scripts; until scoring is a command of `htr-train`, measure the
-same way so numbers compare:
+The pilot numbers above were measured with throwaway scripts. MiniCPM-OCR's scoring is now `htr-eval` (`read` through
+vLLM with the flags below, then `cer`: the per-line mean CER, OpenBMB's corpus CER and WER, the baseline's
+`normalize()` on both sides, as read and with loops cut). Jev's AUROC and the draft's acceptance are not commands yet;
+measure them as below so numbers compare:
 
 - **MiniCPM-OCR CER**: serve the checkpoint with vLLM (`--max-model-len 8192 --limit-mm-per-prompt '{"image": 4,
   "video": 0}' --mm-processor-kwargs '{"downsample_mode": "4x", "max_slice_nums": 9}' --trust-request-mm-kwargs
@@ -123,6 +129,7 @@ same way so numbers compare:
   DeepSpec (the DSpark authors' code; text targets only) publishes block 7, lr 6e-4, global batch 512, 10 epochs, a
   position decay of the loss (gamma 4) and 512 anchors. Which carries over to a line-OCR target is to be settled
   against the pilot draft's served acceptance.
-- Packing for the full MiniCPM-OCR run (5-10x faster) needs flash-attn on the new machine; the specs use `sdpa` and no
-  packing, as on the Spark.
-- Regions: no pilot yet.
+- Packing (5-10x faster) stays off: it leaks between samples in Qwen3.5 ("Packing is off", above). flash-attn is in
+  `envs/minicpm`'s `x86` group but no run packs.
+- Regions: no pilot, but minicpm-all trains on all the masked regions (at most 9 x 448^2 px) beside the lines. Its 200
+  dev regions read 4.2-5.8 % CER at 10 of the 12 evaluations from step 15,000 to 26,000 ([HTR_RUNS.md](HTR_RUNS.md)).

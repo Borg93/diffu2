@@ -4,7 +4,8 @@ The Riksarkivet GT-Lejonet HTR export (`GT-Lejonet_HTR_202602`: ~60 collections,
 the recipe our readers are trained on it with, so that they compare one to one with the TrOCR model trained on the
 same GT ("swedish-lion": `microsoft/trocr-large-handwritten` fine-tuned, its code in RA's own repository). The
 mechanisms are general options of `diffu-reader-set` and `htr-train`; what is specific to this dataset and this
-comparison is the choice of them, here.
+comparison is the choice of them, here. The runs made with it on dmlpai01, their state, the queue and every result so
+far against the baseline: [docs/HTR_RUNS.md](../../../docs/HTR_RUNS.md).
 
 ## The baseline, as its code trains and tests it
 
@@ -59,6 +60,16 @@ Each waits until no other process computes on its GPUs. The scripts leave a mark
 (`runs/htr/pipeline_markers`), so a second run resumes after the last finished one; a file `runs/htr/HOLD` holds the
 trainings back. Run them in tmux: they outlive the login.
 
+**A training that stopped** (on dmlpai01, GPU 2 hangs now and then with Xid 8, "GPU is probably locked") is resumed
+by hand:
+1. Take the newest checkpoint that holds its `trainer_state.json`. The trainer writes that file last, so a crash while
+   saving leaves a checkpoint without one.
+2. Run the run's own `swift sft` command (in `runs/htr/<name>/steps.sh`) with `--resume_from_checkpoint <checkpoint>
+   --ignore_data_skip true`, so the batches already trained in that epoch are not replayed to find the place.
+3. When it finishes, `touch runs/htr/pipeline_markers/minicpm_train.done` and start `after_minicpm.sh`.
+
+The loop that did this unattended on dmlpai01 is in [docs/HTR_RUNS.md](../../../docs/HTR_RUNS.md), "How it survives".
+
 `configs/smoke_*_2gpu.yaml` are the same setups in small on the smoke sets, to check a machine first (minutes).
 
 ## What the recipe settles, and why
@@ -69,8 +80,9 @@ trainings back. Run them in tmux: they outlive the login.
 - **4 samples a GPU** for MiniCPM-OCR: 8 peaked at 86 of 96 GB with regions in the batch.
 - **Regions at most 9 x 448^2 px**: MiniCPM-OCR sees no more of an image (9 slices of 448^2 px); at the scans'
   resolution the region crops alone would take ~375 GB.
-- **CER while it trains** (`cer_sets`): at each evaluation, and once before the first step of a start or resume, the model in training
-  reads 1,000 dev lines, 200 dev regions, 500 out-of-domain lines and 1,000 `test_0050` lines greedily (about 4 min on the two GPUs: 21 s, 188 s and 25 s at step 14,000), logged as
+- **CER while it trains** (`cer_sets`): at each evaluation, and once before the first step of a start or resume, the
+  model in training reads 1,000 dev lines, 200 dev regions, 500 out-of-domain lines and 1,000 `test_0050` lines
+  greedily (about 4 min on the two GPUs: 21 s, 188 s and 25 s at step 14,000), logged as
   `eval_cer_<set>` (per-line mean), `eval_cer_corpus_<set>`, `eval_cer_norm_<set>` (the baseline's `normalize()`)
   and `eval_cut_<set>` beside the eval loss; the readings go to `output/cer/step-<n>.<set>.jsonl`. It shows the
   trend; the scores against the baseline come from `htr-eval read` on a checkpoint through vLLM, and the checkpoint

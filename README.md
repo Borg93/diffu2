@@ -9,7 +9,7 @@ around its released weights, and our own training to teach it to draw from a sam
 
 ## The repo
 
-A uv workspace of six members under `packages/`; the root is the workspace alone (no package of its own). Everything
+A uv workspace of seven members under `packages/`; the root is the workspace alone (no package of its own). Everything
 that draws is a Modular Diffusers pipeline, our blocks around a model's own, the model chosen by its directory alone.
 
 - **`packages/core`** (diffu-core): what every member shares about a model directory: its `modular_model_index.json`
@@ -28,12 +28,17 @@ that draws is a Modular Diffusers pipeline, our blocks around a model's own, the
 - **`packages/runner`** (diffu-runner): generation at scale on a Ray cluster. [docs/RAY.md](docs/RAY.md),
   [docs/INFERENCE.md](docs/INFERENCE.md) (KubeRay inference)
 - **`packages/studio`** (diffu-studio): MOSS-Image models drawing the same page side by side on a `gr.Workflow` canvas.
+- **`packages/htr_train`** (diffu-htr-train): training and scoring the readers: MiniCPM-OCR (lines and regions), its
+  proof-reader Jev, a DSpark draft for it and Unlimited-OCR 2 (the page reader), each tool in its own environment
+  (`htr-train`, `htr-eval`). [docs/HTR_TRAIN.md](docs/HTR_TRAIN.md); the runs on all of GT-Lejonet, matched to the
+  Swedish Lion TrOCR, their state and results: [docs/HTR_RUNS.md](docs/HTR_RUNS.md)
 
 ```
 jobs/         spark_guard.sh (one GPU job at a time on the DGX Spark, 128 GB shared by CPU and GPU),
               moss/ (MOSS-Image training on the Spark, a LoRA or every weight; a Slurm template for the HPC run),
               flux3/run_v3d.sh (FLUX.3's style-reference LoRA), setup_nemo_env.sh (the members in NeMo's environment)
-docs/         PIPELINE.md, MOSS.md, FLUX3.md, RAY.md, INFERENCE.md
+docs/         PIPELINE.md, MOSS.md (with MOSS_RUNS.md, MOSS_HPC.md), FLUX3.md, RAY.md, INFERENCE.md,
+              HTR_TRAIN.md (with HTR_RUNS.md, HTR_HANDOVER.md)
 styles.json   style presets: the FLUX.3 hand LoRAs, each in its archive's look
 conftest.py   test fixtures shared by the members (pages, a scanned form, diffusers' tiny FLUX.3, a tiny MOSS-Image
               and a tiny reference training on it)

@@ -10,10 +10,13 @@ gets faster, the result does not change, but the apprentice must have learnt fro
 fine-tuned MiniCPM-OCR needs its own.
 
 `packages/htr_train` (`htr-train`) trains all four from run specs; this page is the how and why. The package's own
-[README](../packages/htr_train/README.md) has the commands. Evaluation (predictions, CER, Jev's AUROC, the judge
-stage) is the next step and not built yet.
+[README](../packages/htr_train/README.md) has the commands. `htr-eval` scores MiniCPM-OCR (line sets, readings through
+vLLM, CER as read and with loops cut), and a run reads fixed draws while it trains (`cer_sets`). Jev's AUROC, a draft's
+served acceptance and the judge stage are not commands yet.
 
-State as of 4 Nov 2026, what broke in the first real runs, and the run order on other hardware: [HTR_HANDOVER.md](HTR_HANDOVER.md).
+State as of 4 Nov 2026, what broke in the first real runs, and the run order on other hardware:
+[HTR_HANDOVER.md](HTR_HANDOVER.md). The full GT-Lejonet runs on dmlpai01 (what runs, what is queued, the results
+against the TrOCR baseline): [HTR_RUNS.md](HTR_RUNS.md).
 
 ## One tool where it fits
 
@@ -29,8 +32,8 @@ State as of 4 Nov 2026, what broke in the first real runs, and the run order on 
 
 | Job | Recipe | Our deltas |
 |---|---|---|
-| MiniCPM-OCR on lines and regions | OpenBMB's French handwritten lines (`docs/swift_minicpm_ocr_french_en.md`): `<image>Text Recognition:`; full SFT of the vision encoder and language model, projector frozen; `--add_non_thinking_prefix true --loss_scale ignore_empty_think`; lr 5e-6 cosine, warmup 0.05, AdamW fused (beta2 0.95, eps 1e-8), wd 0.1, clip 1.0; global batch 128 (8 x 1 x 16); ZeRO-2; `DOWNSAMPLE_MODE=4x`; 3 epochs, the best by eval loss | ms-swift's built-in `zero2` for their `ds_zero2.json` (the same config); our sets and dev split |
-| Jev | OpenBMB's `docs/finetune_jev_en.md`: `--task_type seq_cls --num_labels 2 --problem_type single_label_classification`, full, vision and projector frozen, lr 1e-5, packing 12,000 with flash attention, ZeRO-3, `IMAGE_MAX_TOKEN_NUM=2048` at training only | started from `openbmb/MiniCPM-OCR-Jev` itself (its head and comparison carry over), `--model_type qwen3_5` named |
+| MiniCPM-OCR on lines and regions | OpenBMB's French handwritten lines (`docs/swift_minicpm_ocr_french_en.md`): `<image>Text Recognition:`; full SFT of the vision encoder and language model, projector frozen; `--add_non_thinking_prefix true --loss_scale ignore_empty_think`; lr 5e-6 cosine, warmup 0.05, AdamW fused (beta2 0.95, eps 1e-8), wd 0.1, clip 1.0; global batch 128 (8 x 1 x 16); ZeRO-2; `DOWNSAMPLE_MODE=4x`; 3 epochs, the best by eval loss | ms-swift's built-in `zero2` for their `ds_zero2.json` (the same config); our sets and dev split; on dmlpai01 (`lion_data_prep/configs/minicpm_all.yaml`) lines and regions together, 2 GPUs x 4 x 16, gradient checkpointing in the vision encoder too |
+| Jev | OpenBMB's `docs/finetune_jev_en.md`: `--task_type seq_cls --num_labels 2 --problem_type single_label_classification`, full, vision and projector frozen, lr 1e-5, packing 12,000 with flash attention, ZeRO-3, `IMAGE_MAX_TOKEN_NUM=2048` at training only | started from `openbmb/MiniCPM-OCR-Jev` itself (its head and comparison carry over), `--model_type qwen3_5` named; on dmlpai01 (`lion_data_prep/configs/jev_all.yaml`) unpacked with sdpa (packing leaks between samples in Qwen3.5, "Not known yet"), 2 epochs |
 | Unlimited-OCR 2 | ms-swift's `examples/models/unlimited_ocr2/train.sh`: LoRA r8 alpha 32 all-linear, vision and projector frozen, lr 1e-4, accumulation 16 | the Hugging Face repo at its commit, `--model_type unlimited-ocr` named, rank 16; a full fine-tune variant |
 | DSpark | speculators' `examples/train/dspark_qwen3_0_6b_sharegpt_online.sh`: online, vLLM serving the target's hidden states | OpenBMB's released draft's shape: 5 layers, 15 tokens a block, target layers 4 8 12 16 20 (their `[3, 7, 11, 15, 19]` read as Z Lab's `id + 1`, an inference), mask token 248076; the draft vocabulary is speculators' default 32,000, not the 114,688 tokens OpenBMB's draft keeps (to be tuned once a draft is measured) |
 
@@ -144,6 +147,10 @@ line samples/s per A100):
 | Unlimited-OCR 2 full | no | ~1-2 h | HPC |
 | DSpark draft (~300 K responses, 3 online epochs) | ~1-2 days if vLLM runs there | ~2-4 h | HPC / x86 |
 
+Measured on dmlpai01 (2 x RTX PRO 6000 Blackwell Max-Q, 96 GB, 300 W): MiniCPM-OCR on all lines and regions,
+unpacked, ZeRO-2, gradient checkpointing in both, takes about 11.9 s a step of 128 samples (~10.8 samples/s). That is
+~40 h for an epoch of 12,227 steps and about 5 days for the 3 epochs ([HTR_RUNS.md](HTR_RUNS.md)).
+
 Memory per GPU (estimates): MiniCPM-OCR full ~25-30 GB alone, ~10-15 GB on 8 with ZeRO-2; Jev ~40-45 GB alone at 12 K
 packed tokens; Unlimited-OCR 2 LoRA 26 GiB (ms-swift's example), full ~65 GB alone, ~20-25 GB on 8.
 
@@ -151,7 +158,10 @@ On Slurm, `htr-train launch --where slurm` writes an sbatch of one srun task a n
 `NNODES`, `NODE_RANK`, `MASTER_ADDR` (the first host), `MASTER_PORT` and `NPROC_PER_NODE`, with `HF_HUB_OFFLINE=1`
 (models staged before). KubeRay is not built (no Ray work until testing is done).
 
-## For the evaluation step (from OpenBMB's docs, not built yet)
+## Evaluation, as OpenBMB's docs ask
+
+MiniCPM-OCR's part is built (`htr-eval`). Jev's and the draft's are scored by scripts until they are commands
+([HTR_HANDOVER.md](HTR_HANDOVER.md), "Scoring").
 
 - MiniCPM-OCR is read as OpenBMB evaluates it: thinking off, greedy (`temperature` 0.01, `top_p` 0.001, `top_k` 1,
   `repetition_penalty` 1.0), `downsample_mode` 4x, `max_slice_nums` 9, at most 4,096 new tokens for a text region
@@ -169,10 +179,10 @@ On Slurm, `htr-train launch --where slurm` writes an sbatch of one srun task a n
 
 - Whether packing can be made safe for Qwen3.5 here: in `envs/minicpm` a packed sample's linear-attention state leaks
   into the next (HTR_HANDOVER.md), so every run is unpacked until a check of the same sample packed and alone agrees.
-
 - Whether flash-attn and causal-conv1d build for aarch64 / sm_121 (plan: `sdpa`, no packing, on the Spark).
-- Whether vLLM's aarch64 wheels carry GB10 kernels; OpenBMB's MiniCPM-OCR vLLM route is x86_64 only.
-- speculators with transformers 5.22.1 (its pin says <= 5.19.0): the envs lane's dry run.
 - Whether Jev's `score.weight` loads into ms-swift's classifier head (check the load log for a newly initialised
   `score`).
 - Scaled or native line crops: the same 2,000 lines read by base MiniCPM-OCR both ways settles it.
+
+Settled since: vLLM's aarch64 wheels and speculators with transformers 5.22.1 both ran the DSpark pilot on the Spark
+(GB10), and the whole DSpark route ran on dmlpai01 (HTR_HANDOVER.md).
