@@ -24,7 +24,7 @@ live only on that disk.
     gradient checkpointing in the language model and the vision encoder, lr 5e-6 cosine, 3 epochs = 36,681 steps.
   - **Checkpoints:** eval and save every 1,000 steps; the one of least eval loss is kept as the result.
 - **Folder:** `runs/htr/minicpm-all/output`; its log is `runs/htr/pipeline.log`.
-- **State (8 Nov 19:20):** step ~27,470 of 36,681 (epoch 2.25), about 11.9 s a step, ending around **02:30 Tue
+- **State (8 Nov 21:40):** step ~28,170 of 36,681 (epoch 2.3), about 11.9 s a step, ending around **02:30 Tue
   10 Nov**. First started 4 Nov 23:07.
 - **Hangs:** GPU 2 hung twice with Xid 8 ("GPU is probably locked", CUDA error 702), 7 Nov 21:38 and 8 Nov 04:36.
   It is a known, unfixed fault of RTX PRO 6000 Blackwell under sustained load (NVIDIA forum thread 382055: power limits,
@@ -107,9 +107,20 @@ column applies TrOCR's training normalisation to both sides; it changes the test
 - **The eval loss.** It rose 0.005 and is falling back, with token accuracy flat. The loss is the cross-entropy of
   the dev text, so it grows when the model is more sure of the tokens it gets wrong, without any more of them being
   wrong.
-- **What the held-out sets say.** Dev lines (whole volumes held out) and OOD (other archives) have been flat since
-  about step 21,000, before epoch 3. Only `test_0050` gains (4.91 % to 4.78 %); its pages come from the training
-  volumes, so it rewards learning those volumes' hands.
+- **What the held-out sets say.** By the per-line mean, dev lines and OOD looked flat since step 21,000. That was
+  wrong: a few short lines swing the mean (at step 28,000 five lines made 0.22 of a 0.28-point drop). By corpus CER
+  (edits over characters) dev lines still gain about 0.02 points a 1,000 steps (3.43 % at 21k, 3.25 % at 28k) and test
+  lines 0.018 (4.27 % to 4.05 %); OOD is flat within noise. So the run continues to its end.
+
+**Resampling the collections now: considered and dropped (8 Nov).** Stopping at step 29,000 and continuing on the lines
+drawn by collection size^0.7 (repeats capped at 4) was prepared, then dropped before it ran:
+- The method is standard in language-model pretraining ([Chen et al., 2026](https://arxiv.org/pdf/2604.16380)), but
+  no 2026 work tests it for HTR, and the 2026 advice is to tune the mix with small repetition-controlled runs
+  ([Zhou et al., 2026](https://arxiv.org/abs/2606.07597)), not to take a default.
+- That we lose in the small collections rests on 1,000 test lines (11 of GT-FNA_1500); "Next", item 1, comes first.
+- The 1,000 dev lines that would have judged it hold no GT-FNA_1500 or landskapshandlingar line (37 lines of
+  collections under 20k), so it could not have shown whether it worked. GT-FNA_1500 is one volume, so a whole-volume
+  dev split cannot hold any of it out; testing a mix needs a page-level split there.
 - **The learning rate** is down to 8e-7 (16 % of the peak) and still falling. What the rest of the run can change is
   small either way.
 
