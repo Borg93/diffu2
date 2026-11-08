@@ -117,6 +117,17 @@ column applies TrOCR's training normalisation to both sides; it changes the test
 In transformers an epoch ends only when its pass over the data does, so each of those resumes restarted epoch 1's
 shuffle at its first batch. The resumes since (14,000, 15,000, 21,000, 23,000) skip the batches already trained.
 
+How it came about, and why it was caught late:
+1. **5 Nov, step 3,000.** The regions were swapped for their masked versions, and the order was restarted on purpose
+   ("the data order starts afresh"). The masked file holds the same 83,072 regions in the same order, so with the same
+   seed the shuffle was the identical one. This was not checked.
+2. **6 Nov, step 6,000.** The pause for a CER check copied that resume, flag included.
+3. **6 Nov, step ~10,500.** The train loss jumping at 9k gave it away. `resume.sh` was written without the flag, and
+   was taken then for one replay (6-9k), not two. The warning had been visible since about step 7k: train loss falling
+   much faster than eval loss, which rose at 8k.
+4. **Recorded only in chat,** so after a summary it was lost. On 8 Nov the `lion_data_prep` README was written telling
+   to resume *with* the flag (corrected the same day), and the replay was found again from the losses above.
+
 | Steps | What they trained on |
 |---|---|
 | 0-9,000 | epoch 1's first 3,000 batches, three times over |
