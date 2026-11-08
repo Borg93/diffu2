@@ -19,6 +19,7 @@ Tested:
 | The hand copied from the sample page: the content pilot (full_c1, 2,500 steps) and B at step 1,000 | **Fails**: one page drawn with four samples keeps the same hand letter for letter, only its paper changes; B's swap test H1 1/18 | TODO.md, the recipe; Results below |
 | The VAE: does encoding a page lose its hand? | **No**: writer ID 0.59 on real lines, 0.57 on the same lines encoded and decoded (47 pages) | TODO.md, the recipe |
 | The hand over training steps (the pilot's checkpoints) | No trend toward the sample's hand at any checkpoint | 8 Nov, `~/diffu_queue/hand_diag/hand_trend` |
+| Reference guidance 2 (a third pass toward the sample at drawing time), B at step 1,000 on the swap set | **The look follows better, the hand not at all**: L1 6/6 (5/6 without), L2 7/7, L3 3/3, H1 1/18 (1/18 without); by eye the grey microfilm page now comes out grey from its own sample (beige without), and every page keeps one tidy cursive letter for letter whatever the sample | 8 Nov, Spark, `~/diffu_queue/eval_b/show_rg2` |
 
 Not tested yet:
 
@@ -28,7 +29,7 @@ Not tested yet:
 | Hand by the collection's name at full scale (N) | Does naming carry the hand for more collections with all the data? | queued on Leonardo |
 | The swap test on windows | Every page of the set gives 2 windows (whole lines at ~2.5x the page's writing size: a 63 px line pitch against 23-25 px), each with a window of its sample at the same size, so B trains on them; the swap test has only been run on whole pages. Does the hand follow where the letters are large? If so the page's writing size is the cause (2 MP, or pages drawn region by region); if not, the way the sample is fed in | not run; drawing only, B's checkpoint |
 | An adapter's hand with a sample page's look (recipe B's plan) | A hand LoRA trained on top of B, drawn with a sample page from another volume: the hand from the adapter, the look from the sample? | not run; needs B's checkpoint |
-| Reference guidance 2 and 3 on the swap set | Does a third guidance pass toward the sample carry the hand at drawing time? | drawn on the Spark, not looked at |
+| Reference guidance 3 on the swap set | Does a stronger third guidance pass toward the sample carry the hand? | drawing on the Spark (B step 1,000) |
 | The sample beside the page (its own position grid) | Does the hand follow when the sample's tokens no longer share the page's (row, column) positions? | not built |
 | Training weighted toward low noise (`--sigma-shift`, `ea9fd2e`) | Does the hand carry when more steps fall where the letter strokes are decided? | code only, no run recorded |
 | Writer-ID supervision | Does an explicit writer signal in training make the hand follow? | not built |
