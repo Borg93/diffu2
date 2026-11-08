@@ -5,6 +5,34 @@ folder, then its state and results. Paths are relative to the project's `$WORK` 
 holds a `run.json` with this entry's facts, beside the trainer's own records (a cache's `cache.json` holds its options,
 each checkpoint's `state/progress.json` the training settings). How to run them: [MOSS_HPC.md](MOSS_HPC.md).
 
+## The hand: what has been tested and what has not (8 Nov 2026)
+
+The page's look (paper, ink, scan) follows the sample page; its handwriting does not. This is the record of every
+test of the hand so far, on the Spark and on Leonardo, so the next one is chosen from it.
+
+Tested:
+
+| Test | Result | Where |
+|---|---|---|
+| One scribe's hand learned by an adapter (LoRA on Base: the 1715 letter book, Påhlman, landskapshandlingar) | **Works**: the clerk's letterforms on held-out windows at step 350, and on whole held-out pages with every line in place and the volume's look | `ea73d21`, `63f0092`; adapters `Gabriel/diffu-moss-hand-*` |
+| Eight hands in one model, chosen by naming the collection (full_r3, 31 Oct, step 1,500) | **Half works**: writer ID of the drawn lines against the real pages' at the same size: Påhlman 88 % (81 %), Överståthållarämbetet 69 % (92 %), Kopparberg 2 % (68 %), Göteborg 0 % (57 %); the sample page ignored | `e0feb18` |
+| The hand copied from the sample page: the content pilot (full_c1, 2,500 steps) and B at step 1,000 | **Fails**: one page drawn with four samples keeps the same hand letter for letter, only its paper changes; B's swap test H1 1/18 | TODO.md, the recipe; Results below |
+| The VAE: does encoding a page lose its hand? | **No**: writer ID 0.59 on real lines, 0.57 on the same lines encoded and decoded (47 pages) | TODO.md, the recipe |
+| The hand over training steps (the pilot's checkpoints) | No trend toward the sample's hand at any checkpoint | 8 Nov, `~/diffu_queue/hand_diag/hand_trend` |
+
+Not tested yet:
+
+| Test | The question | State |
+|---|---|---|
+| A sample by the same scribe (A′) | Was the sample, often another scribe's page, the cause? | queued on Leonardo |
+| Hand by the collection's name at full scale (N) | Does naming carry the hand for more collections with all the data? | queued on Leonardo |
+| The swap test on windows | Every page of the set gives 2 windows (whole lines at ~2.5x the page's writing size: a 63 px line pitch against 23-25 px), each with a window of its sample at the same size, so B trains on them; the swap test has only been run on whole pages. Does the hand follow where the letters are large? If so the page's writing size is the cause (2 MP, or pages drawn region by region); if not, the way the sample is fed in | not run; drawing only, B's checkpoint |
+| An adapter's hand with a sample page's look (recipe B's plan) | A hand LoRA trained on top of B, drawn with a sample page from another volume: the hand from the adapter, the look from the sample? | not run; needs B's checkpoint |
+| Reference guidance 2 and 3 on the swap set | Does a third guidance pass toward the sample carry the hand at drawing time? | drawn on the Spark, not looked at |
+| The sample beside the page (its own position grid) | Does the hand follow when the sample's tokens no longer share the page's (row, column) positions? | not built |
+| Training weighted toward low noise (`--sigma-shift`, `ea9fd2e`) | Does the hand carry when more steps fall where the letter strokes are decided? | code only, no run recorded |
+| Writer-ID supervision | Does an explicit writer signal in training make the hand follow? | not built |
+
 ## Common to every run (7 Nov 2026)
 
 - **Set**: `moss/page_pairs_full_1mp`, the whole GT at 1 MP (`diffu_page.data.page_pairs`, 2 windows a page, 10 % of
