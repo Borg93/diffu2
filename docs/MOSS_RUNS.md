@@ -114,6 +114,6 @@ same 55 collections at 80 scans each): the look follows the sample, the hand doe
   validation loss flat from step 6,000 (sample form 0.6584-0.6585, with look words 0.6583-0.6586, no sample
   0.6598-0.6606). The second job (63750939, `RESUME=latest`) goes on from step 7,000; on 8 Nov 19:30 it and every
   queued MOSS job waited on priority (~135,000-137,000, the median of 10,613 jobs pending on `boost_usr_prod`), Slurm
-  giving no start time.
+  giving no start time. Its second job's limit lowered to 10 h (8 Nov 19:40; ~2,000 steps at ~13 s, the validations and two saves: ~8 h) so it fits a gap sooner.
 
 (Filled in as each run is judged: validation loss by form, the swap test, held-out pages beside the scans.)
