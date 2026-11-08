@@ -2,8 +2,8 @@
 # After minicpm-all (train.sh execs this, as does the resume that took over its training; read only then, so it can
 # change while that trains). Each step leaves a .done marker in $MARKERS: run it again to resume after the last
 # finished step.
-#  1. best: minicpm-all's checkpoint of least eval loss (its trainer state's best_model_checkpoint), linked as
-#     runs/htr/minicpm-all/best: every step after reads with it.
+#  1. best: of minicpm-all's checkpoints on disk, the one of lowest corpus CER on its 1,000 dev lines (link_best),
+#     linked as runs/htr/minicpm-all/best: every step after reads with it.
 #  2. On the first of $GPUS, vLLM serving it with OpenBMB's flags: all 6,358 out-of-domain lines and the 5,000 test_0050
 #     lines read and scored beside the Swedish Lion TrOCR's greedy readings of the same lines (htr-eval cer, as read
 #     and with loops cut: $OUT/result.txt); then its reads of 100,000 training lines and of every test line, Jev's real
@@ -92,11 +92,34 @@ up() {  # up NAME URL CMD...: a server started in the background (its log $O/NAM
   log "$name serving on $url"
 }
 
-link_best() {
-  local newest best
-  newest=$(ls -d $RUN/output/checkpoint-* | sort -V | tail -1)
-  best=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["best_model_checkpoint"])' \
-    "$newest/trainer_state.json") && [ -d "$best" ] && ln -sfn "$best" $RUN/best && log "best: $best"
+link_best() {  # of minicpm-all's checkpoints on disk, the one of lowest corpus CER (edits over characters) on the
+  # 1,000 dev lines its cer callback reads at each evaluation (whole volumes held out; the test lines are watched,
+  # never chosen on), linked as $RUN/best; each candidate logged. Not eval loss: it rose in epoch 3 while CER fell.
+  # Not the per-line mean: one short line read wrong moves it by 0.1 point
+  local best
+  best=$(python3 - $RUN <<'EOF'
+import json
+import sys
+from pathlib import Path
+
+run = Path(sys.argv[1])
+cer = {}
+for line in (run / "output" / "logging.jsonl").read_text(encoding="utf-8").splitlines():
+    row = json.loads(line)
+    if "eval_cer_corpus_dev_lines" in row:
+        cer[int(row["global_step/max_steps"].split("/")[0])] = row["eval_cer_corpus_dev_lines"]
+candidates = []
+for state in run.glob("output/checkpoint-*/trainer_state.json"):
+    step = int(state.parent.name.rsplit("-", 1)[1])
+    if step in cer and any(state.parent.glob("model*.safetensors")):
+        candidates.append((cer[step], -step, str(state.parent.resolve())))
+if not candidates:
+    sys.exit("no checkpoint with a dev-line CER")
+for value, step, _ in sorted(candidates):
+    print(f"  checkpoint-{-step}: dev lines {value:.2%} corpus CER", file=sys.stderr)
+print(min(candidates)[-1])
+EOF
+) && [ -d "$best" ] && ln -sfn "$best" $RUN/best && log "best: $best"
 }
 read_with() {  # read_with CONCURRENCY LINES OUT: the best checkpoint's readings, through the scoring server
   $E read --reader minicpm --model minicpm --endpoint $SCORING --concurrency "$1" --lines "$2" --out "$3"

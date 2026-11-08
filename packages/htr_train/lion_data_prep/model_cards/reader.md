@@ -33,8 +33,9 @@ Its proof-reader is [@NAME@-jev](https://huggingface.co/@REPO@-jev) and its DSpa
   each crop masked the same way. Lines whose text marks an uncertain reading (`??`, `(?)`, `[`, `]`) and lines under
   10 pixels are left out, as the baseline left them out. The text is trained as transcribed, not normalised.
 - **Recipe:** OpenBMB's full fine-tune (vision encoder and language model trained, the aligner frozen), learning rate
-  5e-6 on a cosine schedule, 3 epochs, 128 samples a step, bfloat16, on two RTX PRO 6000 Blackwell GPUs.
-- **Checkpoint:** @STEP@, the one of least loss on the held-out dev lines.
+  5e-6 on a cosine schedule planned over 3 epochs, 128 samples a step, bfloat16, on two RTX PRO 6000 Blackwell GPUs.
+  Stopped after 28,000 of its 36,681 steps (2.3 epochs), where the held-out lines' error had all but stopped falling.
+- **Checkpoint:** @STEP@, the one of lowest corpus CER on 1,000 held-out dev lines.
 
 ## Use
 

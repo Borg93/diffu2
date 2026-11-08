@@ -24,8 +24,9 @@ live only on that disk.
     gradient checkpointing in the language model and the vision encoder, lr 5e-6 cosine, 3 epochs = 36,681 steps.
   - **Checkpoints:** eval and save every 1,000 steps; the one of least eval loss is kept as the result.
 - **Folder:** `runs/htr/minicpm-all/output`; its log is `runs/htr/pipeline.log`.
-- **State (8 Nov 21:40):** step ~28,170 of 36,681 (epoch 2.3), about 11.9 s a step, ending around **02:30 Tue
-  10 Nov**. First started 4 Nov 23:07.
+- **Stopped 8 Nov 21:55 after checkpoint-28000** (2.3 of its 3 epochs), by the user's call: a demo run, and the
+  remaining 8,700 steps were worth about 0.1 point while TrOCR leads by 0.45. Checkpoint-28000 keeps its optimizer
+  state, so the run can be resumed from it. The reader is checkpoint-28000 (dev lines 3.25 % corpus CER, the lowest). First started 4 Nov 23:07.
 - **Hangs:** GPU 2 hung twice with Xid 8 ("GPU is probably locked", CUDA error 702), 7 Nov 21:38 and 8 Nov 04:36.
   It is a known, unfixed fault of RTX PRO 6000 Blackwell under sustained load (NVIDIA forum thread 382055: power limits,
   locked clocks and driver changes did not help there). Each time the run resumed by itself from its newest checkpoint,
@@ -35,8 +36,7 @@ live only on that disk.
 
 | tmux window | What runs there | What it does |
 |---|---|---|
-| `htr:16 resume21k` | `runs/htr/minicpm-all/resume_loop.sh` | the running training; up to 3 resumes (2 used) |
-| `htr:17 resume_more` | `runs/htr/minicpm-all/resume_more.sh` | once `resume_loop.sh` gives up, 10 more resumes, 2 minutes apart |
+| `htr:queue` | `runs/htr/minicpm-all/stop_and_queue.sh` | stopped the training and its resume loops (8 Nov 21:55), then runs `after_minicpm.sh` |
 | `htr:18 gpuwatch` | `nvidia-smi -l 1` on GPUs 1, 2 | temperature, power, clocks, throttle reasons, once a second, to `runs/htr/minicpm-all/gpu_watch.csv` |
 
 Each resume is `runs/htr/minicpm-all/run_resume.sh`:
@@ -47,10 +47,11 @@ Each resume is `runs/htr/minicpm-all/run_resume.sh`:
 
 ### Queued after it: `after_minicpm.sh`
 
-Starts by itself when the training ends. Each step leaves a marker in `runs/htr/pipeline_markers`, so running the
+Started 8 Nov 21:55, when the training was stopped. Each step leaves a marker in `runs/htr/pipeline_markers`, so running the
 script again resumes after the last finished step.
 
-1. **Score the best checkpoint.** Linked as `runs/htr/minicpm-all/best`; read through vLLM on all 6,358 out-of-domain
+1. **Score the best checkpoint.** Of minicpm-all's checkpoints on disk, the one of lowest corpus CER on the 1,000 dev
+   lines (not eval loss, which rose in epoch 3 while CER fell), linked as `runs/htr/minicpm-all/best`; read through vLLM on all 6,358 out-of-domain
    lines and 5,000 `test_0050` lines, beside TrOCR. Result: `runs/htr/final/result.txt`.
 2. **Publish the reader:** `Gabriel/diffu-minicpm-ocr-htr` (private).
 3. **Jev's sets.**
@@ -85,6 +86,7 @@ column applies TrOCR's training normalisation to both sides; it changes the test
 | 25,000 | 0.2290 | 5.00 % | 4.95 % | 6.80 % | 4.92 % |
 | 26,000 | 0.2272 | 4.84 % | 4.79 % | 7.04 % | 5.21 % |
 | 27,000 | 0.2261 | 4.78 % | 4.73 % | 7.03 % | 5.41 % |
+| 28,000 | 0.2269 | 4.77 % | 4.72 % | 7.14 % | 5.07 % |
 
 - **Eval loss** still falls, but more slowly: down 0.0093 over steps 15-18k, 0.0074 over 18-21k and 0.0040 over 21-24k.
 - **Test CER** gains about 0.04 points a 1,000 steps.
