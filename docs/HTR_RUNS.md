@@ -24,7 +24,7 @@ live only on that disk.
     gradient checkpointing in the language model and the vision encoder, lr 5e-6 cosine, 3 epochs = 36,681 steps.
   - **Checkpoints:** eval and save every 1,000 steps; the one of least eval loss is kept as the result.
 - **Folder:** `runs/htr/minicpm-all/output`; its log is `runs/htr/pipeline.log`.
-- **State (8 Nov 17:45):** step 27,000 of 36,681 (epoch 2.21), about 11.9 s a step, ending around **01:45 Tue
+- **State (8 Nov 19:20):** step ~27,470 of 36,681 (epoch 2.25), about 11.9 s a step, ending around **01:45 Tue
   10 Nov**. First started 4 Nov 23:07.
 - **Hangs:** GPU 2 hung twice with Xid 8 ("GPU is probably locked", CUDA error 702), 7 Nov 21:38 and 8 Nov 04:36.
   It is a known, unfixed fault of RTX PRO 6000 Blackwell under sustained load (NVIDIA forum thread 382055: power limits,
@@ -84,6 +84,7 @@ column applies TrOCR's training normalisation to both sides; it changes the test
 | 24,000 | 0.2235 | 4.91 % | 4.87 % | 7.07 % | 5.08 % |
 | 25,000 | 0.2290 | 5.00 % | 4.95 % | 6.80 % | 4.92 % |
 | 26,000 | 0.2272 | 4.84 % | 4.79 % | 7.04 % | 5.21 % |
+| 27,000 | 0.2261 | 4.78 % | 4.73 % | 7.03 % | 5.41 % |
 
 - **Eval loss** still falls, but more slowly: down 0.0093 over steps 15-18k, 0.0074 over 18-21k and 0.0040 over 21-24k.
 - **Test CER** gains about 0.04 points a 1,000 steps.
@@ -103,7 +104,8 @@ TrOCR's greedy readings come from `runs/htr/ckpt_eval/test_trocr.jsonl` and `run
 | 500 OOD lines: corpus CER | **5.55 %** | 5.63 % | |
 
 - **Out of domain the two are level. In domain TrOCR leads**, by 193 edits over the 1,000 lines.
-- **At step 26,000** (same lines): test mean 4.84 % against 4.54 %, corpus 4.13 % against 3.60 % (169 edits behind); OOD mean 7.04 % against 7.01 %, corpus 5.40 % against 5.63 %; best of the two 3.16 %.
+- **At step 26,000** (same lines): test mean 4.84 % against 4.54 %, corpus 4.13 % against 3.60 % (169 edits behind); OOD mean 7.04 % against 7.01 %, corpus 5.40 % against 5.63 %; best of the two 3.16 %. At 27,000: test mean 4.78 %
+  against 4.54 %, corpus 4.10 % against 3.60 % (160 edits behind); OOD level (7.03 % / 5.60 % against 7.01 % / 5.63 %).
 - Per line, on the test lines, we are worse on 231, better on 162 and the same on 607.
 - **The gap is in the letters, not the conventions.** With case, punctuation, `¬` and spaces ignored, the lead grows
   (ours 4.14 % / 3.67 % mean / corpus against TrOCR's 3.25 % / 2.69 %).
