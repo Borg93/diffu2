@@ -32,7 +32,9 @@ samples at their targets' writing scale (legible) in place of the shrunk ``refs/
 A page's prompt is counted in the text encoder's tokens by MOSS's own tokenizer (``--model``'s); a page whose longest
 form passes the encoder's 4,096 tokens is skipped and counted, never cut. A page's sample is another single page of its
 volume (same collection and volume folder) sharing none of its lines' texts (compared by 8 bytes of each text's
-digest), picked from one seeded stream; a page without one is skipped and counted. Whole volumes are held out
+digest), picked from one seeded stream; a page without one is skipped and counted. With ``--sample-pick nearest`` it is
+the nearest such page instead: the other page of its own opening, else the scans closest before and after it in its
+volume's file order (the same scribe far more often than a page drawn from the whole volume). Whole volumes are held out
 (``--val-volumes``, a share of them, at least one): their pairs go to ``val.jsonl``, never to ``train.jsonl``, and
 ``--eval-pages`` of them spread over it make ``val_eval/``, a ``diffu_page.cli.evaluate`` dir (each page, its sample in
 ``refs/`` and the sample's line boxes; drawn with MOSS-Image, its caption compiles to the look form's prompt).
@@ -297,9 +299,19 @@ class BuildRecord(BaseModel):
     failed: dict[str, str]  # the scans whose reading failed, by PAGE file, with their error
 
 
+class SamplePick(StrEnum):
+    """How a page's sample is picked among the pages of its volume sharing none of its lines: drawn from all of them
+    (``random``), or the nearest (``nearest``): the other page of its opening, else the scans closest before and after
+    it in the volume's file order, drawn between two as near."""
+
+    RANDOM = "random"
+    NEAREST = "nearest"
+
+
 class BuildSettings(BaseModel):
     """Which scans a build reads (``collections``, every one when empty; up to ``max_scans`` of each, picked by
-    ``seed``), how its pages and windows are cut and prompted (``scan``), and how its pairs are split and picked."""
+    ``seed``), how its pages and windows are cut and prompted (``scan``), and how its pairs are split and picked
+    (``sample_pick``)."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -309,6 +321,7 @@ class BuildSettings(BaseModel):
     val_volumes: float = 0.03
     eval_pages: int = 24
     seed: int = 0
+    sample_pick: SamplePick = SamplePick.RANDOM
 
 
 @cache
@@ -534,24 +547,51 @@ def held_out_volumes(volumes: Iterable[str], share: float, seed: int) -> set[str
     return set(ranked[:count])
 
 
-def pick_partner(page: PageEntry, volume: list[PageEntry], rng: random.Random) -> PageEntry | None:
+def pick_partner(
+    page: PageEntry, volume: list[PageEntry], rng: random.Random, places: Mapping[str, int] | None = None
+) -> PageEntry | None:
     """Another page of ``page``'s ``volume`` (its pages, in a fixed order) sharing none of its lines' texts, drawn from
-    ``rng``; None when there is none. A sample holding the page's own lines teaches copying them."""
+    ``rng``; None when there is none. A sample holding the page's own lines teaches copying them. With ``places`` (each
+    page's place in ``volume``, which is then in its file order: :func:`file_places`) the nearest such page: the other
+    page of its opening, else the closest before or after, ``rng`` drawing between two as near."""
     texts = set(page.texts())
-    others = [other for other in volume if other.id != page.id]
-    rng.shuffle(others)
-    return next((other for other in others if texts.isdisjoint(other.texts())), None)
+    if places is None:
+        others = [other for other in volume if other.id != page.id]
+        rng.shuffle(others)
+        return next((other for other in others if texts.isdisjoint(other.texts())), None)
+    at = places[page.id]
+    for distance in range(1, len(volume)):
+        near = [volume[place] for place in (at - distance, at + distance) if 0 <= place < len(volume)]
+        rng.shuffle(near)
+        near.sort(key=lambda other: scan_digest(other.id) != scan_digest(page.id))  # its opening's other page first
+        found = next((other for other in near if texts.isdisjoint(other.texts())), None)
+        if found is not None:
+            return found
+    return None
+
+
+def file_places(volumes: dict[str, list[PageEntry]], files: Mapping[str, str]) -> dict[str, int]:
+    """Each volume's pages put in their file order in place (by the PAGE file each page is of, ``files`` by page id,
+    and its side: an opening's left page before its right), and each page's place in its volume."""
+    places: dict[str, int] = {}
+    for pages in volumes.values():
+        pages.sort(key=lambda page: (files[page.id], page.id))
+        places.update((page.id, place) for place, page in enumerate(pages))
+    return places
 
 
 def window_partners(
-    pages: list[PageEntry], volumes: Mapping[str, list[PageEntry]], rng: random.Random
+    pages: list[PageEntry],
+    volumes: Mapping[str, list[PageEntry]],
+    rng: random.Random,
+    places: Mapping[str, int] | None = None,
 ) -> dict[str, PageEntry]:
     """A sample for each page too long to be a pair that has a window short enough to be one, by page id, drawn from
-    ``rng`` (:func:`pick_partner`) after every page's own."""
+    ``rng`` (:func:`pick_partner`, the nearest with ``places``) after every page's own."""
     partners: dict[str, PageEntry] = {}
     for page in pages:
         if page.too_long and any(not window.too_long for window in page.windows):
-            partner = pick_partner(page, volumes[page.volume], rng)
+            partner = pick_partner(page, volumes[page.volume], rng, places)
             if partner is not None:
                 partners[page.id] = partner
     return partners
@@ -719,10 +759,12 @@ def build(out: Path, settings: BuildSettings, *, workers: int) -> BuildRecord:
     ]
     tasks = (ScanTask(xml=Path(xml), out=out, settings=settings.scan) for xml in files)
     pages: list[PageEntry] = []
+    files: dict[str, str] = {}  # each page's PAGE file: a volume's file order, which nearest samples are picked by
     outcomes: Counter[ScanProblem | None] = Counter()  # each scan's problem, None for a scan that gave pages
     failed: dict[str, str] = {}
     for k, scan in enumerate(in_processes(scan_once, tasks, workers), start=1):
         pages += scan.pages
+        files.update((page.id, scan.xml) for page in scan.pages)
         outcomes[scan.problem] += 1
         if scan.problem is ScanProblem.FAILED:
             failed[scan.xml] = scan.error
@@ -734,6 +776,7 @@ def build(out: Path, settings: BuildSettings, *, workers: int) -> BuildRecord:
     for page in pages:
         volumes[page.volume].append(page)
     held_out = held_out_volumes(volumes, settings.val_volumes, settings.seed)
+    places = file_places(volumes, files) if settings.sample_pick is SamplePick.NEAREST else None
     rng = random.Random(settings.seed)
     train: list[tuple[PageEntry, PageEntry]] = []
     val: list[tuple[PageEntry, PageEntry]] = []
@@ -743,13 +786,13 @@ def build(out: Path, settings: BuildSettings, *, workers: int) -> BuildRecord:
         if page.too_long:
             too_long += 1
             continue
-        partner = pick_partner(page, volumes[page.volume], rng)
+        partner = pick_partner(page, volumes[page.volume], rng, places)
         if partner is None:
             no_partner += 1
             continue
         partners[page.id] = partner
         (val if page.volume in held_out else train).append((page, partner))
-    windows = window_pairs(pages, partners | window_partners(pages, volumes, rng))
+    windows = window_pairs(pages, partners | window_partners(pages, volumes, rng, places))
     train_windows = [pair for pair in windows if pair[1].volume not in held_out]
     val_windows = [pair for pair in windows if pair[1].volume in held_out]
     page_of = record_reader(out)
@@ -819,6 +862,13 @@ def main(
         1, (os.cpu_count() or 2) // 2
     ),
     seed: Annotated[int, typer.Option(help="picks the scans read, the held-out volumes and each page's sample")] = 0,
+    sample_pick: Annotated[
+        SamplePick,
+        typer.Option(
+            help="each page's sample: random (any page of its volume sharing none of its lines) or nearest (the other "
+            "page of its opening, else the closest scan before or after it: the same scribe more often)"
+        ),
+    ] = SamplePick.RANDOM,
 ) -> None:
     """Build page pairs for MOSS-Image's reference training: whole single pages, each with a sample page, and windows
     of them if asked."""
@@ -832,6 +882,7 @@ def main(
         val_volumes=val_volumes,
         eval_pages=eval_pages,
         seed=seed,
+        sample_pick=sample_pick,
     )
     try:
         record = build(out, settings, workers=workers)

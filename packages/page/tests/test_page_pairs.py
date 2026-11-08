@@ -41,6 +41,7 @@ from diffu_page.data.page_pairs import (
     BuildSettings,
     PageEntry,
     PageRecord,
+    SamplePick,
     ScanEntry,
     ScanResult,
     ScanSettings,
@@ -283,6 +284,26 @@ def test_page_pairs_pair_each_page_with_another_page_of_its_volume_sharing_none_
         assert (reference.volume, reference.id != row.id) == (row.volume, True)
         assert not pages[row.id].texts() & reference.texts()
     assert not any(LATE in row.volume for row in rows)  # its two pages share "Anno 1701"
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2, 3])  # page 0001_right's two neighbours are as near: the seed draws first
+def test_page_pairs_with_nearest_samples_pair_a_page_with_its_openings_other_page_else_the_closest_scan(
+    tiny_gt: Path, tiny_moss: Path, tmp_path: Path, seed: int
+) -> None:
+    out = tmp_path / "near"
+
+    build(out, _settings(tiny_gt, tiny_moss, sample_pick=SamplePick.NEAREST, seed=seed), workers=1)
+
+    results = [ScanResult.model_validate_json(path.read_bytes()) for path in (out / "scanned").glob("*.json")]
+    # each page by its PAGE file's name and its side: "0001_left", "0002"
+    name = {
+        page.id: Path(result.xml).stem + page.id[len(digest(result.xml)) :]
+        for result in results
+        for page in result.pages
+    }
+    early = {name[row.id]: name[Path(row.reference).stem] for row in _all_rows(out) if EARLY in row.volume}
+    assert early == {"0001_left": "0001_right", "0001_right": "0001_left", "0002": "0001_right"}
+    assert not any(LATE in row.volume for row in _all_rows(out))  # its two pages share "Anno 1701"
 
 
 def test_page_pairs_hold_out_whole_volumes_their_pairs_in_val_and_a_drawable_eval_set(built: Path) -> None:
