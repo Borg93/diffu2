@@ -53,7 +53,8 @@ script again resumes after the last finished step.
 1. **Score the best checkpoint.** Of minicpm-all's checkpoints on disk, the one of lowest corpus CER on the 1,000 dev
    lines (not eval loss, which rose in epoch 3 while CER fell), linked as `runs/htr/minicpm-all/best`; read through vLLM on all 6,358 out-of-domain
    lines and 5,000 `test_0050` lines, beside TrOCR. Result: `runs/htr/final/result.txt`.
-2. **Publish the reader:** `Gabriel/diffu-minicpm-ocr-htr` (private).
+2. **Publish the reader:** `Gabriel/diffu-minicpm-ocr-htr` (private). **Done 8 Nov 22:42:** checkpoint-28000, its
+   weights (3.1 GB) and configs, commit `7735d9ed`.
 3. **Jev's sets.**
    - On the first GPU, the reader reads 100,000 training lines and every test line; the pairs follow on the CPU (about
      4.5 h).
