@@ -64,6 +64,11 @@ same 55 collections at 80 scans each): the look follows the sample, the hand doe
   (row, column) positions (MOSS's reference axis turns only ~8 of 128 head dimensions at index 1), favouring the same
   place (paper, ink) over the same letters elsewhere. A′ tests the first; a pilot with the sample beside the page, the
   second.
+- 8 Nov, Muon orthogonalised by owner ranks (e404761), 30 steps on 2 nodes: 11.07 s a step against 11.57 (-4.3 %), the
+  same memory; its losses differ from the old code's by 2.6e-4 on average, as two runs of the old code do (2.5-3.7e-4:
+  flash attention's backward is not deterministic), so the training is the same. Leonardo's checkout is at e404761 from
+  8 Nov 08:21: N, A′ and B's second job run it; B's first job started on the old code. The stall fixes (3ac313c) wait
+  for their own GPU test.
 
 ## Results
 
