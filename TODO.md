@@ -89,9 +89,9 @@ What runs, what is queued, the numbers and the reasons: [docs/HTR_RUNS.md](docs/
 - [ ] `minicpm-all` to its end (around 01:00 Tue 10 Nov). Then the queue runs by itself: scoring, the reader published,
       Jev trained and published, the DSpark draft trained and published (`after_minicpm.sh`).
 - [ ] Every test line (88,317) read by both readers, CER by collection and by page, each bad page's reason.
-- [ ] Curation of the GT training lines in `lion_data_prep` (the analysis: docs/HTR_RUNS.md, "The data itself"): one
-      code point per glyph, thin-strip pages re-cut, lines whose text overruns the crop left out, collections drawn at
-      n^0.7 with repeats capped at about 4. Then a continued fine-tune on it, measured by collection and out of domain.
+- [ ] Collections drawn at n^0.7, repeats capped at about 4, in `lion_data_prep`, and more lines in the scarce hands
+      (diffu-moss LoRAs, curated batch lines). Then a continued fine-tune, measured by collection and out of domain
+      (docs/HTR_RUNS.md, "The data itself": label hygiene, thin crops and overrunning labels measured as not worth it).
 - [ ] Curation of the batch output (about 1M documents): a page-level detection check, then the agreement filter and
       Jev, per-collection coverage, a human-review sample, a machine-label mark in the set builder.
 - [ ] Pretraining on the curated batch (plus diffu-moss pages in the weak hands), then fine-tuning on the GT.

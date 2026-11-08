@@ -24,7 +24,7 @@ live only on that disk.
     gradient checkpointing in the language model and the vision encoder, lr 5e-6 cosine, 3 epochs = 36,681 steps.
   - **Checkpoints:** eval and save every 1,000 steps; the one of least eval loss is kept as the result.
 - **Folder:** `runs/htr/minicpm-all/output`; its log is `runs/htr/pipeline.log`.
-- **State (8 Nov 11:00):** step ~24,950 of 36,681 (epoch 2.04), about 11 s a step, ending around **01:00 Tue
+- **State (8 Nov 13:00):** step ~25,540 of 36,681 (epoch 2.09), about 11.8 s a step, ending around **01:30 Tue
   10 Nov**. First started 4 Nov 23:07.
 - **Hangs:** GPU 2 hung twice with Xid 8 ("GPU is probably locked", CUDA error 702), 7 Nov 21:38 and 8 Nov 04:36.
   It is a known, unfixed fault of RTX PRO 6000 Blackwell under sustained load (NVIDIA forum thread 382055: power limits,
@@ -35,7 +35,7 @@ live only on that disk.
 
 | tmux window | What runs there | What it does |
 |---|---|---|
-| `htr:16 resume21k` | `runs/htr/minicpm-all/resume_loop.sh` | the running training; up to 3 resumes (1 used) |
+| `htr:16 resume21k` | `runs/htr/minicpm-all/resume_loop.sh` | the running training; up to 3 resumes (2 used) |
 | `htr:17 resume_more` | `runs/htr/minicpm-all/resume_more.sh` | once `resume_loop.sh` gives up, 10 more resumes, 2 minutes apart |
 | `htr:18 gpuwatch` | `nvidia-smi -l 1` on GPUs 1, 2 | temperature, power, clocks, throttle reasons, once a second, to `runs/htr/minicpm-all/gpu_watch.csv` |
 
@@ -82,7 +82,7 @@ column applies TrOCR's training normalisation to both sides; it changes the test
 | 18,000 | 0.2349 | 5.00 % | 4.93 % | 7.53 % | 8.79 % |
 | 21,000 | 0.2275 | 5.02 % | 4.97 % | 6.83 % | 4.46 % |
 | 24,000 | 0.2235 | 4.91 % | 4.87 % | 7.07 % | 5.08 % |
-| 25,000 | | 5.00 % | | 6.80 % | 4.92 % |
+| 25,000 | 0.2290 | 5.00 % | | 6.80 % | 4.92 % |
 
 - **Eval loss** still falls, but more slowly: down 0.0093 over steps 15-18k, 0.0074 over 18-21k and 0.0040 over 21-24k.
 - **Test CER** gains about 0.04 points a 1,000 steps.
@@ -221,17 +221,22 @@ From the 2,090 edits on those 2,000 lines, and 48 of the worst or always-wrong l
 | No-break spaces, tabs, double spaces | 7,862 / 1,640 / 3,708 lines | tabs mostly jämtlands domsaga | scoring forgives them; training does not |
 | Duplicate crops; train/test leaks | none | | exact image hash and text |
 
-**Curation this supports** (for the next training; the test lines stay as they are, so the comparison stays fair):
-1. **One code point per glyph** in the training labels: `ӕ` to `æ`, `β` to `ß` inside Latin words, no-break spaces and
-   tabs to spaces, runs of spaces to one.
-2. **Re-cut the thin-strip pages' lines** with their polygons grown vertically, or leave those pages out.
-3. **Leave out the lines whose text overruns their crop** (920; under 0.1 % of the data). Rotate lines that run
-   vertically.
-4. **Draw collections at n^0.7, capped at about 4 repeats.**
+**What is worth changing, measured against the whole test set** (88,317 lines, 2.8M characters):
+
+| Change | Its share of test characters | Upper bound on the test CER gain |
+|---|---|---|
+| Fix the code points (`ӕ`, `β`) | 0.002 % | none; it would even cost, since the test labels keep `ӕ` |
+| Re-cut the thin-strip lines | 0.38 % | 0.04 points even at 10 points better on them; the test pages are thin too |
+| Drop the lines too dense for their ink | 0.08 % | about 0.01 points. Only 3 of 8 checked were real faults, too few to trust the rate |
+| Collections under 20k training lines brought from 6.2 % to 4.3 % CER (the 20-60k tier) | 16.1 % | **about 0.3 points** |
+
+So the faults in the table above are recorded but are not worth fixing for CER. Thin crops matter for the batch
+pipeline's detection check, not for this training. What is worth doing:
+1. **Draw collections at n^0.7, capped at about 4 repeats.**
    - Göteborg falls from 21 % to 13 % of draws; collections under 20k lines rise from 15 % to 27 %.
    - FNA_1500 and landskapshandlingar are drawn 1.4-1.6 times as often.
    - The cap matters: uncapped, the tiniest collections (126 to 779 lines) would repeat 3.6-6.3 times.
-5. **More of the scarce hands than the GT has:** synthetic lines from the diffu-moss hand LoRAs (one exists for
+2. **More of the scarce hands than the GT has:** synthetic lines from the diffu-moss hand LoRAs (one exists for
    landskapshandlingar), and curated machine-labelled lines from the batch.
 
 Two things need the GPUs and come with the queue: our model's readings of every test line (in Jev's step), and of
