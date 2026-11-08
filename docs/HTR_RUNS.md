@@ -71,6 +71,25 @@ Controls:
 
 ## Measured so far
 
+### Final score: checkpoint-28000 against TrOCR (the queue, 8 Nov 22:03)
+
+`runs/htr/final/result.txt`; vLLM with OpenBMB's flags, greedy, at most 512 tokens a line; TrOCR greedy.
+
+| | Ours | TrOCR |
+|---|---|---|
+| 5,000 `test_0050` lines: mean / corpus CER, as read | 5.22 % / 5.64 % | **4.17 % / 3.58 %** |
+| the same, each looping tail cut | 4.46 % / 3.92 % | 4.17 % / 3.58 % |
+| the same, `normalize()` on both sides | 4.42 % | **3.87 %** |
+| 6,358 out-of-domain lines: mean / corpus CER | 7.21 % / 5.55 % | **6.67 % / 5.30 %** |
+| speed, 5,000 test lines | **68.6 lines/s** (vLLM, 64 at a time) | 7.9 lines/s (transformers, float32, batch 32) |
+
+- **TrOCR leads in domain and out of domain.** In domain by 0.34 points of corpus CER with loops cut; out of domain by
+  0.25 (on the 500-line draw the two were level).
+- **Three test lines loop:** dotted leader lines ("1: Ducath . . . . ."), where the model writes dots up to the token
+  limit (1,025 characters). They alone take corpus CER from 3.92 % to 5.64 %. A guard at serving (stop a repeated
+  " ." run, or cut it as `cut_loop` does) removes them.
+- **We read about 9 times as fast,** though the two ran on different stacks.
+
 ### The in-training curve
 
 At each eval the model in training reads, greedily, 1,000 `test_0050` lines and 500 out-of-domain lines, among other
