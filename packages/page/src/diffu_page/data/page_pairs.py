@@ -759,12 +759,12 @@ def build(out: Path, settings: BuildSettings, *, workers: int) -> BuildRecord:
     ]
     tasks = (ScanTask(xml=Path(xml), out=out, settings=settings.scan) for xml in files)
     pages: list[PageEntry] = []
-    files: dict[str, str] = {}  # each page's PAGE file: a volume's file order, which nearest samples are picked by
+    page_xml: dict[str, str] = {}  # each page's PAGE file: a volume's file order, which nearest samples are picked by
     outcomes: Counter[ScanProblem | None] = Counter()  # each scan's problem, None for a scan that gave pages
     failed: dict[str, str] = {}
     for k, scan in enumerate(in_processes(scan_once, tasks, workers), start=1):
         pages += scan.pages
-        files.update((page.id, scan.xml) for page in scan.pages)
+        page_xml.update((page.id, scan.xml) for page in scan.pages)
         outcomes[scan.problem] += 1
         if scan.problem is ScanProblem.FAILED:
             failed[scan.xml] = scan.error
@@ -776,7 +776,7 @@ def build(out: Path, settings: BuildSettings, *, workers: int) -> BuildRecord:
     for page in pages:
         volumes[page.volume].append(page)
     held_out = held_out_volumes(volumes, settings.val_volumes, settings.seed)
-    places = file_places(volumes, files) if settings.sample_pick is SamplePick.NEAREST else None
+    places = file_places(volumes, page_xml) if settings.sample_pick is SamplePick.NEAREST else None
     rng = random.Random(settings.seed)
     train: list[tuple[PageEntry, PageEntry]] = []
     val: list[tuple[PageEntry, PageEntry]] = []
