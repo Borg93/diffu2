@@ -92,6 +92,45 @@ column applies TrOCR's training normalisation to both sides; it changes the test
 - **Dev regions CER** jumps at steps 14,000, 18,000 and 22,000. At each of those evals one of the 200 regions looped to
   the token limit, and at no other eval.
 
+### Is it overfitting? (8 Nov, step 27,000)
+
+**It has started to memorise, but held-out reading is not worse yet.** Over 1,000-step windows:
+
+| Steps | Train loss | Eval loss | Eval token acc. | Dev lines CER | Test CER | OOD CER |
+|---|---|---|---|---|---|---|
+| 23-24k | 0.209 | 0.2235 | 0.9443 | 4.16 % | 4.91 % | 7.07 % |
+| 24-25k (epoch 3 begins at 24,454) | 0.185 | 0.2290 | 0.9437 | 4.22 % | 5.00 % | 6.80 % |
+| 26-27k | 0.167 | 0.2261 | 0.9444 | 4.15 % | 4.78 % | 7.03 % |
+
+- **The memorising.** Train loss fell 20 % within 250 steps of the epoch boundary (0.211 to 0.170), while every
+  held-out measure stayed put. That is the model recognising samples it has trained on.
+- **The eval loss.** It rose 0.005 and is falling back, with token accuracy flat. The loss is the cross-entropy of
+  the dev text, so it grows when the model is more sure of the tokens it gets wrong, without any more of them being
+  wrong.
+- **What the held-out sets say.** Dev lines (whole volumes held out) and OOD (other archives) have been flat since
+  about step 21,000, before epoch 3. Only `test_0050` gains (4.91 % to 4.78 %); its pages come from the training
+  volumes, so it rewards learning those volumes' hands.
+- **The learning rate** is down to 8e-7 (16 % of the peak) and still falling. What the rest of the run can change is
+  small either way.
+
+**The data order was uneven.** Two early resumes (from checkpoints 3,000 and 6,000) ran with `--ignore_data_skip true`.
+In transformers an epoch ends only when its pass over the data does, so each of those resumes restarted epoch 1's
+shuffle at its first batch. The resumes since (14,000, 15,000, 21,000, 23,000) skip the batches already trained.
+
+| Steps | What they trained on |
+|---|---|
+| 0-9,000 | epoch 1's first 3,000 batches, three times over |
+| 9,000-14,000 | epoch 1's batches 3,000-8,000 |
+| 14,000-24,454 | epoch 2's batches 1,773-12,227 |
+| 24,454-36,681 | epoch 3, all of it |
+
+- **It explains every jump in the train loss.** It fell at steps 7-9k (a third pass: eval loss rose 0.303 to 0.309 then,
+  overfitting on those 384,000 samples). It jumped up at 9k (unseen batches). It dropped at 14k (epoch 2's shuffle,
+  65 % of it seen before). It dropped again at 24,454.
+- **Exposure before epoch 3,** counting each shuffle once: 5 % of the samples in neither, 39 % in one, 56 % in both. A
+  quarter of the samples (epoch 1's first 3,000 batches, 384,000 samples) count three times in epoch 1's.
+- **For the next run:** resume only without `--ignore_data_skip`, as `resume.sh` does.
+
 ### Against TrOCR on the same lines (step 24,000)
 
 TrOCR's greedy readings come from `runs/htr/ckpt_eval/test_trocr.jsonl` and `runs/htr/eval/ood_trocr_greedy.jsonl`.
