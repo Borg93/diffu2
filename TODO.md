@@ -82,6 +82,21 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
       stages with their own resources (encode, denoise, read-back, labels and sink); the line repair as such a stage.
 - [ ] `diffu-run` writes ALTO and PAGE only: the page readers' formats come from `diffu-reader-set --xml` on its export.
 
+## Line reader against the Swedish Lion TrOCR (dmlpai01)
+
+What runs, what is queued, the numbers and the reasons: [docs/HTR_RUNS.md](docs/HTR_RUNS.md).
+
+- [ ] `minicpm-all` to its end (around 01:00 Tue 10 Nov). Then the queue runs by itself: scoring, the reader published,
+      Jev trained and published, the DSpark draft trained and published (`after_minicpm.sh`).
+- [ ] Every test line (88,317) read by both readers, CER by collection and by page, each bad page's reason.
+- [ ] A continued fine-tune with the small weak collections (GT-FNA_1500, landskapshandlingar) upsampled, if the
+      previous item confirms them.
+- [ ] Curation of the batch output (about 1M documents): a page-level detection check, then the agreement filter and
+      Jev, per-collection coverage, a human-review sample, a machine-label mark in the set builder.
+- [ ] Pretraining on the curated batch (plus diffu-moss pages in the weak hands), then fine-tuning on the GT.
+- [ ] Jev choosing between our reading and TrOCR's (best of the two: 3.24 % against TrOCR's 4.54 %).
+- [ ] The draft's served speed-up on lines and regions.
+
 ## Page readers
 
 - [ ] Unlimited-OCR 2 (remote code allowed, pinned revision, its `save_results` path never called; transformers 4.52.1 in

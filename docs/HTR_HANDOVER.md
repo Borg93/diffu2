@@ -2,7 +2,8 @@
 
 For a session (or a person) picking up the reader training on another machine. [HTR_TRAIN.md](HTR_TRAIN.md) has
 the design (recipes, data variants, why each tool); this page has the state as of 4 Nov 2026, what broke in the first
-real runs and how to get around it, and the order to run things in.
+real runs and how to get around it, and the order to run things in. The full GT-Lejonet runs since then (what runs on
+dmlpai01, what is queued, the results against the TrOCR baseline, what comes next) are in [HTR_RUNS.md](HTR_RUNS.md).
 
 ## Where it stands
 
