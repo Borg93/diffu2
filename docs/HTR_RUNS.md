@@ -82,6 +82,7 @@ column applies TrOCR's training normalisation to both sides; it changes the test
 | 18,000 | 0.2349 | 5.00 % | 4.93 % | 7.53 % | 8.79 % |
 | 21,000 | 0.2275 | 5.02 % | 4.97 % | 6.83 % | 4.46 % |
 | 24,000 | 0.2235 | 4.91 % | 4.87 % | 7.07 % | 5.08 % |
+| 25,000 | | 5.00 % | | 6.80 % | 4.92 % |
 
 - **Eval loss** still falls, but more slowly: down 0.0093 over steps 15-18k, 0.0074 over 18-21k and 0.0040 over 21-24k.
 - **Test CER** gains about 0.04 points a 1,000 steps.
@@ -157,9 +158,92 @@ longest regions.
 - The cards are Max-Q (300 W cap).
 - Packing would be about 7x faster but is not allowed (see "Rules of the machine").
 
+### The data itself (8 Nov, on the CPU while training)
+
+One row per line for all 1,594,072 lines (train, dev, test) in `runs/htr/analysis/lines_v2_flags.parquet`. Each row
+holds its meta, its text and measures of its crop: the paper's level, the amount of ink and where it runs, and an image
+hash. Our model's readings at steps 15k-25k sit beside it.
+
+**What the training set is made of**
+- 57 collections, very unequal:
+  - Göteborgs poliskammare alone is 21 % of the training lines.
+  - The 5 largest collections hold 49.5 %; the 30 smallest hold 4.8 %.
+- The test set mirrors that mix (Göteborg 20.6 %). So the test mean mostly measures the large collections, and the
+  small ones barely move it.
+
+**The remaining errors are persistent: 86 % sit on lines wrong at every eval from step 15k to 25k**
+
+On the 2,000 test and dev lines read at each eval:
+
+| Category | Lines | Share of errors at step 25k |
+|---|---|---|
+| Right at every eval | 40 % | 0 % |
+| Wrong at every eval | 35 % | 86 % |
+| Flipping | 15 % | 8 % |
+| Getting worse | 3 % | 5 % |
+| Improving | 7 % | 2 % |
+
+The worst 10 % of lines hold 52 % of the errors. More steps on the same data will not fix these lines; the data has to
+change. Lines wrong at every eval are most common in the small collections.
+
+**What the errors are**
+
+From the 2,090 edits on those 2,000 lines, and 48 of the worst or always-wrong lines checked by eye on contact sheets
+(`runs/htr/analysis/sheets/`):
+
+- **Scarce old hands** give the worst lines. GT-FNA_1500 and landskapshandlingar are 16th-century, with old spelling,
+  `ø`, `·` separators and Roman numerals. CER is about 6.2 % in collections under 20k training lines, against 2.7 % in
+  the largest.
+- **The model's language prior.** It modernises spellings ("sät" to "sätt") and turns rare names into common words
+  ("Duhn" to "Datum"). It turns Finnish words in the Finnish court records into Swedish-looking ones ("nimimerkit" to
+  "bomurke").
+- **Things a scan often cannot settle:**
+  - punctuation: 17 % of edits;
+  - case only: 8 %;
+  - word spacing: 5.5 %;
+  - a line-end mark missing or added: 5.9 %. 100 of the 2,000 lines are wrong only in their last character, and some
+    of those marks lie outside the crop.
+- **Label or crop faults:**
+  - text in the label that is outside the crop;
+  - a struck-through word transcribed;
+  - a line rotated 90°;
+  - possibly one misread label ("söisa" where the image shows "sökt bevise").
+
+**Faults in the data, counted over every line**
+
+| Fault | Lines | Where | Checked by eye |
+|---|---|---|---|
+| Thin-strip polygons: the crop cuts off the tops and bottoms of the letters | 5,638 (5,308 train) | Stockholm magistrat 7.2 %, Påhlmans resejournaler 5.9 %, most others about 1 % or less; 143 pages with over half their lines thin (91 of them Stockholm magistrat) | a flagged page confirmed whole-page |
+| Text too long for its ink: label text outside the crop, rotated lines, two lines in one crop | 920 | spread | 3 of 8 real faults |
+| Dark, blurred or faint crops | 378 | boskapslängder, riksregistraturet, bergskollegium (microfilm) | 1 of 8 truly empty; the rest hard but valid |
+| Cyrillic `ӕ` or Greek `β` for Latin `æ` and `ß` | 1,496 lines | Stockholm city archive (SSA) collections | the same glyph under two code points |
+| Five kinds of dash (`—` 42,641, `-` 15,345, `–` 9,390, `―` 169, `‒` 42) | about 67,000 characters | each collection its own convention | |
+| No-break spaces, tabs, double spaces | 7,862 / 1,640 / 3,708 lines | tabs mostly jämtlands domsaga | scoring forgives them; training does not |
+| Duplicate crops; train/test leaks | none | | exact image hash and text |
+
+**Curation this supports** (for the next training; the test lines stay as they are, so the comparison stays fair):
+1. **One code point per glyph** in the training labels: `ӕ` to `æ`, `β` to `ß` inside Latin words, no-break spaces and
+   tabs to spaces, runs of spaces to one.
+2. **Re-cut the thin-strip pages' lines** with their polygons grown vertically, or leave those pages out.
+3. **Leave out the lines whose text overruns their crop** (920; under 0.1 % of the data). Rotate lines that run
+   vertically.
+4. **Draw collections at n^0.7, capped at about 4 repeats.**
+   - Göteborg falls from 21 % to 13 % of draws; collections under 20k lines rise from 15 % to 27 %.
+   - FNA_1500 and landskapshandlingar are drawn 1.4-1.6 times as often.
+   - The cap matters: uncapped, the tiniest collections (126 to 779 lines) would repeat 3.6-6.3 times.
+5. **More of the scarce hands than the GT has:** synthetic lines from the diffu-moss hand LoRAs (one exists for
+   landskapshandlingar), and curated machine-labelled lines from the batch.
+
+Two things need the GPUs and come with the queue: our model's readings of every test line (in Jev's step), and of
+100,000 training lines. The training lines that the final model still cannot fit are the best place to look for label
+errors at scale.
+
 ### Throwaway analysis scripts
 
-In `runs/htr/analysis/` (on disk, not in git):
+In `runs/htr/analysis/` (on disk, not in git). Once a curation step is chosen, it moves into `lion_data_prep`.
+- `features.py OUT.parquet WORKERS`: the line table (about 9 min on 24 low-priority workers; training did not slow).
+- `sheet.py TABLE FLAG OUT.png`: contact sheets of flagged lines.
+- `align.py`: the edit operations of a reading.
 - `compare_trocr.py OURS.jsonl TROCR.jsonl`: by collection, by line, by edit operation.
 - `agreement.py OURS.jsonl TROCR.jsonl`: the agreement bands.
 - `loop_guard.py`, `cer_probe.py`.
