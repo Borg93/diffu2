@@ -24,7 +24,7 @@ live only on that disk.
     gradient checkpointing in the language model and the vision encoder, lr 5e-6 cosine, 3 epochs = 36,681 steps.
   - **Checkpoints:** eval and save every 1,000 steps; the one of least eval loss is kept as the result.
 - **Folder:** `runs/htr/minicpm-all/output`; its log is `runs/htr/pipeline.log`.
-- **State (8 Nov 19:20):** step ~27,470 of 36,681 (epoch 2.25), about 11.9 s a step, ending around **01:45 Tue
+- **State (8 Nov 19:20):** step ~27,470 of 36,681 (epoch 2.25), about 11.9 s a step, ending around **02:30 Tue
   10 Nov**. First started 4 Nov 23:07.
 - **Hangs:** GPU 2 hung twice with Xid 8 ("GPU is probably locked", CUDA error 702), 7 Nov 21:38 and 8 Nov 04:36.
   It is a known, unfixed fault of RTX PRO 6000 Blackwell under sustained load (NVIDIA forum thread 382055: power limits,
