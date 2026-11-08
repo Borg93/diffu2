@@ -103,6 +103,7 @@ TrOCR's greedy readings come from `runs/htr/ckpt_eval/test_trocr.jsonl` and `run
 | 500 OOD lines: corpus CER | **5.55 %** | 5.63 % | |
 
 - **Out of domain the two are level. In domain TrOCR leads**, by 193 edits over the 1,000 lines.
+- **At step 26,000** (same lines): test mean 4.84 % against 4.54 %, corpus 4.13 % against 3.60 % (169 edits behind); OOD mean 7.04 % against 7.01 %, corpus 5.40 % against 5.63 %; best of the two 3.16 %.
 - Per line, on the test lines, we are worse on 231, better on 162 and the same on 607.
 - **The gap is in the letters, not the conventions.** With case, punctuation, `¬` and spaces ignored, the lead grows
   (ours 4.14 % / 3.67 % mean / corpus against TrOCR's 3.25 % / 2.69 %).
