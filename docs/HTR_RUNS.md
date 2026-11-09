@@ -97,6 +97,18 @@ script again resumes after the last finished step.
        steps: the markers, the publish and the check.
      - The run's preparation itself was left alone: it was 45 % done, and starting it again with more workers
        would have saved about 20 minutes.
+     - **speculators' own docs ask for this layout** (read at the installed commit `560f046`). The DSpark example
+       (`examples/train/dspark_qwen3_0_6b_sharegpt_online.sh`) says "online training needs separate GPUs for vLLM
+       and training" and serves vLLM through `scripts/launch_vllm.py`. That launcher adds `--api-server-count`
+       (from the CPUs: 3 on this 64-CPU server) and `--renderer-num-workers 2`, and sets `OMP_NUM_THREADS=1`,
+       because vLLM's stock front end serializes prepare-data's rendering. htr-train's `dspark` job calls
+       `vllm serve` itself with neither, puts both on one GPU, and passes `--num-workers 2` (the default is 12).
+       Their DSpark data ablation (`docs/research/dspark-qwen3-4b-data-ablation-meganeflynn.md`) finds steps
+       trained matter more than which data, so the epochs stay at 3.
+     - GPU 2 hung twice with Xid 8 in minicpm-all, and vLLM now runs there. The script starts a stopped training
+       again, up to 10 times, after restarting vLLM if it is down; speculators resumes from the newest epoch
+       checkpoint, so a hang costs at most the epoch in progress (about 3.5 h). A small process holds GPU 1 from
+       the switch to the end, so the queue never sees both GPUs free between attempts.
 5. **Train Jev** (`configs/jev_all.yaml`, both GPUs), then publish it as `Gabriel/diffu-minicpm-ocr-htr-jev`. About
    2.9 M training pairs × 2 epochs ≈ 45,000 steps of 128. The 2-GPU smoke run's ~32 pairs a second puts that at
    roughly 2 to 3 days, about 8 h of it evaluation (about 60,000 dev pairs every 1,000 steps).
