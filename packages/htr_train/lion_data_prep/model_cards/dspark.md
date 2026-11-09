@@ -45,6 +45,11 @@ vllm serve @READER_REPO@ --served-model-name htr --max-model-len 8192 \
 Requests are the reader's, and greedy decoding gives the same text. vLLM's `spec_decode_num_*` metrics rise when the
 draft is used.
 
+The reader is a hybrid model (linear-attention layers), so with a draft vLLM keeps one copy of each request's recurrent
+state per draft token ([speculators: throughput vs. interactivity](https://docs.vllm.ai/projects/speculators/en/latest/user_guide/tutorials/throughput_interactivity/)):
+each request takes more memory, and fewer fit in a batch. Measure with and without the draft at the concurrency you
+read at.
+
 ## Evaluation
 
 On held-out answers: @VAL@.

@@ -106,9 +106,30 @@ script again resumes after the last finished step.
        Their DSpark data ablation (`docs/research/dspark-qwen3-4b-data-ablation-meganeflynn.md`) finds steps
        trained matter more than which data, so the epochs stay at 3.
      - GPU 2 hung twice with Xid 8 in minicpm-all, and vLLM now runs there. The script starts a stopped training
-       again, up to 10 times, after restarting vLLM if it is down; speculators resumes from the newest epoch
-       checkpoint, so a hang costs at most the epoch in progress (about 3.5 h). A small process holds GPU 1 from
-       the switch to the end, so the queue never sees both GPUs free between attempts.
+       again, up to 10 times, after restarting vLLM if it is down. A small process holds GPU 1 from the switch to the
+       end, so the queue never sees both GPUs free between attempts.
+     - **Checkpoints every tenth of an epoch, not `--save-best`.** With `--save-best` speculators saves only an epoch
+       that improves validation loss, and never mid-epoch: `maybe_save_checkpoint` returns early, and mid-epoch saves
+       require `not self.config.save_best` (`speculators/train/trainer.py` at `560f046`). A hang would then cost the
+       epoch in progress, about 3.5 h. `--checkpoint-freq 0.1`, as their Kimi-K3 DSpark example uses, saves ten times
+       an epoch and resumes at the exact step, so a hang costs at most about 20 min. Their train CLI page still says
+       the flag is an integer ≥ 1; the code takes a fraction of an epoch. `checkpoint_best` is still linked to the
+       epoch of least validation loss, with its `val_metrics.json`, which the publish reads.
+     - **Read in full, at `560f046`:** every page under `docs/` (tutorials, CLI reference, algorithms, features,
+       hyperparameters, losses, research notes) and the DSpark, DFlash best-practices, Kimi-K3 DSpark and DSpark
+       evaluation examples, and `scripts/launch_vllm.py`. Points that bear on this draft:
+       - The answers must come from the reader with the sampling it is served with (`prepare-data` page): ours are
+         greedy (`dspark-set`, temperature 0), as the reader's card asks.
+       - For a multimodal target, generate the answers with a multimodal-capable workflow and give `prepare-data` the
+         conversations (response regeneration page), as `dspark-set` does.
+       - The reader has 24 layers, and `mtp_num_hidden_layers: 0`, so MTP fine-tuning (their route for Qwen3.5
+         models with MTP heads) does not apply; DSpark's 15 draft tokens must equal its block size, as served.
+       - The reader is hybrid (linear attention): with a draft, vLLM keeps one copy of the recurrent state per draft
+         token, so each request costs more memory and fewer fit in a batch (throughput vs. interactivity page). The
+         draft card says to measure at the concurrency one reads at.
+       - "Long prompts with short answers may leave little decoding time to save" (RAG page): our lines.
+       - `runs/htr/verify/check_dspark.sh` now follows their evaluation rules: prefix caching off on both servers,
+         acceptance length (1 + accepted / drafts), and a second pass 64 at a time beside one at a time.
 5. **Train Jev** (`configs/jev_all.yaml`, both GPUs), then publish it as `Gabriel/diffu-minicpm-ocr-htr-jev`. About
    2.9 M training pairs × 2 epochs ≈ 45,000 steps of 128. The 2-GPU smoke run's ~32 pairs a second puts that at
    roughly 2 to 3 days, about 8 h of it evaluation (about 60,000 dev pairs every 1,000 steps).
