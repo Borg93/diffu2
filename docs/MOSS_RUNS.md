@@ -103,6 +103,7 @@ same 55 collections at 80 scans each): the look follows the sample, the hand doe
   flash attention's backward is not deterministic), so the training is the same. Leonardo's checkout is at e404761 from
   8 Nov 08:21: N, A′ and B's second job run it; B's first job started on the old code. The stall fixes (3ac313c) wait
   for their own GPU test.
+- 9 Nov, Leonardo's checkout from `e404761` to `82cd48b` (the stall fixes `3ac313c` and the learning-rate wind-down; the local cu126 edit of `pyproject.toml` and `uv.lock` kept as a patch, `moss/cu126_local.patch`), checked as e404761 was (job 63992658, recipe B's cache, 2 nodes, 30 steps, EMA): 10.08 s a step against 11.01 (-8.4 %), 20.1 GB a GPU as before, losses at steps 10, 20, 30 0.751355, 0.653548, 0.642198 against 0.751792, 0.654103, 0.642270 (a mean difference of 3.5e-4, as two runs of the same code differ): the same training, faster. The 2 MP run trains on it.
 
 ## Results
 
