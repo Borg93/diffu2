@@ -365,6 +365,26 @@ def test_full_fine_tune_resumed_from_a_checkpoints_state_goes_on_exactly_as_the_
     assert logs[0] == logs[1]  # the same samples, noise levels, losses and learning rates, steps 1 to 3
 
 
+def test_full_fine_tune_resumed_with_a_wind_down_added_steps_on_at_the_wind_downs_rate(
+    bfloat16_dit: Path, tiny_pair_cache: Path, full_run: Path, tmp_path: Path
+) -> None:
+    resumed = tmp_path / "run"
+    shutil.copytree(full_run, resumed)
+    for step in (2, 3):
+        shutil.rmtree(_checkpoint(resumed, step))
+    winding_down = FULL_RUN.model_copy(update={"decay_steps": 2, "decay_to": 0.5})
+
+    train(bfloat16_dit, tiny_pair_cache, resumed, winding_down, resume=_checkpoint(resumed, 1))
+
+    rates = [
+        [json.loads(line)["learning_rate"] for line in (run / LOG).read_text().splitlines()]
+        for run in (resumed, full_run)
+    ]
+    base = FULL.learning_rate
+    assert rates[1] == pytest.approx([0.25 * base, 0.5 * base, 0.75 * base])  # the warmup's 4 steps, as it ran
+    assert rates[0] == pytest.approx([0.25 * base, 0.5 * base, 0.5 * base])  # step 3 wound down to half
+
+
 @pytest.mark.parametrize(
     "change",
     [

@@ -14,7 +14,8 @@ and the output (final_linear_video); the Base DiT frozen in bfloat16, the LoRA i
 0.999), weight decay 1e-4. The full fine-tune follows MOSS-Image's own recipe: Muon on the joint blocks' matrices and
 AdamW on the rest at 5e-5, every weight in float32, the forward in bfloat16 (``--muon-momentum-dtype bfloat16`` keeps
 Muon's momentum in bfloat16, stepped in float32: about 9.5 GB less). Both clip the gradients at 1, keep the
-learning rate constant after 50 warmup steps and take two samples a step, one a micro-batch. Each sample is the drawn
+learning rate constant after 50 warmup steps (with ``--decay-steps N`` it then falls linearly over the run's last N
+steps, its last step's at ``--decay-to`` of it: a wind-down) and take two samples a step, one a micro-batch. Each sample is the drawn
 image's clean latents noised to a level drawn as MOSS-Image draws it (:mod:`diffu_moss.train.sigmas`; ``--sigma-shift``
 moves the levels towards the clean end, where letter strokes are decided), and the loss is
 flow matching's: the mean squared error between the DiT's velocity and noise minus image over the drawn image's
@@ -53,7 +54,7 @@ import torch
 import torch.distributed as dist
 import typer
 from peft import LoraConfig, get_peft_model_state_dict
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from rich.console import Console
 from safetensors.torch import save_file
 from torch import Tensor, nn
@@ -98,12 +99,14 @@ CHECKPOINTS = "checkpoints"
 VALIDATION_SEED = 0  # every run scores at the same noise, so runs of different seeds compare
 # a profiled run records its fourth to sixth steps: the first two warm up the kernels and the cache, the third the profiler
 PROFILE_WAIT, PROFILE_WARMUP, PROFILE_ACTIVE = 2, 1, 3
-# what a resumed run may change: how long it runs, how often it saves and scores, where, whether it saves its state,
-# whether it encodes its prompts (the same embeddings as cached), whether and for how many blocks it recomputes the
-# blocks' activations, and
-# whether a sharded block gathers its weights again for its backward pass
+# what a resumed run may change: how long it runs, its learning rate's wind-down (added to a run under way, it takes
+# from the next step), how often it saves and scores, where, whether it saves its state, whether it encodes its prompts
+# (the same embeddings as cached), whether and for how many blocks it recomputes the blocks' activations, and whether a
+# sharded block gathers its weights again for its backward pass
 RESUMABLE_CHANGES = {
     "steps": True,
+    "decay_steps": True,
+    "decay_to": True,
     "save_every": True,
     "val_every": True,
     "device": True,
@@ -121,8 +124,8 @@ class TrainSettings(BaseModel):
     """How a reference DiT is trained (the module's docstring): the LoRA's shape and optimizer, or with ``full`` a full
     fine-tune's; the steps and samples (with ``limit_pairs``, only the cache's first that many pairs drawn with their
     reference: an overfit test); whether each prompt is encoded in the step (``encode_text``) or read from the cache;
-    the shift of the drawn noise levels (``sigma_shift``, :mod:`diffu_moss.train.sigmas`; 1: MOSS-Image's own); and
-    when it is saved and scored."""
+    the shift of the drawn noise levels (``sigma_shift``, :mod:`diffu_moss.train.sigmas`; 1: MOSS-Image's own); the
+    learning rate's warmup and wind-down (:func:`learning_rate_schedule`); and when it is saved and scored."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -138,11 +141,19 @@ class TrainSettings(BaseModel):
     sigma_shift: float = Field(default=1.0, gt=0)
     grad_clip: float = 1.0
     warmup: int = Field(default=50, ge=1)
+    decay_steps: int = Field(default=0, ge=0)
+    decay_to: float = Field(default=0.0, ge=0.0, le=1.0)
     grad_accumulation: int = Field(default=2, ge=1)
     save_every: int = Field(default=250, ge=1)
     val_every: int = Field(default=250, ge=1)
     seed: int = 0
     device: str = "cuda"
+
+    @model_validator(mode="after")
+    def _decay_within_the_run(self) -> Self:
+        if self.decay_steps > self.steps:
+            raise ValueError(f"a wind-down of {self.decay_steps} steps is longer than the run's {self.steps}")
+        return self
 
     @property
     def lora(self) -> LoraSettings:
@@ -199,9 +210,20 @@ def lora_transformer(base: Path, lora: LoraSettings, *, device: str, seed: int) 
     return transformer.to(device).train()
 
 
-def warmup(steps: int) -> Callable[[int], float]:
-    """The learning rate's factor after a number of steps done: rising linearly to 1 over ``steps`` steps."""
-    return lambda done: min(1.0, (done + 1) / steps)
+def learning_rate_schedule(settings: TrainSettings) -> Callable[[int], float]:
+    """The learning rate's factor for a step after a number of steps done: rising linearly to 1 over the warmup's
+    steps, then 1 until the wind-down's (``decay_steps``) last steps of the run, over which it falls linearly to
+    ``decay_to``, the run's last step's (the lower of the two where they overlap)."""
+    rising, steps, falling, floor = settings.warmup, settings.steps, settings.decay_steps, settings.decay_to
+    start = steps - falling
+
+    def factor(done: int) -> float:
+        warm = min(1.0, (done + 1) / rising)
+        if falling == 0 or done < start:
+            return warm
+        return min(warm, max(floor, 1.0 - (1.0 - floor) * (done - start + 1) / falling))
+
+    return factor
 
 
 def flow_matching_loss(
@@ -315,7 +337,7 @@ class LoraTraining:
         self._optimizer = torch.optim.AdamW(
             self.parameters, lr=settings.learning_rate, betas=settings.betas, weight_decay=settings.weight_decay
         )
-        self._schedule = LambdaLR(self._optimizer, warmup(settings.warmup))
+        self._schedule = LambdaLR(self._optimizer, learning_rate_schedule(settings))
         self._lora = settings.lora
         self._sample_size = sample_size
 
@@ -540,7 +562,7 @@ def train(
     if settings.full is None:
         training = LoraTraining(base, settings, sample_size)
     else:
-        schedule = warmup(settings.warmup)
+        schedule = learning_rate_schedule(settings)
         training = FullTraining(
             base,
             settings.full,
@@ -673,6 +695,17 @@ def main(
         float | None,
         typer.Option(help="the learning rate, constant after the warmup (default: 1e-4 for a LoRA, 5e-5 with --full)"),
     ] = None,
+    decay_steps: Annotated[
+        int,
+        typer.Option(
+            min=0,
+            help="a wind-down: the learning rate falls linearly over the run's last this many steps to --decay-to of it "
+            "(0: none; a resumed run may add one)",
+        ),
+    ] = 0,
+    decay_to: Annotated[
+        float, typer.Option(min=0.0, max=1.0, help="with --decay-steps: the run's last step's share of the rate")
+    ] = 0.0,
     ema: Annotated[
         float | None,
         typer.Option(
@@ -788,6 +821,8 @@ def main(
         fine_tune = FullSettings.model_validate(full_settings) if full else None
         run = {
             "steps": steps,
+            "decay_steps": decay_steps,
+            "decay_to": decay_to,
             "limit_pairs": limit_pairs,
             "encode_text": encode_text,
             "sigma_shift": sigma_shift,

@@ -764,6 +764,19 @@ def test_training_lowers_the_loss_of_the_sample_it_trains_on(
     assert losses[1] < 0.9 * losses[0]
 
 
+def test_training_with_a_wind_down_steps_its_last_steps_at_a_learning_rate_falling_linearly_to_decay_to(
+    tiny_moss_dit: Path, tiny_pair_cache: Path, tmp_path: Path
+) -> None:
+    settings = TrainSettings(
+        steps=6, learning_rate=1e-2, warmup=1, decay_steps=3, decay_to=0.25, save_every=6, device="cpu"
+    )
+
+    train(tiny_moss_dit, tiny_pair_cache, tmp_path / "run", settings)
+
+    rates = [json.loads(line)["learning_rate"] for line in (tmp_path / "run" / LOG).read_text().splitlines()]
+    assert rates == pytest.approx([1e-2, 1e-2, 1e-2, 0.75e-2, 0.5e-2, 0.25e-2])
+
+
 def test_training_with_a_profile_dir_writes_its_ranks_trace_of_steps_4_to_6(
     tiny_moss_dit: Path, tiny_pair_cache: Path, tmp_path: Path
 ) -> None:

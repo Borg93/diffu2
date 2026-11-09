@@ -44,6 +44,8 @@ STEPS="${STEPS:-500}"
 SAVE_EVERY="${SAVE_EVERY:-250}"
 VAL_EVERY="${VAL_EVERY:-$SAVE_EVERY}"
 EMA="${EMA:-}"            # e.g. 0.999: an average of the weights saved beside each checkpoint
+DECAY_STEPS="${DECAY_STEPS:-0}"  # a wind-down: the learning rate falls linearly over the last N steps (0: none)
+DECAY_TO="${DECAY_TO:-0}"        # with DECAY_STEPS: the last step's share of the rate
 RESUME="${RESUME:-}"      # a checkpoint saved with --save-state, or "latest": the newest whole one under $OUT
 GRADIENT_CHECKPOINTING="${GRADIENT_CHECKPOINTING:-1}"  # 0: keep the blocks' activations (faster; ~40 GB free a GPU on 8 A100 64 GB)
 UNCHECKPOINTED_BLOCKS="${UNCHECKPOINTED_BLOCKS:-0}"  # with checkpointing: the last N of the 42 blocks keep their activations
@@ -65,6 +67,7 @@ options=(--full --transformer "$TRANSFORMER" --cache "$CACHE" --out "$OUT" --ste
 # a validation cache only once it is whole (a run queued behind its cache job may find none)
 [ -n "$VAL_CACHE" ] && [ -f "$VAL_CACHE/cache.json" ] && options+=(--val-cache "$VAL_CACHE")
 [ -n "$EMA" ] && options+=(--ema "$EMA")
+[ "$DECAY_STEPS" != 0 ] && options+=(--decay-steps "$DECAY_STEPS" --decay-to "$DECAY_TO")
 [ "$GRADIENT_CHECKPOINTING" = 0 ] && options+=(--no-gradient-checkpointing)
 [ "$UNCHECKPOINTED_BLOCKS" != 0 ] && options+=(--uncheckpointed-blocks "$UNCHECKPOINTED_BLOCKS")
 [ -n "$PROFILE_DIR" ] && options+=(--profile-dir "$PROFILE_DIR")
