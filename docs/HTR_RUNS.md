@@ -131,9 +131,10 @@ script again resumes after the last finished step.
        - `runs/htr/verify/check_dspark.sh` now follows their evaluation rules: prefix caching off on both servers,
          acceptance length (1 + accepted / drafts), and a second pass 64 at a time beside one at a time.
      - **Switched 9 Nov 09:51.** Preparation saved its data at 09:50 (two Arrow shards and the token counts); vLLM came
-       up on GPU 2 at 09:51:22. The trainer runs on GPU 1, 96 % busy, at about 2.8 steps a second, about 20 samples a
-       second as in the test: the whole set packs fuller (573 tokens a sample on average, about 7 to a 4,096-token step,
-       against 5.5 in the test's 2,400), so an epoch is about 37,800 steps, 3.7 h, and 3 epochs end about 21:15.
+       up on GPU 2 at 09:51:22. The trainer runs on GPU 1, 96–100 % busy. Its tenth-of-an-epoch checkpoints fall every
+       4,485 steps, 22 min apart (10:16, 10:38, 11:00), so an epoch is 44,850 steps (6.7 samples, about 3,800 tokens a
+       step) at 3.4 steps a second, about 23 samples a second, 3.7 h. Three epochs end about 21:00, plus each epoch's
+       validation. (An estimate at 10:00 of 37,800 steps at 2.8 a second was wrong in both figures; the hours stand.)
      - **The loops over 4,097 tokens are dropped.** The reader's looping answers (about 40, at the 4,096-token cap) with
        their image tokens exceed vLLM's `--max-model-len` 4,097: vLLM refuses them ("Input length (4266) exceeds"),
        and the trainer drops each after its retries (`failed_samples=1`), training on the rest.
