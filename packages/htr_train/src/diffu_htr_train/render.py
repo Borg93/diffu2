@@ -39,7 +39,9 @@ class Command(BaseModel):
     """One process a run starts: in which tool environment, with which argv and extra environment. A ``serve``
     command runs in the background for the commands after it and is ready when ``ready`` answers (a URL); a ``run``
     command has none. A command with ``resume_from`` (ms-swift's output folder) resumes from the newest whole
-    checkpoint there when its steps run again, so a stopped training is continued by running its steps again."""
+    checkpoint there when its steps run again, so a stopped training is continued by running its steps again. A
+    command with a ``device`` sees only the first or the last of the GPUs the run's steps make visible (the same one
+    when there is one); without, all of them."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -49,6 +51,7 @@ class Command(BaseModel):
     role: Literal["run", "serve"] = "run"
     ready: str | None = None
     resume_from: Path | None = None
+    device: Literal["first", "last"] | None = None
 
     @model_validator(mode="after")
     def _ready_when_served(self) -> Self:
@@ -272,10 +275,33 @@ def _prepared(paths: RunPaths) -> Path:
     return (paths.root / "data").resolve()
 
 
-def vllm_serve(job: DSparkJob, paths: RunPaths, *, extra: list[Flag], switches: tuple[str, ...] = ()) -> Command:
+RENDERER_WORKERS = 2  # threads of each vLLM API server's renderer: speculators' launch_vllm.py's default
+# vLLM's API servers each start native thread pools the size of the host unless bounded: launch_vllm.py's bounds
+RENDER_THREADS = {"OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1", "MKL_NUM_THREADS": "1", "RAYON_NUM_THREADS": "2"}
+
+
+def render_budget(cpus: int) -> tuple[int, int]:
+    """How speculators shares ``cpus`` between prepare-data's workers and vLLM's API servers, which render the
+    conversations those workers send (its ``launch_vllm.py`` at 560f046, which prepare-data's default mirrors): 75 %
+    of the CPUs, about 4 a preparation worker (at most 128), one API server for 4 workers and 4 CPUs (at most 32); on
+    their 384-CPU H100 node, 72 workers and 18 API servers. vLLM's own single API server otherwise renders every
+    conversation in turn. The preparation workers and the API servers, in that order."""
+    workers = max(1, min(128, int(cpus * 0.75) // 4))
+    return workers, max(1, min(32, workers // 4, cpus // 4))
+
+
+def vllm_serve(
+    job: DSparkJob,
+    paths: RunPaths,
+    *,
+    extra: list[Flag],
+    switches: tuple[str, ...] = (),
+    environ: dict[str, str] | None = None,
+    device: Literal["first", "last"] | None = None,
+) -> Command:
     """vLLM serving a draft's target, in the background: by its path (``vllm serve`` takes it first), then
     ``switches``, under that name (the name its responses record), reading local images below the job's
-    ``media_root`` only, with ``extra`` flags and the job's own."""
+    ``media_root`` only, with ``extra`` flags and the job's own, in ``environ`` and on ``device`` (:class:`Command`)."""
     target = _target(job)
     argv = [
         paths.tool(ToolEnv.VLLM, "vllm"),
@@ -293,7 +319,14 @@ def vllm_serve(job: DSparkJob, paths: RunPaths, *, extra: list[Flag], switches: 
         ),
         *job.serve_args,
     ]
-    return Command(env=ToolEnv.VLLM, argv=argv, role="serve", ready=f"{_served_url(job)}/health")
+    return Command(
+        env=ToolEnv.VLLM,
+        argv=argv,
+        environ=environ or {},
+        role="serve",
+        ready=f"{_served_url(job)}/health",
+        device=device,
+    )
 
 
 def render_responses_server(job: DSparkJob, paths: RunPaths) -> Command:
@@ -302,11 +335,13 @@ def render_responses_server(job: DSparkJob, paths: RunPaths) -> Command:
     return vllm_serve(job, paths, extra=[])
 
 
-def _dspark_serve(job: DSparkJob, paths: RunPaths) -> Command:
-    """vLLM serving a draft's target with the hidden states of ``target_layer_ids`` and of its last layer (as
-    speculators' launcher asks for it) extracted into the run's folder for speculators; its render endpoints on
+def _dspark_serve(job: DSparkJob, paths: RunPaths, *, cpus: int) -> Command:
+    """vLLM serving a draft's target on the run's first GPU (speculators' docs: "online training needs separate GPUs
+    for vLLM and training"), with the hidden states of ``target_layer_ids`` and of its last layer (as speculators'
+    launcher asks for it) extracted into the run's folder for speculators; its render endpoints on
     (``--enable-scale-out``, which speculators' ``prepare-data`` renders each conversation through, and which answer
-    403 without it; speculators' own launcher always adds it)."""
+    403 without it; speculators' own launcher always adds it), as many API servers as speculators' launcher gives
+    ``cpus`` (:func:`render_budget`), their thread pools bounded as it bounds them."""
     layers = [*job.target_layer_ids, job.target_layers]
     speculative = {
         "method": "extract_hidden_states",
@@ -322,14 +357,16 @@ def _dspark_serve(job: DSparkJob, paths: RunPaths) -> Command:
         ("--max-model-len", job.seq_length + 1),
         ("--speculative_config", speculative),
         ("--kv_transfer_config", transfer),
+        ("--api-server-count", render_budget(cpus)[1]),
+        ("--renderer-num-workers", RENDERER_WORKERS),
     ]
-    return vllm_serve(job, paths, extra=extra, switches=("--enable-scale-out",))
+    return vllm_serve(job, paths, extra=extra, switches=("--enable-scale-out",), environ=RENDER_THREADS, device="first")
 
 
-def _dspark_prepare(job: DSparkJob, paths: RunPaths) -> Command:
-    """speculators preparing a draft's responses as the served target renders them: counting their tokens, for the
-    draft's reduced vocabulary (speculators otherwise skips it), over any earlier preparation (which it otherwise keeps
-    silently)."""
+def _dspark_prepare(job: DSparkJob, paths: RunPaths, *, cpus: int) -> Command:
+    """speculators preparing a draft's responses as the served target renders them, with as many workers as its
+    launcher's budget for ``cpus`` gives (:func:`render_budget`): counting their tokens, for the draft's reduced
+    vocabulary (speculators otherwise skips it), over any earlier preparation (which it otherwise keeps silently)."""
     argv = [
         paths.tool(ToolEnv.SPECULATORS, "speculators"),
         "prepare-data",
@@ -341,6 +378,7 @@ def _dspark_prepare(job: DSparkJob, paths: RunPaths) -> Command:
                 ("--seq-length", job.seq_length),
                 ("--render-endpoint", _served_url(job)),
                 ("--max-samples", job.max_samples),
+                ("--num-preprocessing-workers", render_budget(cpus)[0]),
             ]
         ),
         "--no-skip-token-freq",
@@ -350,9 +388,10 @@ def _dspark_prepare(job: DSparkJob, paths: RunPaths) -> Command:
 
 
 def _dspark_train(job: DSparkJob, paths: RunPaths, *, name: str) -> Command:
-    """speculators training a draft on one GPU against the live server, logged to trackio as ``name``, its best
-    checkpoint kept: ``speculators train`` itself, as speculators' docs run one GPU (under ``torchrun`` it also claims
-    an accelerator before anything else, which a CPU check cannot give it)."""
+    """speculators training a draft on the run's last GPU against the live server, logged to trackio as ``name``,
+    checkpointed every ``checkpoint_freq`` of an epoch (:class:`DSparkJob`): ``speculators train`` itself, as
+    speculators' docs run one GPU (under ``torchrun`` it also claims an accelerator before anything else, which a CPU
+    check cannot give it)."""
     argv = [
         paths.tool(ToolEnv.SPECULATORS, "speculators"),
         "train",
@@ -393,18 +432,24 @@ def _dspark_train(job: DSparkJob, paths: RunPaths, *, name: str) -> Command:
                 ("--num-workers", job.num_workers),
                 ("--logger", "trackio"),
                 ("--run-name", name),
+                ("--checkpoint-freq", job.checkpoint_freq),
             ]
         ),
-        "--save-best",
     ]
-    return Command(env=ToolEnv.SPECULATORS, argv=argv)
+    return Command(env=ToolEnv.SPECULATORS, argv=argv, device="last")
 
 
 def render_dspark(job: DSparkJob, spec: RunSpec, paths: RunPaths) -> list[Command]:
     """A DSpark draft trained online: vLLM serves the target and gives speculators the rendered conversations and the
     hidden states (:func:`_dspark_serve`); speculators prepares the responses (:func:`_dspark_prepare`) and trains the
-    draft against the live server (:func:`_dspark_train`)."""
-    return [_dspark_serve(job, paths), _dspark_prepare(job, paths), _dspark_train(job, paths, name=spec.name)]
+    draft against the live server (:func:`_dspark_train`), on the run's last GPU while vLLM holds its first (with one
+    GPU, beside it), within the run's CPU budget (``cpus_per_task``)."""
+    cpus = spec.resources.cpus_per_task
+    return [
+        _dspark_serve(job, paths, cpus=cpus),
+        _dspark_prepare(job, paths, cpus=cpus),
+        _dspark_train(job, paths, name=spec.name),
+    ]
 
 
 def render(spec: RunSpec, paths: RunPaths) -> list[Command]:

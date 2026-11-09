@@ -115,21 +115,31 @@ From speculators' docs and DSpark research notes (read in full at `560f0465`):
 - The training command is speculators' DSpark example's (`examples/train/dspark_qwen3_0_6b_sharegpt_online.sh`) with
   OpenBMB's draft shape (5 layers, block 15, mask token 248076, their layers `[3, 7, 11, 15, 19]` in Z Lab's
   convention, which speculators' DFlash converter maps to `[4, 8, 12, 16, 20]`), plus the research runs' cosine
-  schedule with 4 % warmup and 2 dataloader workers a rank, and `--save-best`. vLLM gets the same layers and the last
-  (24), as `scripts/launch_vllm.py` adds it; its render-throughput flags (`--api-server-count`,
-  `--renderer-num-workers`) are left out (speed only).
+  schedule with 4 % warmup and 2 dataloader workers a rank (`lion_data_prep/configs/dspark_all.yaml` sets 8, as
+  measured). vLLM gets the same layers and the last (24), as `scripts/launch_vllm.py` adds it.
+- **vLLM on the run's first GPU, the trainer on its last** (`gpus_per_node: 2`; with one GPU both share it). Their
+  DSpark example: "online training needs separate GPUs for vLLM and training". Sharing one GPU, the trainer waits on
+  vLLM: an epoch's 390 steps on 2,400 of the 9 Nov draft's samples took 153 s shared and 100 s split
+  (`docs/HTR_RUNS.md`).
+- **vLLM's front end as their launcher starts it**, from the run's CPU budget (`cpus_per_task`; `render_budget` in
+  `render.py`): `--api-server-count`, `--renderer-num-workers 2`, native thread pools bounded, and prepare-data's
+  workers from the same budget. With vLLM's single API server, every conversation is rendered in turn: the 9 Nov draft
+  prepared its 300,000 answers in about 1 h 50 min. An earlier reading here left these flags out as speed only.
+- **A checkpoint every tenth of an epoch** (`checkpoint_freq: 0.1`, as their Kimi-K3 DSpark example saves), not
+  `--save-best`: with it speculators saves only an epoch that improves validation loss and never mid-epoch
+  (`trainer.py`), so a stopped run loses the epoch in progress. `checkpoint_best` is linked either way.
 - A DSpark draft is served with `num_speculative_tokens` equal to its trained block size (vLLM asserts it), so 15.
-- The draft trains with `speculators train` itself, not under `torchrun`: one GPU, as speculators' docs run it (under
-  `torchrun` it claims an accelerator first). Its trackio logs land in the local project `speculators` (speculators
-  names it; no flag changes it), not `diffu`.
+- The draft trains with `speculators train` itself, not under `torchrun` (under `torchrun` it claims an accelerator
+  first). Its trackio logs land in the local project `speculators` (speculators names it; no flag changes it), not
+  `diffu`.
 - Validation loss on the responses' own 10 % split ranks drafts poorly (speculators' research notes); a draft is judged
   by acceptance length on held-out OCR prompts, served as above, in the evaluation step.
 - Cheaper routes, not built: fine-tuning OpenBMB's released draft (`--from-pretrained`) needs a converter of ours
   first (speculators converts DFlash checkpoints, not DSpark ones, and OpenBMB's `d2t` is delta-encoded with a
-  114,688-token vocabulary), and a fine-tune wants a learning rate about 10x below the from-scratch 3e-4; or
-  fine-tuning the target's own MTP head (Qwen3.5 has one layer of it; `--speculator-type mtp`, then `stitch-mtp`). The
-  first measurement is OpenBMB's draft as it is against our fine-tuned target: if its acceptance holds, no draft is
-  trained at all.
+  114,688-token vocabulary), and a fine-tune wants a learning rate about 10x below the from-scratch 3e-4. Their MTP
+  route (fine-tuning a target's own multi-token head) does not apply: MiniCPM-OCR's config has
+  `mtp_num_hidden_layers: 0`. The first measurement is OpenBMB's draft as it is against our fine-tuned target: if its
+  acceptance holds, no draft is trained at all.
 
 ## Where it runs
 

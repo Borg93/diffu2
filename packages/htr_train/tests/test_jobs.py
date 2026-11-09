@@ -342,7 +342,22 @@ def test_plan_run_refuses_jev_pairs_of_another_renderer_or_prompt(
         pytest.param(
             "target", 2, {}, 1, "holds 2 answers and 3 failed prompts \\(at most 50% may fail\\)", id="too-many-failed"
         ),
-        pytest.param("target", 5, {}, 2, "a DSpark run trains on one GPU", id="two-gpus"),
+        pytest.param(
+            "target",
+            5,
+            {},
+            3,
+            "a DSpark run serves its target on the first of its GPUs and trains on the last, on one node: one GPU",
+            id="three-gpus",
+        ),
+        pytest.param(
+            "target",
+            5,
+            {"checkpoint_freq": 1.5},
+            1,
+            "checkpoint_freq 1.5: a fraction of an epoch \\(at most 1\\) or a whole number of epochs",
+            id="checkpoints-every-epoch-and-a-half",
+        ),
         pytest.param(
             "target",
             1,
@@ -369,7 +384,7 @@ def test_plan_run_refuses_jev_pairs_of_another_renderer_or_prompt(
         ),
     ],
 )
-def test_plan_run_refuses_a_draft_not_on_its_own_targets_answers_or_on_more_than_one_gpu(
+def test_plan_run_refuses_a_draft_not_on_its_own_targets_answers_or_on_more_than_two_gpus(
     tmp_path: Path,
     settings: Settings,
     answered_by: str,

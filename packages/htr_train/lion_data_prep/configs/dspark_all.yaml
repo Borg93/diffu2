@@ -1,7 +1,9 @@
-# The DSpark draft for minicpm-all's checkpoint of least eval loss (after_minicpm.sh links it as
+# The DSpark draft for minicpm-all's checkpoint of least corpus CER on its dev lines (after_minicpm.sh links it as
 # runs/htr/minicpm-all/best), from its own answers to 250,000 training lines and 50,000 training regions, each a
-# seeded draw (htr-train serve-target, then htr-train dspark-set against it); 3 online epochs, vLLM and the trainer on
-# one GPU (htr-train launch --where local, HTR_TRAIN_LOCAL_GPUS one GPU). configs/full/dspark.yaml's recipe.
+# seeded draw (htr-train serve-target, then htr-train dspark-set against it); 3 online epochs, vLLM on the first of
+# the two GPUs and the trainer on the second (htr-train launch --where local, HTR_TRAIN_LOCAL_GPUS two GPUs), vLLM's
+# front end from this server's 64 CPUs (3 API servers, 12 preparation workers), 8 dataloader workers (as measured on
+# 2,400 of its samples, docs/HTR_RUNS.md). configs/full/dspark.yaml's recipe.
 # OpenBMB's draft makes MiniCPM-OCR 55 % faster end to end on whole pages (OmniDocBench v1.6, one page at a time, RTX
 # 5090; its reproduction commands are still to come): long answers, where a draft speeds up the decoding. Our regions
 # are like that (about 250 tokens an answer); our lines are not: base MiniCPM-OCR's line serving read about 24,500
@@ -24,4 +26,5 @@ job:
     - '{"image": 4, "video": 0}'
   vllm_memory: 0.35
   epochs: 3
-resources: {nodes: 1, gpus_per_node: 1, need_gb: 60, hours: 12, cpus_per_task: 32}
+  num_workers: 8
+resources: {nodes: 1, gpus_per_node: 2, need_gb: 60, hours: 12, cpus_per_task: 64}

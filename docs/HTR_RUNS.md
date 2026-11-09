@@ -130,6 +130,13 @@ script again resumes after the last finished step.
        - "Long prompts with short answers may leave little decoding time to save" (RAG page): our lines.
        - `runs/htr/verify/check_dspark.sh` now follows their evaluation rules: prefix caching off on both servers,
          acceptance length (1 + accepted / drafts), and a second pass 64 at a time beside one at a time.
+     - **htr-train's `dspark` job now renders this layout** (9 Nov): vLLM on the run's first GPU and the trainer on its
+       last (one GPU: both on it), vLLM's front end and prepare-data's workers from the run's CPU budget as
+       `launch_vllm.py` computes them, a checkpoint every tenth of an epoch. `configs/dspark_all.yaml` asks for two
+       GPUs and this server's 64 CPUs (3 API servers, 12 workers) with 8 loader workers. `after_minicpm.sh` still
+       launches the draft on the first GPU alone: it is edited once the queue ends, since bash reads a running
+       script as it goes; until then its draft step would be refused (two GPUs asked, one named), and it is skipped
+       anyway once `dspark_split.sh` leaves its marker.
 5. **Train Jev** (`configs/jev_all.yaml`, both GPUs), then publish it as `Gabriel/diffu-minicpm-ocr-htr-jev`. About
    2.9 M training pairs × 2 epochs ≈ 45,000 steps of 128. The 2-GPU smoke run's ~32 pairs a second puts that at
    roughly 2 to 3 days, about 8 h of it evaluation (about 60,000 dev pairs every 1,000 steps).

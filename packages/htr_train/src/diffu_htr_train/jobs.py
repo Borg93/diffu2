@@ -296,9 +296,11 @@ class DSparkJob(BaseModel):
     other flags, never ``--trust-remote-code`` (MiniCPM-OCR is native in vLLM). ``draft_vocab_size`` is speculators'
     DSpark example's (its default is the whole vocabulary); OpenBMB's released draft crops it to 114,688 tokens. ``max_anchors`` and
     ``confidence_head_alpha`` are speculators' DSpark example's; the cosine schedule with 4 % warmup is its DSpark
-    research runs' (speculators' default is linear, no warmup); two dataloader workers a rank, as those runs found the
-    default 12 exhausts a node's threads beside vLLM. The best checkpoint by validation loss is always kept
-    (``--save-best``).
+    research runs' (speculators' default is linear, no warmup); two dataloader workers a rank by default, as those runs
+    found the default 12 exhausts a node's threads beside vLLM. A checkpoint every ``checkpoint_freq`` of an epoch (a
+    whole number above 1: every so many epochs), as speculators' Kimi-K3 DSpark example saves, not ``--save-best``:
+    with it speculators saves only an epoch that improves the validation loss and never mid-epoch, so a stopped run
+    loses the epoch in progress. ``checkpoint_best`` links the epoch of least validation loss either way.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -326,11 +328,16 @@ class DSparkJob(BaseModel):
     warmup_ratio: float = Field(default=0.04, ge=0, lt=1)
     epochs: int = Field(default=5, gt=0)
     num_workers: int = Field(default=2, ge=0)
+    checkpoint_freq: float = Field(default=0.1, gt=0)
     seq_length: int = Field(default=4096, gt=0)
     max_samples: int | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
     def _layers_in_target(self) -> Self:
+        if self.checkpoint_freq > 1 and not self.checkpoint_freq.is_integer():
+            raise ValueError(
+                f"checkpoint_freq {self.checkpoint_freq}: a fraction of an epoch (at most 1) or a whole number of epochs"
+            )
         if not self.target.is_local:
             raise ValueError(
                 f"the target {self.target.repo} must be a local folder (its published commit's snapshot): speculators "
@@ -375,9 +382,10 @@ class RunSpec(BaseModel):
                 "a training part draws samples (#N) but dataset_shuffle is false, so ms-swift would take its first N "
                 "rows: set dataset_shuffle true"
             )
-        if isinstance(self.job, DSparkJob) and self.resources.gpus != 1:
+        if isinstance(self.job, DSparkJob) and (self.resources.nodes != 1 or self.resources.gpus_per_node > 2):
             raise ValueError(
-                f"a DSpark run trains on one GPU beside its own vLLM on one node, not {self.resources.gpus} GPUs"
+                "a DSpark run serves its target on the first of its GPUs and trains on the last, on one node: one GPU "
+                f"(both on it) or two, not {self.resources.nodes} node(s) of {self.resources.gpus_per_node}"
             )
         if not isinstance(self.job, DSparkJob) and self.job.global_batch % (
             self.resources.gpus * self.job.per_device_batch

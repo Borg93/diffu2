@@ -300,7 +300,7 @@ def test_render_gives_speculators_dspark_example_for_our_target_served_by_vllm(t
                 "media_root": str(tmp_path),
                 "serve_args": ["--trust-request-mm-kwargs"],
             },
-            "resources": {"need_gb": 60, "hours": 1},
+            "resources": {"need_gb": 60, "hours": 1, "gpus_per_node": 2, "cpus_per_task": 384},
         }
     )
 
@@ -309,6 +309,16 @@ def test_render_gives_speculators_dspark_example_for_our_target_served_by_vllm(t
     url = "http://localhost:8000"
     tool = tmp_path / "envs"
     assert (serve.role, serve.ready, serve.env) == ("serve", f"{url}/health", ToolEnv.VLLM)
+    # vLLM on the run's first GPU, the trainer on its last, as speculators' DSpark example runs them
+    assert (serve.device, prepare.device, train.device) == ("first", None, "last")
+    # vLLM's front end as speculators' launch_vllm.py starts it: on their 384-CPU H100 node, 18 API servers of 2
+    # renderer threads for prepare-data's 72 workers, every native thread pool bounded
+    assert serve.environ == {
+        "OMP_NUM_THREADS": "1",
+        "OPENBLAS_NUM_THREADS": "1",
+        "MKL_NUM_THREADS": "1",
+        "RAYON_NUM_THREADS": "2",
+    }
     assert serve.argv == [
         str(tool / "vllm" / ".venv" / "bin" / "vllm"),
         "serve",
@@ -330,6 +340,7 @@ def test_render_gives_speculators_dspark_example_for_our_target_served_by_vllm(t
         "--kv_transfer_config",
         '{"kv_connector": "ExampleHiddenStatesConnector", "kv_role": "kv_producer", "kv_connector_extra_config": '
         f'{{"shared_storage_path": "{(paths.root / "hidden_states").resolve()}"}}}}',
+        *("--api-server-count", "18", "--renderer-num-workers", "2"),
         "--trust-request-mm-kwargs",
     ]
     data = (paths.root / "data").resolve()
@@ -337,14 +348,15 @@ def test_render_gives_speculators_dspark_example_for_our_target_served_by_vllm(t
         str(tool / "speculators" / ".venv" / "bin" / "speculators"),
         "prepare-data",
         *("--model", str(target), "--data", str(responses), "--output", str(data)),
-        *("--seq-length", "4096", "--render-endpoint", url),
+        *("--seq-length", "4096", "--render-endpoint", url, "--num-preprocessing-workers", "72"),
         # the token counts the reduced draft vocabulary is built from (speculators skips them by default), and never
         # an earlier preparation kept in its place
         *("--no-skip-token-freq", "--overwrite"),
     ]
     # the example's training flags, with OpenBMB's released draft's shape (5 layers, 15 tokens a block, its mask token
     # and layers) for the example's Qwen3-0.6B ones; the cosine schedule, 4 % warmup and 2 workers of speculators'
-    # DSpark research runs; the best checkpoint kept; trackio for logging
+    # DSpark research runs; a checkpoint every tenth of an epoch, as their Kimi-K3 DSpark example saves (--save-best
+    # would save no checkpoint mid-epoch); trackio for logging
     assert train.argv == [
         str(tool / "speculators" / ".venv" / "bin" / "speculators"),
         "train",
@@ -356,7 +368,7 @@ def test_render_gives_speculators_dspark_example_for_our_target_served_by_vllm(t
         *("--confidence-head-alpha", "1.0", "--max-anchors", "3072"),
         *("--loss-fn", '{"ce": 0.1, "tv": 0.9}', "--lr", "0.0003", "--scheduler-type", "cosine"),
         *("--scheduler-warmup-ratio", "0.04", "--epochs", "5", "--total-seq-len", "4096", "--num-workers", "2"),
-        *("--logger", "trackio", "--run-name", "draft", "--save-best"),
+        *("--logger", "trackio", "--run-name", "draft", "--checkpoint-freq", "0.1"),
     ]
 
 

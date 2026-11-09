@@ -71,9 +71,15 @@ class Plan(BaseModel):
     start: list[str]
 
 
+DEVICES = {"first": "%%,*", "last": "##*,"}  # bash's expansions of a comma list to its first and last item
+
+
 def shell(command: Command) -> str:
-    """A command as one line of bash: its environment, then its argv, each word quoted where it must be."""
+    """A command as one line of bash: its environment (its ``device`` taken from the GPUs the steps make visible,
+    expanded when the line runs), then its argv, each word quoted where it must be."""
     environ = [f"{key}={shlex.quote(given)}" for key, given in sorted(command.environ.items())]
+    if command.device is not None:
+        environ.insert(0, f'CUDA_VISIBLE_DEVICES="${{CUDA_VISIBLE_DEVICES{DEVICES[command.device]}}}"')
     return shlex.join(command.argv) if not environ else f"env {' '.join(environ)} {shlex.join(command.argv)}"
 
 

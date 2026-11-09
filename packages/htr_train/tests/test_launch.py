@@ -194,9 +194,9 @@ def test_plan_run_writes_an_sbatch_of_one_task_a_node_with_ms_swifts_multi_node_
     assert plan.start == ["sbatch", "--partition", "boost_usr_prod", "--account", "proj", str(root / "job.sbatch")]
 
 
-def _draft(tmp_path: Path, settings: Settings) -> Plan:
-    """A draft's run planned on the Spark, on responses its target answered, its runs folder given relative (as its
-    default is) from ``tmp_path``."""
+def _draft(tmp_path: Path, settings: Settings, *, local_gpus: str | None = None) -> Plan:
+    """A draft's run planned on the Spark (or on the server's GPUs ``local_gpus`` names, as many as it names), on
+    responses its target answered, its runs folder given relative (as its default is) from ``tmp_path``."""
     target = tmp_path / "target"
     target.mkdir()
     responses = tmp_path / "responses.jsonl"
@@ -204,17 +204,24 @@ def _draft(tmp_path: Path, settings: Settings) -> Plan:
     record = {"target": str(target.resolve()), "samples": 1, "failed": 0, "max_failed": 0.01, "max_tokens": 512}
     (tmp_path / "responses.target.json").write_text(json.dumps(record), encoding="utf-8")
     job = {"kind": "dspark", "target": {"repo": str(target)}, "responses": str(responses), "media_root": "."}
-    spec = RunSpec.model_validate({"name": "draft", "job": job, "resources": {"need_gb": 60, "hours": 1}})
-    return plan_run(spec, Where.SPARK, settings.model_copy(update={"runs": Path("runs")}))
+    gpus = len(local_gpus.split(",")) if local_gpus else 1
+    resources = {"need_gb": 60, "hours": 1, "gpus_per_node": gpus}
+    spec = RunSpec.model_validate({"name": "draft", "job": job, "resources": resources})
+    if local_gpus is None:
+        return plan_run(spec, Where.SPARK, settings.model_copy(update={"runs": Path("runs")}))
+    return plan_run(spec, Where.LOCAL, settings.model_copy(update={"runs": Path("runs"), "local_gpus": local_gpus}))
 
 
 def _run_steps(plan: Plan, tmp_path: Path, *, vllm: str) -> tuple[subprocess.CompletedProcess[str], list[str]]:
-    """The plan's steps.sh run with stand-ins on its tools' paths: vllm (the script ``vllm``), curl (on ``PATH``,
-    answering once the stand-in vllm has recorded its start, after a first failure) and speculators
-    (recording their argv); the run's result and the calls recorded, in order."""
-    calls, tried = tmp_path / "calls", tmp_path / "tried"
-    recording = f'#!/bin/bash\necho "$(basename "$0") $*" >> {calls}\n'
-    _executable(Path(plan.paths.tool(ToolEnv.VLLM, "vllm")), vllm.format(calls=calls))
+    """The plan's steps.sh run with stand-ins on its tools' paths: vllm (the script ``vllm``, given ``calls`` and
+    ``devices`` to record in), curl (on ``PATH``, answering once the stand-in vllm has recorded its start, after a
+    first failure) and speculators (recording their argv, and the GPUs each command saw in ``devices``); the run's
+    result and the calls recorded, in order."""
+    calls, tried, devices = tmp_path / "calls", tmp_path / "tried", tmp_path / "devices"
+    recording = (
+        f'#!/bin/bash\necho "$(basename "$0") $*" >> {calls}\necho "$1 ${{CUDA_VISIBLE_DEVICES-}}" >> {devices}\n'
+    )
+    _executable(Path(plan.paths.tool(ToolEnv.VLLM, "vllm")), vllm.format(calls=calls, devices=devices))
     _executable(Path(plan.paths.tool(ToolEnv.SPECULATORS, "speculators")), recording)
     _executable(
         tmp_path / "bin" / "curl",
@@ -298,6 +305,29 @@ def test_steps_start_a_drafts_served_target_wait_for_its_health_and_stop_it_afte
     assert (tmp_path / "runs" / "draft" / "serve.log").is_file()
     with pytest.raises(ProcessLookupError):
         os.kill(int(calls[served].split()[1]), 0)
+
+
+@pytest.mark.parametrize(
+    ("local_gpus", "seen"),
+    [
+        pytest.param("3,5", {"vllm": "3", "prepare-data": "3,5", "train": "5"}, id="two-gpus"),
+        pytest.param("4", {"vllm": "4", "prepare-data": "4", "train": "4"}, id="one-gpu"),
+    ],
+)
+def test_steps_serve_a_drafts_target_on_the_runs_first_gpu_and_train_the_draft_on_its_last(
+    tmp_path: Path, settings: Settings, monkeypatch: pytest.MonkeyPatch, local_gpus: str, seen: dict[str, str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    plan = _draft(tmp_path, settings, local_gpus=local_gpus)
+    vllm = (
+        '#!/bin/bash\necho "vllm $$" >> {calls}\necho "vllm ${{CUDA_VISIBLE_DEVICES-}}" >> {devices}\nexec sleep 30\n'
+    )
+
+    result, _ = _run_steps(plan, tmp_path, vllm=vllm)
+
+    assert result.returncode == 0, result.stderr
+    recorded = (tmp_path / "devices").read_text(encoding="utf-8").splitlines()
+    assert dict(line.split(" ") for line in recorded) == seen
 
 
 def test_steps_fail_when_a_drafts_served_target_dies_before_it_answers(
