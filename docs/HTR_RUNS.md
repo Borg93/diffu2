@@ -157,7 +157,30 @@ script again resumes after the last finished step.
        GPUs and this server's 64 CPUs (3 API servers, 12 workers) with 8 loader workers. `after_minicpm.sh` still
        launches the draft on the first GPU alone: it is edited once the queue ends, since bash reads a running
        script as it goes; until then its draft step would be refused (two GPUs asked, one named), and it is skipped
-       anyway once `dspark_split.sh` leaves its marker.
+       anyway once `dspark_split.sh` leaves its marker. (Done 20:24: the queue was restarted with that edit.)
+     - **Done 9 Nov 22:10: `Gabriel/diffu-minicpm-ocr-htr-dspark`** (private), the end of epoch 3 (folder `2`), the
+       best on held-out answers. Held out after each epoch: loss 0.168 / 0.132 / 0.115, acceptance length 6.76 / 7.98
+       / 8.65, first guess right 92.5 / 94.2 / 95.1 %, fifteenth 65.4 / 74.1 / 78.6 %. Still improving at the end, by
+       less each epoch: a longer run (5–6 epochs on the same data) is the next step if regions matter.
+     - **Speed and accuracy (`runs/htr/verify/bench_three.sh`, 22:15–22:33),** the first 1,000 test lines and the 200
+       dev regions, each server on its own GPU, prefix caching off, OpenBMB's greedy settings; lines a second:
+
+       | | one at a time | 64 at a time |
+       |---|---|---|
+       | lines: Swedish Lion TrOCR (float32) | 4.31 (batch 1) | 6.54 (batch 32) |
+       | lines: reader alone | 13.28 | 74.61 |
+       | lines: reader + draft | 18.17 (1.37×) | 82.17 (1.10×) |
+       | regions: reader alone | 1.95 | 12.35 |
+       | regions: reader + draft | 4.08 (2.09×) | 13.21 (1.07×) |
+
+       Acceptance length in vLLM 8.72 over all of it (8.75 in `check_dspark.sh`'s 330 asks). Corpus CER with and
+       without the draft within 0.04 points (lines 4.97–5.01 %, regions 4.27–4.31 %); TrOCR 4.48 % on the same
+       lines. With the draft 96–97 % of line and 75–77 % of region readings are identical to the reader's alone, and
+       the reader alone is identical to itself between 1 and 64 at a time just as often (959 of 1,000, 155 of 200):
+       batch-size arithmetic on near-tied tokens, not the draft. The card on the Hub carries both tables, setup and
+       use, and TensorBoard curves (`runs/`); the raw output is in its `eval/`.
+     - **Jev held back for the test:** a placeholder process of ours on GPU 1 kept the queue's gate closed until the
+       test ended (22:33:49); `jev_train` started 22:34:41. marerle's sweep on GPU 2 ended about 21:31.
 5. **Train Jev** (`configs/jev_all.yaml`, both GPUs), then publish it as `Gabriel/diffu-minicpm-ocr-htr-jev`. About
    2.9 M training pairs × 2 epochs ≈ 45,000 steps of 128. The 2-GPU smoke run's ~32 pairs a second puts that at
    roughly 2 to 3 days, about 8 h of it evaluation (about 60,000 dev pairs every 1,000 steps).
