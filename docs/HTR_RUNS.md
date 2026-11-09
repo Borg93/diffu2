@@ -145,6 +145,27 @@ script again resumes after the last finished step.
        peaked at 21.4 GB a GPU in the 2-GPU smoke run at 16 a GPU (32 now). The draft check's two servers take 80 % of
        their GPUs (`--gpu-memory-utilization 0.8`), as vLLM's default 90 % no longer fits beside the 10 GB. The queue's
        draft step now serves on the first GPU and trains on the second, as dspark_split.sh does.
+     - **Done 9 Nov 21:55, published 22:10** (`Gabriel/diffu-minicpm-ocr-htr-dspark`, private): epoch 3 the best on
+       held-out answers. Loss 0.168 / 0.132 / 0.115 and acceptance length 6.76 / 7.98 / 8.65 after epochs 1 / 2 / 3,
+       still rising, but by less each epoch. TensorBoard log from the console log pushed to the repo's `runs/`.
+     - **Three-way test** (`runs/htr/verify/bench_three.sh`, 22:15–22:34; results in `runs/htr/bench/`). One RTX PRO 6000
+       per model, prefix caching off, greedy; 1,000 test lines (the first of test5000) and 200 dev regions; a
+       placeholder process on GPU 1 kept the queue's Jev back until it ended. Read per second:
+
+       | | at a time | TrOCR | reader alone | reader + draft | speedup |
+       |---|---|---|---|---|---|
+       | lines | 1 (TrOCR batch 1) | 4.31 | 13.28 | 18.17 | 1.37× |
+       | lines | 64 (TrOCR batch 32) | 6.54 | 74.61 | 82.17 | 1.10× |
+       | regions | 1 | – | 1.95 | 4.08 | 2.09× |
+       | regions | 64 | – | 12.35 | 13.21 | 1.07× |
+
+       Acceptance length in vLLM: 7.5 on lines, 9.7 on regions. Corpus CER, lines: TrOCR 4.48 %, reader 4.99 %, with
+       the draft 4.97 %; regions: 4.28 % and 4.27 %. 964 of 1,000 line readings are identical with and without the
+       draft, and the reader alone is identical to itself at 1 and 64 at a time for 959: the differences are GPU
+       rounding, not the draft. The draft card on the Hub carries both tables. `bench_three.sh`'s summary printed
+       the acceptance length as nan: vLLM names the counters `*_total` and the script kept the suffix. Computed by hand
+       from its `.counters` files.
+     - **Jev started 22:45** on GPUs 1 and 2 (the queue, as soon as the placeholder ended).
      - **A speculators training stopped by a signal exits 0.** On SIGTERM it saves `output/interrupted` and returns
        success, so `dspark_first.sh` took the stopped launch for a finished one: it wrote `dspark_train.done` and
        then failed to publish (no `checkpoint_best`). The marker was removed at 09:53, so the queue would still
