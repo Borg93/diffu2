@@ -119,4 +119,6 @@ same 55 collections at 80 scans each): the look follows the sample, the hand doe
   queued MOSS job waited on priority (~135,000-137,000, the median of 10,613 jobs pending on `boost_usr_prod`), Slurm
   giving no start time. Its second job's limit lowered to 10 h (8 Nov 19:40; ~2,000 steps at ~13 s, the validations and two saves: ~8 h) so it fits a gap sooner.
 
+- **B published** (9 Nov): the EMA weights at step 7,000 as a new commit of `Gabriel/diffu-moss-r6b` (`9da723d`; its first version stays at `726b9fe`), with a model card (data, recipe, validation by form, the swap test, the limitations) and `tensorboard/` (7,000 steps and 14 validations from `runs/full_b/train_log.jsonl`, converted by `~/diffu_queue/hf_publish/to_tensorboard.py`); `config.json` written as `MossTransformer` (the checkpoint's says `FSDPMossTransformer`, FSDP2's wrapper class, and names a cluster path) and `export.json` without cluster paths. README, INFERENCE.md and the staging Job pin the new commit.
+
 (Filled in as each run is judged: validation loss by form, the swap test, held-out pages beside the scans.)

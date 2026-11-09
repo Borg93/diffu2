@@ -60,13 +60,15 @@ Package names keep the `diffu-` prefix (imports `diffu_page`, ...) so they stay 
 ## Drawing pages
 
 The model is [Gabriel/diffu-moss-r6b](https://huggingface.co/Gabriel/diffu-moss-r6b) (public): our fine-tuned
-MOSS-Image DiT. Its text encoder, tokenizer and VAE are MOSS-Image-Base's. Once:
+MOSS-Image DiT, since 9 Nov 2026 run B (the whole ground truth, 54 collections, 7,000 steps on Leonardo; its first
+version, eight collections, is the repository's revision `726b9fe`). Its text encoder, tokenizer and VAE are
+MOSS-Image-Base's. Once:
 
 ```bash
 uv sync --all-packages
 hf download OpenMOSS-Team/MOSS-Image-Base --revision 85975793d8b3d432f1b6e27f352abaa4c2a4c0d3 \
     --include "text_encoder/*" --include "tokenizer/*" --include "vae/*" --local-dir models/MOSS-Image-Base
-hf download Gabriel/diffu-moss-r6b --revision 2246c79aa65bf5a16409f185671fd2877efdb142 \
+hf download Gabriel/diffu-moss-r6b --revision 9da723d920d580abc8f462117f05c0b6f865c88b \
     --local-dir models/dit/diffu-moss-r6b
 uv run diffu-moss-init --base models/MOSS-Image-Base --transformer models/dit/diffu-moss-r6b --out models/moss-r6b
 ```
@@ -88,6 +90,10 @@ echo '{"steps": 50, "device": "cuda"}' > draw.json  # Blackwell: add "precision"
 uv run diffu-run --jobs run.jsonl --draw-settings draw.json --model models/moss-r6b --out out/run1 --gpus 1
 uv run diffu-run-export --out out/run1 --to out/run1/files
 ```
+
+The model takes the paper, ink and look from the sample page, not its handwriting (its model card). With grey
+microfilm samples add `"reference_guidance_scale": 2` to `draw.json`: a third guidance pass toward the sample, about
+1.5 times the drawing time, that makes their pages grey reliably.
 
 Every field of a page job, with a worked example of each combination (template or layout, new text or its own), the
 draw settings, outputs and running on KubeRay: [docs/INFERENCE.md](docs/INFERENCE.md). What the model does well and

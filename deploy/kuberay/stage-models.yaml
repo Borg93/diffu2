@@ -43,7 +43,7 @@ spec:
             - name: DIT_REPO  # "" when the DiT folder is copied in by hand
               value: Gabriel/diffu-moss-r6b
             - name: DIT_REVISION
-              value: 2246c79aa65bf5a16409f185671fd2877efdb142
+              value: 9da723d920d580abc8f462117f05c0b6f865c88b
             - name: DIT_NAME
               value: diffu-moss-r6b
           command: ["/bin/bash", "-c"]

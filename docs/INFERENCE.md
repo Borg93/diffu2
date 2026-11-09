@@ -57,7 +57,7 @@ The code is `packages/runner` (`diffu-run`, `diffu-run-export`); the drawing its
 | Artifact | What it is | Version | Size | Staged at (example) |
 |---|---|---|---|---|
 | MOSS-Image-Base, `text_encoder/` `tokenizer/` `vae/` | the frozen Qwen3.5-9B text encoder, its tokenizer and the FLUX.2-class VAE that every MOSS-Image model shares | `OpenMOSS-Team/MOSS-Image-Base` at revision `85975793d8b3d432f1b6e27f352abaa4c2a4c0d3` | 16.8 GB + 0.02 GB + 0.25 GB | `/models/MOSS-Image-Base` |
-| The fine-tuned DiT | our MOSS-Image transformer trained to draw from a sample page: `config.json`, `diffusion_pytorch_model.safetensors` (5.1 B parameters, bf16) and `export.json` (it says the DiT takes a sample image) | [`Gabriel/diffu-moss-r6b`](https://huggingface.co/Gabriel/diffu-moss-r6b) at commit `2246c79aa65bf5a16409f185671fd2877efdb142` (public), or a checkpoint folder you are handed | 10.2 GB | `/models/dit/diffu-moss-r6b` |
+| The fine-tuned DiT | our MOSS-Image transformer trained to draw from a sample page: `config.json`, `diffusion_pytorch_model.safetensors` (5.1 B parameters, bf16) and `export.json` (it says the DiT takes a sample image) | [`Gabriel/diffu-moss-r6b`](https://huggingface.co/Gabriel/diffu-moss-r6b) at commit `9da723d920d580abc8f462117f05c0b6f865c88b` (public), or a checkpoint folder you are handed | 10.2 GB | `/models/dit/diffu-moss-r6b` |
 | The handwriting judge | the Swedish TrOCR model every drawn line is read back with | `Riksarkivet/trocr-base-handwritten-hist-swe-2` at revision `aa79fcb1850bf3155ebc442570d6c6bfc0ac8100` | 1.5 GB | `/models/trocr-base-handwritten-hist-swe-2` |
 | The model directory | a 2 KB `modular_model_index.json` naming where the text encoder, tokenizer, VAE and DiT are (written by `diffu-moss-init`) | written on the cluster | - | `/models/moss-<dit-name>` |
 | A hand's adapter (optional) | a PEFT LoRA adapter of Base's own DiT, one collection's handwriting ("A hand's adapter", below) | `Gabriel/diffu-moss-hand-<hand>`, four, public | 0.16 GB | `/models/adapters/<hand>` |
@@ -90,7 +90,7 @@ mounts the claim (`aws s3 sync s3://<bucket>/models/ /models/`, `rclone copy <re
 model directory as in "The model directory" below.
 
 **C. A model repository.** The published DiT is `Gabriel/diffu-moss-r6b`, public, at commit
-`2246c79aa65bf5a16409f185671fd2877efdb142`: the staging Job fetches it as it is set (`DIT_NAME` `diffu-moss-r6b`, so
+`9da723d920d580abc8f462117f05c0b6f865c88b`: the staging Job fetches it as it is set (`DIT_NAME` `diffu-moss-r6b`, so
 the model directory is `/models/moss-diffu-moss-r6b`), with no token. A DiT of your own is uploaded once by the person
 who trained it:
 
@@ -576,10 +576,10 @@ one after the other (the two models are never in memory together), with PyTorch'
 two need not be bit for bit: on a GPU SGLang loads its own Qwen3.5 text encoder (on CPU it falls back to
 transformers', which ours runs), and its fused kernels take over some of the DiT's elementwise operations.
 
-Measured on the DGX Spark (GB10), 2 Nov 2026, with `Gabriel/diffu-moss-r6b` on a held-out court-record page at
-784 x 1280 px, 50 steps, with its sample page: the two pages differ by at most 0.00054 in a pixel (on 0-1, about a
-seventh of one 8-bit level; PSNR 88.7 dB) and look the same; not bit for bit, as expected. SGLang drew at 2.76 s a step
-(eager, bfloat16), its memory peaking at 29 GB.
+Measured on the DGX Spark (GB10), 2 Nov 2026, with `Gabriel/diffu-moss-r6b` (its first version, revision `726b9fe`) on a
+held-out court-record page at 784 x 1280 px, 50 steps, with its sample page: the two pages differ by at most 0.00054 in
+a pixel (on 0-1, about a seventh of one 8-bit level; PSNR 88.7 dB) and look the same; not bit for bit, as expected.
+SGLang drew at 2.76 s a step (eager, bfloat16), its memory peaking at 29 GB.
 
 **Ray Serve and vLLM-Omni.** Ray Serve LLM's SGLang server serves chat and completion models over an OpenAI-compatible
 API, not image generation; it is the route if a reading model (section 14) is ever served online. vLLM-Omni serves
