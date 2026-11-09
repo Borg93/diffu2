@@ -46,8 +46,9 @@ GT=/mnt/work/GT-Lejonet_HTR_202602 WORKERS=56 GPUS=1,2 bash packages/htr_train/l
 - **The draft's responses:** meanwhile, on the second GPU, the same model answers 250,000 training lines and 50,000
   training regions, each a seeded draw: the DSpark draft's responses. A draw of the two together would hold only about
   16,000 regions, and regions' long answers are where a draft speeds decoding up.
-- **Jev, then the draft:** `configs/jev_all.yaml` trains on both GPUs, then `configs/dspark_all.yaml` on the first
-  (`DSPARK=0` stops before the draft).
+- **Jev, then the draft:** `configs/jev_all.yaml` trains on both GPUs, then `configs/dspark_all.yaml` serves the reader on the
+  first and trains the draft on the second (`DSPARK=0` stops before the draft). A GPU step waits until none of our processes
+  holds the GPUs and each has `NEED_GB` (60) free; another user's small job there does not hold it back.
 - **Each model to the Hub:** `publish_model.sh` uploads each model as soon as it is made. The reader goes up after its
   scoring as `Gabriel/diffu-minicpm-ocr-htr` (`READER_REPO`), and Jev and the draft after their training as its
   `-jev` and `-dspark`.

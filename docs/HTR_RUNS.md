@@ -138,6 +138,13 @@ script again resumes after the last finished step.
      - **The loops over 4,097 tokens are dropped.** The reader's looping answers (about 40, at the 4,096-token cap) with
        their image tokens exceed vLLM's `--max-model-len` 4,097: vLLM refuses them ("Input length (4266) exceeds"),
        and the trainer drops each after its retries (`failed_samples=1`), training on the rest.
+     - **Another user's job on GPU 2 (9 Nov 18:33).** marerle started a 10 GB sampling sweep on GPU 2 beside our vLLM
+       (training 3.3 → 3.1 steps a second). The queue's `gpus_free` counted every process on GPUs 1,2, so Jev would
+       have waited for it. At 20:24 the waiting queue was stopped by PID and started again (its `.done` markers skip
+       what is done) with `gpus_free` counting only our processes and asking `NEED_GB` (60) free on each GPU; Jev
+       peaked at 21.4 GB a GPU in the 2-GPU smoke run at 16 a GPU (32 now). The draft check's two servers take 80 % of
+       their GPUs (`--gpu-memory-utilization 0.8`), as vLLM's default 90 % no longer fits beside the 10 GB. The queue's
+       draft step now serves on the first GPU and trains on the second, as dspark_split.sh does.
      - **A speculators training stopped by a signal exits 0.** On SIGTERM it saves `output/interrupted` and returns
        success, so `dspark_first.sh` took the stopped launch for a finished one: it wrote `dspark_train.done` and
        then failed to publish (no `checkpoint_best`). The marker was removed at 09:53, so the queue would still

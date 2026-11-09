@@ -11,8 +11,9 @@
 #     On the second, meanwhile, vLLM serving it as the DSpark run serves its target (htr-train serve-target): its
 #     answers to 250,000 training lines and 50,000 training regions (each a seeded draw), the draft's responses.
 #  3. Jev trained on both GPUs (configs/jev_all.yaml; if it stops, started again up to $RETRIES times, resuming from
-#     its newest whole checkpoint), then the DSpark draft on the first (configs/dspark_all.yaml; DSPARK=0 stops
-#     before it).
+#     its newest whole checkpoint), then the DSpark draft on both, vLLM on the first and the trainer on the second
+#     (configs/dspark_all.yaml; DSPARK=0 stops before it). A GPU step waits until none of our processes is on $GPUS
+#     and each has $NEED_GB free: another user's small job there does not hold it back.
 #  4. Each model to the Hugging Face Hub once it is made (publish_model.sh, its card from model_cards/): the reader
 #     after its scoring as $READER_REPO, Jev and the draft after their training as $READER_REPO-jev and -dspark; a new
 #     repo private unless HF_PUBLIC=1. A failed upload is logged and the pipeline goes on; run again to retry it.
@@ -27,6 +28,7 @@ RUN=runs/htr/minicpm-all
 SPECS=packages/htr_train/lion_data_prep/configs
 RUNS=${HTR_TRAIN_RUNS:-runs/htr}
 RETRIES=${RETRIES:-10}
+NEED_GB=${NEED_GB:-60}  # free on each GPU before a GPU step starts (jev_all.yaml's need_gb)
 E=packages/htr_train/envs/minicpm/.venv/bin/htr-eval
 V=packages/htr_train/envs/vllm/.venv/bin/vllm
 TROCR_OOD=runs/htr/eval/ood_trocr_greedy.jsonl  # the Swedish Lion's greedy readings (runs/htr/eval_trocr.sh)
@@ -49,13 +51,18 @@ step() {  # step NAME CMD...: run once, stop on failure
   if "$@"; then touch "$M/$name.done"; log "done $name"; else log "FAILED $name"; return 1; fi
 }
 done_all() { local name; for name; do [ -f "$M/$name.done" ] || return 1; done; }
-gpus_free() {  # until no process computes on the GPUs $GPUS names
-  local uuids busy
+gpus_free() {  # until none of our processes computes on the GPUs $GPUS names and each has $NEED_GB free. Another
+  # user's job there does not hold the queue back unless it leaves too little memory for the next step
+  local uuids busy short
   uuids=$(nvidia-smi --query-gpu=index,uuid --format=csv,noheader | awk -F', ' -v want=",$HTR_TRAIN_LOCAL_GPUS," \
     'index(want, "," $1 ",") {print $2}')
-  while busy=$(nvidia-smi --query-compute-apps=gpu_uuid --format=csv,noheader | grep -cFf <(echo "$uuids")); \
-        [ "$busy" -gt 0 ]; do
-    log "GPUs $HTR_TRAIN_LOCAL_GPUS busy ($busy processes): waiting"; sleep 60
+  while busy=$(nvidia-smi --query-compute-apps=gpu_uuid,pid --format=csv,noheader | grep -Ff <(echo "$uuids") \
+          | awk -F', ' '{print $2}' | xargs -r ps -o user= -p | grep -cx "$USER"); \
+        short=$(nvidia-smi --query-gpu=index,memory.free --format=csv,noheader,nounits \
+          | awk -F', ' -v want=",$HTR_TRAIN_LOCAL_GPUS," -v need=$((NEED_GB * 1024)) \
+            'index(want, "," $1 ",") && $2 < need {n++} END {print n + 0}'); \
+        [ "$busy" -gt 0 ] || [ "$short" -gt 0 ]; do
+    log "GPUs $HTR_TRAIN_LOCAL_GPUS: $busy of our processes, $short with under $NEED_GB GB free: waiting"; sleep 60
   done
 }
 trained() {  # trained SPEC NAME: SPEC launched as run NAME, or that run started again if it was launched before. A
@@ -241,6 +248,5 @@ wait $SECOND_JOB || { log "the draft's responses failed: see $O/second_gpu.log";
 gpus_free; step jev_train trained $SPECS/jev_all.yaml jev-all || exit 1
 published publish_jev
 [ "${DSPARK:-1}" = 0 ] && { log "DSPARK=0: stopping before the draft"; exit 0; }
-gpus_free; step dspark_train env HTR_TRAIN_LOCAL_GPUS=$FIRST uv run htr-train launch $SPECS/dspark_all.yaml --where local \
-  || exit 1
+gpus_free; step dspark_train uv run htr-train launch $SPECS/dspark_all.yaml --where local || exit 1
 published publish_dspark
