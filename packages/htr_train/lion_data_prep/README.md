@@ -41,7 +41,8 @@ GT=/mnt/work/GT-Lejonet_HTR_202602 WORKERS=56 GPUS=1,2 bash packages/htr_train/l
   the Swedish Lion TrOCR's greedy readings of the same lines in `runs/htr/final/result.txt`: as read, and with each
   reading's looping tail cut (`htr-eval cer`).
 - **Jev's reads and pairs:** the same model reads 100,000 training lines and every test line, Jev's real errors
-  beside its rule ones. Jev's pairs, dev split and test pairs follow on the CPU, about 4.5 h for the training lines.
+  beside its rule ones. Jev's pairs, dev split and test pairs follow on the CPU, about 10 h for the training lines
+  (about 148,000 an hour).
 - **The draft's responses:** meanwhile, on the second GPU, the same model answers 250,000 training lines and 50,000
   training regions, each a seeded draw: the DSpark draft's responses. A draw of the two together would hold only about
   16,000 regions, and regions' long answers are where a draft speeds decoding up.

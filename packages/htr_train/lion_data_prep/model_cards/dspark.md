@@ -24,7 +24,7 @@ verify, so the reader decodes faster and, decoding greedily, writes the same tex
 
 - **Data:** the reader's own answers to 250,000 training lines and 50,000 training regions of GT-Lejonet (February
   2026), each a seeded draw.
-- **Recipe:** 3 online epochs, with vLLM serving the reader beside the trainer on one RTX PRO 6000 Blackwell.
+- **Recipe:** 3 online epochs, with vLLM serving the reader on one RTX PRO 6000 Blackwell and the trainer on another.
 - **Checkpoint:** epoch @STEP@, the best on held-out answers.
 
 The files are in the [speculators](https://github.com/vllm-project/speculators) format (`config.json`, its `config.py`

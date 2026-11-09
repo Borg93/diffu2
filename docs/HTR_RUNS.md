@@ -68,13 +68,38 @@ script again resumes after the last finished step.
      Jev on 2,000 test pairs (AUROC, renders redrawn), the draft served beside the reader against the reader alone
      (identical readings, spec_decode counters, speed). Results in `runs/htr/verify/check_*.log`.
 3. **Jev's sets.**
-   - On the first GPU, the reader reads 100,000 training lines and every test line; the pairs follow on the CPU (about
-     4.5 h).
+   - On the first GPU, the reader reads 100,000 training lines and every test line; the pairs follow on the CPU. They
+     were estimated at 4.5 h and took about 10 h: about 148,000 lines an hour, one process writing a crop and two
+     renders a line into folders of millions of files.
    - Meanwhile, on the second GPU, the reader answers 250,000 training lines and 50,000 training regions for the DSpark
-     draft (`runs/htr/final/second_gpu.log`).
-4. **Train Jev** (`configs/jev_all.yaml`, both GPUs), then publish it as `Gabriel/diffu-minicpm-ocr-htr-jev`.
-5. **Train the DSpark draft** (`configs/dspark_all.yaml`, first GPU), then publish it as
-   `Gabriel/diffu-minicpm-ocr-htr-dspark`.
+     draft (`runs/htr/final/second_gpu.log`). **Done 9 Nov 00:15.**
+4. **The DSpark draft, moved before Jev (9 Nov 07:32, at the user's request).** Its answers were ready at 00:15 and
+   both GPUs sat idle while Jev's pairs built on the CPU. `runs/htr/dspark_first.sh` (tmux `htr:dspark`, log
+   `runs/htr/dspark_first.log`) runs the queue's own two steps: `configs/dspark_all.yaml` on GPU 1, then publish as
+   `Gabriel/diffu-minicpm-ocr-htr-dspark`. It leaves the queue's markers, so the queue skips both after Jev. A small
+   process holds GPU 2 until the published draft has been checked with `check_dspark.sh`, which needs both GPUs.
+   Until then the queue's wait for free GPUs keeps Jev back.
+   - **Its training moved to two GPUs (9 Nov, `runs/htr/dspark_split.sh`, tmux `htr:dsparksplit`).** The run's
+     own commands, timed on 2,400 of its samples on the idle GPU 2 (`runs/htr/dspark-speedtest/times.log`):
+
+     | Layout | Prepare 2,400 | Train 390 steps |
+     |---|---|---|
+     | As configured: vLLM (1 API server) and the trainer on one GPU, 12 preparation workers, 2 loader workers | 90 s | 153 s |
+     | Same GPU, 4 API servers, 48 preparation workers, 8 loader workers | 34 s | 153 s |
+     | vLLM on GPU 2 (4 API servers), the trainer on GPU 1, 8 loader workers | | 100 s |
+
+     - Preparation is limited by vLLM's single API server, which formats each sample. Training is limited by the
+       GPU the trainer shares with vLLM: alone on its GPU, the trainer keeps it ~94 % busy.
+     - So 3 epochs take about 10.5 h instead of about 16 h.
+     - The script waits for the run's preparation to save its data. It then starts vLLM on GPU 2, stops the run's
+       training and vLLM on GPU 1, and trains on GPU 1 into `runs/htr/dspark-all/output`. Data, recipe and epochs
+       are unchanged. `dspark_first.sh` then logs the stopped launch as failed, and this script does its remaining
+       steps: the markers, the publish and the check.
+     - The run's preparation itself was left alone: it was 45 % done, and starting it again with more workers
+       would have saved about 20 minutes.
+5. **Train Jev** (`configs/jev_all.yaml`, both GPUs), then publish it as `Gabriel/diffu-minicpm-ocr-htr-jev`. About
+   2.9 M training pairs × 2 epochs ≈ 45,000 steps of 128. The 2-GPU smoke run's ~32 pairs a second puts that at
+   roughly 2 to 3 days, about 8 h of it evaluation (about 60,000 dev pairs every 1,000 steps).
 
 Controls:
 - A file `runs/htr/HOLD` holds the trainings back.
