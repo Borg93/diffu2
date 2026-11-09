@@ -131,8 +131,12 @@ script again resumes after the last finished step.
        - `runs/htr/verify/check_dspark.sh` now follows their evaluation rules: prefix caching off on both servers,
          acceptance length (1 + accepted / drafts), and a second pass 64 at a time beside one at a time.
      - **Switched 9 Nov 09:51.** Preparation saved its data at 09:50 (two Arrow shards and the token counts); vLLM came
-       up on GPU 2 at 09:51:22; the trainer runs on GPU 1 at about 3.9 steps a second, as in the test (about 48,700
-       steps an epoch, so 3 epochs end about 20:45).
+       up on GPU 2 at 09:51:22. The trainer runs on GPU 1, 96 % busy, at about 2.8 steps a second, about 20 samples a
+       second as in the test: the whole set packs fuller (573 tokens a sample on average, about 7 to a 4,096-token step,
+       against 5.5 in the test's 2,400), so an epoch is about 37,800 steps, 3.7 h, and 3 epochs end about 21:15.
+     - **The loops over 4,097 tokens are dropped.** The reader's looping answers (about 40, at the 4,096-token cap) with
+       their image tokens exceed vLLM's `--max-model-len` 4,097: vLLM refuses them ("Input length (4266) exceeds"),
+       and the trainer drops each after its retries (`failed_samples=1`), training on the rest.
      - **A speculators training stopped by a signal exits 0.** On SIGTERM it saves `output/interrupted` and returns
        success, so `dspark_first.sh` took the stopped launch for a finished one: it wrote `dspark_train.done` and
        then failed to publish (no `checkpoint_best`). The marker was removed at 09:53, so the queue would still
