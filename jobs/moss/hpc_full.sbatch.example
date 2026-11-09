@@ -1,8 +1,9 @@
 #!/bin/bash
 # MOSS-Image's full fine-tune over several GPUs on a Slurm cluster: FSDP2 (diffu_moss.train.distributed) launched by
 # torchrun, one node or several. Set for Leonardo's Booster (partition, QOS, 4 A100 64 GB a node); the account comes
-# from SBATCH_ACCOUNT and the paths from the environment (REPO, MOSS_BASE, CACHE, OUT). The debug QOS allows a short
-# walltime only: submit the smoke test with --time=00:30:00 on the command line. docs/MOSS_HPC.md is the runbook.
+# from SBATCH_ACCOUNT and the paths from the environment (REPO, MOSS_BASE, CACHE, OUT; TRANSFORMER to start from a
+# checkpoint instead of Base). The debug QOS allows a short walltime only: submit the smoke test with
+# --time=00:30:00 on the command line. docs/MOSS_HPC.md is the runbook.
 # Tested on CPU only (gloo, world size 2, tiny models): no run on real GPUs yet.
 #
 # Memory, estimated per GPU before any run (one sample a micro-batch, a 1 MP target and a 0.5 MP reference, ~2k prompt
@@ -57,9 +58,12 @@ PY="$REPO/.venv/bin/python"
 HEAD_NODE="$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)"
 export OMP_NUM_THREADS=8
 
-options=(--full --transformer "$BASE/transformer" --cache "$CACHE" --out "$OUT" --steps "$STEPS"
+# the DiT a run starts from: Base, or a checkpoint's transformer/ (its weights, a fresh optimizer and warmup)
+TRANSFORMER="${TRANSFORMER:-$BASE/transformer}"
+options=(--full --transformer "$TRANSFORMER" --cache "$CACHE" --out "$OUT" --steps "$STEPS"
     --samples-per-step "$SAMPLES_PER_STEP" --save-every "$SAVE_EVERY" --val-every "$VAL_EVERY" --save-state)
-[ -n "$VAL_CACHE" ] && options+=(--val-cache "$VAL_CACHE")
+# a validation cache only once it is whole (a run queued behind its cache job may find none)
+[ -n "$VAL_CACHE" ] && [ -f "$VAL_CACHE/cache.json" ] && options+=(--val-cache "$VAL_CACHE")
 [ -n "$EMA" ] && options+=(--ema "$EMA")
 [ "$GRADIENT_CHECKPOINTING" = 0 ] && options+=(--no-gradient-checkpointing)
 [ "$UNCHECKPOINTED_BLOCKS" != 0 ] && options+=(--uncheckpointed-blocks "$UNCHECKPOINTED_BLOCKS")
