@@ -130,6 +130,15 @@ script again resumes after the last finished step.
        - "Long prompts with short answers may leave little decoding time to save" (RAG page): our lines.
        - `runs/htr/verify/check_dspark.sh` now follows their evaluation rules: prefix caching off on both servers,
          acceptance length (1 + accepted / drafts), and a second pass 64 at a time beside one at a time.
+     - **Switched 9 Nov 09:51.** Preparation saved its data at 09:50 (two Arrow shards and the token counts); vLLM came
+       up on GPU 2 at 09:51:22; the trainer runs on GPU 1 at about 3.9 steps a second, as in the test (about 48,700
+       steps an epoch, so 3 epochs end about 20:45).
+     - **A speculators training stopped by a signal exits 0.** On SIGTERM it saves `output/interrupted` and returns
+       success, so `dspark_first.sh` took the stopped launch for a finished one: it wrote `dspark_train.done` and
+       then failed to publish (no `checkpoint_best`). The marker was removed at 09:53, so the queue would still
+       train the draft if this run failed. A wrapper cannot tell a signalled stop from a finished training by its
+       exit code: never stop the trainer by signal while `dspark_split.sh` waits on it, since it would go on to
+       publish. A GPU hang raises inside the trainer and exits non-zero, which its retry loop catches.
      - **htr-train's `dspark` job now renders this layout** (9 Nov): vLLM on the run's first GPU and the trainer on its
        last (one GPU: both on it), vLLM's front end and prepare-data's workers from the run's CPU budget as
        `launch_vllm.py` computes them, a checkpoint every tenth of an epoch. `configs/dspark_all.yaml` asks for two
