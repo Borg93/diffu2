@@ -104,6 +104,7 @@ same 55 collections at 80 scans each): the look follows the sample, the hand doe
   8 Nov 08:21: N, A′ and B's second job run it; B's first job started on the old code. The stall fixes (3ac313c) wait
   for their own GPU test.
 - 9 Nov, Leonardo's checkout from `e404761` to `82cd48b` (the stall fixes `3ac313c` and the learning-rate wind-down; the local cu126 edit of `pyproject.toml` and `uv.lock` kept as a patch, `moss/cu126_local.patch`), checked as e404761 was (job 63992658, recipe B's cache, 2 nodes, 30 steps, EMA): 10.08 s a step against 11.01 (-8.4 %), 20.1 GB a GPU as before, losses at steps 10, 20, 30 0.751355, 0.653548, 0.642198 against 0.751792, 0.654103, 0.642270 (a mean difference of 3.5e-4, as two runs of the same code differ): the same training, faster. The 2 MP run trains on it.
+- 9 Nov, 2 MP on 8 A100s (job 63994902: a 96-entry probe cache of the 2 MP set, B's options; 30 steps of 16 from B's step 7,000, EMA 0.999, every block checkpointed, the 82cd48b code): **18.36 s a step** (16.7-20.7), **25.0 GB a GPU** at most (1 MP: 10.1 s, 20.1 GB); losses 0.660, 0.588, 0.535, 0.635 at steps 1, 10, 20, 30. One pass of the 2 MP set (143,375 rows, 8,961 steps) ~45.7 h, three ~137 h (~8,800 CPU hours). Memory is not the limit: the step is compute-bound (as profiled at 1 MP), ~39 GB a GPU free for checkpointing fewer blocks.
 
 ## Results
 
