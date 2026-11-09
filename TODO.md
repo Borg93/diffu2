@@ -42,6 +42,10 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
 
 ## MOSS-Image drawing
 
+- [ ] A full fine-tune's checkpoint saves its DiT's `config.json` as `FSDPMossTransformer` (FSDP2's wrapper class)
+      with `_name_or_path` the cluster's Base path; it should say `MossTransformer` and name no path (fixed by hand for
+      the published B, 9 Nov). A converter of `train_log.jsonl` to TensorBoard for model cards lives in the
+      scratch queue (`hf_publish/to_tensorboard.py`); into the repo when a second model is published.
 - [ ] A content-mix model drawn without a sample should be prompted in its generic form (nothing named); diffu-generate
       captions a page drawn without a sample in its named style, and has no option for the generic form yet.
 - [ ] A legible model draws a window only from a sample given with its line boxes (a job's `reference.lines`,
