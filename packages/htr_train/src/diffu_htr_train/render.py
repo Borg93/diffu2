@@ -26,12 +26,14 @@ from diffu_htr_train.jobs import (
     LightOnOCR3Job,
     MiniCPMOCRJob,
     ModelRef,
+    NemotronParseJob,
     RunSpec,
     SwiftJob,
     SwiftSFT,
     ToolEnv,
     UnlimitedOCR2Job,
 )
+from diffu_htr_train.nemotron_parse.options import TrainerOptions
 
 type Flag = tuple[str, object]  # a flag and its value; None leaves the flag out
 
@@ -488,6 +490,86 @@ def render_dspark(job: DSparkJob, spec: RunSpec, paths: RunPaths) -> list[Comman
     ]
 
 
+def nemotron_parse_options(job: NemotronParseJob, data: DataRef) -> TrainerOptions:
+    """Our trainer's own options for ``job`` (passed as one JSON): the model (a local folder by its absolute path, a
+    Hub repo at its commit) and the sets by their absolute paths."""
+    model = str(Path(job.model.repo).expanduser().resolve()) if job.model.is_local else job.model.repo
+    return TrainerOptions(
+        model=model,
+        revision=job.model.revision,
+        train=[part.path.resolve() for part in data.train],
+        dev=data.dev.resolve() if data.dev else None,
+        freeze_vision_encoder=job.freeze_vision_encoder,
+        freeze_adapter=job.freeze_adapter,
+        coordinate_weight=job.coordinate_weight,
+        max_target_tokens=job.max_target_tokens,
+        activation_checkpointing=job.activation_checkpointing,
+    )
+
+
+def render_nemotron_parse(job: NemotronParseJob, spec: RunSpec, paths: RunPaths) -> list[Command]:
+    """Nemotron 3.5 Parse trained by our trainer (``htr-nemotron-parse``), a process a GPU under ``torchrun
+    --standalone`` (its own rendezvous on a free port, so it never meets another run's on the server); its options as
+    JSON, then transformers' TrainingArguments, each set field one flag (``warmup_ratio`` as ``--warmup_steps``, which
+    reads a fraction below 1 as the ratio: ``warmup_ratio`` is deprecated in transformers 5.14). It resumes from its
+    output folder when run again, unless its checkpoints hold the model only."""
+    data = spec.data
+    if data is None:
+        raise ValueError(f"{spec.name} trains on no data")
+    accumulation = job.global_batch // (spec.resources.gpus * job.per_device_batch)
+    best = job.best_by_eval_loss or None
+    trackio = job.report_to == "trackio"
+    argv = [
+        paths.tool(ToolEnv.NEMOTRON_PARSE, "torchrun"),
+        "--standalone",
+        "--nproc-per-node",
+        str(spec.resources.gpus_per_node),
+        paths.tool(ToolEnv.NEMOTRON_PARSE, "htr-nemotron-parse"),
+        "--options",
+        nemotron_parse_options(job, data).model_dump_json(),
+        *flags(
+            [
+                ("--output_dir", paths.output.resolve()),
+                ("--bf16", job.bf16),
+                ("--num_train_epochs", job.epochs),
+                ("--max_steps", job.max_steps),
+                ("--per_device_train_batch_size", job.per_device_batch),
+                ("--gradient_accumulation_steps", accumulation),
+                ("--learning_rate", job.learning_rate),
+                ("--lr_scheduler_type", job.lr_scheduler),
+                ("--warmup_steps", job.warmup_ratio),
+                ("--optim", job.optim),
+                ("--adam_beta1", job.adam_beta1),
+                ("--adam_beta2", job.adam_beta2),
+                ("--adam_epsilon", job.adam_epsilon),
+                ("--weight_decay", job.weight_decay),
+                ("--max_grad_norm", job.max_grad_norm),
+                ("--seed", job.seed),
+                ("--data_seed", job.data_seed),
+                ("--dataloader_num_workers", job.dataloader_num_workers),
+                ("--eval_strategy", job.eval_strategy),
+                ("--eval_steps", job.eval_steps),
+                ("--save_strategy", job.save_strategy),
+                ("--save_steps", job.save_steps),
+                ("--save_total_limit", job.save_total_limit),
+                ("--save_only_model", job.save_only_model),
+                ("--load_best_model_at_end", best),
+                ("--metric_for_best_model", "eval_loss" if best else None),
+                ("--greater_is_better", False if best else None),
+                ("--per_device_eval_batch_size", job.per_device_eval_batch_size),
+                ("--logging_steps", job.logging_steps),
+                ("--ddp_timeout", job.ddp_timeout),
+                ("--ddp_find_unused_parameters", job.ddp_find_unused_parameters),
+                ("--report_to", job.report_to),
+                ("--project", paths.trackio_project if trackio else None),
+                ("--run_name", spec.name if trackio else None),
+            ]
+        ),
+    ]
+    resume = None if job.save_only_model else paths.output.resolve()
+    return [Command(env=ToolEnv.NEMOTRON_PARSE, argv=argv, resume_from=resume)]
+
+
 def render(spec: RunSpec, paths: RunPaths) -> list[Command]:
     """The processes ``spec`` starts, in order, by its job's renderer."""
     job = spec.job
@@ -502,5 +584,7 @@ def render(spec: RunSpec, paths: RunPaths) -> list[Command]:
             return render_lightonocr_3(job, spec, paths)
         case DSparkJob():
             return render_dspark(job, spec, paths)
+        case NemotronParseJob():
+            return render_nemotron_parse(job, spec, paths)
         case _:
             assert_never(job)

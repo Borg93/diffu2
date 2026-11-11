@@ -1,0 +1,38 @@
+# nemotron-parse-all's setup in small on two GPUs (--where local): 20 steps of 16 pages, a checkpoint at steps 10 and 20
+# and an evaluation of the dev pages at 20, to measure speed and peak memory first (and, by running its command.sh
+# again after step 10, a resume). Reads the full page sets: its trainer tokenizes every answer once at the start.
+name: smoke-nemotron-parse-2gpu
+description: "smoke: whole pages, full fine-tune, 4 a GPU, activations recomputed, 2 GPUs"
+job:
+  kind: nemotron-parse
+  model: {repo: nvidia/Nemotron-3.5-Parse, revision: 72ad4d71dd827135ee581502363e14748008900a}
+  freeze_vision_encoder: false
+  freeze_adapter: false
+  coordinate_weight: 10.0
+  activation_checkpointing: true
+  bf16: true
+  learning_rate: 5.0e-5
+  max_steps: 20
+  global_batch: 16
+  per_device_batch: 4
+  lr_scheduler: cosine
+  warmup_ratio: 0.05
+  weight_decay: 0.01
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  max_grad_norm: 1.0
+  seed: 42
+  data_seed: 42
+  dataloader_num_workers: 4
+  eval_strategy: steps
+  eval_steps: 20
+  save_strategy: steps
+  save_steps: 10
+  save_total_limit: 2
+  per_device_eval_batch_size: 4
+  logging_steps: 1
+  ddp_find_unused_parameters: false
+data:
+  train: [{path: data/htr/nemotron_parse_pages.train.jsonl}]
+  dev: data/htr/nemotron_parse_pages.dev.jsonl
+resources: {gpus_per_node: 2, need_gb: 60, hours: 1}

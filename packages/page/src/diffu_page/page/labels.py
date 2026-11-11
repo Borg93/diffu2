@@ -551,6 +551,11 @@ class PageElement(BaseModel):
             return f"## {' '.join(line.text for line in self.lines)}"
         return "\n".join(line.text for line in self.lines)
 
+    @property
+    def grid(self) -> TableGrid:
+        """A table's cells by row and column, each its lines' texts one under the other (None: nothing written)."""
+        return _table_grid(self.lines)
+
 
 class PageElements(BaseModel):
     """A page as the page readers read it (``<name>.elements.json``): its image, its size (px) and its elements in

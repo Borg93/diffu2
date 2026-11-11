@@ -2,12 +2,12 @@
 
 Training our page and line readers from run specs: Unlimited-OCR 2 (the page reader; LoRA or full), MiniCPM-OCR 1.0
 (the line and region recogniser; OpenBMB's full recipe), MiniCPM-OCR-Jev (the proof-reader that scores whether a crop
-shows a text) and a DSpark draft for our fine-tuned MiniCPM-OCR; LightOnOCR-3-4B, a second page reader (its pages
-grounded as LightOn's client asks for them: [lion_data_prep/README.md](lion_data_prep/README.md)). The tools
-(ms-swift, speculators, vLLM) each run in their own environment under `envs/`; this package is a light workspace
-member that checks a spec, renders the tools'
-exact commands, launches them on the Spark (under `jobs/spark_guard.sh`) or on Slurm, and builds the sets they train
-on. The design, with every recipe and pin cited, and the hardware estimates: [docs/HTR_TRAIN.md](../../docs/HTR_TRAIN.md).
+shows a text), a DSpark draft for our fine-tuned MiniCPM-OCR, and two more page readers: LightOnOCR-3-4B (its pages
+grounded as LightOn's client asks for them: [lion_data_prep/README.md](lion_data_prep/README.md)) and Nemotron 3.5 Parse
+(by our own trainer: no tool has the model). The tools (ms-swift, speculators, vLLM, our `htr-nemotron-parse`) each run
+in their own environment under `envs/`; this package is a light workspace member that checks a spec, renders the
+tools' exact commands, launches them on the Spark (under `jobs/spark_guard.sh`) or on Slurm, and builds the sets they
+train on. The design, with every recipe and pin cited, and the hardware estimates: [docs/HTR_TRAIN.md](../../docs/HTR_TRAIN.md).
 The runs on all of GT-Lejonet (what runs, what is queued, the results against the TrOCR baseline):
 [docs/HTR_RUNS.md](../../docs/HTR_RUNS.md).
 
@@ -22,12 +22,14 @@ each other and with the workspace's (transformers 5.22 vs 4.52.1 vs speculators'
 | `envs/uocr2` | Unlimited-OCR 2 | Python 3.12, torch 2.14.1, ms-swift @ `ef4953a4`, transformers 4.52.1, easydict, addict, peft < 0.21, datasets < 4.8.5, trackio; group `multi-gpu`. Its remote code runs from `baidu/Unlimited-OCR-2@0480966938291445591f69f08a13b041c073a96a` only |
 | `envs/speculators` | the DSpark draft | Python 3.12, speculators @ `560f0465` (0.9.0 + the prepare-data render-route fix), torch 2.14.1, transformers overridden to 5.22.1 (speculators pins <= 5.19.0; `minicpm_ocr` is native from 5.21) |
 | `envs/vllm` | serving the target for the draft | vLLM at OpenBMB's pin `fa3b9d13` from vLLM's own prebuilt wheels (linux aarch64 and x86_64), transformers overridden to 5.22.1; built and run on the Spark (GB10) |
+| `envs/nemotron_parse` | Nemotron 3.5 Parse (`htr-nemotron-parse`) | Python 3.12, NVIDIA's validated Transformers stack for it (its `reference/parse_3_5/transformers.constraints.txt`): torch 2.11.0 (cu130), transformers 5.14.1, timm 1.0.22, accelerate 1.12.0, Pillow 12.2.0, beautifulsoup4 4.13.3; trackio. Its remote code runs from `nvidia/Nemotron-3.5-Parse@72ad4d71dd827135ee581502363e14748008900a` only |
 
 ```bash
 uv sync --project packages/htr_train/envs/minicpm             # one at a time; --group multi-gpu on a cluster
 uv sync --project packages/htr_train/envs/uocr2
 uv sync --project packages/htr_train/envs/speculators
 uv sync --project packages/htr_train/envs/vllm
+uv sync --project packages/htr_train/envs/nemotron_parse
 ```
 
 htr-train calls each tool by its path, `envs/<env>/.venv/bin/<tool>`, never imports it.
@@ -47,6 +49,11 @@ htr-train split-dev data/htr/minicpm_lines_scaled.jsonl --share 0.03
 # --exclude-collection GT-...), native crops (no --max-crop-pixels), regions (--task elements), drawn pages
 # (--xml of a diffu-run-export); a set mixed with another holds out its volumes:
 htr-train split-dev data/htr/minicpm_regions.jsonl --like data/htr/minicpm_lines_scaled.dev.jsonl
+# whole pages for Nemotron 3.5 Parse (each written as its processor scales it, to fit 1664 x 2048), the regions' dev
+# volumes held out
+diffu-reader-set --xml /mnt/work/GT-Lejonet_HTR_202602 --model nemotron-parse --split-from-gt-test-lists \
+    --gt-test-list test_0050 --workers 56 --out data/htr/nemotron_parse_pages.jsonl
+htr-train split-dev data/htr/nemotron_parse_pages.jsonl --like data/htr/minicpm_regions.dev.jsonl
 # Jev's pairs from the training lines (scaled to the generator's line height), our frozen renderer
 htr-train jev-set --lines data/htr/minicpm_lines_scaled.train.jsonl --out data/htr/jev_lines.jsonl
 # Jev's test pairs (to evaluate it on), from the test lines
@@ -90,11 +97,23 @@ uv run htr-train split-dev data/htr/smoke/jev_lines.jsonl --share 0.25
 ## Runs
 
 A run is one YAML file (`configs/smoke/`, `configs/full/`): its name, a description of its variant, its job (one of
-`minicpm-ocr`, `unlimited-ocr-2`, `jev`, `dspark`, `lightonocr-3`), its sets and its resources. It is checked before
-anything starts: an unpinned Hub model, remote code for anything but Unlimited-OCR 2 at its revision, a test page or a
-dev volume in training, a missing image, pairs of another renderer, a draft's responses from another target, a batch
-that does not divide, packing without flash attention, a LightOnOCR-3 page larger than 2,048 px, packed or sized
-otherwise than LightOnOCR-3 reads it, and a Spark run of more than its one GPU or memory are refused.
+`minicpm-ocr`, `unlimited-ocr-2`, `jev`, `dspark`, `lightonocr-3`, `nemotron-parse`), its sets and its resources. It
+is checked before anything starts: an unpinned Hub model, remote code for anything but Unlimited-OCR 2 and Nemotron 3.5
+Parse at their revisions, a test page or a dev volume in training, a missing image, pairs of another renderer, a
+draft's responses from another target, a batch that does not divide, packing without flash attention, a LightOnOCR-3
+page larger than 2,048 px, packed or sized otherwise than LightOnOCR-3 reads it, and a Spark run of more than its one
+GPU or memory are refused.
+
+Nemotron 3.5 Parse (`nemotron-parse`) is trained by `htr-nemotron-parse` (`diffu_htr_train.nemotron_parse`):
+transformers' Trainer around the model's remote code, a process a GPU under `torchrun --standalone`, one node. Its
+spec's fields are that trainer's options (which parts learn, the layout tokens' weight in the loss, the longest answer,
+activations recomputed) and TrainingArguments; it resumes like an ms-swift run, by running `command.sh` again. The why,
+the recipe and what is not known yet: [docs/HTR_TRAIN.md](../../docs/HTR_TRAIN.md), "Nemotron 3.5 Parse". On dmlpai01:
+
+```bash
+HTR_TRAIN_LOCAL_GPUS=1,2 htr-train launch packages/htr_train/lion_data_prep/configs/smoke_nemotron_parse_2gpu.yaml --where local
+HTR_TRAIN_LOCAL_GPUS=1,2 htr-train launch packages/htr_train/lion_data_prep/configs/nemotron_parse_all.yaml --where local
+```
 
 ```bash
 htr-train render packages/htr_train/configs/smoke/minicpm_lines.yaml        # the scripts, nothing started
@@ -118,7 +137,9 @@ from `HTR_TRAIN_*` variables (`diffu_htr_train.settings`): `HTR_TRAIN_RUNS`, `HT
 - default lane (`pytest packages/htr_train`): the rendered commands against OpenBMB's and ms-swift's published ones,
   every refusal, the scripts, the manifest, the sets.
 - `envs` lane (`pytest packages/htr_train -m envs`, the envs built): a real `swift sft` of two steps on tiny models, on
-  CPU.
+  CPU; Nemotron 3.5 Parse itself (it has no small form: its code fixes its vision encoder's size) trained two steps on
+  CPU in two processes, resumed by its run's steps, and a batch of pages of three sizes read as each page alone
+  (`pytest packages/page -m envs`: our pages read back by the model's own postprocessing, tokenizer and processor).
 - `gpu` lane (`-m gpu`): the smoke runs, through the guard, one at a time.
 
 ## GT-Lejonet

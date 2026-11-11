@@ -1,0 +1,47 @@
+# Nemotron 3.5 Parse on every GT-Lejonet training page (diffu-reader-set --model nemotron-parse, test_0050 held out,
+# each page scaled as its processor scales it to fit 1664 x 2048; dev: the volumes of minicpm_regions.dev.jsonl), real
+# only, on one server's two GPUs (htr-train launch --where local, HTR_TRAIN_LOCAL_GPUS). NVIDIA's own fine-tuning recipe
+# (NeMo AutoModel's tutorials/nemotron-parse at 58487ab5: AdamW at 5e-5, weight decay 0.01, betas 0.9 and 0.999,
+# bfloat16, coordinate and class tokens weighted 10, the whole model trained, as its freeze_vision_tower matches no
+# module of Nemotron-Parse), with our deltas for a run of epochs, not 50 steps: a cosine schedule with 5 % warmup,
+# clipping at 1.0, global batch 32 (2 GPUs x 4 x 4), 2 epochs (~3,300 steps of ~52,600 pages), activations recomputed
+# (estimated ~15 GB a page without: its vision encoder attends over a page's ~13,000 patches), an evaluation and a
+# checkpoint every 250 steps, the best by eval loss. Run smoke_nemotron_parse_2gpu.yaml first: it measures speed and
+# memory (a page's forward and backward are estimated at ~100 TFLOP, so ~1 s a page a GPU: ~15 h an epoch; not
+# measured).
+name: nemotron-parse-all
+description: "all GT training pages (whole, scaled to fit 1664 x 2048), full fine-tune, real only, 2 GPUs"
+job:
+  kind: nemotron-parse
+  model: {repo: nvidia/Nemotron-3.5-Parse, revision: 72ad4d71dd827135ee581502363e14748008900a}
+  freeze_vision_encoder: false
+  freeze_adapter: false
+  coordinate_weight: 10.0
+  activation_checkpointing: true
+  bf16: true
+  learning_rate: 5.0e-5
+  epochs: 2
+  global_batch: 32
+  per_device_batch: 4
+  lr_scheduler: cosine
+  warmup_ratio: 0.05
+  weight_decay: 0.01
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  max_grad_norm: 1.0
+  seed: 42
+  data_seed: 42
+  dataloader_num_workers: 8
+  eval_strategy: steps
+  eval_steps: 250
+  save_strategy: steps
+  save_steps: 250
+  save_total_limit: 3
+  best_by_eval_loss: true
+  per_device_eval_batch_size: 4
+  logging_steps: 10
+  ddp_find_unused_parameters: false
+data:
+  train: [{path: data/htr/nemotron_parse_pages.train.jsonl}]
+  dev: data/htr/nemotron_parse_pages.dev.jsonl
+resources: {gpus_per_node: 2, need_gb: 60, hours: 48}

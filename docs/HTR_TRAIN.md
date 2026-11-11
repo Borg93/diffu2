@@ -27,6 +27,8 @@ against the TrOCR baseline): [HTR_RUNS.md](HTR_RUNS.md).
   under Megatron, which has no `minicpm_ocr`).
 - **vLLM** serves the target for the draft (its rendered conversations and hidden states). Unlimited-OCR 2 has no
   vLLM support yet, so it gets no draft.
+- **Our own trainer** (`htr-nemotron-parse`: transformers' Trainer around the model's remote code) trains Nemotron 3.5
+  Parse, a second page reader: neither ms-swift nor NeMo AutoModel has it ("Nemotron 3.5 Parse" below).
 
 ## The recipes, as published
 
@@ -45,12 +47,64 @@ tensorboard). `--freeze_vit` and `--freeze_aligner` default to true in ms-swift 
 must state both. The golden tests (`packages/htr_train/tests/test_render.py`) check each rendered command against the
 published one, flag for flag, less exactly these deltas.
 
+## Nemotron 3.5 Parse
+
+`nvidia/Nemotron-3.5-Parse` (0.631 B: a C-RADIOv4-SO400M vision encoder whose page, up to 1664 x 2048, is the causal
+prefix of a 10-layer mBART decoder with grouped-query attention and no positions; one bundled MTP head) reads a page as
+blocks in reading order, each its box, its text and one of 15 classes. Read at `72ad4d71` (its code, processor,
+tokenizer, postprocessing and vLLM plugin) and against NeMo AutoModel at `58487ab5`:
+
+- **No tool has it.** AutoModel's `nemotron_parse` is the encoder-decoder of Nemotron-Parse 1.1 to 2.0 (RADIO-H, mBART
+  cross-attention and positions); its registry has no `RadioMBartPrefixForCausalLM`, and its tutorial
+  (`tutorials/nemotron-parse`) is written for 1.1. Loaded through its fallback for remote code, 3.5 would meet a
+  collate that tokenizes with special tokens on (an `<s>` before the prompt, which the model is asked without) and
+  1.1's prompt by default (no `<predict_text_in_pic>`), and a `freeze_vision_tower` that freezes modules named
+  `vision`, `visual` or `image_encoder`, which Nemotron-Parse has none of (it freezes nothing). Not run: it may load
+  that way, but nothing NVIDIA publishes trains 3.5 with it. ms-swift (main, 11 Nov) has no Nemotron-Parse.
+- **Its forward takes no labels and returns no loss** (`hf_nemotron_parse_modeling.py`): text logits only, the page's
+  prefix cut off. So the trainer is ours (`diffu_htr_train.nemotron_parse`): transformers' Trainer with
+  `compute_loss_func`, the sets read as diffu-reader-set writes them, each page through the model's own processor.
+- **The loss is NVIDIA's** (AutoModel's `NemotronParseLoss`, ten times a layout token's cross-entropy, divided by the
+  tokens learnt) **with the layout tokens named**: theirs weighs every id from a threshold on, and in 3.5's vocabulary
+  ids above the 2,304 coordinates and 15 classes are added characters and punctuation (`' -'`, `' /'`, `' ('` and `„`
+  among them: 0.13 % of our pages' text tokens), so their tutorial's threshold (50000) would weigh those ten times too,
+  and 3.5's own `class_token_start_idx` (52315) no coordinate at all.
+- **The format is its own** (`diffu_page.page.nemotron_parse`): `<x_X0><y_Y0>text<x_X1><y_Y1><class_C>` a block, a
+  blank line between two, boxes as fractions of the page on its 1,024 x and 1,280 y coordinates, a table as LaTeX in
+  the dialect its strict table reader parses, text NFKC-normalized as its tokenizer normalizes it (`½` is `1⁄2` to it).
+  Its base reading of a GT page writes the same form (a line of the page a line of the block) in the same frame; the
+  envs lane reads our answers back with its postprocessing, tokenizer and processor.
+- **Each page is written as its processor scales it** (bilinear, its aspect kept, to fit 1664 x 2048), so the set holds
+  what the model sees and its processor scales it no further.
+
+| Job | Recipe | Our deltas |
+|---|---|---|
+| Nemotron 3.5 Parse | NVIDIA's AutoModel tutorial (`nemotron_parse_config.yaml`): AdamW lr 5e-5, weight decay 0.01, betas (0.9, 0.999), bfloat16, coordinate weight 10, global batch 8 of 1, 50 steps, the whole model trained (its vision-tower freeze matches nothing) | 3.5 at its revision; our sets; a cosine schedule with 5 % warmup, clipping at 1.0, global batch 32 (2 GPUs x 4 x 4), 2 epochs, eval and save every 250 steps, the best by eval loss (`lion_data_prep/configs/nemotron_parse_all.yaml`); float32 weights under bfloat16 autocast; activations recomputed by our trainer (the model has no gradient checkpointing of its own); the MTP head frozen |
+
+The trainer also sets what this model needs: `--label_names labels` (its forward names none, so the Trainer would
+compute no evaluation loss), `--prediction_loss_only true` (an evaluation would keep 72,512 logits a token) and
+`--remove_unused_columns false`; `--gradient_checkpointing` and DataParallel are refused. Every checkpoint is made to
+read as the model's repo: `config.json` names `RadioMBartPrefixForCausalLM` again (`save_pretrained` writes the Python
+class's name, which NVIDIA's vLLM plugin does not serve), and its tokenizer, processor, code, postprocessing and vLLM
+plugin are copied beside the weights (float32: serve a checkpoint with `--dtype bfloat16`). The model a run ends with is
+written in bfloat16, as the repo ships it.
+
+Not known yet: speed and memory on the RTX PRO 6000s (estimated ~100 TFLOP a page's forward and backward, most of it
+the vision encoder's attention over a page's ~13,000 patches: about 1 s a page a GPU; the smoke spec measures them), how
+fast it learns 17th-19th century hands (its base reading of a GT page: 5.9 nats a token on our answer), and whether vLLM
+with NVIDIA's plugin serves a fine-tuned checkpoint as it serves the repo. The MTP head is not trained (the forward does
+not use it), so vLLM's one-token MTP proposals will be accepted less often after fine-tuning; on the base model's own
+reading of a GT page, the head's next-but-one token was right 53 % of the time with the decoder's scaled embedding of
+the next token and 37 % with the raw one, so a joint MTP loss would use the scaled one. The DFlash2 draft in the repo
+(`dflash2/`) no longer matches a fine-tuned model either.
+
 ## Data, and variants of it
 
 The sets come from `diffu-reader-set` (diffu-page owns the PAGE/ALTO files and the scans): `--task lines` for
 MiniCPM-OCR (a sample per text line, its box cut as `<page id>_<k>_<j>.jpg`, the meta giving its kind, production,
 element and line), `--task elements` for regions, `--task parse` for Unlimited-OCR 2, `--model lightonocr-3` (its
-pages fitted to 2,048 px, grounded) for LightOnOCR-3. The GT's test lists send every
+pages fitted to 2,048 px, grounded) for LightOnOCR-3, `--model nemotron-parse` for Nemotron 3.5 Parse (whole pages,
+each scaled as its processor scales it). The GT's test lists send every
 test scan to `<stem>.test.jsonl` (`--split-from-gt-test-lists`), never to training, and the GT's second export of
 `GT-RA_landskapshandlingar_20260227` is always left out.
 

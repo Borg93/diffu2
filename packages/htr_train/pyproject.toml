@@ -21,6 +21,7 @@ dependencies = [
 [project.scripts]
 htr-train = "diffu_htr_train.cli:app"  # render, launch and queue reader trainings; build their dev splits, Jev pairs and draft data
 htr-eval = "diffu_htr_train.evaluate.cli:app"  # score the readers: line sets, readings through vLLM or transformers, CER as each side scores itself
+htr-nemotron-parse = "diffu_htr_train.nemotron_parse.train:app"  # Nemotron 3.5 Parse's trainer: run from envs/nemotron_parse under torchrun, as htr-train renders it
 
 [build-system]
 requires = ["hatchling"]

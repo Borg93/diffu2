@@ -1,0 +1,37 @@
+# htr-train's Nemotron-Parse environment: NVIDIA's Nemotron 3.5 Parse fine-tuned on whole pages by htr-train's own
+# trainer (diffu_htr_train.nemotron_parse: transformers' Trainer around the model's remote code, which takes no labels
+# and returns no loss). Neither ms-swift nor NeMo AutoModel has the model (AutoModel's nemotron_parse is v1.1-2.0's
+# encoder-decoder, not 3.5's causal visual prefix), so this environment is NVIDIA's own validated Transformers stack
+# for it (the repo's reference/parse_3_5/transformers.constraints.txt at 72ad4d71): transformers 5.14.1, timm 1.0.22,
+# accelerate 1.12.0, torch 2.11.0 and torchvision 0.26.0 (CUDA 13), Pillow 12.2.0; beautifulsoup4 4.13.3 for its
+# postprocessing (tables), which the envs lane reads our targets back with. The model's code runs from the Hub at one
+# revision only (nvidia/Nemotron-3.5-Parse@72ad4d71dd827135ee581502363e14748008900a; htr-train refuses any other).
+[project]
+name = "htr-env-nemotron-parse"
+version = "0"
+requires-python = "==3.12.*"
+dependencies = [
+    "diffu-htr-train",
+    "torch==2.11.0",
+    "torchvision==0.26.0",
+    "transformers==5.14.1",
+    "timm==1.0.22",
+    "accelerate==1.12.0",
+    "pillow==12.2.0",
+    "beautifulsoup4==4.13.3",
+    "trackio",
+]
+
+[tool.uv]
+package = false
+environments = ["sys_platform == 'linux'"]
+
+[tool.uv.sources]
+diffu-htr-train = { path = "../..", editable = true }
+torch = { index = "pytorch-cu130" }
+torchvision = { index = "pytorch-cu130" }
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true

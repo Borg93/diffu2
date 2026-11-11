@@ -692,6 +692,11 @@ queued above. Then:
 7. **Research track:** self-supervised pretraining of the vision encoder on unlabelled scans.
    [Garrido-Munoz and Calvo-Zaragoza, NeurIPS 2026](https://arxiv.org/abs/2609.35473): masked-pixel pretraining gave
    the lowest CER on every benchmark, and it is the only kind tested that improved with real handwriting.
+8. **Nemotron 3.5 Parse on whole pages** (the user's order, 11 Nov: after Unlimited-OCR 2 and LightOnOCR-3). Its
+   trainer, set writer and specs are ready and tested on the CPU only ([HTR_TRAIN.md](HTR_TRAIN.md), "Nemotron 3.5
+   Parse"); its set is not built and nothing has run on a GPU. Build the set and its dev split
+   ([htr_train README](../packages/htr_train/README.md), "The sets"), then `smoke_nemotron_parse_2gpu.yaml` for speed
+   and memory, then `nemotron_parse_all.yaml`.
 
 A 4th epoch of the same data has the weakest case: the curve is flattening, and item 2 targets the small collections
 more cheaply.

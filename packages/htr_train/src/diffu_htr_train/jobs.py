@@ -7,7 +7,8 @@ when it is set, so a spec states every choice it makes and leaves ms-swift's def
 are traps, so the spec must state them: ``--freeze_vit`` and ``--freeze_aligner`` default to true in ms-swift even for a
 full fine-tune (``swift/arguments/tuner_args.py:123-124`` at ms-swift ``ef4953a4``), and OpenBMB's MiniCPM-OCR recipe
 trains the vision encoder. The draft job (:class:`DSparkJob`) is speculators', whose data comes from the target model
-served by vLLM.
+served by vLLM. Nemotron 3.5 Parse (:class:`NemotronParseJob`) is trained by our own trainer
+(:mod:`diffu_htr_train.nemotron_parse`), as no tool has the model; its fields are the same way that trainer's flags.
 """
 
 from __future__ import annotations
@@ -23,6 +24,9 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, Validation
 
 from diffu_htr_train.evaluate.in_training import CerSet
 from diffu_htr_train.jev.prompt import prompt_digest
+from diffu_htr_train.nemotron_parse import REPO as NEMOTRON_PARSE
+from diffu_htr_train.nemotron_parse import REVISION as NEMOTRON_PARSE_REVISION
+from diffu_htr_train.nemotron_parse.options import MAX_TARGET_TOKENS
 from diffu_htr_train.output import validation_problems
 from diffu_htr_train.records import Sample, SampleMeta, meta_path, read_jsonl, read_meta, target_record_path
 
@@ -58,6 +62,7 @@ class Kind(StrEnum):
     JEV = "jev"
     DSPARK = "dspark"
     LIGHTONOCR_3 = "lightonocr-3"
+    NEMOTRON_PARSE = "nemotron-parse"
 
 
 class ToolEnv(StrEnum):
@@ -67,6 +72,7 @@ class ToolEnv(StrEnum):
     UOCR2 = "uocr2"  # ms-swift + transformers 4.52.1: Unlimited-OCR 2 (its remote code)
     SPECULATORS = "speculators"
     VLLM = "vllm"
+    NEMOTRON_PARSE = "nemotron_parse"  # transformers 5.14.1 + our trainer: Nemotron 3.5 Parse (its remote code)
 
 
 class Where(StrEnum):
@@ -390,8 +396,91 @@ class DSparkJob(BaseModel):
         return self
 
 
+class NemotronParseJob(BaseModel):
+    """Nemotron 3.5 Parse as a page reader (``diffu-reader-set --model nemotron-parse`` sets), trained by our trainer
+    (:mod:`diffu_htr_train.nemotron_parse`): its options (which parts learn, the layout tokens' weight in the loss, the
+    longest answer kept, activations recomputed or not) and, each passed only when set, transformers'
+    TrainingArguments, as :class:`SwiftSFT`'s fields are ms-swift's. ``freeze_vision_encoder`` and ``freeze_adapter``
+    have no default: NVIDIA's tutorial asks to freeze its vision tower (``freeze_vision_tower: true``), but AutoModel
+    freezes a module by ``vision``, ``visual`` or ``image_encoder`` in its name and Nemotron-Parse's is ``encoder``, so
+    there nothing is frozen. The model's code runs from the Hub at its pinned revision only; a local folder (a
+    checkpoint of ours) is the code it holds."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal[Kind.NEMOTRON_PARSE] = Kind.NEMOTRON_PARSE
+    model: ModelRef
+    freeze_vision_encoder: bool
+    freeze_adapter: bool
+    coordinate_weight: float = Field(default=10.0, gt=0)
+    max_target_tokens: int = Field(default=MAX_TARGET_TOKENS, gt=0)
+    activation_checkpointing: bool = False
+    bf16: bool = True
+    # optimisation
+    learning_rate: float = Field(gt=0)
+    epochs: float | None = Field(default=None, gt=0)
+    max_steps: int | None = Field(default=None, gt=0)
+    global_batch: int = Field(gt=0)
+    per_device_batch: int = Field(default=1, gt=0)
+    lr_scheduler: str | None = None
+    warmup_ratio: float | None = Field(default=None, ge=0, lt=1)
+    optim: str | None = None
+    adam_beta1: float | None = None
+    adam_beta2: float | None = None
+    adam_epsilon: float | None = None
+    weight_decay: float | None = None
+    max_grad_norm: float | None = None
+    seed: int | None = None
+    data_seed: int | None = None
+    # data loading
+    dataloader_num_workers: int | None = Field(default=None, ge=0)
+    # evaluation, checkpoints and logs
+    eval_strategy: Strategy | None = None
+    eval_steps: int | None = Field(default=None, gt=0)
+    save_strategy: Strategy | None = None
+    save_steps: int | None = Field(default=None, gt=0)
+    save_total_limit: int | None = Field(default=None, gt=0)
+    save_only_model: bool | None = None
+    best_by_eval_loss: bool = False
+    per_device_eval_batch_size: int | None = Field(default=None, gt=0)
+    logging_steps: int | None = Field(default=None, gt=0)
+    ddp_timeout: int | None = Field(default=None, gt=0)
+    ddp_find_unused_parameters: bool | None = None
+    report_to: Literal["trackio", "tensorboard", "none"] = "trackio"
+
+    @property
+    def evaluates(self) -> bool:
+        """Whether the run evaluates on its dev set."""
+        return self.eval_strategy not in (None, "no")
+
+    @model_validator(mode="after")
+    def _consistent(self) -> Self:
+        if (self.epochs is None) == (self.max_steps is None):
+            raise ValueError("give the run's length as epochs or as max_steps, one of them")
+        if self.best_by_eval_loss and (not self.evaluates or self.save_strategy != self.eval_strategy):
+            raise ValueError("best_by_eval_loss needs save_strategy equal to an eval_strategy that evaluates")
+        if (
+            self.best_by_eval_loss
+            and self.eval_strategy == "steps"
+            and (self.eval_steps is None or self.save_steps is None or self.save_steps % self.eval_steps)
+        ):
+            raise ValueError("best_by_eval_loss needs save_steps a multiple of eval_steps")
+        return self
+
+    @model_validator(mode="after")
+    def _pinned_remote_code(self) -> Self:
+        if not self.model.is_local and (self.model.repo, self.model.revision) != (
+            NEMOTRON_PARSE,
+            NEMOTRON_PARSE_REVISION,
+        ):
+            raise ValueError(
+                f"Nemotron-Parse runs its own code: only {NEMOTRON_PARSE}@{NEMOTRON_PARSE_REVISION} is trusted"
+            )
+        return self
+
+
 type Job = Annotated[
-    MiniCPMOCRJob | UnlimitedOCR2Job | JevJob | DSparkJob | LightOnOCR3Job, Field(discriminator="kind")
+    MiniCPMOCRJob | UnlimitedOCR2Job | JevJob | DSparkJob | LightOnOCR3Job | NemotronParseJob, Field(discriminator="kind")
 ]
 type SwiftJob = MiniCPMOCRJob | UnlimitedOCR2Job | JevJob | LightOnOCR3Job  # the jobs ms-swift trains
 
@@ -412,8 +501,10 @@ class RunSpec(BaseModel):
     def _data_for_sft(self) -> Self:
         if isinstance(self.job, DSparkJob) != (self.data is None):
             raise ValueError("an ms-swift job trains on data; a DSpark job on its responses alone (no data)")
+        if isinstance(self.job, NemotronParseJob):
+            self._check_nemotron_parse(self.job)
         if (
-            not isinstance(self.job, DSparkJob)
+            isinstance(self.job, SwiftSFT)
             and self.job.dataset_shuffle is False
             and self.data is not None
             and any(part.samples for part in self.data.train)
@@ -435,6 +526,18 @@ class RunSpec(BaseModel):
                 f"{self.job.per_device_batch} a device"
             )
         return self
+
+    def _check_nemotron_parse(self, job: NemotronParseJob) -> None:
+        """Our trainer runs on one node (``torchrun --standalone``), reads its sets whole and evaluates on the dev
+        set."""
+        if self.resources.nodes != 1:
+            raise ValueError(
+                f"a nemotron-parse run trains on one node (torchrun --standalone), not {self.resources.nodes}"
+            )
+        if self.data is not None and any(part.samples for part in self.data.train):
+            raise ValueError("a nemotron-parse run reads its training sets whole: give no samples (#N)")
+        if job.evaluates and (self.data is None or self.data.dev is None):
+            raise ValueError(f"a nemotron-parse run evaluating ({job.eval_strategy}) needs a dev set")
 
 
 def load_run_spec(path: Path) -> RunSpec:

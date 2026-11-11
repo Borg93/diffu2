@@ -163,7 +163,7 @@ both a PAGE and an ALTO file describe is read from its PAGE file (ALTO, as read,
 out, each with why in `<out stem>.skipped.jsonl`: a scan wider than tall that its lines cannot split, one without a
 transcribed line, one that is not the size its file says, a file without its scan or that cannot be read, and the GT's
 second export of a collection (`GT-RA_landskapshandlingar_20260227`, the scans of `..._20260220` again). More
-readers, as ms-swift fine-tunes them (`messages` and `images`):
+readers (`messages` and `images`), all but Nemotron 3.5 Parse as ms-swift fine-tunes them:
 
 - `--model unlimited-ocr-2` (ms-swift's model type `unlimited-ocr`, template `unlimited_ocr`, which shows each
   `<image>` as `<PAGE><image>`): `--task parse` (the default) a sample per page, asked `<image>Multi page parsing.` and
@@ -188,6 +188,17 @@ readers, as ms-swift fine-tunes them (`messages` and `images`):
   `title` (a heading, after `## `), `aside_text`, `page_number`, `header`, `footer` (a footer, catchword or signature
   mark) or `table` (an HTML table). `--task page` shows the image alone (`<image>`, its transcription mode), answered
   with the Markdown.
+- `--model nemotron-parse` (Nemotron 3.5 Parse, trained by htr-train's own trainer; `diffu_page.page.nemotron_parse`,
+  read from the model's code at `72ad4d71`): `--task parse` (the only one) a sample per page, asked `<image>` and its
+  task prompt (`</s><s><predict_bbox><predict_classes><output_markdown><predict_text_in_pic>`) and answered with its
+  blocks in reading order, a blank line apart: `<x_X0><y_Y0>{text}<x_X1><y_Y1><class_C>`, the box's corners as
+  fractions of the page on the model's 1,024 x and 1,280 y coordinates, the class one of its 15 (running text and a
+  margin note `Text`, a heading `Section-header`, a header `Page-header`, a footer, catchword or signature mark
+  `Page-footer`, a page number either by the half of the page it is in, a table `Table`), the text a line of the page
+  a line, a line with nothing written left out, a table as LaTeX `tabular` in the dialect its table reader parses,
+  everything NFKC-normalized as its tokenizer reads it. Each page is shown as the model's processor scales it
+  (bilinear, to fit 1664 x 2048), so the set holds what the model sees: written to `<out stem>_pages/<page id>.jpg`
+  when that changes it or it is cut from an opening.
 
 Beside each set `<out stem>.meta.jsonl` gives a line per sample: its id (a page's is the MOSS page-pair sets', the
 digest of its PAGE file's path below the folder given and its side, `<digest>_left`), `source` (`real`, or

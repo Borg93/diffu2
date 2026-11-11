@@ -41,6 +41,12 @@ is taught a page whole, as pages will be sent to it.
   default) asks ``<image>grounding`` and answers with a block per element, its label and box then its Markdown
   (:func:`diffu_page.page.labels.to_lightonocr_grounding`); ``--task page`` shows the image alone (``<image>``, its
   transcription mode) and answers with the Markdown.
+- ``nemotron-parse``: as htr-train fine-tunes Nemotron 3.5 Parse (``messages`` and ``images``, read by its own trainer:
+  the model has no chat template). ``--task parse`` (the only one) a sample per page, asked ``<image>`` and its task
+  prompt (:data:`diffu_page.page.nemotron_parse.TASK_PROMPT`) and answered with its blocks
+  (:func:`diffu_page.page.nemotron_parse.to_nemotron_parse`); a page is shown as its processor scales it, to fit
+  1664 x 2048 (:func:`diffu_page.page.nemotron_parse.fit_page`), written to ``<out stem>_pages/<page id>.jpg`` when
+  that changes it or it is cut from an opening.
 
 A page that is the whole of its image is shown as that image; a page of an opening is cut from its scan into
 ``<out stem>_pages/<page id>.jpg``. With ``--xml``, ``--split-from-gt-test-lists`` sends every scan its volume's test
@@ -120,6 +126,7 @@ from diffu_page.page.labels import (
     to_spotting,
     to_unlimited_ocr,
 )
+from diffu_page.page.nemotron_parse import TASK_PROMPT, fit_page, to_nemotron_parse
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 
@@ -132,6 +139,7 @@ class Reader(StrEnum):
     UNLIMITED_OCR_2 = "unlimited-ocr-2"
     MINICPM_OCR = "minicpm-ocr"
     LIGHTONOCR_3 = "lightonocr-3"
+    NEMOTRON_PARSE = "nemotron-parse"
 
 
 class Task(StrEnum):
@@ -156,6 +164,7 @@ TASKS: dict[Reader, tuple[Task, ...]] = {  # the tasks each reader is fine-tuned
     Reader.UNLIMITED_OCR_2: (Task.PARSE, Task.OPENING),
     Reader.MINICPM_OCR: (Task.ELEMENTS, Task.LINES, Task.PAGE),
     Reader.LIGHTONOCR_3: (Task.GROUNDING, Task.PAGE),
+    Reader.NEMOTRON_PARSE: (Task.PARSE,),
 }
 MIN_LINE_SIDE = 8  # px: a line's box narrower or lower than this holds no writing (a transcriber's stray box)
 UNCERTAIN_MARKS = ("??", "(?)", "[", "]")  # a transcriber's doubt or comment in a line's text (the TrOCR baseline's)
@@ -166,14 +175,15 @@ LIGHTONOCR_LONGEST_EDGE = 2048
 
 
 class PageFormat(BaseModel):
-    """A page task's sample: the prompt the page's image is shown with, its answer written from the page, and the
-    longest edge the page is fitted to, as the reader's own client sends it (None: as cut)."""
+    """A page task's sample: the prompt the page's image is shown with, its answer written from the page, and how the
+    page is scaled before it is shown, as the reader's own client or processor scales it (None: as cut; else it is
+    written so, :func:`page_image`)."""
 
     model_config = {"frozen": True}
 
     prompt: str
     answer: Callable[[PageElements], str]
-    longest_edge: int | None = None
+    fit: Callable[[Image.Image], Image.Image] | None = None
 
 
 def _parsed(page: PageElements) -> str:
@@ -198,10 +208,13 @@ PAGE_FORMATS: dict[tuple[Reader, Task], PageFormat] = {
     (Reader.LIGHTONOCR_3, Task.GROUNDING): PageFormat(
         prompt=f"<image>{LIGHTONOCR_GROUNDING_PROMPT}",
         answer=to_lightonocr_grounding,
-        longest_edge=LIGHTONOCR_LONGEST_EDGE,
+        fit=partial(fit_longest_edge, longest_edge=LIGHTONOCR_LONGEST_EDGE),
     ),
     (Reader.LIGHTONOCR_3, Task.PAGE): PageFormat(
-        prompt="<image>", answer=to_markdown, longest_edge=LIGHTONOCR_LONGEST_EDGE
+        prompt="<image>", answer=to_markdown, fit=partial(fit_longest_edge, longest_edge=LIGHTONOCR_LONGEST_EDGE)
+    ),
+    (Reader.NEMOTRON_PARSE, Task.PARSE): PageFormat(
+        prompt=f"<image>{TASK_PROMPT}", answer=to_nemotron_parse, fit=fit_page
     ),
 }
 
@@ -253,6 +266,7 @@ SAMPLE_SHAPES: dict[Reader, Callable[[str, str, list[Path]], Sample]] = {
     Reader.UNLIMITED_OCR_2: chat_sample,
     Reader.MINICPM_OCR: chat_sample,
     Reader.LIGHTONOCR_3: chat_sample,
+    Reader.NEMOTRON_PARSE: chat_sample,
 }
 
 
@@ -285,21 +299,22 @@ def fit_longest_edge(image: Image.Image, longest_edge: int) -> Image.Image:
     return image.resize(size, Image.Resampling.LANCZOS)
 
 
-def page_image(page: ReaderPage, pages: Path, longest_edge: int | None = None) -> Path:
-    """The image showing ``page`` alone, its longest edge at most ``longest_edge`` px (None: as cut): its own when the
-    page is all of it and no longer, else the page cut from it and fitted (:func:`fit_longest_edge`) into ``pages`` as
+def page_image(page: ReaderPage, pages: Path, fit: Callable[[Image.Image], Image.Image] | None = None) -> Path:
+    """The image showing ``page`` alone, as ``fit`` scales it (None: as cut): its own when the page is all of it and
+    ``fit`` leaves its size as it is, else the page cut from it and scaled, written into ``pages`` as
     ``<page id>.jpg``."""
-    if page.rect is None and longest_edge is None:
+    if page.rect is None and fit is None:
         return page.image
     path = pages / f"{page.meta.id}.jpg"
     with open_scan(page.image) as scan:
-        if page.rect is None and longest_edge is not None and max(scan.size) <= longest_edge:
-            return page.image
-        cut = (scan if page.rect is None else scan.crop(page.rect)).convert("RGB")
-        if longest_edge is not None:
-            cut = fit_longest_edge(cut, longest_edge)
+        shown = (scan if page.rect is None else scan.crop(page.rect)).convert("RGB")
+        if fit is not None:
+            scaled = fit(shown)
+            if page.rect is None and scaled.size == shown.size:
+                return page.image
+            shown = scaled
         pages.mkdir(parents=True, exist_ok=True)
-        cut.save(path, quality=TILE_QUALITY)
+        shown.save(path, quality=TILE_QUALITY)
     return path
 
 
@@ -485,7 +500,7 @@ def scan_samples(
                     shape(
                         page_format.prompt,
                         page_format.answer(page.elements),
-                        [page_image(page, dirs.pages, page_format.longest_edge)],
+                        [page_image(page, dirs.pages, page_format.fit)],
                     ),
                     page.meta,
                 )
@@ -733,7 +748,8 @@ def reader_set(
             "element's crop, for its recogniser); unlimited-ocr-2: parse (a page's blocks; default) or opening (a "
             "scan's pages in one sample); minicpm-ocr: elements (each element's crop; default), lines (each text "
             "line's crop, in <out stem>_lines) or page (its plain text); lightonocr-3: grounding (each element's label "
-            "and box, then its Markdown; default) or page (the image alone: the Markdown)"
+            "and box, then its Markdown; default) or page (the image alone: the Markdown); nemotron-parse: parse (a "
+            "page's blocks, the page scaled as its processor scales it, in <out stem>_pages)"
         ),
     ] = None,
     max_crop_pixels: Annotated[
