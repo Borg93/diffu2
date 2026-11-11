@@ -40,6 +40,7 @@ from diffu_moss.train.cache import (
     PromptEncoder,
     encoder_pipeline,
     load_sample,
+    planned_entries,
     read_entries,
     read_record,
     styled,
@@ -59,6 +60,7 @@ from diffu_moss.train.pairs import (
     MIXES,
     PagePair,
     PagePairRow,
+    Pair,
     PromptMix,
     SampleSize,
     TrainingPair,
@@ -316,7 +318,7 @@ def test_cache_gives_exactly_its_share_of_the_sample_forms_entries_a_look_change
     assert [entry.model_copy(update={"restyle": None}) for entry in entries] == plain
     assert [(entry.pair, entry.variant, entry.restyle.kind) for entry in changed if entry.restyle] == [
         ("vol_08", Variant.SAMPLE, "microfilm"),
-        ("vol_06", Variant.SAMPLE, "colourise"),
+        ("vol_09", Variant.SAMPLE, "colourise"),
     ]
     record = read_record(tiny_restyled_cache)
     assert (record.restyle_share, record.restyled) == (0.4, {"colourise": 1, "microfilm": 1})
@@ -554,10 +556,10 @@ def test_cache_gives_a_pairs_target_and_sample_the_hand_change_its_entry_records
             return encode_latents(vae, image_pixels(styled(image, hand=hand))).to(CACHE_DTYPE)
 
     changed = [(entry, entry.hand) for entry in entries if entry.hand is not None]
-    # 2 of the 4 in the sample form (vol_08, vol_06, vol_05, vol_07), by a stream of their own
+    # 2 of the 4 in the sample form (vol_08, vol_09, vol_01, vol_06), by a stream of their own
     assert [(entry.pair, entry.variant) for entry, _ in changed] == [
+        ("vol_09", Variant.SAMPLE),
         ("vol_06", Variant.SAMPLE),
-        ("vol_07", Variant.SAMPLE),
     ]
     for entry, hand in changed:
         sample, size = load_sample(tiny_hand_cache, entry, "cpu"), unchanged[entry.file].target_size
@@ -588,6 +590,31 @@ def test_content_mix_draws_the_sample_alone_for_three_fifths_and_the_sample_with
     forms = assign_variants(10, seed=0, mix=PromptMix.CONTENT)
 
     assert Counter(forms) == {Variant.SAMPLE: 6, Variant.SAMPLE_LOOK: 2, Variant.GENERIC: 2}
+
+
+def test_cache_plan_without_a_limit_draws_each_pairs_form_apart_from_its_place_in_the_manifest() -> None:
+    pairs: list[TrainingPair] = [
+        Pair(id=f"pair_{k}", target=Path(f"target_{k}.jpg"), reference=Path(f"reference_{k}.jpg"), caption="")
+        for k in range(10)
+    ]
+
+    planned = planned_entries(pairs, CacheSettings(mix=PromptMix.CONTENT, device="cpu"))
+
+    forms = {plan.pair.id: plan.variant for plan in planned}
+    # drawn from the stream that shuffles the pairs, the forms fell in the manifest's order: the first two pairs
+    # generic, the next two with the look, the last six the sample alone (a page-pair set's pages all the first forms)
+    assert [forms[f"pair_{k}"] for k in range(10)] == [
+        Variant.SAMPLE_LOOK,
+        Variant.SAMPLE,
+        Variant.SAMPLE,
+        Variant.SAMPLE_LOOK,
+        Variant.GENERIC,
+        Variant.SAMPLE,
+        Variant.GENERIC,
+        Variant.SAMPLE,
+        Variant.SAMPLE,
+        Variant.SAMPLE,
+    ]
 
 
 def test_cache_refuses_a_mix_whose_forms_its_pairs_lack_before_it_loads_an_encoder(
@@ -713,12 +740,14 @@ def test_training_draws_every_entry_once_a_pass_so_a_run_keeps_the_caches_mix(
 def test_training_limited_to_n_pairs_trains_on_the_caches_first_n_drawn_with_their_reference(
     tiny_moss_dit: Path, tiny_pair_cache: Path, tmp_path: Path
 ) -> None:
-    train(tiny_moss_dit, tiny_pair_cache, tmp_path, TrainSettings(steps=3, limit_pairs=3, save_every=3, device="cpu"))
+    train(tiny_moss_dit, tiny_pair_cache, tmp_path, TrainSettings(steps=3, limit_pairs=6, save_every=3, device="cpu"))
 
     steps = [json.loads(line) for line in (tmp_path / LOG).read_text(encoding="utf-8").splitlines()]
-    # 3 steps of 2: two passes over vol_08 (sample), vol_09 (look) and vol_06 (sample); vol_01, cached before vol_06,
-    # takes none
-    assert sorted(pair for step in steps for pair in step["pairs"]) == sorted(["vol_08", "vol_09", "vol_06"] * 2)
+    # 3 steps of 2: one pass over vol_08, vol_09, vol_01 and vol_06 (sample), vol_04 (plain) and vol_02 (look); vol_05,
+    # cached before vol_02, takes none
+    assert sorted(pair for step in steps for pair in step["pairs"]) == sorted(
+        ["vol_08", "vol_09", "vol_01", "vol_06", "vol_04", "vol_02"]
+    )
 
 
 def test_training_moves_every_lora_a_weight_at_the_recipes_learning_rate(

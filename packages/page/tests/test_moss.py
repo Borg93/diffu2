@@ -252,14 +252,21 @@ def test_reference_trained_moss_draws_a_crop_from_its_reference_through_the_page
 def test_draw_pairs_draws_a_trained_pair_back_as_the_page_pipeline_draws_its_crop_from_its_reference(
     tiny_pairs: Path, tiny_pair_cache: Path, tiny_reference_moss: Path, tmp_path: Path
 ) -> None:
-    sheets = draw_pairs(tiny_reference_moss, tiny_pair_cache, tmp_path, count=3, seed=0, settings=MOSS_SETTINGS)
+    sheets = draw_pairs(tiny_reference_moss, tiny_pair_cache, tmp_path, count=6, seed=0, settings=MOSS_SETTINGS)
 
-    # the cache's first three pairs drawn with their reference: vol_01, cached without it, is passed over
-    assert [sheet.name for sheet in sheets] == ["000_vol_08.jpg", "001_vol_09.jpg", "002_vol_06.jpg"]
-    pair = next(pair for pair in read_pairs(tiny_pairs / "train.jsonl") if pair.id == "vol_09")  # cached in look form
+    # the cache's first six pairs drawn with their reference: vol_05, cached without it before vol_02, is passed over
+    assert [sheet.name for sheet in sheets] == [
+        "000_vol_08.jpg",
+        "001_vol_09.jpg",
+        "002_vol_01.jpg",
+        "003_vol_06.jpg",
+        "004_vol_04.jpg",
+        "005_vol_02.jpg",
+    ]
+    pair = next(pair for pair in read_pairs(tiny_pairs / "train.jsonl") if pair.id == "vol_02")  # cached in look form
     pipe = load_pipeline(tiny_reference_moss, crop_blocks, loras={}, settings=MOSS_SETTINGS)
-    crop = _draw(pipe, _pair_plan(pair), seed=1, reference=Image.open(pair.reference))  # drawn second: seed 0 + 1
-    with Image.open(tmp_path / "generated" / "001.png") as drawn:
+    crop = _draw(pipe, _pair_plan(pair), seed=5, reference=Image.open(pair.reference))  # drawn sixth: seed 0 + 5
+    with Image.open(tmp_path / "generated" / "005.png") as drawn:
         assert drawn.tobytes() == crop.tobytes()
 
 
@@ -284,7 +291,7 @@ def test_draw_pairs_draws_a_restyled_pair_back_from_its_sample_in_the_look_it_wa
 def test_draw_pairs_draws_a_hand_changed_pair_back_from_its_moved_prompt_and_its_sample_in_that_hand(
     tiny_pairs: Path, tiny_hand_cache: Path, tiny_reference_moss: Path, tmp_path: Path
 ) -> None:
-    entry = read_entries(tiny_hand_cache)[3]  # vol_06, the cache's third pair drawn with its reference
+    entry = read_entries(tiny_hand_cache)[3]  # vol_06, the cache's fourth pair drawn with its reference
     assert entry.hand is not None
     pair = next(pair for pair in read_pairs(tiny_pairs / "train.jsonl") if pair.id == entry.pair)
     pipe = load_pipeline(tiny_reference_moss, lambda family: family.blocks(), loras={}, settings=MOSS_SETTINGS)
@@ -295,14 +302,14 @@ def test_draw_pairs_draws_a_hand_changed_pair_back_from_its_moved_prompt_and_its
         image=styled(load_rgb(pair.reference), hand=entry.hand),
         height=height,
         width=width,
-        generator=torch.Generator().manual_seed(2),  # the third pair drawn: seed 0 + 2
+        generator=torch.Generator().manual_seed(3),  # the fourth pair drawn: seed 0 + 3
         **MOSS_SETTINGS.pipeline_inputs(),
         output="images",
     )[0]
 
-    draw_pairs(tiny_reference_moss, tiny_hand_cache, tmp_path, count=3, seed=0, settings=MOSS_SETTINGS)
+    draw_pairs(tiny_reference_moss, tiny_hand_cache, tmp_path, count=4, seed=0, settings=MOSS_SETTINGS)
 
-    with Image.open(tmp_path / "generated" / "002.png") as drawn:
+    with Image.open(tmp_path / "generated" / "003.png") as drawn:
         assert drawn.tobytes() == in_that_hand.tobytes()
 
 

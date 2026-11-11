@@ -302,9 +302,12 @@ def apart(pairs: list[TrainingPair]) -> list[TrainingPair]:
 
 def assign_variants(count: int, seed: int, mix: PromptMix = PromptMix.NAMED) -> list[Variant]:
     """The prompt forms of ``count`` pairs, in pair order: of each form of ``mix``'s shares (:data:`MIXES`) exactly
-    its share of them (rounded), its ``rest`` form the rest, placed by a shuffle seeded by ``seed``."""
+    its share of them (rounded), its ``rest`` form the rest, placed by a shuffle seeded by ``seed`` from a stream of
+    its own. A cache shuffles its pairs by the seed itself, and two lists of one length shuffled by one stream take
+    the same order: drawn from the pairs' stream, each pair's form would be the form at its own place in the manifest
+    (a page-pair manifest's pages, written first, all the first forms and its windows the last)."""
     shares = MIXES[mix]
     variants = [variant for variant, share in shares.shares.items() for _ in range(round(count * share))]
     variants += [shares.rest] * (count - len(variants))
-    random.Random(seed).shuffle(variants)
+    random.Random(f"forms/{seed}").shuffle(variants)  # apart from the stream that shuffles a cache's pairs
     return variants
