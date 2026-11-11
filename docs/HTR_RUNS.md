@@ -591,6 +591,7 @@ The same evening (11 Nov, 20:30–21:45):
   the characters that differ from the ground truth marked. On a wide page the bars stand beside their summary, our
   server's timings beside the batched rates, and each of Jev's lines beside its readings. On ZeroGPU the 17-line
   region: TrOCR 4.99 s line by line and 2.09 s as one batch, the reader 1.89 s alone and 0.76 s with the draft.
+- **Public since 21:55** (the user's choice); the TrOCR copy stays private, read through the Space's secret.
 - **Not done:** ahead-of-time compilation (AOTInductor, the route ZeroGPU supports), which could close the reader
   alone's gap to vLLM and shorten the 5 s a fresh worker spends on graphs. SGLang: OpenBMB's guide serves the reader
   and a draft through a pull request still open in October 2026, built from source with CUDA 13; not measured.
