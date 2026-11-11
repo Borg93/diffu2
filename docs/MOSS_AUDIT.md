@@ -26,6 +26,11 @@ copy the hand.
 - **The lessons barely reward the hand.** Knowing a scribe's hand makes his guess of a noisy line better by at most
   4.5 %, and only while the page is nearly all noise; once the strokes show through the noise the page itself tells
   him the hand and the sample is worth nothing. So the marks he gets hardly push him to study the sample's letters.
+- **Why he stopped looking.** As he came to us, the scribe traced: whatever lay under his sheet he copied at the same
+  spot, which is how MOSS-Image uses a reference. We laid the sample under his sheet and marked him down whenever he
+  traced it, since its lines are not the ones asked for. He learned the only rule that fits: take the sample's tone
+  and do not read it. The scribe as he came still reads what lies under his sheet; ours no longer does, even when it
+  is the right answer.
 
 ## 1. The fault: each pair's prompt form was tied to its kind (fixed)
 
@@ -126,8 +131,14 @@ themselves and on the lower lines; against no reference):
 A reference that holds the very lines being drawn, at the very places they are drawn, lowers B's error on them by
 1.1-1.4 % at the highest noise, 0.3-0.6 % at 0.85 and under 0.25 % below. B takes the tone of its reference and
 nothing finer: the same scribe's lines beside the ones it draws help it no more than a sample page does (-0.68 %
-against -0.56 %), and another volume's lines there cost what another volume's sample costs. The same probe on the
-released Base and on the pilot taught with hand changes is running.
+against -0.56 %), and another volume's lines there cost what another volume's sample costs.
+
+**The released Base reads its reference at every noise level, by copying** (the same probe, the same 24 pairs): the
+page's own upper lines in place lower its error on those lines by 18.9 % at sigma 0.95, 17.6 % at 0.85, 12.5 % at 0.70
+and 6.7 % at 0.50; another volume's lines in their place raise it by 31-49 %; and a sample page laid over the page, as
+B was trained, raises its error by 39-50 % on the whole page. Base tries to reproduce whatever lies under each spot.
+Laid over the page, a sample is therefore something the model must learn to stop reading: B's training removed the
+copying, and the reading went with it. The same probe on the pilot taught with hand changes is running.
 
 ## 4. Why the look follows and the hand does not
 
@@ -137,17 +148,18 @@ Put together:
    worth 2 %; the hand pays 4.5 % at most, at the same noise only, and only if the sample's writer is the page's.
    B's samples were any page of the volume (often another scribe's), so for B the hand paid less than that.
 2. **What the model was built to do with a reference.** MOSS-Image lays the reference over the page, and was
-   pretrained to edit: to look at the same spot. That carries a sample's tone to the page; it does not carry letters,
-   which sit elsewhere on a sample. B's attention to its sample is a sliver, a tenth of it at the same spot.
-3. **What B then learned.** To take the tone and stop: it reads nothing finer from a reference, not even the answer
-   laid in place. The pilot taught with hand changes shows the path itself can carry strokes when they pay.
+   pretrained to edit: to copy what lies at the same spot. The released Base does exactly that, at every noise level.
+   A sample page holds other lines at each spot, so copying it is wrong (Base's error rises by 39-50 %).
+3. **What B then learned.** To stop copying, which was the only way it read a reference: it keeps the tone and reads
+   nothing finer, not even the answer laid in place, and its attention to its sample shrank to a sliver. The pilot
+   taught with hand changes shows the path can still carry strokes when they pay.
 4. **The fault of section 1** tied whole pages to the forms without the sample alone, so B never trained the form its
    users draw whole pages in. It is not why the hand fails (the Spark's pilots were free of it and their hand fails
    too), but it skewed what B learned from a sample on whole pages.
 
 So the hand needs a lesson that pays for it (a sample that is the page's own scribe for certain; changes of hand
-that only the sample can explain) and perhaps a place for the sample that suits finding letters rather than editing
-(beside the page, not over it). The sibling pilot tests both: section 6.
+that only the sample can explain) and a place for the sample where reading it is not copying the wrong lines: beside
+the page, not over it. The sibling pilot tests both, from B and from Base: section 6.
 
 ## 5. Speed and memory at 2 MP (the PyTorch team's skills)
 
@@ -163,7 +175,7 @@ for byte) applied to the 2 MP training step on 8 A100s (job 64198262) and to the
   **Fix, built and measured:** `--size-block N` sorts each pass's samples by size inside shuffled blocks of N rounds,
   so a round's samples are of like size. On the 8 A100s (job 64201211, the probe cache, the same samples a pass):
   15.2 s a step on average against 19.1, the losses the same (0.5997 against 0.6000 over steps 7-30); simulated on
-  the full cache's sizes, 16.2 s against 18.7. On for the 27,000-step run: about 17 of its 137 hours.
+  the full cache's sizes, 16.2 s against 18.7. On for the 27,000-step run: 16 to 24 of its 137 hours.
 - **The memory snapshot**: 21.5 GiB of tensors at the step's peak, 31-32 of the GPU's 64 GB in use; a third of the
   peak is what stays between steps (weights, their average, Muon's momentum), the rest the saved block inputs
   (3.9 GiB), the gathered weights and one block's activations. Half the reserved memory is free but in small pieces,
@@ -185,9 +197,10 @@ Done:
 
 Running (MOSS_RUNS.md, the audit's runs):
 
-- **The sibling pilot**, two arms from B's step 7,000 on 8,576 pairs whose sample is the other window of the
-  target's own page: the sample over the page (as now) and above it. Judged by the loss with the right and the wrong
-  scribe's sample, and by drawings from both beside the real windows.
+- **The sibling pilot** on 8,576 pairs whose sample is the other window of the target's own page: from B's step
+  7,000 with the sample over the page (as now) and above it, and from the released Base (which still reads a
+  reference) with the sample above. Judged by the loss with the right and the wrong scribe's sample, and by drawings
+  from both beside the real windows.
 - Per-scribe adapters in the named form on B and on Base (the route that already works for one scribe).
 
 Ranked next, by what the measurements say:
