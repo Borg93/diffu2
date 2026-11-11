@@ -414,8 +414,9 @@ operands.
 In plain words: SGLang Diffusion is another engine that can run MOSS-Image, as a scribe can work at another
 workshop's desk. Out of the box that desk has no stand for the sample page: SGLang's MOSS-Image (sglang 0.5.23,
 sgl-project/sglang#44325) draws from a prompt alone. Our plugin, `diffu_sglang_moss` (`packages/sglang_moss`), is
-that stand. It adds the sample-page input exactly as our own pipeline reads it, so the fine-tuned scribe copies the
-sample's hand at SGLang's desk too. On CPU with a tiny model, SGLang with the plugin draws the same pixels, bit for
+that stand. It adds the sample-page input exactly as our own pipeline reads it, so the fine-tuned scribe sees the
+sample page at SGLang's desk too, and takes its paper and ink from it as at ours (not its handwriting: the model
+card's limitation). On CPU with a tiny model, SGLang with the plugin draws the same pixels, bit for
 bit, as our pipeline from the same prompt, sample and noise, with a sample page and without one
 (`packages/sglang_moss/tests`).
 
