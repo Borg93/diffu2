@@ -2,8 +2,10 @@
 
 Training our page and line readers from run specs: Unlimited-OCR 2 (the page reader; LoRA or full), MiniCPM-OCR 1.0
 (the line and region recogniser; OpenBMB's full recipe), MiniCPM-OCR-Jev (the proof-reader that scores whether a crop
-shows a text) and a DSpark draft for our fine-tuned MiniCPM-OCR. The tools (ms-swift, speculators, vLLM) each run in
-their own environment under `envs/`; this package is a light workspace member that checks a spec, renders the tools'
+shows a text) and a DSpark draft for our fine-tuned MiniCPM-OCR; LightOnOCR-3-4B, a second page reader (its pages
+grounded as LightOn's client asks for them: [lion_data_prep/README.md](lion_data_prep/README.md)). The tools
+(ms-swift, speculators, vLLM) each run in their own environment under `envs/`; this package is a light workspace
+member that checks a spec, renders the tools'
 exact commands, launches them on the Spark (under `jobs/spark_guard.sh`) or on Slurm, and builds the sets they train
 on. The design, with every recipe and pin cited, and the hardware estimates: [docs/HTR_TRAIN.md](../../docs/HTR_TRAIN.md).
 The runs on all of GT-Lejonet (what runs, what is queued, the results against the TrOCR baseline):
@@ -88,10 +90,11 @@ uv run htr-train split-dev data/htr/smoke/jev_lines.jsonl --share 0.25
 ## Runs
 
 A run is one YAML file (`configs/smoke/`, `configs/full/`): its name, a description of its variant, its job (one of
-`minicpm-ocr`, `unlimited-ocr-2`, `jev`, `dspark`), its sets and its resources. It is checked before anything starts:
-an unpinned Hub model, remote code for anything but Unlimited-OCR 2 at its revision, a test page or a dev volume in
-training, a missing image, pairs of another renderer, a draft's responses from another target, a batch that does not
-divide, packing without flash attention, and a Spark run of more than its one GPU or memory are refused.
+`minicpm-ocr`, `unlimited-ocr-2`, `jev`, `dspark`, `lightonocr-3`), its sets and its resources. It is checked before
+anything starts: an unpinned Hub model, remote code for anything but Unlimited-OCR 2 at its revision, a test page or a
+dev volume in training, a missing image, pairs of another renderer, a draft's responses from another target, a batch
+that does not divide, packing without flash attention, a LightOnOCR-3 page larger than 2,048 px, packed or sized
+otherwise than LightOnOCR-3 reads it, and a Spark run of more than its one GPU or memory are refused.
 
 ```bash
 htr-train render packages/htr_train/configs/smoke/minicpm_lines.yaml        # the scripts, nothing started

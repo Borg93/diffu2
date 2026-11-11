@@ -2,6 +2,7 @@
 transformers has no ``minicpm_ocr``), never imported by the tests.
 
     <env>/.venv/bin/python envs_tiny.py minicpm-ocr OUT    # MiniCPM-OCR 1.0's config shrunk, its tokenizer, processor
+    <env>/.venv/bin/python envs_tiny.py lightonocr-3 OUT   # LightOnOCR-3-4B's, the same
 
 Only the configs, tokenizers and processors are fetched (at pinned commits), never weights.
 """
@@ -18,6 +19,7 @@ import transformers
 from huggingface_hub import snapshot_download
 
 MINICPM_OCR = ("openbmb/MiniCPM-OCR-1.0", "2697d4e93dca82784abf858ae57206a49629cb6b")
+LIGHTONOCR_3 = ("lightonai/LightOnOCR-3-4B", "b71010f095dc3735de7ee6b9969bff8f8f50b39a")
 FILES = ["*.json", "*.jinja", "*.txt", "*.model"]  # configs, tokenizer, processor, chat template: no weights
 
 
@@ -65,7 +67,26 @@ def tiny_minicpm_ocr(out: Path) -> None:
     _copy_files(snapshot, out)
 
 
-TINY_MODELS = {"minicpm-ocr": tiny_minicpm_ocr}
+def tiny_lightonocr_3(out: Path) -> None:
+    """A tiny random LightOnOCR-3-4B written to ``out``: its pinned config with a four-layer language model
+    (:func:`_shrink_text`) and a two-layer vision encoder of width 32 (its patches, merge and positions as they are),
+    its weights drawn by seed 0, and the snapshot's tokenizer, processor and chat template beside it."""
+    snapshot = Path(snapshot_download(LIGHTONOCR_3[0], revision=LIGHTONOCR_3[1], allow_patterns=FILES))
+    config = transformers.AutoConfig.from_pretrained(snapshot)
+    config.text_config = _shrink_text(config.text_config)
+    vision = config.vision_config
+    vision.depth = 2
+    vision.hidden_size = 32
+    vision.intermediate_size = 64
+    vision.num_heads = 2
+    vision.out_hidden_size = config.text_config.hidden_size
+    torch.manual_seed(0)
+    model = getattr(transformers, config.architectures[0])(config)
+    model.save_pretrained(out)
+    _copy_files(snapshot, out)
+
+
+TINY_MODELS = {"minicpm-ocr": tiny_minicpm_ocr, "lightonocr-3": tiny_lightonocr_3}
 
 
 if __name__ == "__main__":

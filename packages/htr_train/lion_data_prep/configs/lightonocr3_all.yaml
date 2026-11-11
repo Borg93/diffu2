@@ -1,0 +1,60 @@
+# LightOnOCR-3-4B on every GT-Lejonet training page (diffu-reader-set --model lightonocr-3: grounding, each page fitted
+# to 2,048 px as LightOn's client fits it, test_0050 held out, the dev volumes of minicpm_regions.dev), real only, on one
+# server's two GPUs (htr-train launch --where local, HTR_TRAIN_LOCAL_GPUS). Full fine-tune as our MiniCPM-OCR recipe
+# (OpenBMB's: vision encoder trained, projector frozen, lr 5e-6 cosine, AdamW fused beta2 0.95, wd 0.1, ZeRO-2,
+# unpacked: Qwen3.5's linear attention leaks between packed samples in envs/minicpm), 2 pages a GPU, 32 a step.
+# Sequences: a page is 2,591 visual tokens on average (4,096 at most) and its answer 407 (2,761 at most); the longest
+# page is 5,304 tokens in all, so max_length 8,192 drops none (ms-swift silently replaces a sample past it). ~1,550 steps
+# an epoch; eval and save every 250 (a checkpoint with its optimizer state is ~63 GB: two kept). Measure the step time
+# and peak memory with smoke_lightonocr3_2gpu.yaml first; the hours are an estimate.
+name: lightonocr3-all
+description: "LightOnOCR-3-4B full, all GT training pages grounded (2048 px), real only, 2 GPUs"
+job:
+  kind: lightonocr-3
+  model: {repo: lightonai/LightOnOCR-3-4B, revision: b71010f095dc3735de7ee6b9969bff8f8f50b39a}
+  # a LoRA instead: tuner: lora, lora: {rank: 16, alpha: 32, target_modules: all-linear}, freeze_vit: true,
+  # learning_rate: 1.0e-4 (ms-swift's Qwen3.5 example, examples/models/qwen3_5/transformers.sh at ef4953a4)
+  tuner: full
+  freeze_vit: false
+  freeze_aligner: true
+  freeze_llm: false
+  learning_rate: 5.0e-6
+  epochs: 2
+  global_batch: 32
+  per_device_batch: 2
+  lr_scheduler: cosine
+  warmup_ratio: 0.05
+  optim: adamw_torch_fused
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  adam_epsilon: 1.0e-8
+  weight_decay: 0.1
+  max_grad_norm: 1.0
+  seed: 42
+  data_seed: 42
+  max_length: 8192
+  packing: false
+  padding_free: false
+  attn_impl: sdpa
+  deepspeed: zero2
+  gradient_checkpointing: true
+  vit_gradient_checkpointing: true
+  gradient_checkpointing_kwargs: {use_reentrant: false}
+  dataset_num_proc: 16
+  dataloader_num_workers: 8
+  load_from_cache_file: false
+  dataset_shuffle: true
+  train_dataloader_shuffle: true
+  eval_strategy: steps
+  eval_steps: 250
+  save_strategy: steps
+  save_steps: 250
+  save_total_limit: 2
+  save_only_model: false
+  best_by_eval_loss: true
+  per_device_eval_batch_size: 2
+  logging_steps: 10
+data:
+  train: [{path: data/htr/lightonocr3_pages.train.jsonl}]
+  dev: data/htr/lightonocr3_pages.dev.jsonl
+resources: {gpus_per_node: 2, need_gb: 80, hours: 60}

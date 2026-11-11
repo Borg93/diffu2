@@ -94,6 +94,49 @@ server, where vLLM serves the reader; then Jev's scores line by line.
 - The Space reads the private TrOCR copy with a read-only `HF_TOKEN` secret, set in its settings; without it the app
   runs without TrOCR and says so.
 
+## LightOnOCR-3-4B, a page reader
+
+`lightonai/LightOnOCR-3-4B` at `b71010f0` (Qwen3.5's own classes, no code of its own in the repo) fine-tuned on whole
+pages asked as LightOn's own client asks it (`lightonai/LightOnOCR` at `36755d4`: `lightonocr/client.py`,
+`render.py`, `grounding.py`):
+
+- **A sample** (`diffu-reader-set --model lightonocr-3`): the page fitted to a longest edge of 2,048 px as their
+  `fit` fits it (Lanczos, never enlarged; "the model applies no further resizing"), asked `<image>grounding`, answered
+  with a block per region in reading order: `![label](x0,y0,x1,y1)`, the box on 0-1000 of the page, then on the next
+  line the region as Markdown (a heading after `## `, a table as HTML), a blank line between two, as the model card
+  shows its output. Their parser reads it back into our regions, and its blocks' texts joined into the `--task page`
+  answer (their transcription mode: the image alone, answered with the Markdown). Labels: running text `text`, a
+  heading `title`, a margin note `aside_text`, `page_number`, `header`, a footer, catchword or signature mark
+  `footer`, a table `table` (the model card's; `diffu_page.page.labels.LIGHTONOCR_LABELS`).
+- **The sequence.** ms-swift's `qwen3_5` template with `--add_non_thinking_prefix true --loss_scale
+  ignore_empty_think` (the renderer always passes both) makes the same token ids as LightOnOCR-3's own
+  `chat_template.jinja` with thinking off, as the card trains and serves it, and the loss starts where its generation
+  prompt (`<|im_start|>assistant\n<think>\n\n</think>\n\n`) ends: checked on CPU on 13 real pages. Without the prefix
+  the sequence is not the one read at inference; without `ignore_empty_think` the empty think block is trained on.
+- **The image size.** ms-swift resizes an image itself (qwen_vl_utils) and has the processor not resize it again;
+  the renderer sets its bounds to LightOn's processor's (`IMAGE_MIN_TOKEN_NUM=64`, `IMAGE_MAX_TOKEN_NUM=16384`: 65,536
+  and 16,777,216 px), so a page gets the grid it gets at inference (checked: the same grids, pixels within one level
+  of 255); without them a page under 65,536 px is sized otherwise. A run refuses a page over 2,048 px, which would be
+  read at up to 16,777,216 px.
+- **Lengths**, all 53,436 pages: 2,591 visual tokens on average (4,096 at most), a grounded answer 407 (2,761), a
+  whole sample at most 5,304 tokens, so `max_length` 8,192 drops none (ms-swift silently swaps a longer sample for
+  another).
+- **The recipe** is MiniCPM-OCR's (`configs/lightonocr3_all.yaml`): full, the vision encoder trained and the
+  projector frozen (ms-swift: `freeze_parameters: ['model.visual.merger']`), lr 5e-6, ZeRO-2, unpacked (Qwen3.5),
+  2 pages a GPU, 32 a step, 2 epochs, the best by eval loss. LightOn publishes no fine-tuning recipe (their blog: SFT
+  with Muon and packing, then RL).
+
+```bash
+# the pages, test_0050 held out: ~0.7 MB a page, ~37 GB in data/htr (/mnt/work)
+uv run diffu-reader-set --xml /mnt/work/GT-Lejonet_HTR_202602 --model lightonocr-3 --task grounding \
+    --split-from-gt-test-lists --gt-test-list test_0050 --workers 16 --out data/htr/lightonocr3_pages.jsonl
+uv run htr-train split-dev data/htr/lightonocr3_pages.jsonl --like data/htr/minicpm_regions.dev.jsonl
+# the smoke: 20 steps on 160 of those training pages, the dev set once, a checkpoint (~63 GB: delete it after)
+C=packages/htr_train/lion_data_prep/configs
+HTR_TRAIN_LOCAL_GPUS=1,2 uv run htr-train launch $C/smoke_lightonocr3_2gpu.yaml --where local
+HTR_TRAIN_LOCAL_GPUS=1,2 uv run htr-train launch $C/lightonocr3_all.yaml --where local
+```
+
 ## What the recipe settles, and why
 
 - **Unpacked.** In `envs/minicpm`, Qwen3.5's linear-attention layers carry state from one packed sample into the next

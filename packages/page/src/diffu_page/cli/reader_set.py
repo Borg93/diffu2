@@ -35,12 +35,19 @@ is taught a page whole, as pages will be sent to it.
   or a line's crop down to at most that many pixels, its aspect kept (200,704 = 448 x 448 keeps a MiniCPM-OCR line one
   view of 256 visual tokens); the meta of a crop's sample also gives its element's kind and place, a line's its
   production and place in its element.
+- ``lightonocr-3``: as ms-swift fine-tunes LightOnOCR-3-4B (``messages`` and ``images``; model type and template
+  ``qwen3_5``), asked as LightOn's client asks it: a sample per page, the page fitted to a longest edge of
+  :data:`LIGHTONOCR_LONGEST_EDGE` px as that client fits it (:func:`fit_longest_edge`). ``--task grounding`` (the
+  default) asks ``<image>grounding`` and answers with a block per element, its label and box then its Markdown
+  (:func:`diffu_page.page.labels.to_lightonocr_grounding`); ``--task page`` shows the image alone (``<image>``, its
+  transcription mode) and answers with the Markdown.
 
 A page that is the whole of its image is shown as that image; a page of an opening is cut from its scan into
 ``<out stem>_pages/<page id>.jpg``. With ``--xml``, ``--split-from-gt-test-lists`` sends every scan its volume's test
 lists name to ``<out stem>.test.jsonl`` (and ``<out stem>.test.meta.jsonl``), never to ``--out``, and ``--exclude``
 leaves out the pages a file lists (by id, as the MOSS page-pair sets give them, or by path: pages a generator was
 trained on); the GT's second export of a collection is always left out.
+A page its reader reads fitted to a smaller size (LightOnOCR-3's) is fitted and written to ``<out stem>_pages/`` too.
 
 A set is one variant of a reader's data, so several can be built and trained on apart: ``--collection`` takes only the
 collections it names, ``--exclude-collection`` leaves some out, ``--max-per-collection`` caps a collection's training
@@ -95,6 +102,7 @@ from diffu_page.data.reader_pages import (
 from diffu_page.local_run import describe
 from diffu_page.output import console
 from diffu_page.page.labels import (
+    LIGHTONOCR_GROUNDING_PROMPT,
     OCR_PROMPT,
     PARSE_PROMPT,
     SPOTTING_PROMPT,
@@ -106,6 +114,7 @@ from diffu_page.page.labels import (
     minicpm_ocr_recognition,
     paddleocr_vl_recognition,
     to_grounded_markdown,
+    to_lightonocr_grounding,
     to_markdown,
     to_plain_text,
     to_spotting,
@@ -122,12 +131,13 @@ class Reader(StrEnum):
     PADDLEOCR_VL = "paddleocr-vl"
     UNLIMITED_OCR_2 = "unlimited-ocr-2"
     MINICPM_OCR = "minicpm-ocr"
+    LIGHTONOCR_3 = "lightonocr-3"
 
 
 class Task(StrEnum):
     """What a set teaches its reader: a whole page grounded (DeepSeek-OCR 2), as Markdown or plain text, its lines
     spotted (PaddleOCR-VL) or parsed into blocks (Unlimited-OCR 2), a scan's pages parsed together (Unlimited-OCR 2's
-    opening), or each element's or line's crop (a recogniser's)."""
+    opening), or each element's or line's crop (a recogniser's); ``grounding`` a page in LightOnOCR-3's blocks."""
 
     GROUNDED = "grounded"
     MARKDOWN = "markdown"
@@ -137,6 +147,7 @@ class Task(StrEnum):
     LINES = "lines"
     PARSE = "parse"
     OPENING = "opening"
+    GROUNDING = "grounding"
 
 
 TASKS: dict[Reader, tuple[Task, ...]] = {  # the tasks each reader is fine-tuned on, its default first
@@ -144,18 +155,25 @@ TASKS: dict[Reader, tuple[Task, ...]] = {  # the tasks each reader is fine-tuned
     Reader.PADDLEOCR_VL: (Task.PAGE, Task.SPOTTING, Task.ELEMENTS),
     Reader.UNLIMITED_OCR_2: (Task.PARSE, Task.OPENING),
     Reader.MINICPM_OCR: (Task.ELEMENTS, Task.LINES, Task.PAGE),
+    Reader.LIGHTONOCR_3: (Task.GROUNDING, Task.PAGE),
 }
 MIN_LINE_SIDE = 8  # px: a line's box narrower or lower than this holds no writing (a transcriber's stray box)
 UNCERTAIN_MARKS = ("??", "(?)", "[", "]")  # a transcriber's doubt or comment in a line's text (the TrOCR baseline's)
+# The longest edge of a page LightOnOCR-3-4B reads: LightOn's client fits every page to it before sending it
+# (lightonocr/render.py at 36755d4: "Longest edge used to render training data; the model applies no further
+# resizing"); its processor's bounds (65,536 to 16,777,216 px) only round such a page to its 32 px grid
+LIGHTONOCR_LONGEST_EDGE = 2048
 
 
 class PageFormat(BaseModel):
-    """A page task's sample: the prompt the page's image is shown with, and its answer written from the page."""
+    """A page task's sample: the prompt the page's image is shown with, its answer written from the page, and the
+    longest edge the page is fitted to, as the reader's own client sends it (None: as cut)."""
 
     model_config = {"frozen": True}
 
     prompt: str
     answer: Callable[[PageElements], str]
+    longest_edge: int | None = None
 
 
 def _parsed(page: PageElements) -> str:
@@ -175,6 +193,16 @@ PAGE_FORMATS: dict[tuple[Reader, Task], PageFormat] = {
     (Reader.PADDLEOCR_VL, Task.SPOTTING): PageFormat(prompt=f"<image>{SPOTTING_PROMPT}", answer=to_spotting),
     (Reader.UNLIMITED_OCR_2, Task.PARSE): PageFormat(prompt=f"<image>{PARSE_PROMPT}", answer=_parsed),
     (Reader.MINICPM_OCR, Task.PAGE): PageFormat(prompt=f"<image>{TEXT_PROMPT}", answer=to_plain_text),
+    # LightOnOCR-3's two modes as its client asks them (lightonocr/client.py): the image, then "grounding" right after
+    # it for the blocks, or the image alone for the Markdown
+    (Reader.LIGHTONOCR_3, Task.GROUNDING): PageFormat(
+        prompt=f"<image>{LIGHTONOCR_GROUNDING_PROMPT}",
+        answer=to_lightonocr_grounding,
+        longest_edge=LIGHTONOCR_LONGEST_EDGE,
+    ),
+    (Reader.LIGHTONOCR_3, Task.PAGE): PageFormat(
+        prompt="<image>", answer=to_markdown, longest_edge=LIGHTONOCR_LONGEST_EDGE
+    ),
 }
 
 ELEMENT_FORMATS: dict[
@@ -224,6 +252,7 @@ SAMPLE_SHAPES: dict[Reader, Callable[[str, str, list[Path]], Sample]] = {
     Reader.PADDLEOCR_VL: chat_sample,
     Reader.UNLIMITED_OCR_2: chat_sample,
     Reader.MINICPM_OCR: chat_sample,
+    Reader.LIGHTONOCR_3: chat_sample,
 }
 
 
@@ -245,15 +274,32 @@ def fitted(image: Image.Image, max_pixels: int | None) -> Image.Image:
     return image.resize(size, Image.Resampling.LANCZOS)
 
 
-def page_image(page: ReaderPage, pages: Path) -> Path:
-    """The image showing ``page`` alone: its own when the page is all of it, else the page cut from it into ``pages``
-    as ``<page id>.jpg``."""
-    if page.rect is None:
+def fit_longest_edge(image: Image.Image, longest_edge: int) -> Image.Image:
+    """``image`` scaled down, its aspect kept, to a longest edge of ``longest_edge`` px, as LightOn's client fits a page
+    before sending it (``fit`` in its ``lightonocr/render.py``: each side rounded, at least 1 px, Lanczos); as it is
+    when it is no longer."""
+    scale = longest_edge / max(image.size)
+    if scale >= 1:
+        return image
+    size = (max(1, round(image.width * scale)), max(1, round(image.height * scale)))
+    return image.resize(size, Image.Resampling.LANCZOS)
+
+
+def page_image(page: ReaderPage, pages: Path, longest_edge: int | None = None) -> Path:
+    """The image showing ``page`` alone, its longest edge at most ``longest_edge`` px (None: as cut): its own when the
+    page is all of it and no longer, else the page cut from it and fitted (:func:`fit_longest_edge`) into ``pages`` as
+    ``<page id>.jpg``."""
+    if page.rect is None and longest_edge is None:
         return page.image
     path = pages / f"{page.meta.id}.jpg"
-    pages.mkdir(parents=True, exist_ok=True)
     with open_scan(page.image) as scan:
-        scan.crop(page.rect).convert("RGB").save(path, quality=TILE_QUALITY)
+        if page.rect is None and longest_edge is not None and max(scan.size) <= longest_edge:
+            return page.image
+        cut = (scan if page.rect is None else scan.crop(page.rect)).convert("RGB")
+        if longest_edge is not None:
+            cut = fit_longest_edge(cut, longest_edge)
+        pages.mkdir(parents=True, exist_ok=True)
+        cut.save(path, quality=TILE_QUALITY)
     return path
 
 
@@ -436,7 +482,11 @@ def scan_samples(
             page_format, shape = PAGE_FORMATS[(model, task)], SAMPLE_SHAPES[model]
             return [
                 (
-                    shape(page_format.prompt, page_format.answer(page.elements), [page_image(page, dirs.pages)]),
+                    shape(
+                        page_format.prompt,
+                        page_format.answer(page.elements),
+                        [page_image(page, dirs.pages, page_format.longest_edge)],
+                    ),
                     page.meta,
                 )
                 for page in scan.pages
@@ -682,7 +732,8 @@ def reader_set(
             "paddleocr-vl: page (OCR: the Markdown; default), spotting (each line's text and box) or elements (each "
             "element's crop, for its recogniser); unlimited-ocr-2: parse (a page's blocks; default) or opening (a "
             "scan's pages in one sample); minicpm-ocr: elements (each element's crop; default), lines (each text "
-            "line's crop, in <out stem>_lines) or page (its plain text)"
+            "line's crop, in <out stem>_lines) or page (its plain text); lightonocr-3: grounding (each element's label "
+            "and box, then its Markdown; default) or page (the image alone: the Markdown)"
         ),
     ] = None,
     max_crop_pixels: Annotated[

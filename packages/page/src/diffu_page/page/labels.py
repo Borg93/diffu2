@@ -13,6 +13,8 @@ line's text and box), and the elements themselves, as JSON, are PaddleOCR-VL's l
 PP-DocLayoutV3 category, its box and the prompt and text its recogniser reads its crop with). :func:`to_unlimited_ocr`
 is pages as Unlimited-OCR 2 parses them (each element a block: its label, its box and its lines), :func:`to_plain_text`
 a page as MiniCPM-OCR reads it whole, and :func:`minicpm_ocr_recognition` an element's crop as MiniCPM-OCR reads it.
+:func:`to_lightonocr_grounding` is a page as LightOnOCR-3 grounds it (each element its label and box, then its
+Markdown).
 A real page's layout (:func:`diffu_page.page.layout.load_xml_layout`) gives the same elements (:func:`layout_elements`).
 """
 
@@ -435,9 +437,26 @@ UNLIMITED_OCR_LABELS: dict[LineKind, str] = {
     LineKind.SIGNATURE_MARK: "footer",
 }
 
+# LightOnOCR-3's block labels for each kind of element, of those its model card lists ("Prompt Modes", LightOnOCR-3-4B
+# at b71010f0): a heading is a title (its text carrying its own "#", as LightOn's ParseBench provider reads a title), a
+# margin note aside text ("marginal or side text outside the main text flow"), and page furniture under the text a
+# footer, as above. No block is a continuation ("text+"): a region of ours is whole.
+LIGHTONOCR_LABELS: dict[LineKind, str] = {
+    LineKind.BODY: "text",
+    LineKind.TABLE: "table",
+    LineKind.HEADING: "title",
+    LineKind.MARGINALIA: "aside_text",
+    LineKind.PAGE_NUMBER: "page_number",
+    LineKind.HEADER: "header",
+    LineKind.FOOTER: "footer",
+    LineKind.CATCH_WORD: "footer",
+    LineKind.SIGNATURE_MARK: "footer",
+}
+
 GROUNDING_SCALE = 999  # DeepSeek-OCR's boxes: on 0-999 of the image's width and height, as its decoder divides them
 SPOTTING_SCALE = 1000  # PaddleOCR-VL's spotted boxes: <|LOC_0|> to <|LOC_1000|> of the image's width and height
 UNLIMITED_OCR_SCALE = 1000  # Unlimited-OCR 2's blocks: on 0-1000 of the page, as its post-processing clamps them
+LIGHTONOCR_SCALE = 1000  # LightOnOCR-3's blocks: on 0-1000 of the page's width and height, as its client reads them
 
 # PaddleOCR-VL's prompts: a crop or a page read as text, a crop as a table (OTSL), a page's lines spotted
 OCR_PROMPT = "OCR:"
@@ -445,6 +464,7 @@ TABLE_PROMPT = "Table Recognition:"  # MiniCPM-OCR's for a table's crop too
 SPOTTING_PROMPT = "Spotting:"
 TEXT_PROMPT = "Text Recognition:"  # MiniCPM-OCR's for a text region's crop or a whole page (its model card)
 PARSE_PROMPT = "Multi page parsing."  # Unlimited-OCR 2's after its pages' images, one page or several (its README)
+LIGHTONOCR_GROUNDING_PROMPT = "grounding"  # LightOnOCR-3's after the page's image for its blocks (its model card)
 
 
 class ElementLine(BaseModel):
@@ -684,6 +704,23 @@ def to_unlimited_ocr(pages: list[PageElements]) -> str:
     writes a page (Unlimited-OCR issue #114); the next page's ``<PAGE>`` follows its last block, as its post-processing
     reads pages apart."""
     return "".join("<PAGE>" + "\n".join(_block(element, page) for element in page.elements) for page in pages)
+
+
+def _lightonocr_block(element: PageElement, page: PageElements) -> str:
+    """An element as LightOnOCR-3 grounds it: ``![label](x0,y0,x1,y1)``, its box on 0-1000 of the page, then on the next
+    line the element in the page's Markdown (:attr:`PageElement.markdown`: a heading after ``## ``, a table as
+    HTML)."""
+    box = ",".join(str(value) for value in _on_grid(element.box, page, LIGHTONOCR_SCALE))
+    return f"![{LIGHTONOCR_LABELS[element.kind]}]({box})\n{element.markdown}"
+
+
+def to_lightonocr_grounding(page: PageElements) -> str:
+    """The page as LightOnOCR-3 writes it asked ``grounding`` (its model card's "Prompt Modes"): its elements in reading
+    order, each a block (:func:`_lightonocr_block`), a blank line between two. Its client's parser
+    (``lightonocr/grounding.py``: each marker owns the text up to the next, stripped) gives back each element's
+    Markdown, and the blocks' texts joined by blank lines are :func:`to_markdown`'s text, LightOnOCR-3's answer to the
+    page alone."""
+    return "\n\n".join(_lightonocr_block(element, page) for element in page.elements)
 
 
 def to_plain_text(page: PageElements) -> str:

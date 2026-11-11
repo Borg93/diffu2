@@ -162,7 +162,7 @@ from it into `<out stem>_pages/`; a region's PAGE type is its element's kind, an
 both a PAGE and an ALTO file describe is read from its PAGE file (ALTO, as read, has neither types nor tables). Left
 out, each with why in `<out stem>.skipped.jsonl`: a scan wider than tall that its lines cannot split, one without a
 transcribed line, one that is not the size its file says, a file without its scan or that cannot be read, and the GT's
-second export of a collection (`GT-RA_landskapshandlingar_20260227`, the scans of `..._20260220` again). Two more
+second export of a collection (`GT-RA_landskapshandlingar_20260227`, the scans of `..._20260220` again). More
 readers, as ms-swift fine-tunes them (`messages` and `images`):
 
 - `--model unlimited-ocr-2` (ms-swift's model type `unlimited-ocr`, template `unlimited_ocr`, which shows each
@@ -181,6 +181,13 @@ readers, as ms-swift fine-tunes them (`messages` and `images`):
   sample per page asked `<image>Text Recognition:` and answered with its plain text, a line of the page a line, a
   blank line between two regions. `--max-crop-pixels N` scales a region's or line's crop down to at most N pixels
   (200,704 = 448 x 448: a MiniCPM-OCR line in one view of 256 visual tokens).
+- `--model lightonocr-3` (LightOnOCR-3-4B; ms-swift's model type and template `qwen3_5`): a sample per page, the page
+  fitted to a longest edge of 2,048 px as LightOn's client fits it, cut into `<out stem>_pages/`. `--task grounding`
+  (the default) asked `<image>grounding` and answered with a block per region in reading order, `![label](x0,y0,x1,y1)`
+  (0-1000 of the page) and on the next line the region as Markdown, a blank line between two; the label `text`,
+  `title` (a heading, after `## `), `aside_text`, `page_number`, `header`, `footer` (a footer, catchword or signature
+  mark) or `table` (an HTML table). `--task page` shows the image alone (`<image>`, its transcription mode), answered
+  with the Markdown.
 
 Beside each set `<out stem>.meta.jsonl` gives a line per sample: its id (a page's is the MOSS page-pair sets', the
 digest of its PAGE file's path below the folder given and its side, `<digest>_left`), `source` (`real`, or

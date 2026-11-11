@@ -2,8 +2,9 @@
 not YAML, an unpinned Hub model, a local model with a revision or one that does not exist, remote code for any model but
 Unlimited-OCR 2 at its revision, a batch that does not divide, packing without flash attention, a test page or a dev
 volume in training, a missing image or meta line, pairs of another renderer, a draft's responses from another target,
-a draft's target from the Hub or its layers outside it, and a Spark run with more than its one GPU or memory; every
-shipped spec loads."""
+a draft's target from the Hub or its layers outside it, a LightOnOCR-3 run reading a page otherwise than LightOnOCR-3
+reads it (sized by a spec's env, packed, read for CER, or larger than its client sends), and a Spark run with more
+than its one GPU or memory; every shipped spec loads."""
 
 from __future__ import annotations
 
@@ -334,6 +335,73 @@ def test_plan_run_refuses_jev_pairs_of_another_renderer_or_prompt(
         plan_run(spec, Where.SPARK, settings)
 
 
+LIGHTONOCR_3 = {"repo": "lightonai/LightOnOCR-3-4B", "revision": "b71010f095dc3735de7ee6b9969bff8f8f50b39a"}
+
+
+@pytest.mark.parametrize(
+    ("fields", "page", "refusal"),
+    [
+        pytest.param(
+            {"env": {"IMAGE_MAX_TOKEN_NUM": "1024"}},
+            (1182, 2048),
+            "env may not set IMAGE_MAX_TOKEN_NUM: LightOnOCR-3's pages are sized as its processor sizes them",
+            id="image-tokens-in-env",
+        ),
+        pytest.param(
+            {"env": {"MAX_PIXELS": "4194304"}}, (1182, 2048), "env may not set MAX_PIXELS", id="pixels-in-env"
+        ),
+        pytest.param(
+            {"packing": True, "attn_impl": "flash_attn"},
+            (1182, 2048),
+            "carries a packed sample's state into the next in envs/minicpm: train LightOnOCR-3 unpacked",
+            id="packed",
+        ),
+        pytest.param({"padding_free": True}, (1182, 2048), "train LightOnOCR-3 unpacked", id="padding-free"),
+        pytest.param(
+            {"cer_sets": {"dev": {"lines": "dev_lines.jsonl"}}, "eval_strategy": "steps", "eval_steps": 1},
+            (1182, 2048),
+            "cer_sets read lines in MiniCPM-OCR's prompt: a LightOnOCR-3 run is evaluated by its loss",
+            id="cer-sets",
+        ),
+        pytest.param(
+            {},
+            (1500, 2600),
+            "train.jsonl:1 shows .*a_0_0.jpg at a longest edge of 2600 px: LightOnOCR-3 reads pages fitted to 2048 px",
+            id="page-larger-than-its-client-sends",
+        ),
+    ],
+)
+def test_plan_run_refuses_a_lightonocr_3_run_that_would_read_a_page_otherwise_than_lightonocr_3_reads_it(
+    tmp_path: Path,
+    make_set: MakeSet,
+    settings: Settings,
+    fields: dict[str, JsonValue],
+    page: tuple[int, int],
+    refusal: str,
+) -> None:
+    train = make_set("train", [("a_0_0", "Anno 1715", "GT-A", "V1", "train")], size=page)
+    dev = make_set("dev", [("b_0_0", "den 4 maj", "GT-A", "V2", "train")], size=(1182, 2048))
+    spec = _spec(train, dev)
+    spec["job"].update(kind="lightonocr-3", model=dict(LIGHTONOCR_3), **fields)
+
+    with pytest.raises(JobRefused, match=refusal):
+        plan_run(load_run_spec_from(tmp_path, spec), Where.SPARK, settings)
+
+
+def test_plan_run_plans_a_lightonocr_3_run_on_pages_fitted_as_its_client_fits_them_with_its_processors_bounds(
+    tmp_path: Path, make_set: MakeSet, settings: Settings
+) -> None:
+    train = make_set("train", [("a_0_0", "Anno 1715", "GT-A", "V1", "train")], size=(2048, 1446))
+    dev = make_set("dev", [("b_0_0", "den 4 maj", "GT-A", "V2", "train")], size=(1182, 2048))
+    spec = _spec(train, dev)
+    spec["job"].update(kind="lightonocr-3", model=dict(LIGHTONOCR_3))
+
+    plan = plan_run(load_run_spec_from(tmp_path, spec), Where.SPARK, settings)
+
+    [command] = plan.commands
+    assert command.environ == {"IMAGE_MIN_TOKEN_NUM": "64", "IMAGE_MAX_TOKEN_NUM": "16384"}
+
+
 @pytest.mark.parametrize(
     ("answered_by", "samples", "job_fields", "gpus", "refusal"),
     [
@@ -429,7 +497,7 @@ def test_model_ref_reads_a_hub_id_as_a_hub_repo_whatever_folders_the_current_one
 def test_every_shipped_run_spec_loads() -> None:
     """Kept although it reads the repository's files: a spec field renamed or tightened breaks the shipped specs, and
     nothing else loads them before a run is launched."""
-    specs = sorted(CONFIGS.glob("*/*.yaml"))
+    specs = sorted([*CONFIGS.glob("*/*.yaml"), *(CONFIGS.parent / "lion_data_prep" / "configs").glob("*.yaml")])
 
     loaded = [load_run_spec(path) for path in specs]
 

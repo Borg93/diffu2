@@ -1,4 +1,4 @@
-"""A training run as one YAML file (:class:`RunSpec`): what to train (one of the four jobs, a discriminated union on
+"""A training run as one YAML file (:class:`RunSpec`): what to train (one of the jobs, a discriminated union on
 ``kind``), on which sets, with which resources; loaded and checked before any tool, GPU or model is touched
 (:func:`load_run_spec`, :func:`check_run`).
 
@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Annotated, Literal, Self
 
 import yaml
+from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, model_validator
 
 from diffu_htr_train.evaluate.in_training import CerSet
@@ -35,6 +36,14 @@ REFUSED_SERVE_FLAGS = {
     "--allowed-local-media-path": "it is the job's media_root",
     "--served-model-name": "the target is served by its path, which the responses record",
 }
+# The longest edge of a page LightOnOCR-3-4B reads: LightOn's client fits every page to it before sending it
+# (lightonocr/render.py at 36755d4), as diffu-reader-set --model lightonocr-3 writes its pages
+LIGHTONOCR_LONGEST_EDGE = 2048
+# What sizes an image in ms-swift's qwen3_5 template (qwen_vl_utils' bounds, read from the environment at ef4953a4):
+# the renderer sets them to LightOnOCR-3's processor's, so a spec may not
+LIGHTONOCR_SIZE_VARIABLES = frozenset(
+    {"IMAGE_MIN_TOKEN_NUM", "IMAGE_MAX_TOKEN_NUM", "MIN_PIXELS", "MAX_PIXELS", "SPATIAL_MERGE_SIZE", "MAX_RATIO"}
+)
 
 
 class JobRefused(ValueError):
@@ -48,6 +57,7 @@ class Kind(StrEnum):
     UNLIMITED_OCR_2 = "unlimited-ocr-2"
     JEV = "jev"
     DSPARK = "dspark"
+    LIGHTONOCR_3 = "lightonocr-3"
 
 
 class ToolEnv(StrEnum):
@@ -286,6 +296,34 @@ class JevJob(SwiftSFT):
     renderer: str
 
 
+class LightOnOCR3Job(SwiftSFT):
+    """LightOnOCR-3 (a Qwen3.5 checkpoint: ``qwen3_5``, LightOnOCR-3-4B or a checkpoint of ours) as a page reader, on
+    pages as LightOn's client sends them (``diffu-reader-set --model lightonocr-3``). Its renderer gives every run the
+    sequence LightOnOCR-3's own chat template makes, thinking off, and the image size its processor gives a page
+    (:func:`diffu_htr_train.render.render_lightonocr_3`), so a spec's ``env`` may not size images. Unpacked, as every
+    Qwen3.5 run here (in ``envs/minicpm`` a packed sample's linear-attention state reaches the next: docs/HTR_RUNS.md),
+    and evaluated by its loss: the in-training CER reads lines in MiniCPM-OCR's prompt."""
+
+    kind: Literal[Kind.LIGHTONOCR_3] = Kind.LIGHTONOCR_3
+
+    @model_validator(mode="after")
+    def _as_lighton_reads_a_page(self) -> Self:
+        sized = sorted(LIGHTONOCR_SIZE_VARIABLES & set(self.env))
+        if sized:
+            raise ValueError(
+                f"env may not set {sized[0]}: LightOnOCR-3's pages are sized as its processor sizes them, which the "
+                "renderer sets"
+            )
+        if self.packing or self.padding_free:
+            raise ValueError(
+                "Qwen3.5's linear attention carries a packed sample's state into the next in envs/minicpm: train "
+                "LightOnOCR-3 unpacked (packing and padding_free false)"
+            )
+        if self.cer_sets:
+            raise ValueError("cer_sets read lines in MiniCPM-OCR's prompt: a LightOnOCR-3 run is evaluated by its loss")
+        return self
+
+
 class DSparkJob(BaseModel):
     """A DSpark draft for a fine-tuned MiniCPM-OCR, trained by speculators on hidden states its target served by vLLM
     gives: ``responses`` are that same target's answers (``htr-train dspark-set``), checked against ``target``.
@@ -352,8 +390,10 @@ class DSparkJob(BaseModel):
         return self
 
 
-type Job = Annotated[MiniCPMOCRJob | UnlimitedOCR2Job | JevJob | DSparkJob, Field(discriminator="kind")]
-type SwiftJob = MiniCPMOCRJob | UnlimitedOCR2Job | JevJob  # the jobs ms-swift trains
+type Job = Annotated[
+    MiniCPMOCRJob | UnlimitedOCR2Job | JevJob | DSparkJob | LightOnOCR3Job, Field(discriminator="kind")
+]
+type SwiftJob = MiniCPMOCRJob | UnlimitedOCR2Job | JevJob | LightOnOCR3Job  # the jobs ms-swift trains
 
 
 class RunSpec(BaseModel):
@@ -502,6 +542,35 @@ def check_jev_pairs(job: JevJob, data: DataRef) -> None:
                 )
 
 
+def _longest_edge(image: Path) -> int | None:
+    """An image's longest edge in px, read from its header; None for one PIL will not open as too large (far past any
+    page)."""
+    try:
+        with Image.open(image) as opened:
+            return max(opened.size)
+    except Image.DecompressionBombError:
+        return None
+
+
+def check_page_sizes(data: DataRef, longest_edge: int = LIGHTONOCR_LONGEST_EDGE) -> None:
+    """A LightOnOCR-3 run's pages are no larger than LightOn's client sends them: its processor would read a larger one
+    at its own size (up to 16,777,216 px), not as the model is read at inference.
+
+    Raises:
+        JobRefused: If a training or dev image's longest edge passes ``longest_edge``.
+    """
+    for path in [part.path for part in data.train] + ([data.dev] if data.dev is not None else []):
+        for number, row in enumerate(read_jsonl(path, Sample), start=1):
+            for image in row.images:
+                edge = _longest_edge(Path(image))
+                if edge is None or edge > longest_edge:
+                    raise JobRefused(
+                        f"{path}:{number} shows {image} at a longest edge of {edge or 'more than PIL opens'} px: "
+                        f"LightOnOCR-3 reads pages fitted to {longest_edge} px (diffu-reader-set --model lightonocr-3 "
+                        "writes them so)"
+                    )
+
+
 class ResponsesMeta(BaseModel):
     """What ``htr-train dspark-set`` records of a response set (``<stem>.target.json``): the target folder that
     answered (as an absolute path; vLLM served it by that name), the samples answered and failed, the share of prompts
@@ -549,8 +618,8 @@ def check_responses(job: DSparkJob) -> None:
 
 
 def check_run(spec: RunSpec) -> None:
-    """Every check a run passes before it is planned: its data (:func:`check_data`), a Jev run's renderer and prompt, a DSpark
-    run's responses, and a local model that exists.
+    """Every check a run passes before it is planned: its data (:func:`check_data`), a Jev run's renderer and prompt, a
+    LightOnOCR-3 run's page sizes, a DSpark run's responses, and a local model that exists.
 
     Raises:
         JobRefused: If any check fails.
@@ -564,6 +633,8 @@ def check_run(spec: RunSpec) -> None:
         check_data(spec.data)
         if isinstance(spec.job, JevJob):
             check_jev_pairs(spec.job, spec.data)
+        if isinstance(spec.job, LightOnOCR3Job):
+            check_page_sizes(spec.data)
         model = spec.job.model
     if model.is_local and not Path(model.repo).expanduser().is_dir():
         raise JobRefused(f"{model.repo} is no model folder")

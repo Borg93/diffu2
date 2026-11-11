@@ -22,7 +22,7 @@ against the TrOCR baseline): [HTR_RUNS.md](HTR_RUNS.md).
 
 - **ms-swift** (`swift sft`) trains the three models: MiniCPM-OCR full, Unlimited-OCR 2 LoRA or full, Jev as a
   two-class sequence classifier. It is pinned to main at `ef4953a4` (4.7.0.dev0), the first with `minicpm_ocr` and
-  Unlimited-OCR 2; release 4.6.0 has neither.
+  Unlimited-OCR 2; release 4.6.0 has neither. It also trains LightOnOCR-3-4B, a second page reader (full or LoRA).
 - **speculators** at main `560f0465` (0.9.0 plus #1317: `prepare-data` stops instead of silently dropping conversations when the render route is missing) trains the DSpark draft: ms-swift trains no draft of any kind for MiniCPM-OCR (MTP heads only,
   under Megatron, which has no `minicpm_ocr`).
 - **vLLM** serves the target for the draft (its rendered conversations and hidden states). Unlimited-OCR 2 has no
@@ -35,6 +35,7 @@ against the TrOCR baseline): [HTR_RUNS.md](HTR_RUNS.md).
 | MiniCPM-OCR on lines and regions | OpenBMB's French handwritten lines (`docs/swift_minicpm_ocr_french_en.md`): `<image>Text Recognition:`; full SFT of the vision encoder and language model, projector frozen; `--add_non_thinking_prefix true --loss_scale ignore_empty_think`; lr 5e-6 cosine, warmup 0.05, AdamW fused (beta2 0.95, eps 1e-8), wd 0.1, clip 1.0; global batch 128 (8 x 1 x 16); ZeRO-2; `DOWNSAMPLE_MODE=4x`; 3 epochs, the best by eval loss | ms-swift's built-in `zero2` for their `ds_zero2.json` (the same config); our sets and dev split; on dmlpai01 (`lion_data_prep/configs/minicpm_all.yaml`) lines and regions together, 2 GPUs x 4 x 16, gradient checkpointing in the vision encoder too |
 | Jev | OpenBMB's `docs/finetune_jev_en.md`: `--task_type seq_cls --num_labels 2 --problem_type single_label_classification`, full, vision and projector frozen, lr 1e-5, packing 12,000 with flash attention, ZeRO-3, `IMAGE_MAX_TOKEN_NUM=2048` at training only | started from `openbmb/MiniCPM-OCR-Jev` itself (its head and comparison carry over), `--model_type qwen3_5` named; on dmlpai01 (`lion_data_prep/configs/jev_all.yaml`) unpacked with sdpa (packing leaks between samples in Qwen3.5, "Not known yet"), 2 epochs |
 | Unlimited-OCR 2 | ms-swift's `examples/models/unlimited_ocr2/train.sh`: LoRA r8 alpha 32 all-linear, vision and projector frozen, lr 1e-4, accumulation 16 | the Hugging Face repo at its commit, `--model_type unlimited-ocr` named, rank 16; a full fine-tune variant |
+| LightOnOCR-3-4B on pages | none for fine-tuning (LightOn's blog: their own SFT with Muon and packing, then RL); the request is their client's (`lightonai/LightOnOCR` `client.py` at `36755d4`: the page fitted to 2,048 px, then `grounding`, thinking off) | `--model_type qwen3_5 --template qwen3_5` named, `--add_non_thinking_prefix true --loss_scale ignore_empty_think` (its own chat template's tokens, the loss from the end of its generation prompt), its processor's bounds as `IMAGE_MIN_TOKEN_NUM=64 IMAGE_MAX_TOKEN_NUM=16384`; otherwise MiniCPM-OCR's full recipe, unpacked; LoRA as ms-swift's `examples/models/qwen3_5/transformers.sh` (`lion_data_prep/README.md`, "LightOnOCR-3-4B") |
 | DSpark | speculators' `examples/train/dspark_qwen3_0_6b_sharegpt_online.sh`: online, vLLM serving the target's hidden states | OpenBMB's released draft's shape: 5 layers, 15 tokens a block, target layers 4 8 12 16 20 (their `[3, 7, 11, 15, 19]` read as Z Lab's `id + 1`, an inference), mask token 248076; the draft vocabulary is speculators' default 32,000, not the 114,688 tokens OpenBMB's draft keeps (to be tuned once a draft is measured) |
 
 Every run also passes `--use_hf true`, `--split_dataset_ratio 0` (never a split by sample: lines of one page would land
@@ -48,7 +49,8 @@ published one, flag for flag, less exactly these deltas.
 
 The sets come from `diffu-reader-set` (diffu-page owns the PAGE/ALTO files and the scans): `--task lines` for
 MiniCPM-OCR (a sample per text line, its box cut as `<page id>_<k>_<j>.jpg`, the meta giving its kind, production,
-element and line), `--task elements` for regions, `--task parse` for Unlimited-OCR 2. The GT's test lists send every
+element and line), `--task elements` for regions, `--task parse` for Unlimited-OCR 2, `--model lightonocr-3` (its
+pages fitted to 2,048 px, grounded) for LightOnOCR-3. The GT's test lists send every
 test scan to `<stem>.test.jsonl` (`--split-from-gt-test-lists`), never to training, and the GT's second export of
 `GT-RA_landskapshandlingar_20260227` is always left out.
 

@@ -3,6 +3,7 @@ conversation and in PaddleOCR-VL's (the page as Markdown, or its lines spotted),
 recognition prompt and text) for PaddleOCR-VL's recogniser; and from PAGE or ALTO files with their scans, the GT's or
 a drawn run's: a page parsed as Unlimited-OCR 2 parses it (an opening's two pages each cut from it, or shown together)
 or read as MiniCPM-OCR reads it (whole, element by element, or line by line, a crop past a pixel budget scaled to it),
+or grounded as LightOnOCR-3 is asked for it (fitted to its 2,048 px, its blocks read back by LightOn's own parser),
 split by the GT's own test lists, less the pages a list leaves out, of the collections asked for (one it does not hold
 refused), its scans read in the order a seed shuffles them, with each sample's meta and each file, scan, page or line
 left out recorded."""
@@ -11,6 +12,7 @@ from __future__ import annotations
 
 import json
 import random
+import re
 from pathlib import Path
 from typing import Any
 
@@ -535,6 +537,125 @@ def test_reader_set_writes_each_text_line_of_an_opening_as_minicpm_ocr_reads_a_l
         }
         for page, k, j, kind, *_ in lines
     ]
+
+
+# On each page's own grid of 0-1000 (as LEFT_BLOCKS and RIGHT_BLOCKS), each element's LightOnOCR-3 label and box, then
+# its Markdown on the next line
+LEFT_GROUNDING = (
+    "![page_number](880,17,960,50)\n12\n\n"
+    "![title](200,67,900,117)\n## Förteckning öfver gods\n\n"
+    "![text](200,167,900,267)\nAnno 1715 den 4 maj\nkom för rätten\n\n"
+    "![aside_text](20,167,180,217)\nNota"
+)
+TABLE_HTML = "<table><tr><td>Namn</td><td>Ort</td></tr><tr><td>Anders</td><td>Bro</td></tr></table>"
+RIGHT_GROUNDING = f"![text](40,500,940,550)\nSumma 2\n\n![table](40,333,940,433)\n{TABLE_HTML}"
+LEFT_MARKDOWN = "12\n\n## Förteckning öfver gods\n\nAnno 1715 den 4 maj\nkom för rätten\n\nNota"
+RIGHT_MARKDOWN = f"Summa 2\n\n{TABLE_HTML}"
+
+
+@pytest.mark.parametrize(
+    ("task", "prompt", "answers"),
+    [
+        pytest.param([], "<image>grounding", (LEFT_GROUNDING, RIGHT_GROUNDING), id="grounding"),
+        pytest.param(["--task", "page"], "<image>", (LEFT_MARKDOWN, RIGHT_MARKDOWN), id="page"),
+    ],
+)
+def test_reader_set_writes_each_page_of_an_opening_as_lightonocr_3_is_asked_for_it(
+    tmp_path: Path, task: list[str], prompt: str, answers: tuple[str, str]
+) -> None:
+    xml = _opening(tmp_path / "gt")
+    out = tmp_path / "set" / "lighton.jsonl"
+
+    result = CliRunner().invoke(
+        app, ["--xml", str(tmp_path / "gt"), "--model", "lightonocr-3", "--out", str(out), *task]
+    )
+
+    pages = [(tmp_path / "set" / "lighton_pages" / f"{page}.jpg").resolve() for page in _ids(xml, tmp_path / "gt")]
+    assert result.exit_code == 0
+    assert _lines(out) == [
+        {
+            "messages": [{"role": "user", "content": prompt}, {"role": "assistant", "content": answer}],
+            "images": [str(page)],
+        }
+        for answer, page in zip(answers, pages, strict=True)
+    ]
+    assert [load_rgb(page).size for page in pages] == [(1000, 1200), (1000, 1200)]  # within 2,048 px: as cut
+
+
+# LightOn's client's parser of grounding output (lightonocr/grounding.py at 36755d4): each marker owns the text up to
+# the next one, stripped
+LIGHTON_MARKER = re.compile(r"!\[([A-Za-z_][\w-]*?)(\+?)\]\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)[ \t]*")
+
+
+def _lighton_blocks(raw: str, size: tuple[int, int]) -> list[tuple[str, tuple[float, ...], str]]:
+    """``raw`` read as LightOn's client reads grounding output: each block's label, its box on a page of ``size`` px
+    (``Block.to_pixels``: x of 1000 of the width, y of the height) and its text."""
+    width, height = size
+    marks = list(LIGHTON_MARKER.finditer(raw))
+    ends = [mark.start() for mark in marks[1:]] + [len(raw)]
+    return [
+        (
+            mark[1],
+            (
+                int(mark[3]) * width / 1000,
+                int(mark[4]) * height / 1000,
+                int(mark[5]) * width / 1000,
+                int(mark[6]) * height / 1000,
+            ),
+            raw[mark.end() : end].strip(),
+        )
+        for mark, end in zip(marks, ends, strict=True)
+    ]
+
+
+def test_reader_set_grounds_a_page_so_lightons_own_parser_reads_back_its_regions_and_its_markdown(
+    tmp_path: Path,
+) -> None:
+    _opening(tmp_path / "gt")
+    grounded, markdown = tmp_path / "set" / "grounding.jsonl", tmp_path / "set" / "page.jsonl"
+    common = ["--xml", str(tmp_path / "gt"), "--model", "lightonocr-3"]
+
+    results = [
+        CliRunner().invoke(app, [*common, "--out", str(grounded)]),
+        CliRunner().invoke(app, [*common, "--task", "page", "--out", str(markdown)]),
+    ]
+
+    [answer, _] = [row["messages"][1]["content"] for row in _lines(grounded)]
+    [text, _] = [row["messages"][1]["content"] for row in _lines(markdown)]
+    blocks = _lighton_blocks(answer, (1000, 1200))
+    regions = [  # the left page's regions, as its PAGE file gives them on the page (1000 x 1200 px)
+        ("page_number", (880, 20, 960, 60), "12"),
+        ("title", (200, 80, 900, 140), "## Förteckning öfver gods"),
+        ("text", (200, 200, 900, 320), "Anno 1715 den 4 maj\nkom för rätten"),
+        ("aside_text", (20, 200, 180, 260), "Nota"),
+    ]
+    assert [result.exit_code for result in results] == [0, 0]
+    assert [(label, block) for label, _, block in blocks] == [(label, region) for label, _, region in regions]
+    assert all(  # each box within half a step of the 0-1000 grid
+        box == pytest.approx(region, abs=0.6) for (_, box, _), (_, region, _) in zip(blocks, regions, strict=True)
+    )
+    assert "\n\n".join(block for *_, block in blocks) == text
+
+
+def test_reader_set_fits_a_page_to_lightonocr_3s_2048_px_as_its_client_does_and_shows_a_smaller_one_as_it_is(
+    tmp_path: Path,
+) -> None:
+    gt = tmp_path / "gt"
+    _gt_page(gt, VOLUME, "a")  # 100 x 200 px
+    big = _scan(gt / VOLUME / "big.jpg", (1500, 2600))
+    _page_xml(gt / VOLUME / "page" / "big.xml", (1500, 2600), _region("r", "", [((150, 260, 1350, 520), "Anno 1715")]))
+    out = tmp_path / "set" / "lighton.jsonl"
+
+    result = CliRunner().invoke(app, ["--xml", str(gt), "--model", "lightonocr-3", "--out", str(out)])
+
+    small_image, big_image = (Path(row["images"][0]) for row in _lines(out))
+    fitted = load_rgb(big).resize((1182, 2048), Image.Resampling.LANCZOS)  # 1500 x 2048 / 2600 = 1181.5, rounded
+    assert result.exit_code == 0
+    assert small_image == gt / VOLUME / "a.jpg"
+    assert big_image.parent == (tmp_path / "set" / "lighton_pages").resolve()
+    assert load_rgb(big_image).size == (1182, 2048)
+    assert _mean_difference(load_rgb(big_image), fitted) < 2
+    assert _lines(out)[1]["messages"][1]["content"] == "![text](100,100,900,200)\nAnno 1715"
 
 
 def test_reader_set_scales_line_crops_to_at_most_max_crop_pixels_and_records_the_lines_it_leaves_out(

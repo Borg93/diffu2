@@ -2,8 +2,9 @@
 lines (``docs/swift_minicpm_ocr_french_en.md``) and its Jev fine-tune (``docs/finetune_jev_en.md``), ms-swift's
 Unlimited-OCR 2 example (``examples/models/unlimited_ocr2/train.sh`` at ``ef4953a4``) and speculators' DSpark example
 (``examples/train/dspark_qwen3_0_6b_sharegpt_online.sh``), flag for flag, less the choices we make on purpose, each
-named in the case (:data:`OURS` and each case's ``ours``); a run left to log to trackio logs to the local project
-under its name."""
+named in the case (:data:`OURS` and each case's ``ours``); LightOnOCR-3, which no one publishes a fine-tune of, renders
+OpenBMB's recipe and ms-swift's Qwen3.5 example (``examples/models/qwen3_5/transformers.sh``) but for its own flags and
+image bounds; a run left to log to trackio logs to the local project under its name."""
 
 from __future__ import annotations
 
@@ -282,6 +283,123 @@ def test_render_gives_the_published_swift_sft_command_but_for_our_choices(
         expected["--val_dataset"] = [str(val)]
     env = ToolEnv.UOCR2 if job["kind"] == "unlimited-ocr-2" else ToolEnv.MINICPM
     assert command.argv[:2] == [str(tmp_path / "envs" / env / ".venv" / "bin" / "swift"), "sft"]
+    assert _flags(command.argv[2:]) == expected
+    assert command.environ == environ
+
+
+# ms-swift's Qwen3.5 example (examples/models/qwen3_5/transformers.sh at ef4953a4), a LoRA of Qwen3.5-35B-A3B, less its
+# mixture-of-experts flags (--experts_impl grouped_mm --router_aux_loss_coef 1e-3: LightOnOCR-3-4B is dense) and
+# --group_by_length true (a sampler our specs do not choose); its environment: IMAGE_MAX_TOKEN_NUM=1024,
+# VIDEO_MAX_TOKEN_NUM=128, FPS_MAX_FRAMES=12, NPROC_PER_NODE=4
+QWEN35_LORA = """
+  --model Qwen/Qwen3.5-35B-A3B --tuner_type lora --dataset 'AI-ModelScope/LaTeX_OCR:human_handwrite#2000'
+  --load_from_cache_file true --add_non_thinking_prefix true --split_dataset_ratio 0.01 --torch_dtype bfloat16
+  --num_train_epochs 1 --per_device_train_batch_size 4 --per_device_eval_batch_size 4 --learning_rate 1e-4
+  --lora_rank 8 --lora_alpha 32 --target_modules all-linear --gradient_accumulation_steps 1
+  --output_dir output/Qwen3.5-35B-A3B --eval_steps 50 --save_steps 50 --save_total_limit 2 --logging_steps 5
+  --max_length 2048 --warmup_ratio 0.05 --dataset_num_proc 4 --dataloader_num_workers 4 --deepspeed zero3
+"""
+QWEN35_LORA_SPEC = {
+    "kind": "lightonocr-3",
+    "tuner": "lora",
+    "lora": {"rank": 8, "alpha": 32, "target_modules": "all-linear"},
+    "freeze_vit": True,
+    "freeze_aligner": True,
+    "learning_rate": 1e-4,
+    "epochs": 1,
+    "global_batch": 16,
+    "per_device_batch": 4,
+    "warmup_ratio": 0.05,
+    "max_length": 2048,
+    "load_from_cache_file": True,
+    "dataset_num_proc": 4,
+    "dataloader_num_workers": 4,
+    "deepspeed": "zero3",
+    "eval_steps": 50,
+    "save_steps": 50,
+    "save_total_limit": 2,
+    "per_device_eval_batch_size": 4,
+    "logging_steps": 5,
+    "report_to": "tensorboard",
+}
+# LightOnOCR-3-4B's processor's bounds on an image, in ms-swift's qwen3_5 template's tokens of 32 x 32 px: 65,536 and
+# 16,777,216 px (its preprocessor_config.json at b71010f0)
+LIGHTON_IMAGE_TOKENS = {"IMAGE_MIN_TOKEN_NUM": "64", "IMAGE_MAX_TOKEN_NUM": "16384"}
+# Every LightOnOCR-3 run: model type and template named (its architecture maps to several model types, its repo to no
+# model group), and the empty thinking block its chat template writes with thinking off added to each answer and left
+# out of the loss, so a sample is its own template's sequence and the loss starts where its generation prompt ends
+LIGHTON_OWN = {"--model_type": ["qwen3_5"], "--template": ["qwen3_5"], "--add_non_thinking_prefix": ["true"]}
+LIGHTON_OWN |= {"--loss_scale": ["ignore_empty_think"]}
+
+
+@pytest.mark.parametrize(
+    ("published", "job", "gpus", "environ", "ours"),
+    [
+        pytest.param(
+            FRENCH,
+            {key: given for key, given in FRENCH_SPEC.items() if key != "env"} | {"kind": "lightonocr-3"},
+            8,
+            {**LIGHTON_IMAGE_TOKENS, "NPROC_PER_NODE": "8"},
+            # OpenBMB's full recipe for MiniCPM-OCR (its vision encoder trained, its projector frozen) with
+            # LightOnOCR-3's own flags for MiniCPM-OCR's, and no DOWNSAMPLE_MODE (MiniCPM-OCR's slicing)
+            {"--deepspeed": ["zero2"], **LIGHTON_OWN},
+            id="full-as-openbmbs-minicpm-ocr-recipe",
+        ),
+        pytest.param(
+            QWEN35_LORA,
+            QWEN35_LORA_SPEC,
+            4,
+            {**LIGHTON_IMAGE_TOKENS, "NPROC_PER_NODE": "4"},
+            # its own flags and image bounds (no video); its two freezes stated (ms-swift's defaults, which a spec
+            # must state); our dev set, not a split by sample; ms-swift's default logger, named
+            {
+                **LIGHTON_OWN,
+                "--freeze_vit": ["true"],
+                "--freeze_aligner": ["true"],
+                "--report_to": ["tensorboard"],
+                **OURS,
+            },
+            id="lora-as-ms-swifts-qwen3-5-example",
+        ),
+    ],
+)
+def test_render_gives_lightonocr_3_the_published_recipe_but_for_its_own_flags_and_image_bounds(
+    tmp_path: Path,
+    make_set: MakeSet,
+    published: str,
+    job: dict[str, JsonValue],
+    gpus: int,
+    environ: dict[str, str],
+    ours: dict[str, list[str]],
+) -> None:
+    model = (tmp_path / "model").resolve()
+    model.mkdir()
+    train = make_set("train", [("a_0_0", "Anno 1715", "GT-A", "V1", "train")]).resolve()
+    val = make_set("dev", [("b_0_0", "den 4 maj", "GT-A", "V2", "train")]).resolve()
+    paths = _paths(tmp_path)
+    spec = RunSpec.model_validate(
+        {
+            "name": "r",
+            "job": {**job, "model": {"repo": str(model)}},
+            "data": {"train": [{"path": str(train)}], "dev": str(val)},
+            "resources": {"gpus_per_node": gpus, "need_gb": 60, "hours": 1},
+        }
+    )
+
+    [command] = render(spec, paths)
+
+    words = (
+        published.replace('"$MODEL_PATH"', str(model))
+        .replace("--model Qwen/Qwen3.5-35B-A3B", f"--model {model}")
+        .replace('"$TRAIN_DATA"', str(train))
+        .replace("'AI-ModelScope/LaTeX_OCR:human_handwrite#2000'", str(train))
+        .replace('"$VAL_DATA"', str(val))
+        .replace('"$OUTPUT_DIR"', str(paths.output.resolve()))
+        .replace("--output_dir output/Qwen3.5-35B-A3B", f"--output_dir {paths.output.resolve()}")
+    )
+    expected = _flags(_published(words)) | _flags([word for flag, values in ours.items() for word in (flag, *values)])
+    expected.setdefault("--val_dataset", [str(val)])
+    assert command.argv[:2] == [str(tmp_path / "envs" / ToolEnv.MINICPM / ".venv" / "bin" / "swift"), "sft"]
     assert _flags(command.argv[2:]) == expected
     assert command.environ == environ
 

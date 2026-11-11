@@ -23,6 +23,7 @@ from diffu_htr_train.jobs import (
     DSparkJob,
     JevJob,
     Kind,
+    LightOnOCR3Job,
     MiniCPMOCRJob,
     ModelRef,
     RunSpec,
@@ -215,6 +216,7 @@ SWIFT_ENVS: dict[Kind, ToolEnv] = {  # the environment each ms-swift job runs in
     Kind.MINICPM_OCR: ToolEnv.MINICPM,
     Kind.JEV: ToolEnv.MINICPM,
     Kind.UNLIMITED_OCR_2: ToolEnv.UOCR2,
+    Kind.LIGHTONOCR_3: ToolEnv.MINICPM,  # Qwen3.5 is native in its transformers 5.22.1
 }
 
 
@@ -268,6 +270,30 @@ def render_jev(job: JevJob, spec: RunSpec, paths: RunPaths) -> list[Command]:
         ("--problem_type", "single_label_classification"),
     ]
     return [_swift_sft([*model_flags(job.model), *own], job=job, spec=spec, paths=paths)]
+
+
+# LightOnOCR-3-4B's processor's bounds on an image's pixels (preprocessor_config.json at b71010f0: shortest_edge 65,536
+# and longest_edge 16,777,216) in the tokens of 32 x 32 px that ms-swift's qwen3_5 template sizes an image by (it
+# resizes it with qwen_vl_utils and has the processor not resize it again): without them a page below 65,536 px keeps
+# qwen_vl_utils' own floor of 4 tokens, and is read at another size than LightOnOCR-3 reads it
+LIGHTONOCR_IMAGE_TOKENS = {"IMAGE_MIN_TOKEN_NUM": str(65_536 // 32**2), "IMAGE_MAX_TOKEN_NUM": str(16_777_216 // 32**2)}
+
+
+def render_lightonocr_3(job: LightOnOCR3Job, spec: RunSpec, paths: RunPaths) -> list[Command]:
+    """LightOnOCR-3, a Qwen3.5 checkpoint: model type and template ``qwen3_5`` both named (as Jev's: its architecture
+    maps to several model types, its repo to none of ms-swift's model groups); each answer after the empty thinking
+    block its chat template writes with thinking off (``--add_non_thinking_prefix``), which is left out of the loss
+    (``ignore_empty_think``), so a sample is the token sequence LightOnOCR-3's own chat template makes and the loss
+    starts where its generation prompt ends; its images sized by its processor's bounds
+    (:data:`LIGHTONOCR_IMAGE_TOKENS`)."""
+    own: list[Flag] = [
+        ("--model_type", "qwen3_5"),
+        ("--template", "qwen3_5"),
+        ("--add_non_thinking_prefix", True),
+        ("--loss_scale", "ignore_empty_think"),
+    ]
+    command = _swift_sft([*model_flags(job.model), *own], job=job, spec=spec, paths=paths)
+    return [command.model_copy(update={"environ": {**command.environ, **LIGHTONOCR_IMAGE_TOKENS}})]
 
 
 def _target(job: DSparkJob) -> str:
@@ -472,6 +498,8 @@ def render(spec: RunSpec, paths: RunPaths) -> list[Command]:
             return render_unlimited_ocr2(job, spec, paths)
         case JevJob():
             return render_jev(job, spec, paths)
+        case LightOnOCR3Job():
+            return render_lightonocr_3(job, spec, paths)
         case DSparkJob():
             return render_dspark(job, spec, paths)
         case _:
