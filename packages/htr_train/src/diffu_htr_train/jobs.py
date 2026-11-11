@@ -480,7 +480,8 @@ class NemotronParseJob(BaseModel):
 
 
 type Job = Annotated[
-    MiniCPMOCRJob | UnlimitedOCR2Job | JevJob | DSparkJob | LightOnOCR3Job | NemotronParseJob, Field(discriminator="kind")
+    MiniCPMOCRJob | UnlimitedOCR2Job | JevJob | DSparkJob | LightOnOCR3Job | NemotronParseJob,
+    Field(discriminator="kind"),
 ]
 type SwiftJob = MiniCPMOCRJob | UnlimitedOCR2Job | JevJob | LightOnOCR3Job  # the jobs ms-swift trains
 

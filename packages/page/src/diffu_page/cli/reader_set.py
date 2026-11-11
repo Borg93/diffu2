@@ -174,6 +174,17 @@ UNCERTAIN_MARKS = ("??", "(?)", "[", "]")  # a transcriber's doubt or comment in
 LIGHTONOCR_LONGEST_EDGE = 2048
 
 
+def fit_longest_edge(image: Image.Image, longest_edge: int) -> Image.Image:
+    """``image`` scaled down, its aspect kept, to a longest edge of ``longest_edge`` px, as LightOn's client fits a page
+    before sending it (``fit`` in its ``lightonocr/render.py``: each side rounded, at least 1 px, Lanczos); as it is
+    when it is no longer."""
+    scale = longest_edge / max(image.size)
+    if scale >= 1:
+        return image
+    size = (max(1, round(image.width * scale)), max(1, round(image.height * scale)))
+    return image.resize(size, Image.Resampling.LANCZOS)
+
+
 class PageFormat(BaseModel):
     """A page task's sample: the prompt the page's image is shown with, its answer written from the page, and how the
     page is scaled before it is shown, as the reader's own client or processor scales it (None: as cut; else it is
@@ -285,17 +296,6 @@ def fitted(image: Image.Image, max_pixels: int | None) -> Image.Image:
         return image
     scale = math.sqrt(max_pixels / (image.width * image.height))
     size = (max(1, math.floor(image.width * scale)), max(1, math.floor(image.height * scale)))
-    return image.resize(size, Image.Resampling.LANCZOS)
-
-
-def fit_longest_edge(image: Image.Image, longest_edge: int) -> Image.Image:
-    """``image`` scaled down, its aspect kept, to a longest edge of ``longest_edge`` px, as LightOn's client fits a page
-    before sending it (``fit`` in its ``lightonocr/render.py``: each side rounded, at least 1 px, Lanczos); as it is
-    when it is no longer."""
-    scale = longest_edge / max(image.size)
-    if scale >= 1:
-        return image
-    size = (max(1, round(image.width * scale)), max(1, round(image.height * scale)))
     return image.resize(size, Image.Resampling.LANCZOS)
 
 
