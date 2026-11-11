@@ -37,6 +37,13 @@ its step by the frozen text encoder (:class:`diffu_moss.train.cache.PromptEncode
 ``--model``, by default the model directory the cache was made with) instead of read from the cache, which then needs
 its latents alone (``diffu-moss-cache-pairs --latents-only``): the same embeddings, at the cost of the encoder's
 16.8 GB in bfloat16 beside the DiT and a forward of it per sample.
+
+Over several ranks all of them gather each block's weights together, so a round of a step (one sample a rank) runs at
+the pace of its largest sample and the ranks holding smaller ones wait: on 8 A100s at 2 MP a rank computed 84 % of a
+step's compute time on average. ``--size-block N`` sorts each pass's samples by the tokens the DiT reads for them
+(:func:`entry_tokens`) inside blocks of N rounds of the pass's shuffled order, then shuffles each block's rounds
+(:class:`SizeGroups`): a round's samples are of like size, a pass still draws every entry once, and the order now
+depends on the number of ranks.
 """
 
 from __future__ import annotations
@@ -62,6 +69,7 @@ from torch.nn import functional as F
 from torch.optim.lr_scheduler import LambdaLR
 from torch.profiler import ProfilerActivity, profile, schedule
 
+from diffu_moss.latents import PIXELS_PER_LATENT
 from diffu_moss.train.cache import (
     CachedSample,
     CacheEntry,
@@ -101,10 +109,12 @@ VALIDATION_SEED = 0  # every run scores at the same noise, so runs of different 
 PROFILE_WAIT, PROFILE_WARMUP, PROFILE_ACTIVE = 2, 1, 3
 # what a resumed run may change: how long it runs, its learning rate's wind-down (added to a run under way, it takes
 # from the next step), how often it saves and scores, where, whether it saves its state, whether it encodes its prompts
-# (the same embeddings as cached), whether and for how many blocks it recomputes the blocks' activations, and whether a
-# sharded block gathers its weights again for its backward pass
+# (the same embeddings as cached), whether and for how many blocks it recomputes the blocks' activations, whether a
+# sharded block gathers its weights again for its backward pass, and how the passes after the one under way group their
+# samples by size
 RESUMABLE_CHANGES = {
     "steps": True,
+    "size_block": True,
     "decay_steps": True,
     "decay_to": True,
     "save_every": True,
@@ -125,7 +135,9 @@ class TrainSettings(BaseModel):
     fine-tune's; the steps and samples (with ``limit_pairs``, only the cache's first that many pairs drawn with their
     reference: an overfit test); whether each prompt is encoded in the step (``encode_text``) or read from the cache;
     the shift of the drawn noise levels (``sigma_shift``, :mod:`diffu_moss.train.sigmas`; 1: MOSS-Image's own); the
-    learning rate's warmup and wind-down (:func:`learning_rate_schedule`); and when it is saved and scored."""
+    learning rate's warmup and wind-down (:func:`learning_rate_schedule`); over several ranks, the rounds each pass's
+    samples are sorted by size within (``size_block``, :class:`SizeGroups`; 0: the pass as shuffled); and when it is
+    saved and scored."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -144,6 +156,7 @@ class TrainSettings(BaseModel):
     decay_steps: int = Field(default=0, ge=0)
     decay_to: float = Field(default=0.0, ge=0.0, le=1.0)
     grad_accumulation: int = Field(default=2, ge=1)
+    size_block: int = Field(default=0, ge=0)
     save_every: int = Field(default=250, ge=1)
     val_every: int = Field(default=250, ge=1)
     seed: int = 0
@@ -254,9 +267,47 @@ def flow_matching_loss(
     return F.mse_loss(velocity.float(), noise - image)
 
 
+def entry_tokens(entry: CacheEntry) -> int:
+    """The tokens the DiT reads for ``entry``: its drawn image's, its prompt's and its sample's (none without one)."""
+    width, height = entry.target_size
+    tokens = (width // PIXELS_PER_LATENT) * (height // PIXELS_PER_LATENT) + entry.tokens
+    if entry.reference_size is not None:
+        sample_width, sample_height = entry.reference_size
+        tokens += (sample_width // PIXELS_PER_LATENT) * (sample_height // PIXELS_PER_LATENT)
+    return tokens
+
+
+class SizeGroups(BaseModel):
+    """How a pass's samples are grouped by size over several ranks, where a round (one sample a rank) runs at the pace
+    of its largest sample: entry ``i``'s size ``sizes[i]`` (:func:`entry_tokens`), the samples of a round
+    (``per_round``: the ranks) and the rounds sorted together (``block``)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    sizes: list[int]
+    per_round: int = Field(ge=1)
+    block: int = Field(ge=1)
+
+    def grouped(self, order: list[int], lead: int, generator: torch.Generator) -> list[int]:
+        """A pass's shuffled ``order`` regrouped: its first ``lead`` entries as they are (they finish the round the
+        pass before left open), the rest sorted by size inside blocks of ``block`` rounds, each block's whole rounds
+        then shuffled by ``generator``; a last, short round stays last (the next pass finishes it)."""
+        span = self.per_round * self.block
+        grouped = order[:lead]
+        for start in range(lead, len(order), span):
+            block = sorted(order[start : start + span], key=self.sizes.__getitem__)
+            whole = len(block) - len(block) % self.per_round
+            rounds = [block[index : index + self.per_round] for index in range(0, whole, self.per_round)]
+            for place in torch.randperm(len(rounds), generator=generator).tolist():
+                grouped.extend(rounds[place])
+            grouped.extend(block[whole:])
+        return grouped
+
+
 class SampleOrder:
     """Entry indices for ever: each pass over ``count`` entries in an order drawn from ``generator`` when the pass
-    begins; resumed, from ``order`` (the current pass's) with ``drawn`` of it drawn.
+    begins, grouped by size with ``groups`` (:meth:`SizeGroups.grouped`); resumed, from ``order`` (the current pass's)
+    with ``drawn`` of it drawn. A run starts and resumes between rounds, so the rounds are counted from there.
 
     Attributes:
         order: The current pass's order.
@@ -264,10 +315,18 @@ class SampleOrder:
     """
 
     def __init__(
-        self, count: int, generator: torch.Generator, *, order: list[int] | None = None, drawn: int = 0
+        self,
+        count: int,
+        generator: torch.Generator,
+        *,
+        order: list[int] | None = None,
+        drawn: int = 0,
+        groups: SizeGroups | None = None,
     ) -> None:
         self._count = count
         self._generator = generator
+        self._groups = groups
+        self._open = 0  # how many samples of the round under way were drawn
         self.order = [] if order is None else order
         self.drawn = drawn
 
@@ -277,8 +336,13 @@ class SampleOrder:
     def __next__(self) -> int:
         if self.drawn == len(self.order):
             self.order = torch.randperm(self._count, generator=self._generator).tolist()
+            if self._groups is not None:
+                lead = -self._open % self._groups.per_round
+                self.order = self._groups.grouped(self.order, lead, self._generator)
             self.drawn = 0
         self.drawn += 1
+        if self._groups is not None:
+            self._open = (self._open + 1) % self._groups.per_round
         return self.order[self.drawn - 1]
 
 
@@ -526,7 +590,8 @@ def train(
     ``settings.full`` every weight, from the start or from ``out``'s checkpoint ``resume``; with
     ``settings.encode_text`` its prompts encoded by the text encoder of :func:`prompt_encoder` (``model``'s). Over
     several ``ranks`` (a ``torchrun`` launch, :mod:`diffu_moss.train.distributed`) a full fine-tune is sharded by
-    FSDP2, each step's samples shared out among the ranks, and the main rank writes the log and checkpoints. With
+    FSDP2, each step's samples shared out among the ranks (with ``settings.size_block``, each round's of like size:
+    :class:`SizeGroups`), and the main rank writes the log and checkpoints. With
     ``profile_dir``, steps 4 to 6 of this run are recorded by torch's profiler (CPU and, on a GPU, CUDA), each rank's
     trace written to ``profile_dir/trace_rank<rank>.json`` (a diagnostic: the training is the same).
 
@@ -538,13 +603,16 @@ def train(
             validation cache sized its samples otherwise than the training cache (:func:`sample_size_of`), ``out``
             holds a training's log already (unless resumed), or the run cannot resume from ``resume``
             (:func:`resumed_progress`; its cache's entries are others); over several ranks, if it trains a LoRA or its
-            samples a step do not share out evenly among them.
+            samples a step do not share out evenly among them; in one process, if it is asked to group its rounds'
+            samples by size (a round is one sample a rank).
     """
     ranks = Ranks() if ranks is None else ranks
     if ranks.mesh is not None and settings.full is None:
         raise ValueError("a run over several processes shards a full fine-tune: give --full")
     if settings.grad_accumulation % ranks.world:
         raise ValueError(f"{settings.grad_accumulation} samples a step do not share out among {ranks.world} ranks")
+    if settings.size_block and ranks.world == 1:
+        raise ValueError("--size-block groups the samples of a round, one a rank: it needs several ranks (torchrun)")
     if resume is None and (out / LOG).exists():
         raise ValueError(f"{out} holds a training already ({LOG}); give a new directory")
     entries = read_entries(cache)
@@ -573,11 +641,15 @@ def train(
             sample_size=sample_size,
         )
     generator = torch.Generator().manual_seed(settings.seed)
-    order = SampleOrder(len(entries), generator)
+    groups = None
+    if settings.size_block:
+        sizes = [entry_tokens(entry) for entry in entries]
+        groups = SizeGroups(sizes=sizes, per_round=ranks.world, block=settings.size_block)
+    order = SampleOrder(len(entries), generator, groups=groups)
     done = 0
     if progress is not None:
         generator.set_state(torch.frombuffer(bytearray(progress.generator), dtype=torch.uint8))
-        order = SampleOrder(len(entries), generator, order=progress.order, drawn=progress.drawn)
+        order = SampleOrder(len(entries), generator, order=progress.order, drawn=progress.drawn, groups=groups)
         done = progress.step
         if ranks.main:
             _cut_log(out, done)
@@ -779,6 +851,16 @@ def main(
             "validation always does)",
         ),
     ] = 1.0,
+    size_block: Annotated[
+        int,
+        typer.Option(
+            min=0,
+            help="under torchrun: sort each pass's samples by size (the tokens the DiT reads) inside blocks of this "
+            "many rounds of its shuffled order (a round: one sample a rank) and shuffle each block's rounds, so the "
+            "ranks of a round hold samples of like size; a sharded round runs at the pace of its largest sample (32: "
+            "about 13 % less time a step at 2 MP on 8 GPUs); 0 draws each pass as shuffled",
+        ),
+    ] = 0,
     seed: Annotated[int, typer.Option(help="the sample order, noise levels, noise and the LoRA's start")] = 0,
     profile_dir: Annotated[
         Path | None,
@@ -827,6 +909,7 @@ def main(
             "encode_text": encode_text,
             "sigma_shift": sigma_shift,
             "grad_accumulation": samples_per_step,
+            "size_block": size_block,
             "save_every": save_every,
             "val_every": val_every,
         }

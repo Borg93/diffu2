@@ -8,8 +8,9 @@ that would move a line off its page or onto another refused), a page pair that
 refuses a prompt its row was not compiled for (another size, a form built after its set), how a cache's samples were
 sized recorded from its pairs to the model index (and a validation cache sized otherwise refused), MOSS's noise levels,
 the flow-matching loss over the drawn image alone, a LoRA that learns at the recipe's learning rate, the validation's
-paired noise, a training that lowers the loss of what it trains on, one that refuses an empty cache, and prompts
-encoded in the step as the cache encodes them, by a frozen encoder, from a cache of latents alone."""
+paired noise, a training that lowers the loss of what it trains on, one that refuses an empty cache, prompts
+encoded in the step as the cache encodes them, by a frozen encoder, from a cache of latents alone, and a sample order
+that groups a round's samples by size (every entry still once a pass, the rounds counted on across passes)."""
 
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ import json
 import math
 from collections import Counter
 from collections.abc import Callable
+from itertools import pairwise
 from pathlib import Path
 
 import numpy as np
@@ -50,7 +52,10 @@ from diffu_moss.train.export import export_merged
 from diffu_moss.train.full import FullSettings
 from diffu_moss.train.loop import (
     LOG,
+    SampleOrder,
+    SizeGroups,
     TrainSettings,
+    entry_tokens,
     flow_matching_loss,
     lora_transformer,
     train,
@@ -735,6 +740,63 @@ def test_training_draws_every_entry_once_a_pass_so_a_run_keeps_the_caches_mix(
     drawn = [sample for step in steps for sample in zip(step["pairs"], step["variants"], strict=True)]
     # 5 steps of 2: one pass over the 10 entries, each once, in the form it was cached in
     assert sorted(drawn) == sorted((entry.pair, entry.variant.value) for entry in read_entries(tiny_pair_cache))
+
+
+def test_entry_tokens_count_the_drawn_images_the_prompts_and_the_samples() -> None:
+    entry = CacheEntry(
+        file="000000_sample.safetensors",
+        pair="vol_00",
+        variant=Variant.SAMPLE,
+        prompt="{}",
+        tokens=5,
+        target_size=(64, 32),
+        reference_size=(32, 32),
+    )
+
+    # a 4 x 2 latent grid, 5 prompt tokens and the sample's 2 x 2; without a sample, the first two alone
+    assert entry_tokens(entry) == 8 + 5 + 4
+    assert entry_tokens(entry.model_copy(update={"variant": Variant.GENERIC, "reference_size": None})) == 8 + 5
+
+
+def test_size_grouped_order_draws_every_entry_once_a_pass_in_shuffled_rounds_of_like_size() -> None:
+    sizes = [100] * 101 + [200] * 101  # 202 entries of two sizes: 25 rounds of 8 a pass and 2 entries over
+    groups = SizeGroups(sizes=sizes, per_round=8, block=32)  # one block holds a whole pass
+    order = SampleOrder(len(sizes), torch.Generator().manual_seed(0), groups=groups)
+
+    draws = [next(order) for _ in range(3 * len(sizes))]
+
+    passes = [draws[start : start + len(sizes)] for start in range(0, len(draws), len(sizes))]
+    assert [sorted(drawn) for drawn in passes] == [list(range(len(sizes)))] * 3
+    rounds = [[sizes[entry] for entry in draws[start : start + 8]] for start in range(0, len(draws) - 7, 8)]
+    mixed = [index for index, drawn in enumerate(rounds) if len(set(drawn)) > 1]
+    # a pass's sorted entries change size inside one round, and a round two passes share may hold both: 3 + 2 at most,
+    # which holds only if each pass's rounds are counted on from where the pass before stopped
+    assert len(mixed) <= 5
+    first_pass = [drawn[0] for drawn in rounds[:25]]
+    assert first_pass != sorted(first_pass)  # its rounds shuffled, not dealt from the smallest to the largest
+
+
+def test_size_grouped_order_sorts_inside_blocks_of_rounds_so_no_two_rounds_of_a_block_overlap_in_size() -> None:
+    sizes = [(index * 37) % 101 for index in range(256)]
+    groups = SizeGroups(sizes=sizes, per_round=4, block=8)
+    order = SampleOrder(len(sizes), torch.Generator().manual_seed(0), groups=groups)
+
+    drawn = [next(order) for _ in range(len(sizes))]
+
+    assert sorted(drawn) == list(range(len(sizes)))
+    for start in range(0, len(drawn), 32):  # a block: 8 rounds of 4
+        rounds = [[sizes[entry] for entry in drawn[first : first + 4]] for first in range(start, start + 32, 4)]
+        spans = sorted((min(sizes_), max(sizes_)) for sizes_ in rounds)
+        assert all(low >= smaller_high for (_, smaller_high), (low, _) in pairwise(spans))
+
+
+def test_training_in_one_process_refuses_to_group_its_rounds_by_size(
+    tiny_moss_dit: Path, tiny_pair_cache: Path, tmp_path: Path
+) -> None:
+    settings = TrainSettings(steps=1, size_block=4, device="cpu")
+
+    with pytest.raises(ValueError, match="needs several ranks"):
+        train(tiny_moss_dit, tiny_pair_cache, tmp_path / "run", settings)
 
 
 def test_training_limited_to_n_pairs_trains_on_the_caches_first_n_drawn_with_their_reference(

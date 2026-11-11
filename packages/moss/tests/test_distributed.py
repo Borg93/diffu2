@@ -1,6 +1,7 @@
 """MOSS-Image's full fine-tune over several processes on CPU (gloo; conftest's tiny MOSS and tiny style pairs): FSDP2
 launched by torchrun at world size 2 trains, scores, checkpoints and resumes exactly as at world size 1 for the same
-global batch, Muon's momentum kept in bfloat16 too, and a step's samples must share out evenly among the ranks."""
+global batch, Muon's momentum kept in bfloat16 too, a step's samples must share out evenly among the ranks, and with
+a size block the two ranks of a round hold samples of neighbouring size."""
 
 from __future__ import annotations
 
@@ -17,9 +18,10 @@ from diffusers.utils import SAFETENSORS_WEIGHTS_NAME
 from safetensors.torch import load_file
 from torch import Tensor
 
+from diffu_moss.train.cache import read_entries
 from diffu_moss.train.distributed import Ranks
 from diffu_moss.train.full import AVERAGE, AVERAGE_WEIGHTS, DIT, OPTIMIZER_STATE, STATE, FullSettings
-from diffu_moss.train.loop import LOG, TrainSettings, train
+from diffu_moss.train.loop import LOG, TrainSettings, entry_tokens, train
 
 STEPS = 3
 
@@ -118,6 +120,22 @@ def test_full_fine_tune_resumed_at_world_size_2_from_a_world_size_1_state_goes_o
     assert _log(resumed) == _log(world_runs[1])
     tensors = _tensors(_checkpoint(resumed, STEPS)), _tensors(_checkpoint(world_runs[1], STEPS))
     assert [name for name in tensors[1] if not torch.equal(tensors[0][name], tensors[1][name])] == []
+
+
+def test_full_fine_tune_at_world_size_2_with_a_size_block_gives_a_rounds_ranks_samples_of_neighbouring_size(
+    tiny_moss_dit: Path, tiny_pair_cache: Path, tmp_path: Path
+) -> None:
+    run = tmp_path / "run"
+
+    _torchrun(2, run, tiny_moss_dit, tiny_pair_cache, "--size-block", "5")  # 5 rounds of 2: the pass's 10 entries
+
+    sizes = {(entry.pair, entry.variant.value): entry_tokens(entry) for entry in read_entries(tiny_pair_cache)}
+    logged = [json.loads(line) for line in (run / LOG).read_text(encoding="utf-8").splitlines()]
+    steps = [step for step in logged if "pairs" in step]
+    rounds = [sorted(sizes[sample] for sample in zip(step["pairs"], step["variants"], strict=True)) for step in steps]
+    assert len(rounds) == STEPS
+    assert len(set(sizes.values())) > STEPS  # sizes enough that an ungrouped round would hold others between its two
+    assert [[size for size in sizes.values() if low < size < high] for low, high in rounds] == [[]] * STEPS
 
 
 def test_full_fine_tune_with_a_bfloat16_muon_momentum_resumed_at_world_size_2_goes_on_exactly_as_at_world_size_1(
