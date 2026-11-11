@@ -206,6 +206,9 @@ last = [row for row in map(json.loads, open(sys.argv[1], encoding="utf-8")) if "
 print(f"accuracy {last['eval_acc']:.1%}, loss {last['eval_loss']:.4f} (step {last['global_step/max_steps']})")
 EOF
 }
+jev_test() {  # Jev on its test pairs, once measured ($O/jev_test.md, written after the check from the Hub)
+  if [ -s $O/jev_test.md ]; then cat $O/jev_test.md; else echo "It has not yet been measured on test pairs."; fi
+}
 dspark_val() {  # the draft's validation at its best epoch
   python3 - "$1/val_metrics.json" <<'EOF'
 import json
@@ -225,7 +228,8 @@ publish_reader() {
 publish_jev() {
   local last; last=$(ls -d $JEV_RUN/output/checkpoint-* | sort -V | tail -1)
   bash $PUBLISH jev "$last" "$READER_REPO-jev" STEP="$(basename "$last")" READER_REPO="$READER_REPO" \
-    READER_NAME="${READER_REPO##*/}" RENDERER="$(sed -n 's/^ *renderer: *//p' $SPECS/jev_all.yaml)" EVAL="$(jev_eval)"
+    READER_NAME="${READER_REPO##*/}" RENDERER="$(sed -n 's/^ *renderer: *//p' $SPECS/jev_all.yaml)" EVAL="$(jev_eval)" \
+    TEST="$(jev_test)"
 }
 publish_dspark() {
   local best; best=$(readlink -f $DSPARK_RUN/output/checkpoint_best)

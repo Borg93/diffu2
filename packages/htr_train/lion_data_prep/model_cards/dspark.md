@@ -71,11 +71,19 @@ client = OpenAI(base_url="http://localhost:8000/v1", api_key="-")
 image = base64.b64encode(open("line.jpg", "rb").read()).decode()
 reply = client.chat.completions.create(
     model="htr",
-    messages=[{"role": "user", "content": [
-        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image}"}},
-        {"type": "text", "text": "Text Recognition:"}]}],
+    messages=[
+        {
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image}"}},
+                {"type": "text", "text": "Text Recognition:"},
+            ],
+        }
+    ],
     max_tokens=512,  # 4096 for a text region
-    temperature=0.01, top_p=0.001, extra_body={"top_k": 1, "repetition_penalty": 1.0},
+    temperature=0.01,
+    top_p=0.001,
+    extra_body={"top_k": 1, "repetition_penalty": 1.0},
 )
 print(reply.choices[0].message.content)
 ```

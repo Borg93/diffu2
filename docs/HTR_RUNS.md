@@ -202,9 +202,33 @@ script again resumes after the last finished step.
        use, and TensorBoard curves (`runs/`); the raw output is in its `eval/`.
      - **Jev held back for the test:** a placeholder process of ours on GPU 1 kept the queue's gate closed until the
        test ended (22:33:49); `jev_train` started 22:34:41. marerle's sweep on GPU 2 ended about 21:31.
-5. **Train Jev** (`configs/jev_all.yaml`, both GPUs), then publish it as `Gabriel/diffu-minicpm-ocr-htr-jev`. About
-   2.9 M training pairs × 2 epochs ≈ 45,000 steps of 128. The 2-GPU smoke run's ~32 pairs a second puts that at
-   roughly 2 to 3 days, about 8 h of it evaluation (about 60,000 dev pairs every 1,000 steps).
+5. **Train Jev** (`configs/jev_all.yaml`, both GPUs), then publish it as `Gabriel/diffu-minicpm-ocr-htr-jev`.
+   **Done 11 Nov 16:44:** 45,486 steps of 128 in 41.7 h (2.3 s a step, 23 GB a GPU), `checkpoint-45486` published
+   (private) and checked from the Hub (it loads as its card says; the renderer redraws all 2,000 stored renderings).
+   - **Dev pairs** (2 % of the training lines' pairs): accuracy 87.2 % at step 1,000, 95.6 % at the end, flat from
+     about step 40,000 (loss 0.312 → 0.132).
+   - **Test pairs** (2,000 drawn from `jev_lines.test.jsonl`; `runs/htr/verify/check_jev.py`, then
+     `jev_by_origin.py` on its saved scores): AUROC 0.870, 77.8 % judged right at 0.5. **By kind of candidate the
+     picture splits:** the correct text against rule-made wrong candidates (perturbations, another line's text) AUROC
+     0.988 (96.9 % of the correct kept, 93.9 % of the wrong caught); against the reader's own wrong readings AUROC
+     **0.624**, 6.6 % caught. Those misreadings are small (median CER 5 %) and were 35,578 of the 3.0 M training pairs
+     (1.2 %): the reader had trained on those lines, so it misread few of them. A threshold of 0.97 catches 74 % of
+     them and rejects 55 % of the correct texts.
+   - **OpenBMB's checkpoint on the same pairs,** given our prompt and rendering (not its own): AUROC 0.594; it scores
+     nearly every pair near 0. That is the starting point of the fine-tuning, not a measure of their model.
+   - **So this Jev is a gross-mismatch detector, not yet a proof-reader of the reader.** A next one needs real
+     misreadings in number: readings of training lines by a reader that has not seen them (folds, or an early
+     checkpoint), TrOCR's readings, the reader's second-best readings.
+   - Its card has the table, the limit, setup and a transformers example (scores within 0.01 of vLLM's on 60 pairs);
+     TensorBoard curves are in the repo's `runs/`.
+6. **A longer draft (11 Nov 17:43, `runs/htr/dspark_ft.sh`, tmux `htr:dsparkft`).** The published draft was still
+   improving after its 3 epochs (held-out acceptance length 6.76 / 7.98 / 8.65), so it is trained 3 more, started from
+   its weights (`--from-pretrained`, into `runs/htr/dspark-ft`), at a learning rate of 3.75e-5: speculators' own study
+   of training a trained DSpark draft further (docs/research/dspark-qwen3-4b-code-finetune-lr-ablation, at the
+   installed commit) found the from-scratch rate made it worse and about an eighth of it over 3 epochs best. Same data
+   and layout (vLLM on GPU 2, trainer on GPU 1). Not published from the script: it must beat the published draft on
+   lines and regions in vLLM first (their study found in-domain validation an unreliable judge). Ends about 05:30 on
+   12 Nov. Paused 3 minutes at 19:50 (SIGSTOP, then SIGCONT) for clean timings; it went on from step 25,163.
 
 Controls:
 - A file `runs/htr/HOLD` holds the trainings back.
@@ -473,6 +497,43 @@ pipeline's detection check, not for this training. What is worth doing:
 Two things need the GPUs and come with the queue: our model's readings of every test line (in Jev's step), and of
 100,000 training lines. The training lines that the final model still cannot fit are the best place to look for label
 errors at scale.
+
+### The demo Space, and DSpark decoding in PyTorch (11 Nov)
+
+`Gabriel/diffu-htr-speed` (a ZeroGPU Space, private until checked there): the same dev region read by the Swedish
+Lion TrOCR (the region as its text lines, cut along the GT's outlines, one batch), by the reader alone and by the
+reader with its draft (the region as one image), each replayed at its measured pace on the manuscript and as text;
+then Jev's scores of both readers' reading of each line. Its files are `lion_data_prep/space/`, published by
+`lion_data_prep/publish_space.sh` (examples cut by `space/build_examples.py`).
+
+- **ZeroGPU cannot host vLLM** (a GPU exists only inside short function calls), so the draft is decoded in PyTorch:
+  `space/dspark_hf.py`, written from speculators' DSpark model code and vLLM's DSpark speculator.
+- **Profiled (`torch.profiler`):** eager decoding was launch-bound, about 1,500 kernels a reader pass, the GPU busy
+  12 % of the time. So each reader pass is replayed from a CUDA graph on transformers' StaticCache, the draft's
+  proposal is one graph, and a draft cycle takes one reader pass: the reader's linear-attention states cannot be cut
+  back after rejected tokens, so the verifying graph keeps each such layer's block inputs and the states are rebuilt
+  over the accepted tokens only. A cache of 4,096 positions, not 8,192: a pass costs 14 % more with the longer one.
+  fla's kernels and its fused norms were tried and left out (no gain under graphs; the fused norms changed readings).
+- **The same tokens:** the reader alone on graphs writes what transformers' `generate` writes (5 of 5 lines); with the
+  draft 19 of 20 lines and 11 of 12 regions are identical, the rest near-tie flips; acceptance length 8.1 on regions.
+- **Measured on a quiet GPU** (GPU 2, the draft's training paused for it), the same 12 dev regions and 20 test lines,
+  one at a time (`space/check_decode.py`; vLLM as the draft's card serves it):
+
+  | | reader alone | with the draft |
+  |---|---|---|
+  | regions, vLLM | 5.9 s | 2.2 s |
+  | regions, this PyTorch code | 12.4 s | 3.2 s (3.9×) |
+  | lines, vLLM | 1.43 s | 1.21 s |
+  | lines, this PyTorch code | 2.80 s | 2.19 s (1.3×) |
+
+  In the app, a 17-line region: TrOCR 1.49 s, the reader alone 1.20 s, with the draft 0.36 s.
+- **A lesson:** timed beside the draft's training on the same GPU, the PyTorch reader alone took twice as long
+  (10.5 ms a token against 5.0), and looked slower than TrOCR; vLLM and TrOCR slowed far less. Time on a quiet GPU.
+- **Not done:** ahead-of-time compilation (AOTInductor, the route ZeroGPU supports), which should close most of the
+  remaining factor of two to vLLM for the reader alone; and the Space has not yet run on ZeroGPU itself (it waits for
+  a read-only `HF_TOKEN` secret for the private models).
+- **The baseline's weights:** the 2026 Swedish Lion is not on the Hub; a private copy of our download is
+  `Gabriel/swedish-lion-trocr-large-handwritten-char`, for the Space.
 
 ### Throwaway analysis scripts
 

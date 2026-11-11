@@ -1,0 +1,5 @@
+# The Space's own modules (two of them copied in when it is staged: publish_space.sh) sort as first-party.
+extend = "../../../../pyproject.toml"
+
+[lint.isort]
+known-first-party = ["dspark_hf", "race_view", "jev_prompt", "jev_render"]

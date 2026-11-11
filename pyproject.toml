@@ -85,3 +85,8 @@ replace-imports-with-any = [
 
 [tool.ty.terminal]
 error-on-warning = true
+
+# The demo Space runs in its own environment (Gradio, ZeroGPU's `spaces`), with two modules copied in when it is staged
+# (packages/htr_train/lion_data_prep/publish_space.sh): checked there, not here.
+[tool.ty.src]
+exclude = ["packages/htr_train/lion_data_prep/space"]
