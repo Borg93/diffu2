@@ -160,9 +160,10 @@ for byte) applied to the 2 MP training step on 8 A100s (job 64198262) and to the
   each block's weights together, so a round runs at the pace of its largest sample. A rank holding two samples
   without a sample page (8.5 thousand tokens each) computed for 7.3 s of a 19.5 s step and waited in NCCL for the
   rest. Simulated on the 2 MP cache's own sizes, a rank computes 84 % of a step's compute time on average.
-  **Fix, built:** `--size-block N` sorts each pass's samples by size inside shuffled blocks of N rounds, so a round's
-  samples are of like size: 18.7 s a step as shuffled, 16.2 s with blocks of 32 (simulated; the check on GPUs is
-  queued). On the 27,000-step run that is about 18 of 137 hours.
+  **Fix, built and measured:** `--size-block N` sorts each pass's samples by size inside shuffled blocks of N rounds,
+  so a round's samples are of like size. On the 8 A100s (job 64201211, the probe cache, the same samples a pass):
+  15.2 s a step on average against 19.1, the losses the same (0.5997 against 0.6000 over steps 7-30); simulated on
+  the full cache's sizes, 16.2 s against 18.7. On for the 27,000-step run: about 17 of its 137 hours.
 - **The memory snapshot**: 21.5 GiB of tensors at the step's peak, 31-32 of the GPU's 64 GB in use; a third of the
   peak is what stays between steps (weights, their average, Muon's momentum), the rest the saved block inputs
   (3.9 GiB), the gathered weights and one block's activations. Half the reserved memory is free but in small pieces,
@@ -179,7 +180,7 @@ Done:
 
 - The planner's fault fixed (`c824264`), the 2 MP cache built again (running; the queued run waits for it), the run
   log and the inference guide corrected.
-- `--size-block` in the trainer (`1195a7c`), for the 2 MP run once its GPU check passes.
+- `--size-block` in the trainer (`1195a7c`), measured on GPUs and on for the 2 MP run.
 - Both type checkers back at zero (ty had renamed a rule; pyrefly lacked a config entry).
 
 Running (MOSS_RUNS.md, the audit's runs):
