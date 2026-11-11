@@ -19,16 +19,20 @@ models:
 
 # Swedish HTR speed and Jev
 
-Reads the same handwritten text region three ways on the same GPU, times each and replays the three side by side: the
-Swedish Lion TrOCR on the region's text lines, the
+Reads the same handwritten text region with one stream each on the same GPU, times each and replays them from the same
+start: the Swedish Lion TrOCR on the region's text lines, one after the other (and once more as one batch), the
 [MiniCPM-OCR HTR reader](https://huggingface.co/Gabriel/diffu-minicpm-ocr-htr) on the region as one image, and the same
-reader with its [DSpark draft](https://huggingface.co/Gabriel/diffu-minicpm-ocr-htr-dspark). Then
-[Jev](https://huggingface.co/Gabriel/diffu-minicpm-ocr-htr-jev), the reader's proof-reader, scores both readers' reading
-of each line.
+reader with its [DSpark draft](https://huggingface.co/Gabriel/diffu-minicpm-ocr-htr-dspark). Under the race: the same
+region's timings on our server, where vLLM serves the reader, and what the readers do there when everything is batched.
+Then [Jev](https://huggingface.co/Gabriel/diffu-minicpm-ocr-htr-jev), the reader's proof-reader, scores both readers'
+reading of each line.
 
 - `app.py`: the Gradio app; the readers run one after the other and the page replays them at their measured pace.
 - `dspark_hf.py`: DSpark speculative decoding in PyTorch on CUDA graphs (ZeroGPU cannot host vLLM).
-- `race_view.py`, `race_view.js`, `race_view.css`: the custom component that draws the race and Jev's rows.
+- `race_view.py`, `race_view.js`, `race_view.css`: the custom component that draws the race, our server's timings and
+  Jev's rows.
+- `reference.json`, `reference.py`, `measure_reference.py`: each example region's timings on our server (TrOCR in
+  transformers, the reader in vLLM), and the script that measured them.
 - `check_decode.py`: compares the reader alone and with its draft on a GPU, token for token, and times them.
 
 See the app's "How it works" tab. Part of [diffu](https://github.com/Borg93/diffu2).

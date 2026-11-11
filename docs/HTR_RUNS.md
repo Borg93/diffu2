@@ -500,11 +500,12 @@ errors at scale.
 
 ### The demo Space, and DSpark decoding in PyTorch (11 Nov)
 
-`Gabriel/diffu-htr-speed` (a ZeroGPU Space, private until checked there): the same dev region read by the Swedish
-Lion TrOCR (the region as its text lines, cut along the GT's outlines, one batch), by the reader alone and by the
-reader with its draft (the region as one image), each replayed at its measured pace on the manuscript and as text;
-then Jev's scores of both readers' reading of each line. Its files are `lion_data_prep/space/`, published by
-`lion_data_prep/publish_space.sh` (examples cut by `space/build_examples.py`).
+`Gabriel/diffu-htr-speed` (a ZeroGPU Space): the same dev region read by the Swedish Lion TrOCR (the region as its
+text lines, cut along the GT's outlines), by the reader alone and by the reader with its draft (the region as one
+image), replayed from the same start at their measured pace on the manuscript and as text; the same region's timings
+on our server, where vLLM serves the reader; then Jev's scores of both readers' reading of each line. Its files are
+`lion_data_prep/space/`, published by `lion_data_prep/publish_space.sh` (examples cut by `space/build_examples.py`).
+The first version's notes come first; what changed the same evening follows them.
 
 - **ZeroGPU cannot host vLLM** (a GPU exists only inside short function calls), so the draft is decoded in PyTorch:
   `space/dspark_hf.py`, written from speculators' DSpark model code and vLLM's DSpark speculator.
@@ -526,14 +527,73 @@ then Jev's scores of both readers' reading of each line. Its files are `lion_dat
   | lines, vLLM | 1.43 s | 1.21 s |
   | lines, this PyTorch code | 2.80 s | 2.19 s (1.3×) |
 
-  In the app, a 17-line region: TrOCR 1.49 s, the reader alone 1.20 s, with the draft 0.36 s.
+  In the app, a 17-line region: TrOCR 1.49 s, the reader alone 1.20 s, with the draft 0.36 s. (The vLLM rows were a
+  second pass over images its servers had just read: see the processor cache below. They flatter vLLM.)
 - **A lesson:** timed beside the draft's training on the same GPU, the PyTorch reader alone took twice as long
   (10.5 ms a token against 5.0), and looked slower than TrOCR; vLLM and TrOCR slowed far less. Time on a quiet GPU.
-- **Not done:** ahead-of-time compilation (AOTInductor, the route ZeroGPU supports), which should close most of the
-  remaining factor of two to vLLM for the reader alone; and the Space has not yet run on ZeroGPU itself (it waits for
-  a read-only `HF_TOKEN` secret for the private models).
 - **The baseline's weights:** the 2026 Swedish Lion is not on the Hub; a private copy of our download is
   `Gabriel/swedish-lion-trocr-large-handwritten-char`, for the Space.
+
+The same evening (11 Nov, 20:30–21:45):
+
+- **It runs on ZeroGPU.** Without a secret the private TrOCR copy answered 401 at startup and the whole Space stopped
+  (`RUNTIME_ERROR`). The app now starts without TrOCR and says so in its lane; with the user's read-only `HF_TOKEN`
+  secret it loads all four models. On ZeroGPU (half an RTX PRO 6000 Blackwell) every call gets a fresh worker: a GPU
+  after about 3 s, then about 5 s to capture the CUDA graphs. The 10-line region then takes TrOCR 2.10 s one line
+  after the other and 1.30 s as one batch, the reader alone 1.24 s, with the draft 0.56 s (0.3 s before the first
+  token, then 7.6 ms a token alone and 2.1 with the draft). The two regions compared there read the same with and
+  without the draft.
+- **One rule for everyone (the user's question).** The first version raced TrOCR on a batch of the region's lines
+  against the reader's one sequence, and TrOCR looked as fast as the reader alone. Batching was the whole reason: 8 to
+  18 lines decode side by side, while a region is one sequence with nothing to batch (the reader batches whole
+  regions, in vLLM). The page now shows three views, each with one rule: the race with one stream each (TrOCR reads
+  its lines one after the other); TrOCR's one-batch time as a second bar; and everything batched, from our server
+  (TrOCR at batch 32 against vLLM with 64 requests at a time). All bars start together once every reader is timed;
+  before, each lane started when its result arrived, and TrOCR, run first, seemed to get a head start.
+- **The same regions on our server** (`space/measure_reference.py` → `space/reference.json`, shown under the race):
+  GPU 2 with the trainer paused, TrOCR in transformers, the reader in vLLM, one request at a time, medians of 5;
+  beside them this PyTorch code on the same GPU (the local app, medians of 3, timed from the decoded image). Seconds:
+
+  | region | TrOCR line by line | TrOCR one batch | vLLM alone | vLLM + draft | PyTorch alone | PyTorch + draft |
+  |---|---|---|---|---|---|---|
+  | 10 lines, 124 tokens | 1.66 | 0.84 | 0.50 | 0.32 | 0.78 | 0.28 |
+  | 8 lines, 76 tokens | 1.25 | 0.60 | 0.38 | 0.27 | 0.53 | 0.23 |
+  | 9 lines, 96 tokens | 1.86 | 0.75 | 0.53 | 0.35 | 0.63 | 0.23 |
+  | 11 lines, 129 tokens | 1.47 | 0.67 | 0.57 | 0.34 | 0.79 | 0.26 |
+  | 17 lines, 209 tokens | 3.92 | 1.54 | 0.69 | 0.33 | 1.21 | 0.38 |
+  | 18 lines, 198 tokens | 3.41 | 1.32 | 0.73 | 0.45 | 1.15 | 0.41 |
+
+  vLLM alone is 1.2–2.2× faster than TrOCR's one batch and 2.6–5.7× faster than TrOCR line by line; with the draft
+  2.0–4.6× and 4.4–11.7×. With the draft this PyTorch code is as fast as vLLM for one region at a time; alone it is
+  1.2–1.8× slower. TrOCR line by line varied by up to 25 % between runs (a CPU-bound loop).
+- **vLLM keeps the processed form of an image it has seen** (its multimodal processor cache, on by default). One
+  request at a time, a region it had seen came back 0.05–0.1 s sooner on a quiet GPU (0.11–0.2 s beside the
+  training). So the reference sends every request with one pixel, drawn at random, changed by one level; a first
+  version changed fixed pixels, and its second run on the same servers was cache-assisted and 15–20 % too fast.
+  That one-level change also flips a near-tied token now and then (2 or 3 readings of a region over 6 requests).
+- **Do the 9 Nov "64 at a time" numbers stand? Yes.** They were read on servers that had just read the same images
+  one at a time. `runs/htr/verify/bench_cold.sh` (both servers on GPU 2, asked in turn, the trainer paused) read the
+  same 1,000 lines and 200 regions 64 at a time, first new to the servers, then again:
+
+  | per second | new | seen | 9 Nov (seen, a GPU each) |
+  |---|---|---|---|
+  | lines, reader alone | 67.3 | 68.9 | 74.6 |
+  | lines, with the draft | 77.2 | 84.6 | 82.2 |
+  | regions, reader alone | 11.9 | 11.7 | 12.4 |
+  | regions, with the draft | 12.7 | 12.7 | 13.2 |
+
+  At 64 at a time the GPU is the limit, and the cache changes little. The page quotes the "new" column.
+- **Near ties:** on GPU 2 the PyTorch reading with the draft differed from the reading alone by one token in 4 of
+  these 6 regions ("dal.r" against "d.r", "Pohhieth" against "Pohlieth"); the page says so when it happens.
+- **The page:** one region box (an example from a three-column `gr.Examples` table, or an upload; the app tells them
+  apart by the file's bytes), and Jev's lines folded away under a sentence that reads them (both right, only one
+  right and which one Jev scored higher, Jev's mean score on right and on wrong readings), with column headers and
+  the characters that differ from the ground truth marked. On a wide page the bars stand beside their summary, our
+  server's timings beside the batched rates, and each of Jev's lines beside its readings. On ZeroGPU the 17-line
+  region: TrOCR 4.99 s line by line and 2.09 s as one batch, the reader 1.89 s alone and 0.76 s with the draft.
+- **Not done:** ahead-of-time compilation (AOTInductor, the route ZeroGPU supports), which could close the reader
+  alone's gap to vLLM and shorten the 5 s a fresh worker spends on graphs. SGLang: OpenBMB's guide serves the reader
+  and a draft through a pull request still open in October 2026, built from source with CUDA 13; not measured.
 
 ### Throwaway analysis scripts
 
@@ -592,7 +652,6 @@ more cheaply.
 ## Waiting on the user
 
 - Where the batch output (PAGE/ALTO) and its scans are, and whether `volym_batch_lista.db` lists that batch.
-- Whether the three Hub repos should be public. They are private by default.
 - Whether to add item 5 (Jev choosing between the two readings) to the queue, after Jev.
 
 ## Sources

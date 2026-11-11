@@ -2,4 +2,4 @@
 extend = "../../../../pyproject.toml"
 
 [lint.isort]
-known-first-party = ["dspark_hf", "race_view", "jev_prompt", "jev_render"]
+known-first-party = ["dspark_hf", "race_view", "jev_prompt", "jev_render", "reference"]

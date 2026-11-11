@@ -1,5 +1,6 @@
-"""RaceView, a custom Gradio component: three readers' readings replayed at their measured pace, then Jev's scores
-line by line. Its value is a `Race` payload (app.py); the drawing is in race_view.js and race_view.css."""
+"""RaceView, a custom Gradio component: three readers' readings replayed from the same start at their measured pace,
+the same region's timings on our server, then Jev's scores line by line. Its value is a `Race` payload (app.py); the
+drawing is in race_view.js and race_view.css."""
 
 from __future__ import annotations
 
@@ -10,15 +11,16 @@ import gradio as gr
 
 _HERE = Path(__file__).parent
 HINT = (
-    "Pick a region and press Read: the three readers run one after the other, and each reading is replayed here at "
-    "the pace it was measured."
+    "Pick a region and press Read: the three readers run one after the other, and once all are timed their "
+    "readings are replayed here from the same start, each at the pace it was measured."
 )
 TEMPLATE = f'<div class="rv-root"><p class="rv-hint">{HINT}</p></div>'
 
 
 class RaceView(gr.HTML):
-    """Replays a `Race`: a bar and a text lane per reader, growing as the reader produced its tokens, and one row per
-    line with Jev's scores. Readings are written as text, never as HTML."""
+    """Replays a `Race`: a bar per timed stretch and a text lane per reader, growing as the reader produced its
+    tokens; the same stretches on our server; and one row per line with Jev's scores. Readings are written as text,
+    never as HTML."""
 
     def __init__(self, value: dict[str, Any] | None = None, **kwargs: Any) -> None:
         super().__init__(

@@ -2,7 +2,8 @@
 # The Space that shows the three models (Gabriel/diffu-htr-speed, ZeroGPU), staged in $STAGE/<space name> and uploaded:
 # space/'s files; the Jev prompt and renderer from diffu_htr_train, copied as jev_prompt.py and jev_render.py (a Space
 # cannot install the package); the renderer's font; and the example regions build_examples.py cuts from the dev sets
-# and the GT's PAGE XML. Refused if a staged file names a local path. DRY_RUN=1 stages and lists, without uploading.
+# and the GT's PAGE XML. Refused if a staged file names a local path, or if reference.json (the examples' timings on
+# our server, written by space/measure_reference.py) lacks an example. DRY_RUN=1 stages and lists, without uploading.
 # The Space reads the private models with its HF_TOKEN secret (a read-only token, set in the Space's settings).
 #
 #   GT=/mnt/work/GT-Lejonet_HTR_202602 bash packages/htr_train/lion_data_prep/publish_space.sh
@@ -17,14 +18,18 @@ HF=${HF:-packages/htr_train/envs/minicpm/.venv/bin/hf}
 PY=${PY:-packages/htr_train/envs/minicpm/.venv/bin/python}
 stage=${STAGE:-runs/htr/final/hub}/${SPACE##*/}
 rm -rf "$stage" && mkdir -p "$stage"
-for name in app.py dspark_hf.py race_view.py race_view.js race_view.css check_decode.py HOW_IT_WORKS.md README.md \
-    requirements.txt; do
+for name in app.py dspark_hf.py race_view.py race_view.js race_view.css reference.py reference.json check_decode.py \
+    measure_reference.py HOW_IT_WORKS.md README.md requirements.txt; do
   cp "$here/space/$name" "$stage/"
 done
 cp packages/htr_train/src/diffu_htr_train/jev/prompt.py "$stage/jev_prompt.py"
 cp packages/htr_train/src/diffu_htr_train/jev/render.py "$stage/jev_render.py"
 cp "$FONT" "$stage/DejaVuSans.ttf"
 $PY "$here/space/build_examples.py" --sets "$D" --gt "$GT" --out "$stage/examples"
+untimed=$($PY -c 'import json, sys
+timed = json.load(open(sys.argv[1] + "/reference.json"))["regions"]
+print(" ".join(e["id"] for e in json.load(open(sys.argv[1] + "/examples/examples.json")) if e["id"] not in timed))' "$stage")
+[ -z "$untimed" ] || { echo "refused: reference.json has no timings for $untimed" >&2; exit 1; }
 if leaks=$(grep -rlE "/home/|/mnt/" "$stage" --include='*.py' --include='*.md' --include='*.json' --include='*.js'); then
   echo "refused: local paths in $leaks" >&2; exit 1
 fi

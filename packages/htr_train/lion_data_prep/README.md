@@ -80,14 +80,19 @@ minicpm-all itself was written before that: the loop that keeps it going is in
 `configs/smoke_*_2gpu.yaml` are the same setups in small on the smoke sets, to check a machine first (minutes).
 
 **The demo Space** (`space/`, published by `publish_space.sh` as `Gabriel/diffu-htr-speed`, ZeroGPU): one dev region
-read by the Swedish Lion TrOCR (as its text lines), by the reader alone and by the reader with its draft, each replayed
-at its measured pace; then Jev's scores line by line.
+read with one stream each by the Swedish Lion TrOCR (its text lines, one after the other), by the reader alone and by
+the reader with its draft, replayed from the same start at their measured pace; the same region's timings on our
+server, where vLLM serves the reader; then Jev's scores line by line.
 - `GT=... bash publish_space.sh` stages `space/`, the Jev prompt and renderer from `diffu_htr_train`, the font and the
   example regions (`space/build_examples.py`: the crops from the dev sets, the lines' outlines from the GT's PAGE XML),
   and uploads them; `DRY_RUN=1` stages only.
 - ZeroGPU cannot host vLLM, so `space/dspark_hf.py` decodes the draft in PyTorch on CUDA graphs;
   `space/check_decode.py READER DRAFT LINES REGIONS` checks it against the reader alone on a GPU and times both.
-- The Space reads the private models with a read-only `HF_TOKEN` secret, set in its settings.
+- `space/measure_reference.py` times the example regions on a quiet GPU (TrOCR in transformers, the reader in vLLM
+  alone and with its draft, each image new to the server) and writes `space/reference.json`, which the page shows
+  under its live race; `publish_space.sh` refuses to publish an example that has no timings there.
+- The Space reads the private TrOCR copy with a read-only `HF_TOKEN` secret, set in its settings; without it the app
+  runs without TrOCR and says so.
 
 ## What the recipe settles, and why
 
