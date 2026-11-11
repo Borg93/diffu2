@@ -240,10 +240,20 @@ def render_minicpm_ocr(job: MiniCPMOCRJob, spec: RunSpec, paths: RunPaths) -> li
     return [_swift_sft([*model_flags(job.model), *own], job=job, spec=spec, paths=paths)]
 
 
+# Unlimited-OCR 2's sparse attention as its own inference routes it: the stage its checkpoint was saved with (its
+# config's dash_stage0), which the training forward reads from the environment instead (default "indexer"), and prompt
+# queries scoped to their page, as configure_dash_inference sets. Without them ms-swift trains it through attention it
+# never decodes with: its loss on its own greedy reading of a page was 4.19 (gradient norm 10,176), with them 0.40
+# (8.1), the same page's target 7.16 against 2.49 (11 Nov 2026, runs/htr/uocr2).
+UNLIMITED_OCR_2_ENV = {"DASH_STAGE0": "head_cls", "PAGE_SCOPE_PREFILL": "1"}
+
+
 def render_unlimited_ocr2(job: UnlimitedOCR2Job, spec: RunSpec, paths: RunPaths) -> list[Command]:
-    """Unlimited-OCR 2 (``unlimited-ocr``, named: its architecture is shared with v1, which ms-swift would pick)."""
+    """Unlimited-OCR 2 (``unlimited-ocr``, named: its architecture is shared with v1, which ms-swift would pick), its
+    sparse attention routed as its inference routes it (:data:`UNLIMITED_OCR_2_ENV`; a spec's ``env`` may override)."""
     own: list[Flag] = [("--model_type", "unlimited-ocr")]
-    return [_swift_sft([*model_flags(job.model), *own], job=job, spec=spec, paths=paths)]
+    command = _swift_sft([*model_flags(job.model), *own], job=job, spec=spec, paths=paths)
+    return [command.model_copy(update={"environ": {**UNLIMITED_OCR_2_ENV, **command.environ}})]
 
 
 def render_jev(job: JevJob, spec: RunSpec, paths: RunPaths) -> list[Command]:

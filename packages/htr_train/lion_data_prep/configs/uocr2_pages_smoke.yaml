@@ -1,0 +1,41 @@
+# Smoke of uocr2_pages.yaml on dmlpai01's GPUs 1 and 2: the same model, recipe and memory settings on 400 training pages
+# and 40 dev pages drawn from its sets (runs/htr/uocr2/build_pages.sh), 30 steps of 8 pages (1 a GPU, 4 accumulated:
+# the model's sparse attention builds its page mask for one sample, so a batch of 4 a GPU fails in its first step, as
+# ms-swift's own example never shows with its 1), one evaluation and one save at the end: that the run starts, its
+# loss falls, its peak memory and its pages a second.
+name: smoke-uocr2-pages
+description: "smoke: Unlimited-OCR 2 full fine-tune (language model and vision encoder) on 400 GT pages, 2 GPUs"
+job:
+  kind: unlimited-ocr-2
+  model: {repo: baidu/Unlimited-OCR-2, revision: 0480966938291445591f69f08a13b041c073a96a}
+  tuner: full
+  freeze_vit: false
+  freeze_aligner: true
+  freeze_llm: false
+  learning_rate: 1.0e-5
+  max_steps: 30
+  global_batch: 8
+  per_device_batch: 1
+  lr_scheduler: cosine
+  warmup_ratio: 0.05
+  max_grad_norm: 1.0
+  seed: 42
+  data_seed: 42
+  max_length: 8192
+  deepspeed: zero2
+  gradient_checkpointing: false  # 45 of 96 GB with it on: tried off for speed
+  dataset_num_proc: 8
+  dataloader_num_workers: 4
+  load_from_cache_file: false
+  eval_strategy: steps
+  eval_steps: 30
+  save_strategy: steps
+  save_steps: 30
+  save_total_limit: 1
+  per_device_eval_batch_size: 1
+  logging_steps: 1
+  report_to: tensorboard  # transformers 4.52.1 predates TrainingArguments' trackio project field
+data:
+  train: [{path: data/htr/smoke/uocr2_pages.train.jsonl}]
+  dev: data/htr/smoke/uocr2_pages.dev.jsonl
+resources: {gpus_per_node: 2, need_gb: 60, hours: 1}

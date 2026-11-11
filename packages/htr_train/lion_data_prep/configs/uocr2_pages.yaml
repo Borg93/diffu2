@@ -1,0 +1,51 @@
+# Unlimited-OCR 2 on every GT-Lejonet training page (lion_data_prep/build_pages.sh: an opening cut into its two pages at
+# its gutter, one its lines cannot split left out, test_0050 held out, the dev split by the MiniCPM-OCR sets' volumes;
+# answered with the page's blocks in the transcribers' reading order, each with its label and box), real only, on one
+# server's two GPUs (htr-train launch --where local, HTR_TRAIN_LOCAL_GPUS). A full fine-tune of the language model and
+# the vision encoder, projector frozen, as our MiniCPM-OCR recipe trains its encoder: ms-swift's own example (LoRA r8
+# on a frozen encoder) teaches it printed LaTeX, and this hand is far from what its encoder saw (it reads a list of
+# goods "Affradz Smör 5 t:na" as "Miyas Onno 5. 4. 5. 6. ..."). One page a GPU: its sparse attention builds its page
+# mask for one sample (4 a GPU failed in the first step). No gradient checkpointing: 48 of 96 GB without it, 5.5 s a
+# step of 8 pages against 10 s with it (uocr2_pages_smoke.yaml, 11 Nov). 2 epochs of 1,547 steps of 32 pages, about
+# 19 h; eval and save every 200 steps (about 70 min) and keep the best by eval loss. htr-train sets its sparse
+# attention to route as its inference does (render.UNLIMITED_OCR_2_ENV).
+name: uocr2-pages
+description: "Unlimited-OCR 2 full fine-tune on all GT training pages (single pages), real only, 2 GPUs"
+job:
+  kind: unlimited-ocr-2
+  model: {repo: baidu/Unlimited-OCR-2, revision: 0480966938291445591f69f08a13b041c073a96a}
+  tuner: full
+  freeze_vit: false
+  freeze_aligner: true
+  freeze_llm: false
+  learning_rate: 1.0e-5
+  epochs: 2
+  global_batch: 32
+  per_device_batch: 1
+  lr_scheduler: cosine
+  warmup_ratio: 0.05
+  max_grad_norm: 1.0
+  seed: 42
+  data_seed: 42
+  max_length: 8192
+  deepspeed: zero2
+  gradient_checkpointing: false
+  dataset_num_proc: 16
+  dataloader_num_workers: 8
+  load_from_cache_file: false
+  dataset_shuffle: true
+  train_dataloader_shuffle: true
+  eval_strategy: steps
+  eval_steps: 200
+  save_strategy: steps
+  save_steps: 200
+  save_total_limit: 3
+  save_only_model: false
+  best_by_eval_loss: true
+  per_device_eval_batch_size: 1
+  logging_steps: 10
+  report_to: tensorboard  # transformers 4.52.1 predates TrainingArguments' trackio project field
+data:
+  train: [{path: data/htr/uocr2_pages.train.jsonl}]
+  dev: data/htr/uocr2_pages.dev.jsonl
+resources: {gpus_per_node: 2, need_gb: 60, hours: 24}

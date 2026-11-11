@@ -224,7 +224,8 @@ def _paths(tmp_path: Path) -> RunPaths:
             UOCR2_SPEC,
             1,
             True,
-            {},
+            # its sparse attention routed as its own inference routes it (render.UNLIMITED_OCR_2_ENV)
+            {"DASH_STAGE0": "head_cls", "PAGE_SCOPE_PREFILL": "1"},
             # the Hugging Face repo at its pinned commit, not ModelScope's; named (its architecture is v1's too); our
             # set with its dev set, not a split by sample; ms-swift's default logger, named
             {

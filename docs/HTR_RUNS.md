@@ -236,6 +236,32 @@ Controls:
 - A failed upload is logged and the queue goes on; running the script again retries it.
 - Repos are private unless `HF_PUBLIC=1`.
 
+## Unlimited-OCR 2 on whole pages (11 Nov 23:57, tmux `htr:uocr2train`)
+
+The user's choice of a whole-page reader, before LightOnOCR-3-4B and Nemotron-Parse (their training code is being
+written beside it). `lion_data_prep/build_pages.sh`: 53,436 pages of 29,122 scans, every opening cut into its two
+pages (1,164 spreads its lines cannot split left out, 704 pages of the duplicate export, 264 of a wrong size, 82 with
+no text); 49,491 training, 974 dev (the MiniCPM-OCR sets' 5 dev volumes), 2,971 test (`test_0050`). Each page answered
+with its blocks in the transcribers' reading order, each with its label and box on 0-1000, as Unlimited-OCR 2 itself
+writes a page (`<PAGE><BLOCK>text[x0, y0, x1, y1]<FORK>...`; it puts a box around each line of a sparse list, ours
+around each transcribed region). `lion_data_prep/configs/uocr2_pages.yaml`, `lion_data_prep/train_pages.sh` (retries
+from the newest checkpoint): a full fine-tune of the language model and vision encoder, projector frozen, lr 1e-5,
+2 epochs of 1,547 steps of 32 pages, 1 page a GPU, no gradient checkpointing; about 23.5 s a step, 52 of 96 GB a GPU,
+about 20 h; eval and save every 200 steps (50 GB a checkpoint, 3 kept).
+
+- **Its sparse attention trains wrong by default.** The training forward reads the attention-routing stage from the
+  environment (`DASH_STAGE0`, default `indexer`), while its checkpoint was saved with `head_cls` and its inference
+  takes that from its config. Teacher-forced through ms-swift's own training path, the published model's loss on its
+  own greedy reading of a page was 4.19 (gradient norm 10,176); with `DASH_STAGE0=head_cls` 0.40 (8.1); our target
+  for the page 7.16 against 2.49. The first smoke ran without it (loss 8.3 falling to 6.8, eval 6.02); with it, loss
+  5.2 falling to 2.9 in 30 steps of 8 pages, eval 2.98. `htr-train` now sets `DASH_STAGE0=head_cls` and
+  `PAGE_SCOPE_PREFILL=1` (inference's page-scoped prompt; no difference on one page) for every Unlimited-OCR 2 run
+  (`render.UNLIMITED_OCR_2_ENV`, red-checked in the golden render test). ms-swift's own example trains it without.
+- **One page a GPU.** Its sparse attention builds its page mask for one sample: 4 a GPU failed in the first step
+  (`shape '[1, 74, 32]' is invalid for input of size 9472`).
+- Zero-shot it cannot read this hand: a list of goods, "Affradz Smör 5 t:na 7 lb 8 mrc", came out "Miyas Onno 5. 4.
+  5. 6. 7. ..." to 99.
+
 ## Measured so far
 
 ### Final score: checkpoint-28000 against TrOCR (the queue, 8 Nov 22:03)
