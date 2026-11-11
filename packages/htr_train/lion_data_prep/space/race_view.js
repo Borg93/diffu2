@@ -28,13 +28,17 @@ const SPEEDS = [
   { label: "½ speed", speed: 0.5 },
   { label: "¼ speed", speed: 0.25 },
 ];
-const JEV_INTRO =
-  "Each line is read on its own by TrOCR and by the MiniCPM-OCR reader. Marked characters differ from the ground " +
-  "truth (the line as a person transcribed it); ‸ stands for missing ones. Jev looks at the line and at a reading " +
-  "drawn as an image, and scores from 0 to 1 how sure it is that the reading is exactly what the line says. Where " +
-  "the two readings differ, the one Jev scores higher is its pick. Jev catches a reading that is plainly another " +
-  "text far better than one that is a letter or two off (see How it works), so a high score does not prove a " +
-  "reading right.";
+const JEV_HOW =
+  "Both readers read each line on its own. Jev looks at the line and at a reading drawn as an image, and scores " +
+  "0 to 1 how sure it is that the reading is exactly the line; where the two readings differ, it picks the one it " +
+  "scores higher. The better reading is the one with fewer wrong characters. Jev tells a plainly wrong text from " +
+  "the right one far more reliably than one a letter or two off.";
+const TALLY = [
+  { key: "trocr", lane: "trocr", name: "TrOCR" },
+  { key: "minicpm", lane: "plain", name: "MiniCPM-OCR" },
+  { key: "kept", lane: "kept", name: "Jev's picks" },
+  { key: "best", lane: "best", name: "Perfect picks" },
+];
 const still = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const state = { run: null, raced: false, speed: 1, raceStart: 0, frame: 0 };
 const derived = new WeakMap(); // per lane payload: what drawing needs, worked out once
@@ -368,26 +372,46 @@ function drawServer(root, race, scale) {
   batched.querySelector(".rv-note").textContent = race.batched_note || "";
 }
 
-function reading(name, key, data, picked) {
-  const row = make("div", picked ? "rv-jr rv-picked" : "rv-jr");
-  row.dataset.lane = key;
+// A reading in a table cell: its text, the characters that differ from the ground truth marked, and Jev's score.
+function cell(data, kept, both) {
+  const box = make("div", kept ? "rv-jc rv-kept" : "rv-jc");
   const text = make("span", "rv-reading");
   for (const [piece, agrees] of data.marks) text.append(make("span", agrees ? "" : "rv-bad", piece));
   if (!data.marks.length) text.textContent = "(empty)";
-  const meter = make("span", "rv-meter");
-  const fill = make("i");
-  fill.style.width = `${Math.round(100 * data.score)}%`;
-  meter.append(fill);
-  const score = make("span", "rv-scorebox");
-  score.append(meter, make("span", "rv-score", data.score.toFixed(3)));
-  row.append(
-    make("span", "rv-k", name),
-    text,
-    make("span", data.exact ? "rv-right" : "rv-wrong", data.exact ? "✓ right" : "✗ wrong"),
-    score,
-    make("span", "rv-pick", picked ? "Jev's pick" : ""),
-  );
-  return row;
+  const score = make("span", "rv-score", data.score.toFixed(2));
+  score.title = "Jev's score: how sure it is that this reading is exactly the line";
+  box.append(text, score);
+  if (both) box.append(make("span", "rv-k", "both"));
+  return box;
+}
+
+function outcome(row) {
+  if (!row.kept) return ["same reading", ""];
+  if (!row.better) return ["tie", ""];
+  return row.kept === row.better ? ["✓ better", "good"] : ["✗ worse", "bad"];
+}
+
+// CER bars: each reader, Jev's picks, and perfect picks (the better reading of every line).
+function tallyChart(title, tally, scale) {
+  const box = make("div", "rv-tally");
+  box.append(make("div", "rv-tallyhead", title));
+  for (const bar of TALLY) {
+    const row = make("div", "rv-trow");
+    row.dataset.lane = bar.lane;
+    const track = make("div", "rv-bar");
+    const fill = make("div", "rv-fillbar");
+    fill.style.width = `${(100 * tally[bar.key]) / scale}%`;
+    track.append(fill);
+    row.append(make("span", "", bar.name), track, make("span", "rv-time", `${(100 * tally[bar.key]).toFixed(1)} %`));
+    box.append(row);
+  }
+  return box;
+}
+
+function verdict(tally) {
+  const lines = `the two readings differ on ${tally.differ} of the region's ${tally.lines} lines`;
+  if (!tally.one_better) return `No pick to judge: ${lines}, and on none is one better than the other.`;
+  return `Jev picked the better reading on ${tally.kept_better} of the ${tally.one_better} lines where one was better (${lines}).`;
 }
 
 function drawJev(root, race) {
@@ -398,43 +422,55 @@ function drawJev(root, race) {
   let list = box.querySelector(".rv-jlist");
   if (!list) {
     list = make("div", "rv-jlist");
-    const header = make("div", "rv-jr");
-    for (const name of ["Reader", "Its reading of the line", "Right?", "Jev's score, 0 to 1", ""]) {
-      header.append(make("span", "", name));
-    }
-    const head = make("div", "rv-jrow rv-jhead");
-    head.append(make("div", "rv-jlinehead", "The line, and what Jev's scores amount to"), header);
+    const header = make("div", "rv-jt rv-jthead");
+    for (const name of ["", "Ground truth", "TrOCR", "MiniCPM-OCR", "Jev's pick"]) header.append(make("span", "", name));
     const fold = make("details", "rv-fold");
-    fold.append(make("summary", "rv-foldhead"), make("p", "rv-jintro", JEV_INTRO), head, list);
-    box.replaceChildren(make("h4", "rv-title", "Jev, the reader's proof-reader"), make("p", "rv-jnote"), fold);
+    fold.append(make("summary", "rv-foldhead"), header, list);
+    box.replaceChildren(
+      make("h4", "rv-title", "Jev, the reader's proof-reader"),
+      make("p", "rv-jnote"),
+      make("div", "rv-tallies"),
+      make("p", "rv-note", JEV_HOW),
+      fold,
+    );
+  }
+  const tally = race.jev_tally;
+  box.querySelector(".rv-jnote").textContent = tally
+    ? verdict(tally)
+    : `Jev has scored ${rows.length} of ${race.jev_total} lines…`;
+  const tallies = box.querySelector(".rv-tallies");
+  if (tally && !tallies.childElementCount) {
+    const scale = Math.max(0.001, ...TALLY.map((bar) => tally[bar.key]));
+    tallies.append(tallyChart("CER over the region, each line read on its own", tally, scale));
   }
   for (let i = list.childElementCount; i < rows.length; i += 1) {
     const row = rows[i];
-    const item = make("div", "rv-jrow");
+    const item = make("div", "rv-jt");
     item.dataset.line = String(row.index);
-    const line = make("div", "rv-jline");
-    const image = make("img", "rv-jimg");
-    image.src = row.image;
-    image.alt = `Line ${row.index + 1} of the region`;
-    image.loading = "lazy";
-    const verdict = make("span", "rv-verdict", row.verdict);
-    verdict.dataset.kind = row.verdict.startsWith("Jev picks the right") ? "good" : row.verdict === "both right" ? "" : "bad";
-    line.append(image, verdict);
-    const truth = make("div", "rv-jr rv-truth");
-    truth.append(make("span", "rv-k", "ground truth"), make("span", "rv-reading", row.truth));
-    const readings = make("div", "rv-jreads");
-    readings.append(
-      truth,
-      reading("TrOCR", "trocr", row.trocr, row.pick === "trocr"),
-      reading("MiniCPM-OCR", "plain", row.minicpm, row.pick === "minicpm"),
-    );
-    item.append(line, readings);
+    item.title = "Click to see the line";
+    const [said, kind] = outcome(row);
+    const result = make("span", "rv-outcome", said);
+    result.dataset.kind = kind;
+    item.append(make("span", "rv-k", String(row.index + 1)), make("span", "rv-truth", row.truth));
+    if (row.kept) {
+      item.append(cell(row.trocr, row.kept === "trocr", false), cell(row.minicpm, row.kept === "minicpm", false));
+    } else {
+      const both = cell(row.trocr, false, true);
+      both.classList.add("rv-both");
+      item.append(both);
+    }
+    item.append(result);
+    const crop = make("img", "rv-jimg");
+    crop.alt = `Line ${row.index + 1} of the region`;
+    crop.hidden = true;
+    item.append(crop);
+    item.addEventListener("click", () => {
+      if (!crop.src) crop.src = row.image;
+      crop.hidden = !crop.hidden;
+    });
     list.append(item);
   }
-  box.querySelector(".rv-jnote").textContent =
-    race.jev_note || `Jev has scored ${rows.length} of ${race.jev_total} lines…`;
-  box.querySelector(".rv-foldhead").textContent =
-    `Line by line: both readings and Jev's scores (${rows.length} of ${race.jev_total} lines)`;
+  box.querySelector(".rv-foldhead").textContent = `Line by line (${rows.length} of ${race.jev_total} lines)`;
 }
 
 function draw(now) {

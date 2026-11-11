@@ -3,29 +3,28 @@ lines' outlines (from the GT's PAGE XML, as fractions of the crop), in OUT with 
 
     python build_examples.py --sets data/htr --gt /mnt/work/GT-Lejonet_HTR_202602 --out examples
 
-The regions are dev regions (volumes held out from training) whose lines are all in the dev lines with the same
-text. A region's crop is the box of its outline and its lines' outlines together (diffu_page's reader_set).
+The regions are drawn at random (seeded) from the test pages (`test_0050`), one from each of COUNT collections, among
+the regions of 8 to 18 lines whose lines are all in the test lines with the same text and whose PAGE region has the
+same lines (else the next in the same draw). No model on the page trained on
+a test page: our dev split is whole volumes cut out of the training pages, which the Swedish Lion TrOCR trained on,
+so dev regions would be pages TrOCR has seen and the reader has not. A region's crop is the box of its outline and its
+lines' outlines together (diffu_page's reader_set).
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import random
 import shutil
 import xml.etree.ElementTree as ET
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
 from PIL import Image
 
-REGIONS = (  # one or two per collection, short to long
-    "8d24e7df7dea_2",
-    "19a1b2195bab_right_0",
-    "eed569a6699c_left_3",
-    "f970d28ac08b_left_0",
-    "38c4ce6331ad_left_1",
-    "35ffe6b8b600_left_0",
-)
+FEWEST, MOST = 8, 18  # lines a region: enough to time, few enough for the page and one GPU call
 MASKED = "minicpm_regions_masked_crops"  # the regions as the reader was trained on them, beside the plain crops
 
 
@@ -38,6 +37,35 @@ def rows(sets: Path, stem: str) -> dict[str, dict[str, Any]]:
         sample, meta = json.loads(sample), json.loads(meta)
         found[meta["id"]] = meta | {"image": sample["images"][0], "text": sample["messages"][1]["content"]}
     return found
+
+
+def own_lines(lines: dict[str, dict[str, Any]], regions: dict[str, dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """Each region's lines in order, for the regions whose lines are all in the line set with the region's text."""
+    found = defaultdict(list)
+    for line_id, line in lines.items():
+        found[line_id.rsplit("_", 1)[0]].append(line)
+    whole = {}
+    for region_id, region in regions.items():
+        mine = sorted(found.get(region_id, []), key=lambda line: int(line["id"].rsplit("_", 1)[1]))
+        if [line["text"].strip() for line in mine] == [text.strip() for text in region["text"].split("\n")]:
+            whole[region_id] = mine
+    return whole
+
+
+def draw(regions: dict[str, dict[str, Any]], whole: dict[str, list[Any]], seed: int) -> list[list[str]]:
+    """The regions of FEWEST to MOST lines, grouped by collection, the collections and each one's regions in an order
+    drawn at random with ``seed``."""
+    fits = defaultdict(list)
+    for region_id, mine in whole.items():
+        if FEWEST <= len(mine) <= MOST:
+            fits[regions[region_id]["collection"]].append(region_id)
+    chance = random.Random(seed)
+    order = []
+    for collection in chance.sample(sorted(fits), len(fits)):
+        candidates = sorted(fits[collection])
+        chance.shuffle(candidates)
+        order.append(candidates)
+    return order
 
 
 def local(tag: str) -> str:
@@ -80,41 +108,47 @@ def main() -> None:
     parser.add_argument("--sets", type=Path, required=True, help="the folder of the dev sets (data/htr)")
     parser.add_argument("--gt", type=Path, required=True, help="GT-Lejonet's folder, for the PAGE XML")
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--count", type=int, default=6, help="regions, each from another collection")
+    parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
 
-    lines, regions = rows(args.sets, "minicpm_lines_scaled.dev"), rows(args.sets, "minicpm_regions.dev")
+    lines, regions = rows(args.sets, "minicpm_lines_scaled.test"), rows(args.sets, "minicpm_regions.test")
+    whole = own_lines(lines, regions)
     examples = []
-    for region_id in REGIONS:
-        region = regions[region_id]
-        own = sorted(
-            (line for line_id, line in lines.items() if line_id.rsplit("_", 1)[0] == region_id),
-            key=lambda line: int(line["id"].rsplit("_", 1)[1]),
-        )
-        texts = [line["text"] for line in own]
-        if [text.strip() for text in texts] != [text.strip() for text in region["text"].split("\n")]:
-            raise ValueError(f"{region_id}: its dev lines are not its region's lines")
-        folder = args.out / region_id
-        folder.mkdir(parents=True, exist_ok=True)
-        masked = Path(region["image"]).parent.parent / MASKED / Path(region["image"]).name
-        shutil.copy(masked, folder / "region.png")
-        for i, line in enumerate(own):
-            shutil.copy(line["image"], folder / f"line_{i:02d}.jpg")
-        found = list((args.gt / region["collection"]).rglob(f"page/{Path(region['scan']).stem}.xml"))
-        if len(found) != 1:
-            raise ValueError(f"{region_id}: {len(found)} PAGE files for {region['scan']}")
-        with Image.open(masked) as image:
-            size = list(image.size)
-        examples.append(
-            {
-                "id": region_id,
-                "collection": region["collection"],
-                "volume": region["volume"],
-                "scan": region["scan"],
-                "lines": texts,
-                "region_size": size,
-                "outlines": line_outlines(found[0], texts),
-            }
-        )
+    for candidates in draw(regions, whole, args.seed):
+        for region_id in candidates:
+            region, own = regions[region_id], whole[region_id]
+            texts = [line["text"] for line in own]
+            found = list((args.gt / region["collection"]).rglob(f"page/{Path(region['scan']).stem}.xml"))
+            if len(found) != 1:
+                continue
+            try:
+                outlines = line_outlines(found[0], texts)
+            except ValueError:
+                continue
+            folder = args.out / region_id
+            folder.mkdir(parents=True, exist_ok=True)
+            masked = Path(region["image"]).parent.parent / MASKED / Path(region["image"]).name
+            shutil.copy(masked, folder / "region.png")
+            for i, line in enumerate(own):
+                shutil.copy(line["image"], folder / f"line_{i:02d}.jpg")
+            with Image.open(masked) as image:
+                size = list(image.size)
+            examples.append(
+                {
+                    "id": region_id,
+                    "collection": region["collection"],
+                    "volume": region["volume"],
+                    "scan": region["scan"],
+                    "lines": texts,
+                    "region_size": size,
+                    "outlines": outlines,
+                }
+            )
+            break
+        if len(examples) == args.count:
+            break
+    examples.sort(key=lambda example: len(example["lines"]))
     (args.out / "examples.json").write_text(json.dumps(examples, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"{len(examples)} regions, {sum(len(example['lines']) for example in examples)} lines in {args.out}")
 

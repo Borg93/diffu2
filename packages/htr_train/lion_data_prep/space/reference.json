@@ -3,53 +3,53 @@
  "measured": "2026-11-11",
  "runs": 5,
  "regions": {
-  "8d24e7df7dea_2": {
-   "lines": 10,
-   "tokens": 124,
-   "trocr_single": 1.661,
-   "trocr_batch": 0.837,
-   "vllm": 0.497,
-   "vllm_dspark": 0.321
-  },
-  "19a1b2195bab_right_0": {
+  "db62c201f7ae_right_0": {
    "lines": 8,
-   "tokens": 76,
-   "trocr_single": 1.246,
-   "trocr_batch": 0.603,
-   "vllm": 0.379,
-   "vllm_dspark": 0.266
+   "tokens": 120,
+   "trocr_single": 1.872,
+   "trocr_batch": 1.073,
+   "vllm": 0.536,
+   "vllm_dspark": 0.35
   },
-  "eed569a6699c_left_3": {
+  "5163e75f9a69_left_0": {
    "lines": 9,
-   "tokens": 96,
-   "trocr_single": 1.859,
-   "trocr_batch": 0.752,
-   "vllm": 0.525,
-   "vllm_dspark": 0.345
+   "tokens": 135,
+   "trocr_single": 2.306,
+   "trocr_batch": 1.054,
+   "vllm": 0.501,
+   "vllm_dspark": 0.319
   },
-  "f970d28ac08b_left_0": {
+  "9cf84823c0f1_left_3": {
    "lines": 11,
-   "tokens": 129,
-   "trocr_single": 1.474,
-   "trocr_batch": 0.668,
-   "vllm": 0.569,
-   "vllm_dspark": 0.335
+   "tokens": 112,
+   "trocr_single": 1.782,
+   "trocr_batch": 0.723,
+   "vllm": 0.5,
+   "vllm_dspark": 0.315
   },
-  "38c4ce6331ad_left_1": {
-   "lines": 17,
-   "tokens": 209,
-   "trocr_single": 3.922,
-   "trocr_batch": 1.543,
-   "vllm": 0.688,
-   "vllm_dspark": 0.334
+  "d2cd06fbea5f_left_0": {
+   "lines": 12,
+   "tokens": 149,
+   "trocr_single": 1.929,
+   "trocr_batch": 1.393,
+   "vllm": 0.587,
+   "vllm_dspark": 0.429
   },
-  "35ffe6b8b600_left_0": {
-   "lines": 18,
-   "tokens": 198,
-   "trocr_single": 3.412,
-   "trocr_batch": 1.323,
-   "vllm": 0.729,
-   "vllm_dspark": 0.45
+  "dc9a942e9986_left_0": {
+   "lines": 14,
+   "tokens": 210,
+   "trocr_single": 2.993,
+   "trocr_batch": 1.858,
+   "vllm": 0.727,
+   "vllm_dspark": 0.497
+  },
+  "166e614d6588_0": {
+   "lines": 15,
+   "tokens": 217,
+   "trocr_single": 3.523,
+   "trocr_batch": 1.568,
+   "vllm": 0.741,
+   "vllm_dspark": 0.443
   }
  }
 }

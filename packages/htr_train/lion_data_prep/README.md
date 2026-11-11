@@ -79,8 +79,8 @@ minicpm-all itself was written before that: the loop that keeps it going is in
 
 `configs/smoke_*_2gpu.yaml` are the same setups in small on the smoke sets, to check a machine first (minutes).
 
-**The demo Space** (`space/`, published by `publish_space.sh` as `Gabriel/diffu-htr-speed`, ZeroGPU): one dev region
-read with one stream each by the Swedish Lion TrOCR (its text lines, one after the other), by the reader alone and by
+**The demo Space** (`space/`, published by `publish_space.sh` as `Gabriel/diffu-htr-speed`, ZeroGPU): one test-page
+region (drawn at random by `space/build_examples.py`; dev regions are pages TrOCR trained on) read with one stream each by the Swedish Lion TrOCR (its text lines, one after the other), by the reader alone and by
 the reader with its draft, replayed from the same start at their measured pace; the same region's timings on our
 server, where vLLM serves the reader; then Jev's scores line by line.
 - `GT=... bash publish_space.sh` stages `space/`, the Jev prompt and renderer from `diffu_htr_train`, the font and the

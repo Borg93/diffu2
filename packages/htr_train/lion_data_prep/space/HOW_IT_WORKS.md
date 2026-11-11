@@ -70,16 +70,15 @@ level: new to the server, as a region is in production. Over the six example reg
 
 | a region read by | seconds |
 |---|---|
-| TrOCR, one line after the other | 1.25 – 3.92 |
-| TrOCR, its lines as one batch | 0.60 – 1.54 |
-| the reader in vLLM | 0.38 – 0.73 |
-| the reader with its draft in vLLM | 0.27 – 0.45 |
-| the reader in this Space's PyTorch, on that GPU | 0.53 – 1.21 |
-| the reader with its draft in this Space's PyTorch, on that GPU | 0.23 – 0.41 |
+| TrOCR, one line after the other | 1.78 – 3.52 |
+| TrOCR, its lines as one batch | 0.72 – 1.86 |
+| the reader in vLLM | 0.50 – 0.74 |
+| the reader with its draft in vLLM | 0.32 – 0.50 |
 
-So with the draft this Space's decoding is as fast as vLLM's for one region at a time, and alone it is 1.2 to 1.8
-times slower; the live bars are slower again because ZeroGPU gives half a GPU. (The PyTorch timings start from the
-decoded image, vLLM's from the request.) The reader alone writes the same tokens as transformers' own `generate`.
+The reader in vLLM is 1.4 to 2.6 times as fast as TrOCR's one batch, and 2.3 to 3.7 times with its draft. On six
+other regions and the same whole GPU, this Space's PyTorch decoding was as fast as vLLM with the draft and 1.2 to 1.8
+times slower alone; the live bars are slower again because ZeroGPU gives half a GPU. The reader alone writes the same
+tokens as transformers' own `generate`.
 
 What vLLM adds is reading many requests at once. On the first 1,000 test lines and 200 dev regions, one RTX PRO
 6000 Blackwell:
@@ -100,7 +99,11 @@ vLLM only.
 
 Jev compares a line's image with a candidate reading drawn as an image (`@RENDERER@`) and returns a score from 0 to 1.
 Here each line is read on its own by TrOCR and by the MiniCPM reader, and Jev scores both; keeping, line by line, the
-reading Jev scores higher is one way to combine two readers.
+reading Jev scores higher is one way to combine two readers. Under the race the page says on how many lines where one
+reading was better (fewer wrong characters) Jev picked that one; the bars give the CER over the region of each reader,
+of Jev's picks, and of perfect picks (the better reading on every line, the most any chooser could get). The table
+has one row per line: the characters that differ from the ground truth are marked, each reading carries Jev's score,
+Jev's pick is shaded; click a row to see the line.
 
 Jev catches gross mismatches well and near-misses badly. On 2,000 test pairs it tells the correct text from rule-made
 wrong candidates (dropped or swapped words, another line's text) with an AUROC of 0.988, but from the reader's own
@@ -109,7 +112,12 @@ does not prove a reading right.
 
 ### Limits
 
-- The examples are from GT-Lejonet's dev volumes; other hands and periods read worse.
+- The examples are drawn at random (seeded, one each from six collections) from GT-Lejonet's test pages, which no
+  model here trained on. Our dev volumes would not do: they are cut out of the training pages, which TrOCR trained on
+  (6 epochs) and our reader did not. TrOCR chose its checkpoint on the test pages, which flatters it a little. Other
+  hands and periods read worse.
+- TrOCR gets each line cut along the ground truth's outline. In practice a line detector finds the lines, and its
+  mistakes would count against TrOCR; here they cannot.
 - Near-greedy decoding can repeat a phrase to the token limit on dense pages (a loop); such a reading is wrong from
   where the loop starts.
 - Timings vary with the GPU slice and the queue. A fresh GPU worker captures its CUDA graphs first (a few seconds, not

@@ -145,10 +145,11 @@ class Rate(BaseModel):
 
 
 class JevReading(BaseModel):
-    """One reader's reading of a line: its text in stretches, each with whether it agrees with the ground truth, Jev's
-    score, and whether the whole reading is exactly the ground truth."""
+    """One reader's reading of a line: its text in stretches, each with whether it agrees with the ground truth, its
+    CER, Jev's score, and whether the whole reading is exactly the ground truth."""
 
     marks: list[tuple[str, bool]]
+    cer: float
     score: float
     exact: bool
 
@@ -159,15 +160,31 @@ class JevReading(BaseModel):
 
 class JevRow(BaseModel):
     """One line: its crop, its ground truth, TrOCR's reading and the reader's (each of the line on its own) with Jev's
-    scores, the reader Jev scores higher ("" where both read the same) and what that amounts to."""
+    scores; the reading Jev picks ("" where both read the same) and the better one, with fewer wrong characters (""
+    where neither is)."""
 
     index: int
     image: str
     truth: str
     trocr: JevReading
     minicpm: JevReading
-    pick: Literal["trocr", "minicpm", ""]
-    verdict: str
+    kept: Literal["trocr", "minicpm", ""]
+    better: Literal["trocr", "minicpm", ""]
+
+
+class JevTally(BaseModel):
+    """What Jev did on a region's lines: where the two readings differ, where one of them is better (fewer wrong
+    characters) and where Jev picked that one; and the CER of each reader, of Jev's picks, and of the better reading
+    on every line (perfect picks)."""
+
+    lines: int
+    differ: int
+    one_better: int
+    kept_better: int
+    trocr: float
+    minicpm: float
+    kept: float
+    best: float
 
 
 class Race(BaseModel):
@@ -194,7 +211,7 @@ class Race(BaseModel):
     batched_note: str = ""
     jev: list[JevRow] = Field(default_factory=list)
     jev_total: int = 0
-    jev_note: str = ""
+    jev_tally: JevTally | None = None
 
 
 # Everything batched, on our server: the first 1,000 test lines, a whole GPU for TrOCR, the two vLLM servers sharing
@@ -206,8 +223,8 @@ BATCHED = [
 ]
 # This Space's decoding against vLLM on that server's GPU, the six example regions (docs/HTR_RUNS.md, 11 Nov 2026)
 SAME_GPU = (
-    "On that same whole GPU this Space's PyTorch decoding is as fast as vLLM with the draft (0.23–0.41 s a region "
-    "against 0.27–0.45 s) and 1.2–1.8× slower alone; the rest of the gap to the live bars is the half GPU."
+    "On such a whole GPU this Space's PyTorch decoding was as fast as vLLM with the draft and 1.2–1.8× slower alone "
+    "(six other regions); the rest of the gap to the live bars is the half GPU."
 )
 BATCHED_NOTE = (
     "The first 1,000 test lines on one RTX PRO 6000 Blackwell, every image new to the server. One at a time on the "
@@ -417,54 +434,45 @@ def _marks(reading: str, truth: str) -> list[tuple[str, bool]]:
     return marks
 
 
-def _jev_row(index: int, image: str, truth: str, crop: Image.Image, guess: str, own: str) -> JevRow:
-    """A line's row: Jev's score of TrOCR's reading and of the reader's, and what its higher score amounts to."""
-    first = JevReading(marks=_marks(guess, truth), score=_jev_score(crop, guess), exact=_same(guess, truth))
-    if _same(guess, own):
-        second, pick = first, ""
-        verdict = "both right" if first.exact else "both wrong, the same way"
-    else:
-        second = JevReading(marks=_marks(own, truth), score=_jev_score(crop, own), exact=_same(own, truth))
-        pick = "minicpm" if second.score > first.score else "trocr"
-        if first.exact == second.exact:
-            verdict = "both wrong"  # two different readings cannot both be the ground truth
-        else:
-            right = "trocr" if first.exact else "minicpm"
-            verdict = "Jev picks the right one" if pick == right else "Jev picks the wrong one"
-    return JevRow(index=index, image=image, truth=truth, trocr=first, minicpm=second, pick=pick, verdict=verdict)
-
-
-def _jev_note(race: Race, truth: list[str]) -> str:
-    rows = race.jev
-    whole = " ".join(truth)
-    picked = [row.minicpm.text if row.pick == "minicpm" else row.trocr.text for row in rows]
-    cer = [
-        _cer(" ".join(texts), whole) for texts in ([r.trocr.text for r in rows], [r.minicpm.text for r in rows], picked)
-    ]
-    one_right = [row for row in rows if row.trocr.exact != row.minicpm.exact]
-    said = [f"Both readers are right on {sum(row.verdict == 'both right' for row in rows)} of {len(rows)} lines"]
-    hits = sum(row.verdict == "Jev picks the right one" for row in one_right)
-    if len(one_right) == 1:
-        said.append(
-            f"On the one where only one of them is right, Jev scored the {'right' if hits else 'wrong'} one higher"
-        )
-    elif one_right:
-        said.append(
-            f"On the {len(one_right)} where only one of them is right, Jev scored the right one higher on {hits}"
-        )
-    readings = [reading for row in rows for reading in (row.trocr, row.minicpm)]
-    right = [reading.score for reading in readings if reading.exact]
-    wrong = [reading.score for reading in readings if not reading.exact]
-    if right and wrong:
-        said.append(
-            f"Jev's score averages {sum(right) / len(right):.2f} on right readings and "
-            f"{sum(wrong) / len(wrong):.2f} on wrong ones"
-        )
-    said.append(
-        f"CER over these lines, each read on its own: TrOCR {100 * cer[0]:.1f} %, MiniCPM-OCR {100 * cer[1]:.1f} %, "
-        f"Jev's pick on each line {100 * cer[2]:.1f} %"
+def _jev_reading(crop: Image.Image, reading: str, truth: str) -> JevReading:
+    return JevReading(
+        marks=_marks(reading, truth),
+        cer=_cer(reading, truth),
+        score=_jev_score(crop, reading),
+        exact=_same(reading, truth),
     )
-    return ". ".join(said) + "."
+
+
+def _jev_row(index: int, image: str, truth: str, crop: Image.Image, guess: str, own: str) -> JevRow:
+    """A line's row: Jev's score of TrOCR's reading and of the reader's, the one it picks and the better one."""
+    first = _jev_reading(crop, guess, truth)
+    if _same(guess, own):
+        return JevRow(index=index, image=image, truth=truth, trocr=first, minicpm=first, kept="", better="")
+    second = _jev_reading(crop, own, truth)
+    kept = "minicpm" if second.score > first.score else "trocr"
+    better = "" if first.cer == second.cer else ("trocr" if first.cer < second.cer else "minicpm")
+    return JevRow(index=index, image=image, truth=truth, trocr=first, minicpm=second, kept=kept, better=better)
+
+
+def _jev_tally(rows: list[JevRow]) -> JevTally:
+    """Jev over a region's lines: the CERs are over the region's text, each line read on its own."""
+    whole = " ".join(row.truth for row in rows)
+    chosen = [row for row in rows if row.kept]
+    better = [row for row in chosen if row.better]
+
+    def cer(pick: Callable[[JevRow], JevReading]) -> float:
+        return _cer(" ".join(pick(row).text for row in rows), whole)
+
+    return JevTally(
+        lines=len(rows),
+        differ=len(chosen),
+        one_better=len(better),
+        kept_better=sum(row.kept == row.better for row in better),
+        trocr=cer(lambda row: row.trocr),
+        minicpm=cer(lambda row: row.minicpm),
+        kept=cer(lambda row: row.minicpm if row.kept == "minicpm" else row.trocr),
+        best=cer(lambda row: row.minicpm if row.better == "minicpm" else row.trocr),
+    )
 
 
 def _duration(example_id: str | None, upload: Image.Image | None, with_jev: bool) -> int:
@@ -522,7 +530,7 @@ def compare(example_id: str | None, upload: Image.Image | None, with_jev: bool) 
                 image = f"/gradio_api/file={HERE / 'examples' / example_id / f'line_{i:02d}.jpg'}"
                 race.jev.append(_jev_row(i, image, truth[i], _jev_crop(line), race.trocr.lines[i].text, own))
                 yield race
-            race.jev_note = _jev_note(race, truth)
+            race.jev_tally = _jev_tally(race.jev)
         race.status, race.done = "", True
         yield race
 
@@ -657,7 +665,7 @@ with gr.Blocks(title="Swedish HTR: TrOCR, MiniCPM-OCR and DSpark") as demo:
                 gr.Examples(
                     [[_region(e), _collection(e), len(e["lines"])] for e in EXAMPLES],
                     [region, collection, count],
-                    label="Examples, from volumes none of the models trained on (or upload or paste your own crop)",
+                    label="Examples drawn at random from test pages no model here trained on (or upload or paste your own)",
                     examples_per_page=len(EXAMPLES),
                     cache_examples=False,
                     elem_id="regions",
@@ -677,7 +685,7 @@ with gr.Blocks(title="Swedish HTR: TrOCR, MiniCPM-OCR and DSpark") as demo:
             with gr.Column():
                 score_out = gr.Label(label="Jev")
                 render_out = gr.Image(label="The candidate rendered, as Jev compares it", height=120)
-        first = max(EXAMPLES, key=lambda example: len(example["lines"]) == 17)  # a clear hand
+        first = EXAMPLES[0]
         gr.Examples(
             [[str(HERE / "examples" / first["id"] / f"line_{i:02d}.jpg"), first["lines"][i]] for i in range(3)],
             [line_in, text_in],

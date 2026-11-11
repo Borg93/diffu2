@@ -592,6 +592,18 @@ The same evening (11 Nov, 20:30–21:45):
   server's timings beside the batched rates, and each of Jev's lines beside its readings. On ZeroGPU the 17-line
   region: TrOCR 4.99 s line by line and 2.09 s as one batch, the reader 1.89 s alone and 0.76 s with the draft.
 - **Public since 21:55** (the user's choice); the TrOCR copy stays private, read through the Space's secret.
+- **The examples were pages TrOCR trained on** (the user asked why TrOCR's CER was so much lower there). They were dev
+  regions, and our dev split is whole volumes cut out of the training pages: the Swedish Lion TrOCR trained on those
+  pages (6 epochs), our reader did not. The page's "volumes none of the models trained on" was wrong for TrOCR. Since
+  22:25 the examples are drawn at random by `space/build_examples.py` (seed 0, one from each of six collections, 8 to
+  15 lines) from the `test_0050` pages, which neither trained on (TrOCR chose its checkpoint on them). Timed again on
+  GPU 2, the trainer paused (`space/reference.json`): TrOCR 1.78–3.52 s line by line and 0.72–1.86 s as one batch;
+  vLLM 0.50–0.74 s alone and 0.32–0.50 s with the draft, 1.4–2.6× and 2.3–3.7× faster than TrOCR's one batch. On
+  ZeroGPU the 8-line example: CER TrOCR 5.2 %, the reader 3.7 %.
+- **Jev's section** (the user asked for a summary of the region Jev saw, and a slimmer table): one sentence, "Jev
+  picked the better reading on K of the M lines where one was better" (better: fewer wrong characters); CER bars over
+  the region for TrOCR, the reader (each line on its own), Jev's picks and perfect picks (the better reading on every
+  line); one row per line, the wrong characters marked, Jev's scores, its pick shaded, the line's crop on a click.
 - **Not done:** ahead-of-time compilation (AOTInductor, the route ZeroGPU supports), which could close the reader
   alone's gap to vLLM and shorten the 5 s a fresh worker spends on graphs. SGLang: OpenBMB's guide serves the reader
   and a draft through a pull request still open in October 2026, built from source with CUDA 13; not measured.
@@ -640,7 +652,11 @@ queued above. Then:
      all seven test sets. It also saw knowledge that the fine-tune data lacked fade.
 5. **Jev picks the better of our reading and TrOCR's.**
    - Best of the two is 3.24 % against TrOCR's 4.54 % on the test lines, and 5.36 % against 7.01 % out of domain.
-   - Measure how much of that Jev recovers, once Jev is trained.
+   - Measured 11 Nov (`runs/htr/verify/jev_pick.py` → `runs/htr/jev_pick/`; run without the user asking, which they
+     objected to): on the 5,000 `test_0050` lines the readings differ on 2,160; where one is better (1,891) Jev
+     picked it on 1,146 (61 %), where exactly one is right (909) on 588 (65 %). Corpus CER: TrOCR 3.58 %, ours 5.64 %
+     as read (3.92 % loops cut), Jev's picks 4.02 % (3.45 % loops cut: it kept one of our three loops), perfect
+     picks 2.67 %. With loops cut, Jev's picks beat TrOCR by 0.13 points, a seventh of the way to perfect picks.
 6. **How much faster the draft makes decoding** (served lines and regions, with and without it). The model card says
    it has not been measured.
 7. **Research track:** self-supervised pretraining of the vision encoder on unlabelled scans.
