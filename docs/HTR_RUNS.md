@@ -600,10 +600,14 @@ The same evening (11 Nov, 20:30–21:45):
   GPU 2, the trainer paused (`space/reference.json`): TrOCR 1.78–3.52 s line by line and 0.72–1.86 s as one batch;
   vLLM 0.50–0.74 s alone and 0.32–0.50 s with the draft, 1.4–2.6× and 2.3–3.7× faster than TrOCR's one batch. On
   ZeroGPU the 8-line example: CER TrOCR 5.2 %, the reader 3.7 %.
-- **Jev's section** (the user asked for a summary of the region Jev saw, and a slimmer table): one sentence, "Jev
-  picked the better reading on K of the M lines where one was better" (better: fewer wrong characters); CER bars over
-  the region for TrOCR, the reader (each line on its own), Jev's picks and perfect picks (the better reading on every
-  line); one row per line, the wrong characters marked, Jev's scores, its pick shaded, the line's crop on a click.
+- **Jev's section** (the user asked for a summary of the region Jev saw, a slimmer table, plain words, and all of it in
+  the fold): one fold titled "Jev, the reader's proof-reader: picked the reading with fewer errors on K of M lines"
+  (errors: characters added, dropped or changed against the ground truth); inside, how to read it, CER bars over the
+  region for TrOCR, the reader (each line on its own), Jev's picks and the best possible picks (the reading with fewer
+  errors on every line), then one row per line: each reading with its wrong characters marked, its errors and Jev's
+  certainty in percent, Jev's pick shaded with ✓ (fewer errors than the other reading) or ✗ (more), the line's crop
+  on a click. A reading's text was rebuilt from its marked pieces, so the "‸" for missing letters entered the tally's
+  CERs; each reading now keeps its own text.
 - **Not done:** ahead-of-time compilation (AOTInductor, the route ZeroGPU supports), which could close the reader
   alone's gap to vLLM and shorten the 5 s a fresh worker spends on graphs. SGLang: OpenBMB's guide serves the reader
   and a draft through a pull request still open in October 2026, built from source with CUDA 13; not measured.

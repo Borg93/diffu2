@@ -145,23 +145,21 @@ class Rate(BaseModel):
 
 
 class JevReading(BaseModel):
-    """One reader's reading of a line: its text in stretches, each with whether it agrees with the ground truth, its
-    CER, Jev's score, and whether the whole reading is exactly the ground truth."""
+    """One reader's reading of a line: its text; the text in stretches, each with whether it agrees with the ground
+    truth; its errors (characters added, dropped or changed against the ground truth); Jev's score (how sure Jev is,
+    0 to 1, that the reading is exactly the line); and whether it is exactly the ground truth."""
 
+    text: str
     marks: list[tuple[str, bool]]
-    cer: float
+    errors: int
     score: float
     exact: bool
-
-    @property
-    def text(self) -> str:
-        return "".join(piece for piece, _ in self.marks)
 
 
 class JevRow(BaseModel):
     """One line: its crop, its ground truth, TrOCR's reading and the reader's (each of the line on its own) with Jev's
-    scores; the reading Jev picks ("" where both read the same) and the better one, with fewer wrong characters (""
-    where neither is)."""
+    scores; the reading Jev picks ("" where both read the same) and the one with fewer errors ("" where they have as
+    many)."""
 
     index: int
     image: str
@@ -173,9 +171,9 @@ class JevRow(BaseModel):
 
 
 class JevTally(BaseModel):
-    """What Jev did on a region's lines: where the two readings differ, where one of them is better (fewer wrong
-    characters) and where Jev picked that one; and the CER of each reader, of Jev's picks, and of the better reading
-    on every line (perfect picks)."""
+    """What Jev did on a region's lines: where the two readings differ, where one of them has fewer errors and where
+    Jev picked that one; and the CER of each reader, of Jev's picks, and of the reading with fewer errors on every
+    line (the best possible picks)."""
 
     lines: int
     differ: int
@@ -251,9 +249,13 @@ def _example(example_id: str) -> dict[str, Any]:
     return next(e for e in EXAMPLES if e["id"] == example_id)
 
 
+def _errors(prediction: str, truth: str) -> int:
+    """Characters added, dropped or changed against the ground truth, runs of spaces counted as one."""
+    return Levenshtein.distance(" ".join(prediction.split()), " ".join(truth.split()))
+
+
 def _cer(prediction: str, truth: str) -> float:
-    prediction, truth = " ".join(prediction.split()), " ".join(truth.split())
-    return Levenshtein.distance(prediction, truth) / max(1, len(truth))
+    return _errors(prediction, truth) / max(1, len(" ".join(truth.split())))
 
 
 def _same(prediction: str, truth: str) -> bool:
@@ -436,21 +438,23 @@ def _marks(reading: str, truth: str) -> list[tuple[str, bool]]:
 
 def _jev_reading(crop: Image.Image, reading: str, truth: str) -> JevReading:
     return JevReading(
+        text=reading,
         marks=_marks(reading, truth),
-        cer=_cer(reading, truth),
+        errors=_errors(reading, truth),
         score=_jev_score(crop, reading),
         exact=_same(reading, truth),
     )
 
 
 def _jev_row(index: int, image: str, truth: str, crop: Image.Image, guess: str, own: str) -> JevRow:
-    """A line's row: Jev's score of TrOCR's reading and of the reader's, the one it picks and the better one."""
+    """A line's row: Jev's score of TrOCR's reading and of the reader's, the one it picks and the one with fewer
+    errors."""
     first = _jev_reading(crop, guess, truth)
     if _same(guess, own):
         return JevRow(index=index, image=image, truth=truth, trocr=first, minicpm=first, kept="", better="")
     second = _jev_reading(crop, own, truth)
     kept = "minicpm" if second.score > first.score else "trocr"
-    better = "" if first.cer == second.cer else ("trocr" if first.cer < second.cer else "minicpm")
+    better = "" if first.errors == second.errors else ("trocr" if first.errors < second.errors else "minicpm")
     return JevRow(index=index, image=image, truth=truth, trocr=first, minicpm=second, kept=kept, better=better)
 
 

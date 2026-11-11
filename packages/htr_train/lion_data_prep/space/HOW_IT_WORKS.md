@@ -99,11 +99,13 @@ vLLM only.
 
 Jev compares a line's image with a candidate reading drawn as an image (`@RENDERER@`) and returns a score from 0 to 1.
 Here each line is read on its own by TrOCR and by the MiniCPM reader, and Jev scores both; keeping, line by line, the
-reading Jev scores higher is one way to combine two readers. Under the race the page says on how many lines where one
-reading was better (fewer wrong characters) Jev picked that one; the bars give the CER over the region of each reader,
-of Jev's picks, and of perfect picks (the better reading on every line, the most any chooser could get). The table
-has one row per line: the characters that differ from the ground truth are marked, each reading carries Jev's score,
-Jev's pick is shaded; click a row to see the line.
+reading Jev scores higher is one way to combine two readers. A reading's errors are the characters it adds, drops or
+gets wrong against the ground truth. The fold under the race is titled with what Jev did: on how many of the lines
+where one reading has fewer errors it picked that one. Inside, the character error rate over the region of each
+reader, of Jev's picks, and of the best possible picks (the reading with fewer errors on every line, the most any
+chooser could get); then one row per line: each reading with its wrong characters marked, its errors and Jev's score
+in percent, Jev's pick shaded and marked ✓ when it has fewer errors than the other reading, ✗ when it has more. Click
+a row to see the line.
 
 Jev catches gross mismatches well and near-misses badly. On 2,000 test pairs it tells the correct text from rule-made
 wrong candidates (dropped or swapped words, another line's text) with an AUROC of 0.988, but from the reader's own

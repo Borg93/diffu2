@@ -137,9 +137,8 @@
 .rv-text .rv-draft { animation: rv-flash 0.5s ease-out; }
 .rv-own { text-decoration: underline; text-decoration-color: var(--rv-dspark); text-decoration-thickness: 2px; text-underline-offset: 3px; }
 
-/* Jev: what it did on the region in a sentence and two charts, then the lines, one row each, folded away */
-.rv-jnote { margin: 0; max-width: 110ch; font-weight: 600; }
-.rv-tallies { max-width: 620px; }
+/* Jev, folded away: its verdict on the region as the fold's title; inside, how to read it, the CER bars, a row a line */
+.rv-tallies { max-width: 660px; margin: 4px 0 6px; }
 .rv-tally { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .rv-tallyhead { font-size: 13px; font-weight: 600; }
 .rv-trow { display: grid; grid-template-columns: 120px minmax(0, 1fr) 56px; gap: 10px; align-items: center; font-size: 13px; }
@@ -150,8 +149,9 @@
   box-shadow: inset 0 0 0 1px var(--rv-lane);
 }
 .rv-fold { border: 1px solid var(--border-color-primary); border-radius: 6px; padding: 0 12px; }
-.rv-foldhead { padding: 8px 0; cursor: pointer; font-weight: 600; }
-.rv-fold[open] .rv-foldhead { border-bottom: 1px solid var(--border-color-primary); }
+.rv-fold > .rv-note { margin: 10px 0 6px; }
+.rv-foldhead { padding: 9px 0; cursor: pointer; font-size: 15px; font-weight: 600; }
+.rv-fold[open] .rv-foldhead { border-bottom: 1px solid var(--border-color-primary); margin-bottom: 8px; }
 .rv-jlist { display: flex; flex-direction: column; }
 .rv-jt {
   display: grid;
