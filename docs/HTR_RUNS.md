@@ -221,7 +221,7 @@ script again resumes after the last finished step.
      checkpoint), TrOCR's readings, the reader's second-best readings.
    - Its card has the table, the limit, setup and a transformers example (scores within 0.01 of vLLM's on 60 pairs);
      TensorBoard curves are in the repo's `runs/`.
-6. **A longer draft (11 Nov 17:43, `runs/htr/dspark_ft.sh`, tmux `htr:dsparkft`).** The published draft was still
+6. **A longer draft (11 Nov 17:43, `runs/htr/dspark_ft.sh`, tmux `htr:dsparkft`).** **Stopped 11 Nov 22:45 at the user's request** (they want GPUs 1 and 2 for other work), at step ~52,000 of 134,550: the wrapper killed first so it could not retry, the trainer by SIGTERM (it saved `output/interrupted`), then its vLLM. Kept on disk: `output/0`, `output/1` (epochs 1 and 2 of 3), `checkpoint_best`, `epoch1_step4484`, `interrupted`; none compared with the published draft yet. The published draft was still
    improving after its 3 epochs (held-out acceptance length 6.76 / 7.98 / 8.65), so it is trained 3 more, started from
    its weights (`--from-pretrained`, into `runs/htr/dspark-ft`), at a learning rate of 3.75e-5: speculators' own study
    of training a trained DSpark draft further (docs/research/dspark-qwen3-4b-code-finetune-lr-ablation, at the
