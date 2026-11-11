@@ -108,7 +108,7 @@ class Muon(Optimizer):
                     )
 
     @torch.no_grad()
-    def step(self, closure: None = None) -> None:  # ty: ignore[invalid-method-override]  no closure: one loss a step
+    def step(self, closure: None = None) -> None:  # ty: ignore[incompatible-method-override]  no closure: one loss a step
         """Every matrix with a gradient stepped (the module's docstring): a sharded one's update orthogonalised by its
         owner rank, any other's here."""
         sharded: list[tuple[DTensor, DTensor, dict[str, Any]]] = []

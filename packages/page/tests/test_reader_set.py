@@ -615,7 +615,9 @@ def test_reader_set_masks_a_line_to_its_outline_and_leaves_out_doubts_and_small_
     page = load_rgb(run / IMAGE).crop((100, 300, 700, 340))
     assert result.exit_code == 0
     assert crop.size == (600, 40)
-    assert all(abs(a - b) < 40 for a, b in zip(crop.getpixel((20, 5)), page.getpixel((20, 5)), strict=True))
+    cut, scanned = crop.getpixel((20, 5)), page.getpixel((20, 5))
+    assert isinstance(cut, tuple) and isinstance(scanned, tuple)  # RGB images: a pixel is its three channels
+    assert all(abs(a - b) < 40 for a, b in zip(cut, scanned, strict=True))
     assert crop.getpixel((580, 35)) == pytest.approx((255, 255, 255), abs=8)  # below the outline: white
     assert [row["reason"] for row in _lines(tmp_path / "set" / "lines.skipped.jsonl")] == [
         "uncertain-line",

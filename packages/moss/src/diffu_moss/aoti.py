@@ -157,7 +157,7 @@ class TensorsCall(nn.Module):
         self.names = tuple(block_tensors(block))
         self.blocks = [block]
 
-    def forward(  # ty: ignore[invalid-mutable-override]  torch declares forward an attribute; Modules override it
+    def forward(
         self,
         hidden_states: Tensor,
         rope: Tensor,

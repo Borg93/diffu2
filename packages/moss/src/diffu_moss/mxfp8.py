@@ -206,7 +206,7 @@ class Linear(nn.Module):
         return MXBlocks(self.elements.view(torch.float8_e4m3fn), scales)
 
     @override
-    def forward(  # ty: ignore[invalid-mutable-override]  torch declares forward an attribute; Modules override it
+    def forward(
         self,
         x: Tensor,
     ) -> Tensor:

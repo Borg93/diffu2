@@ -6,7 +6,8 @@ search-path = [".", "packages/sglang_moss/src"]
 
 # diffusers' and transformers' stubs don't model their dynamic attributes (block state, configs), so they are typed as
 # Any: we check our own logic, not theirs. NeMo AutoModel and the torchdata it brings exist only in NeMo's own
-# environment, SGLang only in its own (packages/sglang_moss). torch, numpy and PIL ship their own types and are checked, as ty checks them (pyproject.toml).
+# environment, SGLang only in its own (packages/sglang_moss), ms-swift only in packages/htr_train/envs (its training
+# plugin imports it). torch, numpy and PIL ship their own types and are checked, as ty checks them (pyproject.toml).
 replace-imports-with-any = [
     "diffusers", "diffusers.*",
     "transformers", "transformers.*",
@@ -14,6 +15,7 @@ replace-imports-with-any = [
     "nemo_automodel", "nemo_automodel.*",
     "torchdata", "torchdata.*",
     "sglang", "sglang.*",
+    "swift", "swift.*",
 ]
 
 [errors]

@@ -37,9 +37,7 @@ class PrintHandNet(nn.Module):
         self.features = nn.Sequential(*blocks)
         self.head = nn.Sequential(nn.Dropout(0.2), nn.Linear(CHANNELS[-1], 1))
 
-    def forward(  # ty: ignore[invalid-mutable-override]  torch declares forward an attribute; Modules override it
-        self, windows: torch.Tensor
-    ) -> torch.Tensor:
+    def forward(self, windows: torch.Tensor) -> torch.Tensor:
         """The printed logit of each window."""
         return self.head(self.features(windows).mean(dim=(2, 3))).squeeze(1)
 

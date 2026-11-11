@@ -322,9 +322,7 @@ class InkMeter(torch.nn.Module):
     """Stands in for the print/hand net: the more of a window is ink, the surer it is printed (a window 0.45 inked, as
     the form's type is: 99.5 %; 0.34, as its faint print: 70 %; 0.15, as its scribbles: 0.1 %)."""
 
-    def forward(  # ty: ignore[invalid-mutable-override]  torch declares forward an attribute; Modules override it
-        self, windows: torch.Tensor
-    ) -> torch.Tensor:
+    def forward(self, windows: torch.Tensor) -> torch.Tensor:
         return 40 * (windows.mean(dim=(1, 2, 3)) - 0.316)
 
 

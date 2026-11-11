@@ -38,7 +38,7 @@ class RMSNorm(nn.Module):
         super().__init__()
         self.weight = nn.Parameter(torch.ones(dim))
 
-    def forward(  # ty: ignore[invalid-mutable-override]  torch declares forward an attribute; Modules override it
+    def forward(
         self,
         x: Tensor,
     ) -> Tensor:
@@ -133,7 +133,7 @@ class TextRefinerBlock(nn.Module):
         self.ffn_gate, self.ffn_up = nn.Linear(dim, ffn_dim), nn.Linear(dim, ffn_dim)
         self.ffn_down = nn.Linear(ffn_dim, dim)
 
-    def forward(  # ty: ignore[invalid-mutable-override]  torch declares forward an attribute; Modules override it
+    def forward(
         self,
         x: Tensor,
         rope: Tensor,
@@ -154,7 +154,7 @@ class TextEmbedder(nn.Module):
         self.proj = nn.Linear(text_dim, dim)
         self.blocks = nn.ModuleList([TextRefinerBlock(dim, ffn_dim, heads) for _ in range(depth)])
 
-    def forward(  # ty: ignore[invalid-mutable-override]  torch declares forward an attribute; Modules override it
+    def forward(
         self,
         text: Tensor,
         rope: Tensor,
@@ -189,7 +189,7 @@ class JointBlock(nn.Module):
         self.proj["ffn_up_gate"] = nn.Linear(dim, 2 * ffn_dim, bias=False)
         self.proj["ffn_down"] = nn.Linear(ffn_dim, dim, bias=False)
 
-    def forward(  # ty: ignore[invalid-mutable-override]  torch declares forward an attribute; Modules override it
+    def forward(
         self,
         hidden_states: Tensor,
         rope: Tensor,
