@@ -692,6 +692,13 @@ queued above. Then:
 7. **Research track:** self-supervised pretraining of the vision encoder on unlabelled scans.
    [Garrido-Munoz and Calvo-Zaragoza, NeurIPS 2026](https://arxiv.org/abs/2609.35473): masked-pixel pretraining gave
    the lowest CER on every benchmark, and it is the only kind tested that improved with real handwriting.
+7b. **LightOnOCR-3-4B on whole pages** (the user's order, 11 Nov: after Unlimited-OCR 2, before Nemotron 3.5 Parse).
+   Its writer and job (`diffu-reader-set --model lightonocr-3`, kind `lightonocr-3`) are merged and tested on the CPU:
+   ms-swift's tokens equal LightOnOCR-3's own chat template's on 13 GT pages, thinking off, the loss from where its
+   generation prompt ends; pages fitted to 2,048 px as LightOn's client fits them. Its set is building since 12 Nov
+   00:03 (`lion_data_prep/build_pages.sh` with `MODEL=lightonocr-3 TASK=grounding`, tmux `htr:lightonset`), Nemotron's
+   queued after it (`htr:nemoset`). Then `smoke_lightonocr3_2gpu.yaml` for memory and speed, then
+   `lightonocr3_all.yaml`, once Unlimited-OCR 2 frees the GPUs.
 8. **Nemotron 3.5 Parse on whole pages** (the user's order, 11 Nov: after Unlimited-OCR 2 and LightOnOCR-3). Its
    trainer, set writer and specs are ready and tested on the CPU only ([HTR_TRAIN.md](HTR_TRAIN.md), "Nemotron 3.5
    Parse"); its set is not built and nothing has run on a GPU. Build the set and its dev split
