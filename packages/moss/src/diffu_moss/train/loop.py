@@ -115,6 +115,7 @@ PROFILE_WAIT, PROFILE_WARMUP, PROFILE_ACTIVE = 2, 1, 3
 RESUMABLE_CHANGES = {
     "steps": True,
     "size_block": True,
+    "stop_at": True,
     "decay_steps": True,
     "decay_to": True,
     "save_every": True,
@@ -158,6 +159,7 @@ class TrainSettings(BaseModel):
     grad_accumulation: int = Field(default=2, ge=1)
     size_block: int = Field(default=0, ge=0)
     reference_place: ReferencePlace = "over"
+    stop_at: int | None = Field(default=None, ge=1)
     save_every: int = Field(default=250, ge=1)
     val_every: int = Field(default=250, ge=1)
     seed: int = 0
@@ -662,7 +664,8 @@ def train(
     device = torch.device(settings.device)
     profiler = None if profile_dir is None else _profiler(profile_dir, device, ranks.rank)
     checkpoint = out
-    for step in range(done + 1, settings.steps + 1):
+    last = settings.steps if settings.stop_at is None else min(settings.stop_at, settings.steps)
+    for step in range(done + 1, last + 1):
         started = time.monotonic()
         if device.type == "cuda":
             torch.cuda.reset_peak_memory_stats(device)
@@ -701,7 +704,7 @@ def train(
         if ranks.main and (step % 10 == 0 or step == done + 1):
             memory = "" if peak is None else f", {peak:.1f} GB"
             console.print(f"step {step}: loss {fmean(losses):.4f}, grad norm {grad_norm:.3f}, {seconds:.1f} s{memory}")
-        if step % settings.save_every == 0 or step == settings.steps:
+        if step % settings.save_every == 0 or step == last:
             checkpoint = out / CHECKPOINTS / f"step_{step:06d}"
             if ranks.main:
                 checkpoint.mkdir(parents=True, exist_ok=True)
@@ -877,6 +880,15 @@ def main(
             "swaps, run B's in 1 of 8)",
         ),
     ] = "over",
+    stop_at: Annotated[
+        int | None,
+        typer.Option(
+            min=1,
+            help="train only to this step of the run, save a checkpoint there and stop, the learning rate's schedule "
+            "still the whole run's (--steps): a chain of short jobs, each resumed from the last one's checkpoint, "
+            "trains as one long job would",
+        ),
+    ] = None,
     seed: Annotated[int, typer.Option(help="the sample order, noise levels, noise and the LoRA's start")] = 0,
     profile_dir: Annotated[
         Path | None,
@@ -927,6 +939,7 @@ def main(
             "grad_accumulation": samples_per_step,
             "size_block": size_block,
             "reference_place": reference_place,
+            "stop_at": stop_at,
             "save_every": save_every,
             "val_every": val_every,
         }

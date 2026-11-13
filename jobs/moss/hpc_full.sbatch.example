@@ -53,6 +53,7 @@ PROFILE_DIR="${PROFILE_DIR:-}"  # a folder: steps 4 to 6 recorded by torch's pro
 RESHARD_AFTER_FORWARD="${RESHARD_AFTER_FORWARD:-1}"  # 0: keep each block's gathered weights for its backward (~10 GB a GPU, half the gathers)
 SIZE_BLOCK="${SIZE_BLOCK:-0}"  # N: each pass's samples sorted by size inside blocks of N rounds, so a round's GPUs hold samples of like size (32: ~13 % less a step at 2 MP on 8 GPUs)
 REFERENCE_PLACE="${REFERENCE_PLACE:-over}"  # where the sample lies against the page: over (MOSS-Image's own) or above (the sibling pilot's, whose pages took the sample's hand)
+STOP_AT="${STOP_AT:-}"  # a step: train to it, save and stop (the schedule still STEPS): a chain of short jobs
 GPUS_PER_NODE="${GPUS_PER_NODE:-4}"
 SAMPLES_PER_STEP="${SAMPLES_PER_STEP:-$((SLURM_NNODES * GPUS_PER_NODE * 2))}"  # two rounds of one sample a GPU
 
@@ -76,6 +77,7 @@ options=(--full --transformer "$TRANSFORMER" --cache "$CACHE" --out "$OUT" --ste
 [ "$RESHARD_AFTER_FORWARD" = 0 ] && options+=(--no-reshard-after-forward)
 [ "$SIZE_BLOCK" != 0 ] && options+=(--size-block "$SIZE_BLOCK")
 [ "$REFERENCE_PLACE" != over ] && options+=(--reference-place "$REFERENCE_PLACE")
+[ -n "$STOP_AT" ] && options+=(--stop-at "$STOP_AT")
 # a cache of latents alone (diffu-moss-cache-pairs --latents-only): encode the prompts in the step
 # options+=(--encode-text --model "$REPO/runs/moss/base")
 # go on from a checkpoint saved with --save-state, on any number of GPUs; "latest" takes the newest whole one (its

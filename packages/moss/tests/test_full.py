@@ -365,6 +365,28 @@ def test_full_fine_tune_resumed_from_a_checkpoints_state_goes_on_exactly_as_the_
     assert logs[0] == logs[1]  # the same samples, noise levels, losses and learning rates, steps 1 to 3
 
 
+def test_a_run_stopped_early_and_resumed_trains_as_the_run_that_went_through(
+    bfloat16_dit: Path, tiny_pair_cache: Path, full_run: Path, tmp_path: Path
+) -> None:
+    run = tmp_path / "run"
+    stopped = FULL_RUN.model_copy(update={"stop_at": 2, "save_every": 100})  # its one checkpoint the stop's
+
+    checkpoint = train(bfloat16_dit, tiny_pair_cache, run, stopped)
+    train(bfloat16_dit, tiny_pair_cache, run, FULL_RUN, resume=checkpoint)
+
+    assert checkpoint == _checkpoint(run, 2)
+    logs = [
+        [
+            {key: value for key, value in json.loads(line).items() if key != "seconds"}
+            for line in log.read_text().splitlines()
+        ]
+        for log in (run / LOG, full_run / LOG)
+    ]
+    assert logs[0] == logs[1]  # the same samples, losses and learning rates (the warmup's), steps 1 to 3
+    weights, expected = _weights(_checkpoint(run, 3) / STATE), _weights(_checkpoint(full_run, 3) / STATE)
+    assert [name for name in expected if not torch.equal(weights[name], expected[name])] == []
+
+
 def test_full_fine_tune_resumed_with_a_wind_down_added_steps_on_at_the_wind_downs_rate(
     bfloat16_dit: Path, tiny_pair_cache: Path, full_run: Path, tmp_path: Path
 ) -> None:
