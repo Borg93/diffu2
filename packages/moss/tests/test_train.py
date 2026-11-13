@@ -716,6 +716,39 @@ def test_model_index_names_how_the_cache_its_dit_trained_on_sized_its_samples(
     assert ModelIndex.read(tmp_path / "repo") == index
 
 
+def test_a_full_fine_tune_with_the_sample_above_saves_its_place_and_draws_with_it(
+    tiny_moss_dit: Path, legible_cache: Path, tmp_path: Path
+) -> None:
+    settings = TrainSettings(steps=1, full=FullSettings(), reference_place="above", device="cpu")
+    checkpoint = train(tiny_moss_dit, legible_cache, tmp_path / "run", settings)
+
+    above = MossTransformer.from_pretrained(str(checkpoint / "transformer"), torch_dtype=torch.float32).eval()
+    over = MossTransformer.from_pretrained(
+        str(checkpoint / "transformer"), torch_dtype=torch.float32, reference_place="over"
+    ).eval()
+    channels = above.config.latent_channels
+    generator = torch.Generator().manual_seed(0)
+    latents, sample = (torch.randn(1, channels, 2, 3, generator=generator) for _ in range(2))
+    text = torch.randn(1, 4, above.config.text_dim, generator=generator)
+    with torch.no_grad():
+        drawn = [dit(latents, torch.tensor([500.0]), text, None, references=[sample]) for dit in (above, over)]
+
+    assert above.config.reference_place == "above"
+    assert not torch.allclose(drawn[0], drawn[1])
+
+
+def test_a_lora_refuses_a_sample_place_other_than_its_base_dits(legible_cache: Path, tmp_path: Path) -> None:
+    (tmp_path / "no_dit").mkdir()  # refused before the DiT is loaded
+
+    with pytest.raises(ValueError, match="--reference-place needs --full"):
+        train(
+            tmp_path / "no_dit",
+            legible_cache,
+            tmp_path / "run",
+            TrainSettings(steps=1, reference_place="above", device="cpu"),
+        )
+
+
 def test_training_refuses_a_validation_cache_whose_samples_were_sized_otherwise(
     legible_cache: Path, tiny_pair_cache: Path, tmp_path: Path
 ) -> None:

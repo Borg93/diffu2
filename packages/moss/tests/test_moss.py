@@ -163,6 +163,15 @@ def test_token_positions_put_reference_k_on_the_reference_axis_at_k_plus_1_centr
     assert positions.tolist() == drawn + prompt + references
 
 
+def test_token_positions_above_put_each_reference_s_last_row_one_above_what_lies_below_it() -> None:
+    positions = token_positions(2, 2, 3, torch.device("cpu"), references=[(1, 2), (2, 1)], place="above")
+
+    drawn = [[0, 3, -0.5, -0.5], [0, 3, -0.5, 0.5], [0, 3, 0.5, -0.5], [0, 3, 0.5, 0.5]]
+    prompt = [[0, 0, 0, 0], [0, 1, 0, 0], [0, 2, 0, 0]]
+    references = [[1, 3, -1.5, -0.5], [1, 3, -1.5, 0.5], [2, 3, -3.5, 0], [2, 3, -2.5, 0]]
+    assert positions.tolist() == drawn + prompt + references
+
+
 @pytest.fixture(scope="module")
 def text_encoder_pipe(tiny_moss: Path) -> ModularPipeline:
     """The tiny MOSS's text encoder step alone, its text encoder and tokenizer loaded; no guider, so no negative."""

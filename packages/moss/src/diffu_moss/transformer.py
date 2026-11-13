@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import functools
 from collections.abc import Sequence
+from typing import Literal, get_args
 
 import torch
 from diffusers.configuration_utils import ConfigMixin, register_to_config
@@ -28,6 +29,7 @@ from torch.nn import functional as F
 
 TIME_PERIOD = 10_000
 NORM_EPS = 1e-6
+ReferencePlace = Literal["over", "above"]  # where a reference lies against the drawn image (token_positions)
 MODULATIONS = 6  # shift, scale and gate of the attention half, then of the feed-forward half
 
 
@@ -87,13 +89,25 @@ def token_positions(
     text_length: int,
     device: torch.device,
     references: Sequence[tuple[int, int]] = (),
+    place: ReferencePlace = "over",
 ) -> Tensor:
     """The 4-axis position of every token in the order the DiT holds them: the drawn image's (:func:`grid_positions`
     on the reference axis at 0), the prompt's at (0, their index, 0, 0), then each reference's, of grid ``references[k]``
-    (rows, columns), on the reference axis at ``k + 1``."""
+    (rows, columns), on the reference axis at ``k + 1``.
+
+    ``place`` is where a reference lies against the drawn image. ``over``, MOSS-Image's own: centre on centre, each
+    reference token at the row and column of the drawn token under it, as suits an image to edit. ``above``: its rows
+    moved up so its last row lies one above the drawn image's first (several references stacked upwards in order),
+    its columns centred as before, so a sample page lies where the lines before the page's first would and nothing
+    lies over the page (a sample holds other lines at the page's places)."""
     text = torch.zeros(text_length, 4, device=device)
     text[:, 1] = torch.arange(text_length, device=device)
     images = [grid_positions(h, w, text_length, k + 1, device) for k, (h, w) in enumerate(references)]
+    if place == "above":
+        lifted = 0
+        for image, (rows, _) in zip(images, references, strict=True):
+            image[:, 2] -= (height + rows) / 2 + lifted
+            lifted += rows
     return torch.cat((grid_positions(height, width, text_length, 0, device), text, *images))
 
 
@@ -243,8 +257,11 @@ class MossTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, CacheMixin):
         freq_dim: int = 256,
         latent_channels: int = 128,
         rope_base: float = 10000.0,
+        reference_place: ReferencePlace = "over",
     ) -> None:
         super().__init__()
+        if reference_place not in get_args(ReferencePlace):
+            raise ValueError(f"reference_place is one of {get_args(ReferencePlace)}, not {reference_place!r}")
         if dim % num_heads or (dim // num_heads) % 8 or freq_dim % 2:
             raise ValueError("dim must divide into heads whose width is a multiple of 8, and freq_dim must be even")
         self.video_embedder = nn.Linear(latent_channels, dim)
@@ -328,7 +345,7 @@ class MossTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, CacheMixin):
         image_tokens, text_tokens = height * width, text.shape[1]
         video = self._embedded(latents)
         grids = [(reference.shape[2], reference.shape[3]) for reference in references]
-        positions = token_positions(height, width, text_tokens, latents.device, grids)
+        positions = token_positions(height, width, text_tokens, latents.device, grids, self.config.reference_place)
         rope = rope_table(positions, self.config.dim // self.config.num_heads, self.config.rope_base).to(video.dtype)
         prompt = self.text_embedder(text, rope[:, image_tokens : image_tokens + text_tokens])
         x = torch.cat((video, prompt, *(self._embedded(reference) for reference in references)), 1)

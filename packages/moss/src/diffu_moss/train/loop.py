@@ -92,7 +92,7 @@ from diffu_moss.train.records import (
     Progress,
 )
 from diffu_moss.train.sigmas import draw_sigmas
-from diffu_moss.transformer import MossTransformer
+from diffu_moss.transformer import MossTransformer, ReferencePlace
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 console = Console()
@@ -157,6 +157,7 @@ class TrainSettings(BaseModel):
     decay_to: float = Field(default=0.0, ge=0.0, le=1.0)
     grad_accumulation: int = Field(default=2, ge=1)
     size_block: int = Field(default=0, ge=0)
+    reference_place: ReferencePlace = "over"
     save_every: int = Field(default=250, ge=1)
     val_every: int = Field(default=250, ge=1)
     seed: int = 0
@@ -613,6 +614,10 @@ def train(
         raise ValueError(f"{settings.grad_accumulation} samples a step do not share out among {ranks.world} ranks")
     if settings.size_block and ranks.world == 1:
         raise ValueError("--size-block groups the samples of a round, one a rank: it needs several ranks (torchrun)")
+    if settings.reference_place != "over" and settings.full is None:
+        raise ValueError(
+            "a LoRA is drawn on its base DiT, whose samples lie over the page: --reference-place needs --full"
+        )
     if resume is None and (out / LOG).exists():
         raise ValueError(f"{out} holds a training already ({LOG}); give a new directory")
     entries = read_entries(cache)
@@ -640,6 +645,7 @@ def train(
             ranks=ranks,
             sample_size=sample_size,
         )
+    training.transformer.register_to_config(reference_place=settings.reference_place)  # saved with every checkpoint
     generator = torch.Generator().manual_seed(settings.seed)
     groups = None
     if settings.size_block:
@@ -861,6 +867,16 @@ def main(
             "about 13 % less time a step at 2 MP on 8 GPUs); 0 draws each pass as shuffled",
         ),
     ] = 0,
+    reference_place: Annotated[
+        ReferencePlace,
+        typer.Option(
+            help="where the sample lies against the drawn page among the DiT's positions (with --full; written into "
+            "the checkpoints' config.json, so drawing reads it): over, MOSS-Image's own (each sample token at the place "
+            "of the page token under it), or above (the sample's rows just above the page's first, nothing over the "
+            "page: in the sibling pilot of 11 Nov a page drawn with another scribe's sample took that hand in 7 of 8 "
+            "swaps, run B's in 1 of 8)",
+        ),
+    ] = "over",
     seed: Annotated[int, typer.Option(help="the sample order, noise levels, noise and the LoRA's start")] = 0,
     profile_dir: Annotated[
         Path | None,
@@ -910,6 +926,7 @@ def main(
             "sigma_shift": sigma_shift,
             "grad_accumulation": samples_per_step,
             "size_block": size_block,
+            "reference_place": reference_place,
             "save_every": save_every,
             "val_every": val_every,
         }
