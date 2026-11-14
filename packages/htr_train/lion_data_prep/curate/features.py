@@ -1,7 +1,8 @@
 """Every page of the Svea pretraining pool as a row of numbers read from its ALTO file alone: who wrote the file, the
 page's size and confidence, how many regions, lines and characters it holds, how tall and how dense its lines are, how
 many lines hold far less or far more text than the page's lines usually do for their width, how much of the page its
-line polygons cover, and how repetitive its text is. One parquet file a volume in --out (a volume already written is
+line polygons cover, and how repetitive its text is. --pool is the folder of the pool's volumes of ALTO files (the
+Svea pool by default; /mnt/work/haas/output/andraarkiv for the other archives). One parquet file a volume in --out (a volume already written is
 skipped, so a stopped run goes on where it was).
 
     uv run python packages/htr_train/lion_data_prep/curate/features.py --out runs/htr/curate/features --workers 24
@@ -123,11 +124,12 @@ def write_volume(job: tuple[Path, Path]) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--pool", type=Path, default=POOL)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--workers", type=int, default=8)
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
-    jobs = [(volume, args.out) for volume in sorted(POOL.iterdir()) if volume.is_dir()]
+    jobs = [(volume, args.out) for volume in sorted(args.pool.iterdir()) if volume.is_dir()]
     done = 0
     with Pool(args.workers) as pool:
         for count, written in enumerate(pool.imap_unordered(write_volume, jobs), 1):

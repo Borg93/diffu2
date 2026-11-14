@@ -3,7 +3,8 @@ the old pipeline's (htrflow: YOLO regions and lines, TrOCR), so the old label an
 side. For each, the old lines are matched to the truth's by their boxes, and the old label's error is measured: per
 line its CER against the truth's line, per page the lines missed and the lines astray, the polygons' cover of each
 other, and the page's CER over its matched lines. Writes lines.parquet, pages.parquet and sources.tsv (every GT scan in
-the pool with its label's source) to --out.
+the pool with its label's source) to --out. --pool is the folder of the pool's volumes of ALTO files (the Svea pool
+by default).
 
     uv run python packages/htr_train/lion_data_prep/curate/calibration.py --out runs/htr/curate/calibration
 """
@@ -106,9 +107,9 @@ def match(old: list[Line], true: list[Line]) -> list[tuple[int, int, float]]:
     return matched
 
 
-def gt_scans() -> dict[str, dict[str, str]]:
+def gt_scans(pool: Path) -> dict[str, dict[str, str]]:
     """Every GT scan whose volume is in the pool: its split and collection, by scan stem."""
-    volumes = {p.name for p in POOL.iterdir()}
+    volumes = {p.name for p in pool.iterdir()}
     scans: dict[str, dict[str, str]] = {}
     for meta in METAS:
         for row in map(json.loads, meta.open(encoding="utf-8")):
@@ -120,13 +121,15 @@ def gt_scans() -> dict[str, dict[str, str]]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--pool", type=Path, default=POOL)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
-    truths = {p.stem: p for p in GT.glob("GT-RA_svea_hovratt_*/*/*/alto/*.xml")}
+    scans = gt_scans(args.pool)
+    truths = {p.stem: p for p in GT.glob("*/*/*/alto/*.xml") if p.stem in scans}
     line_rows, page_rows, source_rows = [], [], []
-    for stem, info in sorted(gt_scans().items()):
-        old_path = POOL / stem.split("_")[0] / f"{stem}.xml"
+    for stem, info in sorted(scans.items()):
+        old_path = args.pool / stem.split("_")[0] / f"{stem}.xml"
         if not old_path.exists():
             continue
         wrote = source(old_path)
