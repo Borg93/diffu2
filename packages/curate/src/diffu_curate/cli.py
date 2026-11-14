@@ -11,13 +11,16 @@ from rich.table import Table
 
 from diffu_curate.calibration import OLD_PIPELINE, calibrate, write_calibration
 from diffu_curate.page_features import write_pool_features
+from diffu_curate.pages import GROUND_TRUTH, pool_groups, truth_scans, write_pages
 from diffu_curate.sample import stage_sample, truth_volumes
 from diffu_curate.settings import CurateSettings, Pool
+from diffu_curate.table import held_values
 
 app = typer.Typer(rich_markup_mode="rich", no_args_is_help=True)
 console = Console()
 err_console = Console(stderr=True)
 
+GROUND_TRUTH_CHUNK = 100  # ground-truth scans a worker reads at a time
 PoolName = Annotated[str, typer.Option("--pool", help="the pool's name: svea, andraarkiv")]
 
 
@@ -38,6 +41,28 @@ def features(
     """Add every scan of a pool to the page table, with what its ALTO file alone says about its labels."""
     for done, total, rows in write_pool_features(_pool(CurateSettings(), pool), table, workers):
         console.print(f"{done} of {total} volumes, {rows} pages")
+    console.print(f"[green]done[/green]: {table}")
+
+
+@app.command()
+def pages(
+    pool: Annotated[str, typer.Option("--pool", help="a pool's name, or gt for the ground truth")],
+    table: Annotated[Path, typer.Option(help="the Lance table of single pages, appended to")],
+    workers: Annotated[int, typer.Option(help="processes reading label files")] = 8,
+) -> None:
+    """Add every single page of a pool, or of the ground truth, to the page table: where it is on its scan, cut by its
+    labelled lines, and what makes that cut doubtful."""
+    settings = CurateSettings()
+    if pool == GROUND_TRUTH:
+        if held_values(table, "pool", f"pool = '{GROUND_TRUTH}'"):
+            err_console.print(f"[bold red]error:[/bold red] {table} already holds the ground truth's pages")
+            raise typer.Exit(code=2)
+        scans = truth_scans(settings.ground_truth, settings.test_list)
+        groups = [scans[i : i + GROUND_TRUTH_CHUNK] for i in range(0, len(scans), GROUND_TRUTH_CHUNK)]
+    else:
+        groups = pool_groups(_pool(settings, pool), table)
+    for done, total, rows in write_pages(groups, table, workers):
+        console.print(f"{done} of {total} groups, {rows} pages")
     console.print(f"[green]done[/green]: {table}")
 
 

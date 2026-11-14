@@ -7,8 +7,8 @@ are named in `diffu_curate.settings` (`svea`, `andraarkiv`) and moved by `DIFFU_
 Every scan of a pool is a row of one Lance table that checks add their scores to. A check scores; it drops nothing. A
 training set is selected from the scores afterwards, so a threshold is set, and reset, without scoring again.
 
-    diffu-curate features --pool svea --table runs/htr/curate/pages.lance --workers 24
-    diffu-curate features --pool andraarkiv --table runs/htr/curate/pages.lance --workers 24
+    diffu-curate features --pool svea --table runs/htr/curate/scans.lance --workers 24
+    diffu-curate features --pool andraarkiv --table runs/htr/curate/scans.lance --workers 24
     diffu-curate calibration --pool andraarkiv --out runs/htr/curate/calibration_andraarkiv
     diffu-curate sample --pool svea --scans 34000 --out /mnt/scratch/gabriel/htr/svea_pilot
 
