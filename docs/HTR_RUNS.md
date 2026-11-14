@@ -288,6 +288,11 @@ of 51 characters, the model reads 1,300 of the rest of the page).
   `runs/htr/nemotron_more.sh`) trains its last checkpoint 2 more epochs at a peak of 2e-5 (fresh cosine, 3 % warmup),
   ~9.5 h, then reads the same 200 pages with the 10-token guard.
 - Not yet compared: MiniCPM-OCR's line reader on these pages (it reads lines, so it needs the page's lines found first).
+- `nemotron-parse-more` ended 14 Nov 18:16 (dev loss 1.167, never under the first run's 1.155) and read the 200 pages
+  with the guard at **6.73 %** (WER 18.8 %): better than the first run's 7.55 % in spite of its dev loss. Score test pages;
+  the dev loss misleads here.
+- The pools of old-labelled scans as a pretraining set, the control experiment (`runs/htr/svea_pilot.sh`) and everything
+  learnt about them: [CURATION.md](CURATION.md).
 
 ## Measured so far
 
