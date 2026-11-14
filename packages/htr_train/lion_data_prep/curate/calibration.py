@@ -2,7 +2,7 @@
 the old pipeline's (htrflow: YOLO regions and lines, TrOCR), so the old label and the transcribers' truth lie side by
 side. For each, the old lines are matched to the truth's by their boxes, and the old label's error is measured: per
 line its CER against the truth's line, per page the lines missed and the lines astray, the polygons' cover of each
-other, and the page's CER over its matched lines. Writes lines.parquet, pages.parquet and sources.tsv (every GT scan in
+other, and the page's CER over its matched lines. Writes lines.lance, pages.lance and sources.tsv (every GT scan in
 the pool with its label's source) to --out. --pool is the folder of the pool's volumes of ALTO files (the Svea pool
 by default).
 
@@ -16,8 +16,10 @@ import json
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+import lance
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 from PIL import Image, ImageDraw
 from pydantic import BaseModel, ConfigDict
 
@@ -159,9 +161,11 @@ def main() -> None:
             "old_on_true": inter / max(1, old_mask.sum()), "true_covered": inter / max(1, true_mask.sum()),
             "mask_iou": inter / max(1, np.logical_or(old_mask, true_mask).sum()),
         })  # fmt: skip
-    pd.DataFrame(line_rows).to_parquet(args.out / "lines.parquet")
     pages = pd.DataFrame(page_rows)
-    pages.to_parquet(args.out / "pages.parquet")
+    for name, frame in (("lines", pd.DataFrame(line_rows)), ("pages", pages)):
+        lance.write_dataset(
+            pa.Table.from_pandas(frame, preserve_index=False), str(args.out / f"{name}.lance"), mode="overwrite"
+        )
     sources = pd.DataFrame(source_rows)
     sources.to_csv(args.out / "sources.tsv", sep="\t", index=False)
     print(sources.groupby(["source", "split"]).size().to_string())

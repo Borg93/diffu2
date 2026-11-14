@@ -2,10 +2,12 @@
 page's size and confidence, how many regions, lines and characters it holds, how tall and how dense its lines are, how
 many lines hold far less or far more text than the page's lines usually do for their width, how much of the page its
 line polygons cover, and how repetitive its text is. --pool is the folder of the pool's volumes of ALTO files (the
-Svea pool by default; /mnt/work/haas/output/andraarkiv for the other archives). One parquet file a volume in --out (a volume already written is
-skipped, so a stopped run goes on where it was).
+Svea pool by default; /mnt/work/haas/output/andraarkiv for the other archives). Rows are appended to one Lance table (--out), each
+with its pool's name (--name); a volume the table already holds is skipped, so a stopped run goes on where it was, and
+the scores of later tests (page embeddings, Jev, backbone overlap) are added to the same table as columns.
 
-    uv run python packages/htr_train/lion_data_prep/curate/features.py --out runs/htr/curate/features --workers 24
+    uv run python packages/htr_train/lion_data_prep/curate/features.py --name svea --out runs/htr/curate/pages.lance --workers 24
+    uv run python packages/htr_train/lion_data_prep/curate/features.py --name andraarkiv --pool /mnt/work/haas/output/andraarkiv --out runs/htr/curate/pages.lance --workers 24
 """
 
 from __future__ import annotations
@@ -17,10 +19,12 @@ import zlib
 from multiprocessing import Pool
 from pathlib import Path
 
-import pandas as pd
+import lance
+import pyarrow as pa
 
 NS = {"a": "http://www.loc.gov/standards/alto/ns-v4#"}
 POOL = Path("/mnt/work/haas/deliveries_old/svea-all")
+VOLUMES_A_WRITE = 200  # volumes gathered before the table is appended to, so a stopped run loses at most these
 ODD_DENSITY = (0.5, 2.0)  # a line is odd when its characters per pixel are outside these multiples of its page's median
 
 
@@ -110,33 +114,75 @@ def page_row(path: Path) -> dict[str, object]:
     }
 
 
-def write_volume(job: tuple[Path, Path]) -> int:
-    volume, out = job
-    target = out / f"{volume.name}.parquet"
-    if target.exists():
-        return 0
-    rows = [page_row(path) for path in sorted(volume.glob("*.xml"))]
-    partial = target.with_suffix(".partial")
-    pd.DataFrame(rows).to_parquet(partial)
-    partial.rename(target)
-    return len(rows)
+SCHEMA = pa.schema(
+    [
+        pa.field("pool", pa.utf8(), nullable=False),
+        pa.field("volume", pa.utf8(), nullable=False),
+        pa.field("scan", pa.utf8(), nullable=False),
+        pa.field("source", pa.utf8()),
+        pa.field("error", pa.utf8()),
+        pa.field("width", pa.float32()),
+        pa.field("height", pa.float32()),
+        pa.field("page_confidence", pa.float32()),
+        pa.field("regions", pa.int32()),
+        pa.field("lines", pa.int32()),
+        pa.field("empty_lines", pa.int32()),
+        pa.field("chars", pa.int32()),
+        pa.field("words", pa.int32()),
+        pa.field("digit_share", pa.float32()),
+        pa.field("line_height_median", pa.float32()),
+        pa.field("line_height_spread", pa.float32()),
+        pa.field("line_width_median", pa.float32()),
+        pa.field("chars_per_100px_median", pa.float32()),
+        pa.field("odd_density_lines", pa.int32()),
+        pa.field("polygon_cover", pa.float32()),
+        pa.field("repeated_lines", pa.int32()),
+        pa.field("longest_word_run", pa.int32()),
+        pa.field("compression", pa.float32()),
+    ]
+)
+
+
+def volume_rows(volume: Path) -> list[dict[str, object]]:
+    return [page_row(path) for path in sorted(volume.glob("*.xml"))]
+
+
+def written_volumes(table: Path, pool: str) -> set[str]:
+    """The pool's volumes the table already holds."""
+    if not table.exists():
+        return set()
+    held = lance.dataset(str(table)).to_table(columns=["volume"], filter=f"pool = '{pool}'")
+    return set(held.column("volume").to_pylist())
+
+
+def append(table: Path, pool: str, rows: list[dict[str, object]]) -> None:
+    columns = {f.name: [pool if f.name == "pool" else row.get(f.name) for row in rows] for f in SCHEMA}
+    lance.write_dataset(pa.table(columns, schema=SCHEMA), str(table), mode="append" if table.exists() else "create")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--pool", type=Path, default=POOL)
-    parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--name", required=True, help="the pool's name in the table: svea, andraarkiv")
+    parser.add_argument("--out", type=Path, required=True, help="the Lance table")
     parser.add_argument("--workers", type=int, default=8)
     args = parser.parse_args()
-    args.out.mkdir(parents=True, exist_ok=True)
-    jobs = [(volume, args.out) for volume in sorted(args.pool.iterdir()) if volume.is_dir()]
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    held = written_volumes(args.out, args.name)
+    volumes = [v for v in sorted(args.pool.iterdir()) if v.is_dir() and v.name not in held]
+    pending: list[dict[str, object]] = []
     done = 0
     with Pool(args.workers) as pool:
-        for count, written in enumerate(pool.imap_unordered(write_volume, jobs), 1):
-            done += written
-            if count % 100 == 0:
-                print(f"{count} of {len(jobs)} volumes, {done} pages", flush=True)
-    print(f"done: {done} pages written this run", flush=True)
+        for count, rows in enumerate(pool.imap_unordered(volume_rows, volumes), 1):
+            pending += rows
+            if count % VOLUMES_A_WRITE == 0 or count == len(volumes):
+                append(args.out, args.name, pending)
+                done += len(pending)
+                pending = []
+                print(f"{count} of {len(volumes)} volumes, {done} pages", flush=True)
+    if args.out.exists():
+        lance.dataset(str(args.out)).optimize.compact_files()
+    print(f"done: {done} pages written this run ({len(held)} volumes were already in the table)", flush=True)
 
 
 if __name__ == "__main__":
