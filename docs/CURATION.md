@@ -100,6 +100,7 @@ scale (about 30 whole openings, strips on some one-side pages).
 | Text length against line width | flags 1 % of lines; 34 % of those badly wrong against 12 % | a weak, free feature |
 | DINOv3 ViT-L page embeddings (class token + mean patch token, page fitted to 448 px), 0.4 s a page on CPU | by one example: the 11 nearest to a typed SVAR card are all typed cards; the nearest to an "EMPTY PAGES" sheet are that, "BLANK PAGES / BLANKA SIDOR", "SLUT / END" and "BÖRJAN / BEGIN" sheets; identical "END" sheets pair at cosine 1.000. In 30 k-means clusters of 3,007 pages: one is the ruled registers with no labelled line (156 pages, 99 % Svea), one the folded letter covers with a small address, six are 90-100 % no-line pages | dropping what is not handwriting by example, near-duplicates, and naming the kinds of page for balancing |
 | A 0.19 M-parameter CNN on a 256 x 256 greyscale page thumbnail saying which way up the writing is, trained on 12,400 of our pages turned on purpose (square input, so the page's shape gives nothing away) | 99.94 % on 1,600 held-out pages; reads the writing, not the scan: the sideways ledger of `A0068129_00755` 270 degrees at 0.97 with its left page upright at 1.00, the same with clamps and edges cropped away, and 211 of 240 on text-only crops. On 20,000 pool pages: 34 turned at confidence >= 0.9 (0.17 %; of 24 looked at, about 20 truly turned, 2 typed pages wrongly called upside down), 5.7 % under 0.9 (looked at: pages with little writing, covers, folded letters with mixed directions). 7 ms a page | an `orientation` column and its confidence; low confidence marks sparse or mixed pages |
+| A 0.21 M-parameter CNN on a 384 x 256 greyscale thumbnail of a scan saying, a column, where the gutter is; trained on 13,000 openings with both pages labelled (the cut between their text blocks, from `pages.lance`) and 6,000 single sheets | 99.3 % of 1,032 held-out openings found, 3.8 % false alarms on single sheets, 90 % within 2 % of the width of its label; of 16 disagreements looked at, the network is on the fold in about 12 and the label (the middle of the gap between text blocks) is off, so its true accuracy is nearer 97 %. Several "false alarms" are a strip of the facing page it rightly finds. On the flagged rows (3,000 scans each, 16 looked at each): `alone` a gutter in 92 %, on the fold in about 14 of 16, and the line-based cut off by more than 2 % of the width in 83 % of them (median 5.9 %); `spread` a gutter in 94 % (85 % sure), on the fold in 15 of 16; nearly square whole scans 67 %, right in about 13 of 16 (2 pairs of loose sheets missed); tall single sheets 2.6 %. 14 ms a scan on CPU, thumbnails at 260 scans a second: every scan of both pools in about 3.5 hours on CPU | the cut for the 870,000 doubtful pages, and to recover the ~310,000 pages of the "spread" scans |
 | Lance for every table | the page table's ids join to the GT sets' | adopted; version tags to set up |
 | A 10-token no-repeat guard when Nemotron reads | 13.6 % to 7.55 % on the 200 test pages | every Nemotron read |
 | Training Nemotron longer on the GT (4 epochs) | 7.55 % to 6.73 %, though its dev loss was worse (1.167 against 1.155) | dev loss is a poor guide here; score test pages |
@@ -123,9 +124,7 @@ scale (about 30 whole openings, strips on some one-side pages).
   our best reader and keep the old labels as a second opinion (CER-HV's method, arXiv 2601.16713).
 - **The writing layer on ledgers and faint ink:** patchy, because it learnt from prose pages. Train it on ledger pages
   too, or a line finder fine-tuned on GT outlines (SAM 3: needs checkpoint access).
-- **A cheap gutter finder:** a 0.2 M-parameter CNN on a thumbnail, trained on openings with both pages labelled (free
-  labels from `pages.lance`); thumbnails load at 260 scans a second. After 4 of 8 passes: 87 % of cuts within 2 % of
-  the scan's width, 99 % of openings found, 4.5 % false alarms on single sheets. Running.
+- **The gutter network into the package:** a `gutter` step writing the image's gutter and its score for every scan, the page rows re-cut from it, then the GT and the 200 test pages re-cut and the readers re-scored once. Loose sheets lying side by side are its weak case.
 - **Orientation at scale:** run the small network over every page (thumbnails load at 260 scans a second); typed pages fool it, so apply it after the non-handwriting pages are set aside. PaddleOCR's classifier not compared: ours is at 99.9 % in-domain.
 - **Page embeddings at scale:** 0.4 s a page on CPU is 25 CPU-days for 5.4 million pages, so a GPU pass, or a smaller DINOv3. Then the non-handwriting kinds named from a handful of examples each, and the duplicates.
 - Not run: DINOv3's text queries (typed cards against handwriting), Upsample Anything, Embedding Atlas (the viewer's
@@ -142,6 +141,7 @@ scale (about 30 whole openings, strips on some one-side pages).
 3. **The pipeline as code:** drop non-handwriting and turned pages, score, calibrate, deduplicate and balance, tagged
    training tables, a viewer.
 
-Prototypes not yet in the package live in the session's scratch folder (`two_backbones.py`, `gutter.py`,
+The two small networks' weights are in `runs/htr/curate/models/` (`small_gutter.pt`, `orientation.pt`). Prototypes not yet
+in the package are kept in `runs/htr/curate/prototypes/` (`two_backbones.py`, `gutter.py`,
 `small_gutter.py`, `orientation.py`, `page_embed.py`, `debias.py`, `anyup_test.py`, `insid3_test.py`): each moves into `diffu_curate`
 when it has earned its place.
