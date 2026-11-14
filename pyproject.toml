@@ -18,6 +18,7 @@ diffu-flux3 = { workspace = true }
 diffu-runner = { workspace = true }
 diffu-studio = { workspace = true }
 diffu-htr-train = { workspace = true }
+diffu-curate = { workspace = true }
 torch = { index = "pytorch-cu130" }
 torchvision = { index = "pytorch-cu130" }
 # FLUX.3 (Flux3Transformer2DModel, its Modular Diffusers blocks and LoRA loader) is on diffusers main only. This is
@@ -52,7 +53,7 @@ ignore = ["E501"]
 "dataclasses.dataclass".msg = "Structured values are pydantic BaseModel (NeMo dataloader configs are the exception)."
 
 [tool.ruff.lint.isort]
-known-first-party = ["diffu_core", "diffu_moss", "diffu_page", "diffu_flux3", "diffu_runner", "diffu_studio", "diffu_sglang_moss", "diffu_htr_train"]
+known-first-party = ["diffu_core", "diffu_moss", "diffu_page", "diffu_flux3", "diffu_runner", "diffu_studio", "diffu_sglang_moss", "diffu_htr_train", "diffu_curate"]
 
 [tool.pytest.ini_options]
 testpaths = ["packages"]
@@ -65,7 +66,7 @@ strict = true
 timeout = 3600  # pytest-timeout: a hung test fails; the slowest (the studio's draw test) takes about a minute on CPU
 
 [tool.coverage.run]  # per-test coverage when pruning: production lines only, never the tests'
-source = ["packages/core/src", "packages/moss/src", "packages/page/src", "packages/runner/src", "packages/studio/src", "packages/flux3/src", "packages/htr_train/src"]
+source = ["packages/core/src", "packages/moss/src", "packages/page/src", "packages/runner/src", "packages/studio/src", "packages/flux3/src", "packages/htr_train/src", "packages/curate/src"]
 omit = ["packages/*/tests/*", "conftest.py"]
 
 # ty, as pyrefly.toml: diffusers, transformers and safetensors are typed as Any (diffusers exports a torch-less dummy
