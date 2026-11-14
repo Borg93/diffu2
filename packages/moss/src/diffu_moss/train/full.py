@@ -42,6 +42,7 @@ from typing import Any, Self
 import torch
 from diffusers.utils import SAFETENSORS_WEIGHTS_NAME
 from pydantic import BaseModel, ConfigDict, Field
+from safetensors.torch import load as load_bytes
 from safetensors.torch import load_file, save_file
 from torch import Tensor, nn
 from torch.distributed.tensor import DTensor
@@ -102,11 +103,12 @@ class FullSettings(BaseModel):
 
 
 def full_transformer(
-    folder: Path, *, device: str, checkpointing: bool = True, uncheckpointed_blocks: int = 0
+    folder: Path, *, device: str, checkpointing: bool = True, uncheckpointed_blocks: int = 0, mapped: bool = True
 ) -> MossTransformer:
     """The DiT at ``folder`` (a diffusers-format folder) in float32 on ``device``, every weight trained, its joint
-    blocks checkpointed unless ``checkpointing`` is off, all but the last ``uncheckpointed_blocks``."""
-    transformer = MossTransformer.from_pretrained(str(folder), torch_dtype=torch.float32)
+    blocks checkpointed unless ``checkpointing`` is off, all but the last ``uncheckpointed_blocks``; its file read
+    whole rather than mapped unless ``mapped``."""
+    transformer = MossTransformer.from_pretrained(str(folder), torch_dtype=torch.float32, disable_mmap=not mapped)
     transformer.requires_grad_(True)
     if checkpointing:
         transformer.enable_gradient_checkpointing()
@@ -254,6 +256,9 @@ class FullTraining:
     Over several ranks (``ranks.mesh``) the DiT is loaded on the CPU on each, then sharded onto the mesh's device
     (:func:`diffu_moss.train.distributed.shard`); the optimizer's and the average's state are sharded as the weights
     are, and a checkpoint is gathered whole and written by the main rank alone, the same files as one process writes.
+    There each rank reads its files whole instead of mapping them: a file mapped from a cluster's shared filesystem
+    came in a page a fault, ~100 MB/s on Leonardo's ``$WORK``, and a resume from a state took 10 of a start's 11
+    minutes (2.5 read whole); at the most a rank then holds the average's file and its tensors, ~40 GB.
 
     Attributes:
         transformer: The DiT, every weight trained in float32.
@@ -286,6 +291,7 @@ class FullTraining:
             device="cpu" if mesh else device,
             checkpointing=settings.gradient_checkpointing,
             uncheckpointed_blocks=settings.uncheckpointed_blocks,
+            mapped=mesh is None,
         )
         if mesh is not None:
             shard(self.transformer, mesh, reshard_after_forward=settings.reshard_after_forward)
@@ -294,14 +300,15 @@ class FullTraining:
         self.average: WeightAverage | None = None
         held = "cpu" if mesh else device  # sharded, each rank keeps its own rows of what it reads whole
         if state is not None:
-            saved = torch.load(state / OPTIMIZER_STATE, map_location=held, weights_only=True, mmap=mesh is not None)
+            saved = torch.load(state / OPTIMIZER_STATE, map_location=held, weights_only=True)
             self.optimizer.load_state_dict(saved)
         if settings.ema is None:
             return
         if state is None:
             self.average = WeightAverage.of(self.transformer, settings.ema)
         else:
-            averaged = load_file(str(state / AVERAGE_WEIGHTS), device=held)
+            file = state / AVERAGE_WEIGHTS
+            averaged = load_file(str(file), device=held) if mesh is None else load_bytes(file.read_bytes())
             weights = {
                 name: sharded_like(averaged[name], weight) for name, weight in self.transformer.named_parameters()
             }

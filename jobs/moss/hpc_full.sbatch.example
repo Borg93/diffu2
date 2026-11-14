@@ -15,7 +15,8 @@
 #   8 GPUs (two nodes): ~22 GB, ~39 GB with --encode-text, ~42 GB with both
 # A checkpoint is gathered whole to the main rank's host memory one file at a time, each held only while it is written
 # (10 GB for the bfloat16 DiT; with --save-state at most ~22 GB, the optimizer state, then 20 GB of float32 weights), and
-# each rank loads the DiT whole on the CPU before it is sharded (~20 GB of host memory a rank).
+# each rank loads the DiT whole on the CPU before it is sharded (~20 GB of host memory a rank; resumed, it reads the
+# state's files whole one after the other, ~40 GB a rank at the most: mapped from $WORK they came at ~100 MB/s).
 #
 # Each step's --samples-per-step samples are shared out evenly among the GPUs (a multiple of their number): one
 # micro-batch each per round. The data must sit on a filesystem every node reads (the cache, the DiT, the run dir).
