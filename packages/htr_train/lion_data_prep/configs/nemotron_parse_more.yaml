@@ -1,0 +1,40 @@
+# Nemotron 3.5 Parse trained on (14 Nov, the user's yes): nemotron-parse-all ended (2 epochs, cosine to 0) with its dev
+# loss still falling (1.24 at step 2,000, 1.155 at 3,094), so its last checkpoint is trained 2 more epochs on the same
+# pages with the same recipe but a fresh cosine schedule from a lower peak (2e-5, 3 % warmup). A new run, not a resume:
+# the old one finished its schedule.
+name: nemotron-parse-more
+description: "nemotron-parse-all's last checkpoint trained 2 more epochs on the same pages at a lower peak lr, 2 GPUs"
+job:
+  kind: nemotron-parse
+  model: {repo: /home/gabriel/Desktop/diffu2/runs/htr/nemotron-parse-all/output/checkpoint-3094}
+  freeze_vision_encoder: false
+  freeze_adapter: false
+  coordinate_weight: 10.0
+  activation_checkpointing: true
+  bf16: true
+  learning_rate: 2.0e-5
+  epochs: 2
+  global_batch: 32
+  per_device_batch: 4
+  lr_scheduler: cosine
+  warmup_ratio: 0.03
+  weight_decay: 0.01
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  max_grad_norm: 1.0
+  seed: 42
+  data_seed: 42
+  dataloader_num_workers: 8
+  eval_strategy: steps
+  eval_steps: 250
+  save_strategy: steps
+  save_steps: 250
+  save_total_limit: 3
+  best_by_eval_loss: true
+  per_device_eval_batch_size: 4
+  logging_steps: 10
+  ddp_find_unused_parameters: false
+data:
+  train: [{path: data/htr/nemotron_parse_pages.train.jsonl}]
+  dev: data/htr/nemotron_parse_pages.dev.jsonl
+resources: {gpus_per_node: 2, need_gb: 60, hours: 48}

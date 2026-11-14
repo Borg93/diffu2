@@ -262,6 +262,33 @@ about 20 h; eval and save every 200 steps (50 GB a checkpoint, 3 kept).
 - Zero-shot it cannot read this hand: a list of goods, "Affradz Smör 5 t:na 7 lb 8 mrc", came out "Miyas Onno 5. 4.
   5. 6. 7. ..." to 99.
 
+## Whole-page readers on 200 test pages (13-14 Nov)
+
+The same 200 seeded `test_0050` pages for each, by id (`runs/htr/verify/*_test_read.py`, scored by `htr-eval cer`,
+labels, boxes, classes and table markup left out). The CER over all characters counts as errors the text a model reads
+where the ground truth transcribed only part of a page (the worst pages of every model: one page's truth is one line
+of 51 characters, the model reads 1,300 of the rest of the page).
+
+| | dev loss | CER, all characters | median page | pages < 5 % | s / page |
+|---|---|---|---|---|---|
+| Unlimited-OCR 2 (`uocr2-pages`, ckpt 3000) | 0.78 | 63.7 % (27.9 % with 16 loops cut) | | | ~20 |
+| LightOnOCR-3-4B (`lightonocr3-all`, ckpt 3094, greedy, 3,000 tokens) | 0.243 | 8.32 % (WER 23.4 %) | 2.7 % | 153 | ~11 |
+| Nemotron 3.5 Parse (`nemotron-parse-all`, ckpt 3094, its generation config, 4,000 tokens) | 1.155 * | 13.64 % (WER 39.3 %) | 3.3 % | 131 | 1.7 |
+| the same, `no_repeat_ngram_size` 10 | | **7.55 %** (WER 20.5 %) | | | |
+| the same, `no_repeat_ngram_size` 20 | | 7.88 % (WER 20.9 %) | | | |
+
+\* its loss weighs layout tokens ten times: not comparable with the others'.
+
+- LightOnOCR-3 never looped; Nemotron looped on near-empty pages (empty tables to the token limit) and on dot leaders.
+  Its 13.6 % came mostly from two pages that hit the limit; a 10-token no-repeat guard brings it to 7.55 %, under
+  LightOnOCR-3's 8.3 % at a sixth of the time a page. Unguarded, LightOnOCR-3 was the better reading on 132 pages,
+  Nemotron on 57.
+- Nemotron's dev loss was still falling at the end of its cosine schedule (1.24 at step 2,000, 1.155 at 3,094), so
+  `nemotron-parse-more` (`lion_data_prep/configs/nemotron_parse_more.yaml`, 14 Nov 08:22, tmux `htr:nemomore`,
+  `runs/htr/nemotron_more.sh`) trains its last checkpoint 2 more epochs at a peak of 2e-5 (fresh cosine, 3 % warmup),
+  ~9.5 h, then reads the same 200 pages with the 10-token guard.
+- Not yet compared: MiniCPM-OCR's line reader on these pages (it reads lines, so it needs the page's lines found first).
+
 ## Measured so far
 
 ### Final score: checkpoint-28000 against TrOCR (the queue, 8 Nov 22:03)
