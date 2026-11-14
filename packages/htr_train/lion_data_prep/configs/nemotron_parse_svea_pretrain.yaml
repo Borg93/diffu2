@@ -1,0 +1,41 @@
+# The control experiment of the Svea pretraining pool (14 Nov), step 1: Nemotron 3.5 Parse pretrained on ~50,000 random
+# pool pages with the old pipeline's labels as they are (lion_data_prep/curate/pilot_sample.py: 34,000 scans, GT volumes
+# left out; median page CER of such labels 5.1 % on the 256 calibration pages). nemotron_parse_all.yaml's recipe, one
+# epoch; the dev set is the GT's, so the eval loss says how the old labels carry over, and the best checkpoint by it is
+# what nemotron_parse_svea_finetune.yaml starts from.
+name: nemotron-parse-svea-pretrain
+description: "~50,000 random Svea pool pages, old htrflow labels unfiltered, 1 epoch, 2 GPUs"
+job:
+  kind: nemotron-parse
+  model: {repo: nvidia/Nemotron-3.5-Parse, revision: 72ad4d71dd827135ee581502363e14748008900a}
+  freeze_vision_encoder: false
+  freeze_adapter: false
+  coordinate_weight: 10.0
+  activation_checkpointing: true
+  bf16: true
+  learning_rate: 5.0e-5
+  epochs: 1
+  global_batch: 32
+  per_device_batch: 4
+  lr_scheduler: cosine
+  warmup_ratio: 0.05
+  weight_decay: 0.01
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  max_grad_norm: 1.0
+  seed: 42
+  data_seed: 42
+  dataloader_num_workers: 8
+  eval_strategy: steps
+  eval_steps: 250
+  save_strategy: steps
+  save_steps: 250
+  save_total_limit: 3
+  best_by_eval_loss: true
+  per_device_eval_batch_size: 4
+  logging_steps: 10
+  ddp_find_unused_parameters: false
+data:
+  train: [{path: /mnt/scratch/gabriel/htr/svea_pilot_nemotron/pages.jsonl}]
+  dev: data/htr/nemotron_parse_pages.dev.jsonl
+resources: {gpus_per_node: 2, need_gb: 60, hours: 48}
