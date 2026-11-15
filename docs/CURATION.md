@@ -394,6 +394,20 @@ fold, writing at the fold, turned writing, where the fold is (`runs/htr/curate/p
   answers here. `Toponymy.fit(texts, vectors, map)` wants a text for each scan (the model's captions), the scans'
   embedding vectors, a low-dimensional map of them to cluster on (`ToponymyClusterer`, or our EVoC layers), and a
   sentence-embedding model to pick each cluster's most telling captions.
+- **First 5,010 of the 45,000 described scans, with their embeddings** (`prototypes/scan_clusters.py`; scans whole at
+  448 px, EVoC with its defaults, a linear head held out by volume, 5 folds):
+  - What the model says the scans are: handwriting 81 %, table or ledger 17 %, sign or card 1.1 %, printed, cover and
+    blank 0.2 % each; opening with both pages written 78 %, one page empty 18 %, single page 3.4 %, not a page 0.4 %.
+    So four scans in five are openings with writing on both pages, and a single page is rare.
+  - A head on the embeddings gives the model's answer for a scan of an unseen volume: kind 0.916 (always saying the
+    commonest: 0.811), layout 0.940 (0.781), written side 0.941 (0.780), with TIPSv2 and DINOv3 together; either
+    alone within 0.03. **Writing at the fold: 0.760 against 0.742, nothing**: a 448-px view of the whole scan does not
+    hold it, or the model's answer is noise; to settle on scans where the labels' boxes reach the fold.
+  - EVoC's own clusters carry less than the head: TIPSv2 32 clusters with 37 % of scans left as noise, a scan's
+    cluster's commonest kind its own for 0.92; DINOv3 3 clusters at the chosen layer, no better than chance. The
+    finer layers (1,100, 200, 75) not yet scored; the settings not yet tuned.
+  - Not yet known: the recall of the rare kinds (signs, covers, blanks, single pages), which is what the filter needs;
+    with 55, 8, 7 and 171 examples it waits for all 45,000.
 - Table across the fold: 1 % and turned writing: 0 % in the pilot: too few to judge those two answers; to check on
   scans known to be such (ledgers over both pages; the orientation network's turned pages).
 
