@@ -4,7 +4,7 @@ The ledger of the curation work: what was measured, what was seen, what works, w
 it the day a thing is learnt. The code is `packages/curate` (`diffu-curate`); the reader runs are in
 [HTR_RUNS.md](HTR_RUNS.md).
 
-## Start here: state and task list (updated 15 Nov 19:00)
+## Start here: state and task list (updated 15 Nov 23:30)
 
 Read this section, then "Rules". Update it whenever a job starts or ends or a task changes state, and give every
 experiment a row in the "Experiment register" below the day it starts.
@@ -15,7 +15,7 @@ experiment a row in the "Experiment register" below the day it starts.
 |---|---|---|---|---|
 | CPU | `gutters` | `diffu-curate gutters`: the gutter network over every scan (1,700,000 of 3,184,889 at 19:00, ~57 scans/s, done about 02:00 on 16 Nov); then `pages --gutters` writes `pages_cut.lance`, **not to be used as it is** (task 1) | `runs/htr/curate/gutters.lance`, `gutters.log` | a table only; nothing reads it |
 | GPU 1 | `vlserve5` | Nemotron 3.5 Super VL served in Docker (`runs/htr/curate/serve_vl.sh 1 8011`; 96 GB of the GPU; stop with `docker stop nemotron-vl`) | `runs/htr/curate/vl/serve.log` | stays up while task 9 runs |
-| GPU 1 | `vldescribe` | the model describing 45,000 scans (20,000 Svea, 20,000 andra arkiv, 5,000 GT; `prototypes/vl_describe.py`, 2.7 scans/s, ~4.7 h from 18:50) | `runs/htr/curate/vl/sample.jsonl`, `sample.log` | resumable: rerun the same command |
+| GPU 1 | `vlpass2` | the model's second pass over the 45,000 scans: table or running text, turned writing, each option defined (`prototypes/vl_ask2.py`, 3.5 scans/s, ends about 02:40 on 16 Nov) | `runs/htr/curate/vl/sample_pass2.jsonl`, `sample_pass2.log` | resumable: rerun the same command |
 | GPU 2 | `embedqwen` | Qwen3-VL-Embedding 2B, then 8B, on the embedder comparison's 49,998 pages, image alone and image with label text (`prototypes/embed_qwen.py`, started 15 Nov 21:00, beside the readers; it runs from a scratch environment of this session, `venv_egemma`, which must not be deleted before it ends) | `runs/htr/curate/embed/qwen2b_*.npy`, `qwen8b_*.npy`, `qwen2B.log` | then scored like the others (`compare_embedders.py`) into the embedder table |
 | GPU 2 | `poolread`, `poolread2` | Nemotron Parse reading 53,490 Svea pool pages, one from the start, one from the end (`runs/htr/verify/pool_read.py`) | `pool_read/svea_pilot.jsonl`, `svea_pilot_rev.jsonl` | resumable |
 | (stopped) | | the andra arkiv pool read, stopped 15 Nov 18:40 at 14,400 of 56,130 pages for the VL model's GPU; `runs/htr/curate/gpu1_queue.sh` resumes it (a second reader: the `poolread3` command with REVERSE) | `pool_read/andra_pilot.jsonl`, `andra_pilot_rev.jsonl` | restart when GPU 1 is free |
@@ -70,12 +70,12 @@ is in the section named; scripts are under `runs/htr/curate/prototypes/` unless 
 | E12 | Our reader against the old labels on pool pages | **running** (Svea, GPU 2); andra arkiv stopped at 14,400 | median disagreement 12 % and 11 %; the pages are cut the old way, so part of it is the cut | `runs/htr/verify/pool_read.py`; "Pages where our reader and the old label disagree" |
 | E13 | The image cut looked at by group, at thumbnail and full size | done 15 Nov | one bug fixed (unsure scans kept whole); the cut clips writing | scratch scripts; "The image cut looked at before the re-cut" |
 | E14 | Vision-language model describing scans: pilot, 268 scans | done 15 Nov | kind and layout follow the groups, 11 of 12 looked at right; fold position a guess | `vl_describe.py`; "The vision-language model describing scans" |
-| E15 | The same on 45,000 scans | **running** (GPU 1, ends ~23:00 15 Nov) | first 5,010: 78 % openings written on both pages | `vl_describe.py`; same section |
-| E16 | A head on the embeddings giving the model's answers; EVoC on whole scans | first pass 15 Nov on 5,010 scans, **to redo on 45,000** | kind 0.92, layout 0.94, written side 0.94; writing at the fold not carried | `scan_clusters.py`; same section |
+| E15 | The same on 45,000 scans | done 15 Nov 23:05 | 44,932 answered; not a page 0.4 %, single page 3.5 %, opening with a page or both empty 18 %, both written 78 %; non-handwriting 1.7 % | `vl_describe.py`; "The vision-language model describing scans" |
+| E16 | A head on the embeddings giving the model's answers, class by class | done 15 Nov on 44,932 scans | handwriting against everything else: finds 98.8 % of the other scans, 74 % of what it flags is other; single page: recall 0.91, precision 0.81; both pages written: precision 0.993, recall 0.93 | `scan_head.py`; "A head on the embeddings, class by class" |
 | E17 | AnyUp, INSID3 segment-by-example, ink mask, NeMo Curator | done, **do not work** | 0.803 against 0.855 bilinear; 0.72 against 0.85 | "What does not work" |
 | E18 | Placing the cut at full resolution near the gutter network's answer, from the image alone | done 15 Nov (prototype) | the column dark down its whole height (the fold) beats the network's place in 14 of 40 scans judged blind, loses in 2, ties in 24; a fold is found in 68 % of scans; "the column with the least writing" is worse than the network | `cut_place.py`; "Placing the cut on the fold" |
 | E19 | Does a sharper question make the VL model tell tables from running text | done 15 Nov | yes: with each option defined, 33-35 of 35 scans judged by eye (alone, with thinking, or in a two-question form), against about half with the first form's bare option names; thinking adds nothing | `vl_table_ask.py`; "What the model's answers are worth, kind by kind" |
-| E20 | A second pass over the 45,000 scans asking table or running text, and turned writing, with definitions | **queued 15 Nov 22:15**, starts by itself when E15 ends (GPU 1, tmux `vlpass2`) | | `vl_ask2.py` -> `runs/htr/curate/vl/sample_pass2.jsonl` |
+| E20 | A second pass over the 45,000 scans asking table or running text, and turned writing, with definitions | **running** since 15 Nov 23:05 (GPU 1, tmux `vlpass2`, 3.5 scans/s, ends about 02:40) | | `vl_ask2.py` -> `runs/htr/curate/vl/sample_pass2.jsonl` |
 
 Queued, not started: Toponymy names for the clusters (needs E15); the rare kinds' recall (needs E15); a step placing
 the cut at full resolution, scored against folds marked by hand; Jev's page score on the calibration scans; the
@@ -498,6 +498,31 @@ to either side of the network's answer, read at 2,400 px of scan width.
 - What the first 32,864 scans are, by the answers that stand: not a page 0.4 %, single page 3.4 %, opening with one
   page empty 17.5 %, opening with both written 78 %; signs and cards 1.0 %, printed or typed 0.3 %, blank 0.2 %,
   cover or spine 0.2 %.
+
+## A head on the embeddings, class by class (15 Nov 23:30, E16 on all 44,932 described scans)
+
+TIPSv2 and DINOv3 embeddings of the whole scan (448 px), joined and reduced to 256 dimensions; a logistic head with
+balanced classes, fitted on four fifths of the volumes and scored on the fifth, five times (`prototypes/scan_head.py`).
+The truth here is the model's answer, which the eye found right for these answers in 14-18 of 18.
+
+| Answer | Class | Scans | Recall | Precision |
+|---|---|---|---|---|
+| handwriting or not | not handwriting (sign, cover, blank, printed, not a page) | 770 | 0.988 | 0.739 |
+| | handwriting | 44,162 | 0.994 | 1.000 |
+| pages | opening, both pages written | 35,100 | 0.931 | 0.993 |
+| | opening, one page or both empty | 8,073 | 0.947 | 0.770 |
+| | single page (and loose sheets) | 1,571 | 0.905 | 0.808 |
+| | not a page | 188 | 0.878 | 0.527 |
+| written side | both / right / left | 35,106 / 6,958 / 2,052 | 0.92 / 0.91 / 0.94 | 0.99 / 0.77 / 0.64 |
+
+- So the embeddings can carry the coarse description to every scan: what is not handwriting is found almost whole
+  (a quarter of what is flagged is handwriting after all, 0.4 % of the handwriting scans), and "both pages written"
+  can be trusted when the head says it.
+- The kinds of non-handwriting are not told apart by the head (sign against cover against not a page: precision
+  0.3-0.7); as one class they are.
+- Where the head is unsure (a single page against an opening with an empty side), the scan can go to the model
+  itself: the unsure share decides how many scans that is. Not yet measured: the head's probabilities and how many
+  scans fall under a threshold.
 
 ## Experiments queued (asked for)
 
