@@ -190,6 +190,33 @@ So without labels, the non-handwriting kinds (clusters 0, 4, 12, 16: about 230 p
 and a single series' hand each come out as their own cluster. fast_hdbscan on a 2-D UMAP of the same embeddings: 36
 clusters, 12 % noise.
 
+## Which embedder (15 Nov): TIPSv2, then DINOv3; EmbeddingGemma 2 well behind
+
+The same 49,998 pages (20,000 Svea, 20,000 andra arkiv, 10,000 GT) embedded by each model on GPU 1
+(`runs/htr/curate/prototypes/embed_pages.py`, `embed_gemma.py`; `runs/htr/curate/embed/`). Scored on the 10,000 GT
+pages, whose volume (219) and collection (57) we know: of each page's 10 nearest pages, how many share its volume or
+collection (independent of any clustering), and how well EVoC's clusters match the collections (adjusted mutual
+information).
+
+| Embedding (class token + mean patch token; EmbeddingGemma 2 its own 768-d) | Same volume | Same collection | EVoC vs collection (AMI) |
+|---|---|---|---|
+| chance | 0.029 | 0.069 | |
+| **TIPSv2-L** | **0.726** | **0.863** | 0.520 |
+| DINOv3 ViT-L | 0.653 | 0.799 | 0.520 |
+| EmbeddingGemma 2, image + label text | 0.434 | 0.648 | 0.329 |
+| EmbeddingGemma 2, image | 0.424 | 0.570 | 0.216 |
+
+- TIPSv2 places a page among its own volume's pages more often than DINOv3 (0.726 against 0.653); their EVoC clusters
+  match the collections equally. EmbeddingGemma 2 is far behind on page images, and adding the label's text helps it
+  only a little.
+- A volume is a scribe's or a few scribes' series and also one scanning session, so "same volume" mixes hand with
+  camera, paper and lighting. It measures how well a model groups pages that belong together, not hands alone.
+- The first run of the DINOv3/TIPSv2 job wrote nothing: an edit deleted a constant and a blanket `except` turned the
+  error into "skip this page" for all 50,000 while it printed 70 pages a second. Rerun with only image errors caught,
+  after a 20-page check of the output.
+- The page table's `collection` for GT pages and the calibration's were the GT root folder's name (it starts with GT-
+  as the collections do); fixed (3417d95) and the GT rows and both calibrations rebuilt.
+
 ## Experiments queued (asked for)
 
 1. **Map the pools with image embeddings and EVoC** (asked for 15 Nov). Embed single pages with DINOv3 (the page
