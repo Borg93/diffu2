@@ -4,6 +4,39 @@ The ledger of the curation work: what was measured, what was seen, what works, w
 it the day a thing is learnt. The code is `packages/curate` (`diffu-curate`); the reader runs are in
 [HTR_RUNS.md](HTR_RUNS.md).
 
+## Start here: state and task list (updated 15 Nov 13:30)
+
+Read this section, then "Rules". Update it whenever a job starts or ends or a task changes state.
+
+**Running** (all in tmux session `htr`; machine dmlpai01, GPUs 1 and 2 only, GPU 0 is another user's):
+
+| Where | Window | What | Writes | When it ends |
+|---|---|---|---|---|
+| CPU | `gutters` | `diffu-curate gutters`: the gutter network over every scan (520,000 of 3,184,889 at 13:00, ~33 scans/s, about a day left) | `runs/htr/curate/gutters.lance`, `gutters.log` | then `diffu-curate pages --gutters` into `pages_cut.lance` (task 1) |
+| GPU 1 | `gpu1queue` | Nemotron (`nemotron-parse-more/output/checkpoint-3094`, guard 10) reading 56,130 andra arkiv pool pages (`runs/htr/curate/gpu1_queue.sh`) | `runs/htr/curate/pool_read/andra_pilot.jsonl` | resumable: rerun the script |
+| GPU 1 | `weval` | the writing layer's check (`prototypes/writing_eval.py`) | `runs/htr/curate/writing_tune/eval.log`, `eval.json`, `heads.pt` | ~30 min; then task 4 |
+| GPU 2 | `poolread`, `poolread2` | the same reader on 53,490 Svea pool pages, one from the start, one from the end (`runs/htr/verify/pool_read.py`) | `pool_read/svea_pilot.jsonl`, `svea_pilot_rev.jsonl` | resumable |
+
+**Tasks, in order.** 1-3 are the agreed backlog (below); 4-8 are experiments asked for. A GPU that falls idle takes the
+next GPU task at once.
+
+| # | Task | State | Next step |
+|---|---|---|---|
+| 1 | Single pages: every scan cut at its gutter from the image | gutter pass running | when `gutters.log` says done: `pages --gutters`, sample 20 cut pages per flag, re-cut the GT and the 200 test pages, re-score the readers once |
+| 2 | Calibration per single page: one estimate of a page's label error from all scores | not started | needs 1; inputs: page confidence, the writing layer's coverage (4), reader disagreement (5) |
+| 3 | The pipeline as code: drop, score, calibrate, deduplicate, balance, tagged training tables, a viewer | not started | needs 2 |
+| 4 | Writing layer (flags writing without a label) | tuned: DINOv3, TIPSv2 and both within 0.01 IoU on test (0.723, 0.713, 0.729), so DINOv3 alone with a linear head; check running of what it is for (does its coverage score fall when lines are removed, by kind of page) | read `eval.log`; write the result here; if it separates, move it into `diffu_curate` as a score column |
+| 5 | Reader disagreement with the old label, per page and per cluster | reads running; so far the median disagreement is 12 % of characters on Svea (5,987 pages) and 11 % on andra arkiv (2,502); 7-11 % of pages disagree by more than half | sample and look at the pages above 50 % and below 5 %; then score clusters (MinerU2.5-Pro's method, below) |
+| 6 | Map the pools: embeddings and EVoC | embedders compared (TIPSv2 best for page similarity); EVoC run on 3,007 pages | tune PCA/UMAP/EVoC settings; name clusters with Toponymy and a local model; balance by cluster size^0.2 |
+| 7 | Curated pretraining: ~100,000 filtered, image-cut pages of both pools, then a 4-epoch GT fine-tune, against 6.73 % | not started | needs 1 and a filter from 4 and 5; the unfiltered control gave 7.18 % against 7.55 % |
+| 8 | Line finder test: PaddleOCR's text detector against RF-DETR-Seg and the old YOLO, on GT PAGE polygons | proposed, **not approved** | ask before starting |
+
+**Questions waiting on Gabriel:** is the goal a better score on the mixed 200 test pages, or a better reader for these
+archives (the pools are mostly microfilm of a few series)? Start task 8? SAM 3 needs checkpoint access on Hugging Face.
+
+**Not yet updated:** the artifact (claude.ai/artifact/HXE6bQA4rhE5AkS9JvNkVm) still quotes the writing layer's 0.93
+against boxes and lacks the embedder comparison and the tuning.
+
 ## The goal
 
 Two pools of archive scans were read in 2024 by the old pipeline (htrflow 0.1.3: YOLO regions and lines, TrOCR), their
