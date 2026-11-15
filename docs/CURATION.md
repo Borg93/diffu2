@@ -74,6 +74,8 @@ is in the section named; scripts are under `runs/htr/curate/prototypes/` unless 
 | E16 | A head on the embeddings giving the model's answers; EVoC on whole scans | first pass 15 Nov on 5,010 scans, **to redo on 45,000** | kind 0.92, layout 0.94, written side 0.94; writing at the fold not carried | `scan_clusters.py`; same section |
 | E17 | AnyUp, INSID3 segment-by-example, ink mask, NeMo Curator | done, **do not work** | 0.803 against 0.855 bilinear; 0.72 against 0.85 | "What does not work" |
 | E18 | Placing the cut at full resolution near the gutter network's answer, from the image alone | done 15 Nov (prototype) | the column dark down its whole height (the fold) beats the network's place in 14 of 40 scans judged blind, loses in 2, ties in 24; a fold is found in 68 % of scans; "the column with the least writing" is worse than the network | `cut_place.py`; "Placing the cut on the fold" |
+| E19 | Does a sharper question make the VL model tell tables from running text | done 15 Nov | yes: with each option defined, 33-35 of 35 scans judged by eye (alone, with thinking, or in a two-question form), against about half with the first form's bare option names; thinking adds nothing | `vl_table_ask.py`; "What the model's answers are worth, kind by kind" |
+| E20 | A second pass over the 45,000 scans asking table or running text, and turned writing, with definitions | **queued 15 Nov 22:15**, starts by itself when E15 ends (GPU 1, tmux `vlpass2`) | | `vl_ask2.py` -> `runs/htr/curate/vl/sample_pass2.jsonl` |
 
 Queued, not started: Toponymy names for the clusters (needs E15); the rare kinds' recall (needs E15); a step placing
 the cut at full resolution, scored against folds marked by hand; Jev's page score on the calibration scans; the
@@ -465,6 +467,30 @@ to either side of the network's answer, read at 2,400 px of scan width.
   fold; both were unsure calls.
 - **Open:** ruled lines in registers; the 32 % with no fold found (wide gutters, loose sheets) keep the network's
   place; not yet run on andra arkiv or the ground truth; the judging was by one pair of eyes on 40 scans.
+
+## What the model's answers are worth, kind by kind (15 Nov, on the first 32,864 described scans)
+
+18 scans drawn from each answer and looked at:
+
+| The model says | Right of 18 | What the wrong ones are |
+|---|---|---|
+| not a page | 18 | (signs, reel targets, spines, covers) |
+| single page | 18 | |
+| opening, one page empty | 14 | two single pages with a strip of the next, one opening written on both pages, one with both empty |
+| table or ledger (kind) | **8** | dense prose called a table |
+| table across the fold | 10 | prose openings |
+| turned writing | about 13 | it means "some writing is turned" (an address panel, a margin note), not most |
+
+- **The form was the fault, not the model (E19):** asked "table or ledger, or running text?" with each option
+  defined in a line, it is right on 33 to 35 of the 35 of those scans that the eye could call (three runs: the
+  question alone, with thinking, and as the first of two questions). The first form gave bare option names.
+  **Every option in a form gets a line saying what it means.** Thinking adds nothing here.
+- So the first form's kind (handwriting against table), table across the fold and turned writing are not to be used;
+  a second pass asks the two questions again with definitions (E20). Its "not a page", "single page", the signs and
+  covers, and which side is written stand.
+- What the first 32,864 scans are, by the answers that stand: not a page 0.4 %, single page 3.4 %, opening with one
+  page empty 17.5 %, opening with both written 78 %; signs and cards 1.0 %, printed or typed 0.3 %, blank 0.2 %,
+  cover or spine 0.2 %.
 
 ## Experiments queued (asked for)
 
