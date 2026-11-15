@@ -87,6 +87,17 @@ marked test.
 Pages with both sides labelled (4.27 million): 22 of 24 clean in a sample. The GT sets have the same flaws at a small
 scale (about 30 whole openings, strips on some one-side pages).
 
+## Correction (15 Nov): the ground truth's line outlines are in its PAGE files, not its ALTO files
+
+GT-Lejonet ships each scan twice, as PAGE (`page/`, 30,470 files) and ALTO (`alto/`, 29,406), in 225 volumes. Its ALTO
+lines are boxes only (21,515 of 21,515 sampled: `HPOS/VPOS/WIDTH/HEIGHT` and a baseline); its PAGE lines carry the real
+outlines (16,012 of 16,136 sampled are polygons). The reader sets take PAGE where both exist, so they are right; but the
+curation prototypes read the ALTO: the writing layer was trained and scored on **boxes**, not polygons, and the
+calibration's outline overlaps compare old polygons with true boxes. So "IoU 0.93 with true outlines" is with true
+boxes, and a normal page's "0.89 of its writing covered" is partly boxes being wider than writing. Line matching and
+the error rates by line are unaffected (they use boxes on both sides by design). To redo: the writing layer and the
+outline measures on PAGE polygons.
+
 ## What works
 
 | Thing | Evidence | Use |
