@@ -388,6 +388,12 @@ fold, writing at the fold, turned writing, where the fold is (`runs/htr/curate/p
   pages written.
 - **Its fold position is a guess:** 0.50 for 149 of the 198 scans it sees a fold in. It says that there is a fold and
   which side is written, not where to cut. The cut's place still needs its own step.
+- **Toponymy can name the clusters with this server** (read 15 Nov: toponymy 0.5.4, README and `llm_wrappers.py`):
+  `OpenAINamer(model=..., api_base="http://127.0.0.1:8011/v1", use_json_object=False)` goes through LiteLLM to any
+  OpenAI-compatible server, vLLM named; `use_json_object=False` because a forced JSON format broke this model's
+  answers here. `Toponymy.fit(texts, vectors, map)` wants a text for each scan (the model's captions), the scans'
+  embedding vectors, a low-dimensional map of them to cluster on (`ToponymyClusterer`, or our EVoC layers), and a
+  sentence-embedding model to pick each cluster's most telling captions.
 - Table across the fold: 1 % and turned writing: 0 % in the pilot: too few to judge those two answers; to check on
   scans known to be such (ledgers over both pages; the orientation network's turned pages).
 
