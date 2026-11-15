@@ -14,6 +14,7 @@ Read this section, then "Rules". Update it whenever a job starts or ends or a ta
 |---|---|---|---|---|
 | CPU | `gutters` | `diffu-curate gutters`: the gutter network over every scan (520,000 of 3,184,889 at 13:00, ~33 scans/s, about a day left) | `runs/htr/curate/gutters.lance`, `gutters.log` | then `diffu-curate pages --gutters` into `pages_cut.lance` (task 1) |
 | GPU 1 | `gpu1queue` | Nemotron (`nemotron-parse-more/output/checkpoint-3094`, guard 10) reading 56,130 andra arkiv pool pages (`runs/htr/curate/gpu1_queue.sh`) | `runs/htr/curate/pool_read/andra_pilot.jsonl` | resumable: rerun the script |
+| GPU 1 | `poolread3` | a second reader on the andra arkiv pages, from the end (started 15 Nov 15:00; the first reader does not see its output, so stop both when their page counts sum to 56,130) | `pool_read/andra_pilot_rev.jsonl` | resumable |
 | GPU 2 | `poolread`, `poolread2` | the same reader on 53,490 Svea pool pages, one from the start, one from the end (`runs/htr/verify/pool_read.py`) | `pool_read/svea_pilot.jsonl`, `svea_pilot_rev.jsonl` | resumable |
 
 **Tasks, in order.** 1-3 are the agreed backlog (below); 4-8 are experiments asked for. A GPU that falls idle takes the
