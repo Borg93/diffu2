@@ -33,8 +33,7 @@ next GPU task at once.
 **Questions waiting on Gabriel:** is the goal a better score on the mixed 200 test pages, or a better reader for these
 archives (the pools are mostly microfilm of a few series)? Start task 8? SAM 3 needs checkpoint access on Hugging Face.
 
-**Not yet updated:** the artifact (claude.ai/artifact/HXE6bQA4rhE5AkS9JvNkVm) still quotes the writing layer's 0.93
-against boxes and lacks the embedder comparison and the tuning.
+**The artifact** (claude.ai/artifact/HXE6bQA4rhE5AkS9JvNkVm, version 9, 15 Nov 13:55) carries everything up to the writing layer's check; its source is a scratch file of one session, so a new session reads it with the Artifact tool before changing it.
 
 ## The goal
 
