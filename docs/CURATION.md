@@ -15,6 +15,7 @@ Read this section, then "Rules". Update it whenever a job starts or ends or a ta
 | CPU | `gutters` | `diffu-curate gutters`: the gutter network over every scan (1,700,000 of 3,184,889 at 19:00, ~57 scans/s, done about 02:00 on 16 Nov); then `pages --gutters` writes `pages_cut.lance`, **not to be used as it is** (task 1) | `runs/htr/curate/gutters.lance`, `gutters.log` | a table only; nothing reads it |
 | GPU 1 | `vlserve5` | Nemotron 3.5 Super VL served in Docker (`runs/htr/curate/serve_vl.sh 1 8011`; 96 GB of the GPU; stop with `docker stop nemotron-vl`) | `runs/htr/curate/vl/serve.log` | stays up while task 9 runs |
 | GPU 1 | `vldescribe` | the model describing 45,000 scans (20,000 Svea, 20,000 andra arkiv, 5,000 GT; `prototypes/vl_describe.py`, 2.7 scans/s, ~4.7 h from 18:50) | `runs/htr/curate/vl/sample.jsonl`, `sample.log` | resumable: rerun the same command |
+| GPU 2 | `embedscans` | the same 45,000 scans embedded whole by DINOv3 and TIPSv2 (`prototypes/embed_pages.py runs/htr/curate/embed_scans`, 34 scans/s, ~25 min from 19:10), beside the readers | `runs/htr/curate/embed_scans/dinov3.npy`, `tipsv2.npy`, `ok.npy` | then EVoC and the head (task 9) |
 | GPU 2 | `poolread`, `poolread2` | Nemotron Parse reading 53,490 Svea pool pages, one from the start, one from the end (`runs/htr/verify/pool_read.py`) | `pool_read/svea_pilot.jsonl`, `svea_pilot_rev.jsonl` | resumable |
 | (stopped) | | the andra arkiv pool read, stopped 15 Nov 18:40 at 14,400 of 56,130 pages for the VL model's GPU; `runs/htr/curate/gpu1_queue.sh` resumes it (a second reader: the `poolread3` command with REVERSE) | `pool_read/andra_pilot.jsonl`, `andra_pilot_rev.jsonl` | restart when GPU 1 is free |
 
@@ -45,7 +46,7 @@ label's error; over the pools only if it does (it chose the better of two readin
 **Questions waiting on Gabriel:** is the goal a better score on the mixed 200 test pages, or a better reader for these
 archives (the pools are mostly microfilm of a few series)? Start task 8? SAM 3 needs checkpoint access on Hugging Face.
 
-**The artifact** (claude.ai/artifact/HXE6bQA4rhE5AkS9JvNkVm, version 9, 15 Nov 13:55) carries everything up to the writing layer's check; its source is a scratch file of one session, so a new session reads it with the Artifact tool before changing it.
+**The artifact** (claude.ai/artifact/HXE6bQA4rhE5AkS9JvNkVm, version 10, 15 Nov 19:10) carries everything up to the vision-language model's pilot; its source is a scratch file of one session, so a new session reads it with the Artifact tool before changing it.
 
 ## The goal
 
