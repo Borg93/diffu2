@@ -6,7 +6,8 @@ it the day a thing is learnt. The code is `packages/curate` (`diffu-curate`); th
 
 ## Start here: state and task list (updated 15 Nov 19:00)
 
-Read this section, then "Rules". Update it whenever a job starts or ends or a task changes state.
+Read this section, then "Rules". Update it whenever a job starts or ends or a task changes state, and give every
+experiment a row in the "Experiment register" below the day it starts.
 
 **Running** (all in tmux session `htr`; machine dmlpai01, GPUs 1 and 2 only, GPU 0 is another user's):
 
@@ -47,6 +48,36 @@ label's error; over the pools only if it does (it chose the better of two readin
 archives (the pools are mostly microfilm of a few series)? Start task 8? SAM 3 needs checkpoint access on Hugging Face.
 
 **The artifact** (claude.ai/artifact/HXE6bQA4rhE5AkS9JvNkVm, version 10, 15 Nov 19:10) carries everything up to the vision-language model's pilot; its source is a scratch file of one session, so a new session reads it with the Artifact tool before changing it.
+
+## Experiment register
+
+Every experiment has a row here, added the day it starts and closed the day its result is known. The result's detail
+is in the section named; scripts are under `runs/htr/curate/prototypes/` unless a path says otherwise.
+
+| # | Experiment | State | Result in one line | Script; section |
+|---|---|---|---|---|
+| E1 | Old labels as a page reader, on the test pages | done 14 Nov | 10.7 % CER on 207 pages | "What the old labels are worth" |
+| E2 | Calibration: old label against truth on scans with both | done 14 Nov | Svea 259 scans 7.4 % CER, andra arkiv 3,392 scans 4.8 %; confidence ranks error (-0.60 to -0.76), blind to unlabelled writing | `diffu-curate calibrate`; same section |
+| E3 | Pretrain on unfiltered Svea pool pages, then fine-tune (control) | done 15 Nov | 7.18 % against 7.55 %, gain only on the pools' own archives | `runs/htr/svea_pilot.sh`; "The control experiment's answer" |
+| E4 | Two more epochs on ground truth | done | 6.73 % CER, the best reader | `configs/nemotron_parse_more.yaml`; HTR_RUNS.md |
+| E5 | Small gutter network from the image | done, **found wanting 15 Nov** | finds openings; places the cut to 1 % of the width, inside a label box in 2.2 % of scans | `diffu_curate.gutter`; "The image cut looked at before the re-cut" |
+| E6 | Orientation network | done 15 Nov | 99.94 % in-domain; typed pages fool it | `orientation.py`; "What works" |
+| E7 | DINOv3 page embeddings + EVoC on 3,007 pages | done 15 Nov | kinds of page come out as their own clusters | `page_embed.py`; "EVoC on DINOv3 page embeddings" |
+| E8 | Which embedder groups pages (TIPSv2, DINOv3, EmbeddingGemma 2) | done 15 Nov | TIPSv2 0.726 same volume, DINOv3 0.653, EmbeddingGemma 2 0.42-0.43 | `embed_pages.py`, `embed_gemma.py`, `compare_embedders.py`; "Which embedder" |
+| E9 | The same for Qwen3-VL-Embedding 2B and 8B | **running** (GPU 2, from 15 Nov 21:00) | | `embed_qwen.py`; to add to "Which embedder" |
+| E10 | Writing layer tuned on PAGE polygons (embedder, head, resolution) | done 15 Nov | all within 0.01 IoU (0.71-0.73 of a possible 0.84): DINOv3, linear | `writing_tune.py`; "The writing layer, tuned and checked" |
+| E11 | Does the writing layer notice missing labels | done 15 Nov | AUC 0.95 with a quarter of the lines removed, 0.88 with a tenth; real misses untested | `writing_eval.py`; same section |
+| E12 | Our reader against the old labels on pool pages | **running** (Svea, GPU 2); andra arkiv stopped at 14,400 | median disagreement 12 % and 11 %; the pages are cut the old way, so part of it is the cut | `runs/htr/verify/pool_read.py`; "Pages where our reader and the old label disagree" |
+| E13 | The image cut looked at by group, at thumbnail and full size | done 15 Nov | one bug fixed (unsure scans kept whole); the cut clips writing | scratch scripts; "The image cut looked at before the re-cut" |
+| E14 | Vision-language model describing scans: pilot, 268 scans | done 15 Nov | kind and layout follow the groups, 11 of 12 looked at right; fold position a guess | `vl_describe.py`; "The vision-language model describing scans" |
+| E15 | The same on 45,000 scans | **running** (GPU 1, ends ~23:00 15 Nov) | first 5,010: 78 % openings written on both pages | `vl_describe.py`; same section |
+| E16 | A head on the embeddings giving the model's answers; EVoC on whole scans | first pass 15 Nov on 5,010 scans, **to redo on 45,000** | kind 0.92, layout 0.94, written side 0.94; writing at the fold not carried | `scan_clusters.py`; same section |
+| E17 | AnyUp, INSID3 segment-by-example, ink mask, NeMo Curator | done, **do not work** | 0.803 against 0.855 bilinear; 0.72 against 0.85 | "What does not work" |
+
+Queued, not started: Toponymy names for the clusters (needs E15); the rare kinds' recall (needs E15); a step placing
+the cut at full resolution, scored against folds marked by hand; Jev's page score on the calibration scans; the
+writing layer on the calibration scans; HiRank and duplicate columns; curated pretraining (task 7); the line finder
+test (task 8, not approved).
 
 ## The goal
 
