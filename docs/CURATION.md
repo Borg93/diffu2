@@ -32,6 +32,15 @@ next GPU task at once.
 | 9 | **Describe each scan before cutting it** (Gabriel, 15 Nov evening): a vision-language model answers a fixed list of questions about a scan (what it is: handwriting, table or ledger, printed or typed card, reel target, blank, cover; one page or an opening, and whether one side is empty; columns of running text; writing up to the fold; turned writing), on a sample drawn from every cluster; a small head on the TIPSv2 / DINOv3 page embeddings spreads the answers to all scans; the answers decide whether a scan is dropped, kept whole or cut, and how carefully | NVIDIA Nemotron 3.5 Super VL (120 B, NVFP4, 75 GB, runs on one RTX PRO 6000 by its card, vLLM 0.32.0 in Docker) downloading to `/mnt/scratch/gabriel/models/nemotron-3.5-super-vl-nvfp4` (the root disk has 72 GB free: nothing large goes in `~/.cache`) | pilot: 300 scans whose kind is known from the groups looked at today, the model's answers checked by eye before anything is built on them; it needs a whole GPU, so one pool's readers stop for it (resumable) |
 | 8 | Line finder test: PaddleOCR's text detector against RF-DETR-Seg and the old YOLO, on GT PAGE polygons | proposed, **not approved** | ask before starting |
 
+**Every check is a column (Gabriel, 15 Nov evening).** What describes a scan before it is cut goes on `scans.lance`
+(a row a scan): the gutter's score and place, the vision-language model's answers (kind, one page or opening, empty
+side, columns, writing at the fold, turned writing, caption) with a column saying whether the model gave them or the
+head on the embeddings did, the cluster, the embeddings. What describes a page goes on `pages.lance` (a row a page):
+the writing layer's `covered`, our reader's disagreement with the old label, the old pipeline's confidence, and Jev's
+score of the page's lines (mean, lowest tenth, share of lines it flags). Columns are added with Lance's merge, the
+tables not rewritten. Jev first on the calibration scans, where the truth says whether its page score ranks the
+label's error; over the pools only if it does (it chose the better of two readings 61 % of the time).
+
 **Questions waiting on Gabriel:** is the goal a better score on the mixed 200 test pages, or a better reader for these
 archives (the pools are mostly microfilm of a few series)? Start task 8? SAM 3 needs checkpoint access on Hugging Face.
 
