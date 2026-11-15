@@ -73,6 +73,7 @@ is in the section named; scripts are under `runs/htr/curate/prototypes/` unless 
 | E15 | The same on 45,000 scans | **running** (GPU 1, ends ~23:00 15 Nov) | first 5,010: 78 % openings written on both pages | `vl_describe.py`; same section |
 | E16 | A head on the embeddings giving the model's answers; EVoC on whole scans | first pass 15 Nov on 5,010 scans, **to redo on 45,000** | kind 0.92, layout 0.94, written side 0.94; writing at the fold not carried | `scan_clusters.py`; same section |
 | E17 | AnyUp, INSID3 segment-by-example, ink mask, NeMo Curator | done, **do not work** | 0.803 against 0.855 bilinear; 0.72 against 0.85 | "What does not work" |
+| E18 | Placing the cut at full resolution near the gutter network's answer, from the image alone | done 15 Nov (prototype) | the column dark down its whole height (the fold) beats the network's place in 14 of 40 scans judged blind, loses in 2, ties in 24; a fold is found in 68 % of scans; "the column with the least writing" is worse than the network | `cut_place.py`; "Placing the cut on the fold" |
 
 Queued, not started: Toponymy names for the clusters (needs E15); the rare kinds' recall (needs E15); a step placing
 the cut at full resolution, scored against folds marked by hand; Jev's page score on the calibration scans; the
@@ -441,6 +442,29 @@ fold, writing at the fold, turned writing, where the fold is (`runs/htr/curate/p
     with 55, 8, 7 and 171 examples it waits for all 45,000.
 - Table across the fold: 1 % and turned writing: 0 % in the pilot: too few to judge those two answers; to check on
   scans known to be such (ledgers over both pages; the orientation network's turned pages).
+
+## Placing the cut on the fold (15 Nov, E18)
+
+A second step after the gutter network, from the image alone (`prototypes/cut_place.py`): a band of 3 % of the width
+to either side of the network's answer, read at 2,400 px of scan width.
+
+- **First idea, wrong: the column with the least writing.** The fold is itself a dark line, so the emptiest column is
+  the page's inner margin beside it; it cut into labelled lines twice as often as the network.
+- **Second: the column that is dark down its whole height.** Writing is dark in some rows of a column, a fold in
+  nearly all of them: thin dark vertical detail (a closing along the row minus the image), scored by a low quantile
+  down the column, the band sheared a little each way for a leaning fold. A fold stands out clearly in 68 % of 1,453
+  Svea scans (the score is two-humped: about 1.7 or about 30-46); in the rest the network's answer is kept.
+- **The labels cannot judge it.** Against the old labels' boxes the new cut looks better on tight bindings (inside a
+  box in 16 % of scans against 31 % where the pages' text is under 2 % of the width apart) and worse where the gap
+  is 2-5 % (10 % against 6 %). Looked at, the "worse" ones have the new cut on the visible fold and the network's
+  in the margin: the old boxes of the left page reach over the fold. A box is not truth at half a percent of the
+  width.
+- **Judged blind instead:** 40 random scans where the two cuts differ by more than 0.4 % of the width, each drawn
+  with the two cuts in colours shuffled per scan, the one on the fold picked before the key was read: the new cut 14,
+  the network's 2, no difference to see 24. The two losses are registers, where it took a ruled column line for the
+  fold; both were unsure calls.
+- **Open:** ruled lines in registers; the 32 % with no fold found (wide gutters, loose sheets) keep the network's
+  place; not yet run on andra arkiv or the ground truth; the judging was by one pair of eyes on 40 scans.
 
 ## Experiments queued (asked for)
 
