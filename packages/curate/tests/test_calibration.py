@@ -26,12 +26,12 @@ OLD = [
 @pytest.fixture
 def ground_truth(tmp_path: Path, alto: Callable[..., str]) -> Path:
     """A ground truth of one collection: V1's scans 0001 (a training scan) and 0002 (named by its test list)."""
-    folder = tmp_path / "gt" / "GT-RA_test" / "V1 volym" / "V1 volym" / "alto"
+    folder = tmp_path / "GT-Lejonet_test" / "GT-RA_test" / "V1 volym" / "V1 volym" / "alto"
     folder.mkdir(parents=True)
     for stem in ("V1_0001", "V1_0002", "V1_0003"):
         (folder / f"{stem}.xml").write_text(alto("Transkribus", TRUE), encoding="utf-8")
     (folder / "test_0050").write_text("V1_0002.xml\n", encoding="utf-8")
-    return tmp_path / "gt"
+    return tmp_path / "GT-Lejonet_test"
 
 
 def test_calibrate_measures_the_old_label_against_the_truth(
@@ -44,6 +44,7 @@ def test_calibrate_measures_the_old_label_against_the_truth(
     result = calibrate(ground_truth, pool, "test_0050")
     write_calibration(result, tmp_path / "calibration")
 
+    assert {s.collection for s in result.scans} == {"GT-RA_test"}
     assert [(s.scan, s.split, s.source) for s in result.scans] == [
         ("V1_0001", "train", "htrflow"),
         ("V1_0002", "test", "htrflow"),

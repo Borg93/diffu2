@@ -16,9 +16,9 @@ from PIL import Image, ImageDraw
 from pydantic import BaseModel
 
 from diffu_curate.alto import AltoLine, AltoPage, Box, read_alto
-from diffu_curate.settings import Pool, volume_of
+from diffu_curate.settings import COLLECTION_PREFIX, Pool, collection_of, volume_of
 from diffu_curate.table import write_rows
-from diffu_page.data.reader_pages import COLLECTION_PREFIX, gt_split
+from diffu_page.data.reader_pages import gt_split
 from diffu_page.quality.readback import levenshtein, numbers_differ
 
 OLD_PIPELINE = "htrflow"  # the writer whose labels are calibrated; a transcriber's export in the pool is truth already
@@ -168,7 +168,7 @@ def truth_scans(ground_truth: Path, pool: Pool, test_list: str) -> list[TruthSca
             continue
         if not pool.label_file(truth.stem).exists():
             continue
-        collection = next(part for part in truth.parts if part.startswith(COLLECTION_PREFIX))
+        collection = collection_of(truth)
         scans[truth.stem] = TruthScan(
             scan=truth.stem, truth=truth, collection=collection, split=gt_split(truth.resolve(), test_list).value
         )

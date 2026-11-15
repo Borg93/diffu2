@@ -31,6 +31,15 @@ class Pool(BaseModel):
         return self.scans / volume_of(stem) / f"{stem}.jpg"
 
 
+COLLECTION_PREFIX = "GT-"  # how the ground truth names its collections' folders (GT-RA_..., GT-SSA_..., GT-FNA_...)
+
+
+def collection_of(path: Path) -> str:
+    """The ground-truth collection a file lies in: the folder nearest to it whose name starts with
+    :data:`COLLECTION_PREFIX` (the ground truth's own root folder may start with it too); ``""`` if none."""
+    return next((folder.name for folder in path.parents if folder.name.startswith(COLLECTION_PREFIX)), "")
+
+
 def volume_of(stem: str) -> str:
     """The volume a scan's stem names: what stands before its first underscore."""
     return stem.split("_", 1)[0]

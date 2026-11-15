@@ -77,7 +77,7 @@ def test_write_pages_cuts_a_scan_at_its_gutter_when_given_one(
 
 
 def test_truth_scans_take_the_ground_truths_ids_and_splits(alto: Callable[..., str], tmp_path: Path) -> None:
-    folder = tmp_path / "gt" / "GT-RA_test" / "Volym 1" / "Volym 1"
+    folder = tmp_path / "GT-Lejonet_test" / "GT-RA_test" / "Volym 1" / "Volym 1"
     (folder / "alto").mkdir(parents=True)
     for stem in ("A1_0001", "A1_0002"):
         (folder / "alto" / f"{stem}.xml").write_text(alto("Transkribus", LEFT + RIGHT, size=OPENING), encoding="utf-8")
@@ -85,7 +85,7 @@ def test_truth_scans_take_the_ground_truths_ids_and_splits(alto: Callable[..., s
     (folder / "alto" / "test_0050").write_text("A1_0002.xml\n", encoding="utf-8")
     table = tmp_path / "pages.lance"
 
-    list(write_pages([truth_scans(tmp_path / "gt", "test_0050")], table, workers=1))
+    list(write_pages([truth_scans(tmp_path / "GT-Lejonet_test", "test_0050")], table, workers=1))
 
     written = rows(table)
     name = digest("GT-RA_test/Volym 1/Volym 1/alto/A1_0001.xml")

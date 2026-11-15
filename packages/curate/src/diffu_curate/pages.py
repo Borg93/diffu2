@@ -25,9 +25,9 @@ from PIL import Image
 from pydantic import BaseModel
 
 from diffu_curate.gutter import Gutter
-from diffu_curate.settings import Pool
+from diffu_curate.settings import Pool, collection_of
 from diffu_curate.table import append_rows, compact, held_values
-from diffu_page.data.reader_pages import COLLECTION_PREFIX, LabelFile, gt_split, label_files
+from diffu_page.data.reader_pages import LabelFile, gt_split, label_files
 from diffu_page.page.layout.pages import ScanPage, is_unsplit_spread, page_id, scan_pages, split_at, whole_page
 from diffu_page.page.layout.xml_replay import load_xml_layout
 
@@ -158,7 +158,7 @@ def _truth_scan(label: LabelFile, ground_truth: Path, test_list: str, gutters: d
         labels=label.path,
         image=label.scan,
         ids_below=ground_truth,
-        collection=next((part for part in label.path.parts if part.startswith(COLLECTION_PREFIX)), ""),
+        collection=collection_of(label.path),
         split=gt_split(label.path, test_list).value,
     )
 
