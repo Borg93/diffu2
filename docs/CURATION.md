@@ -118,11 +118,32 @@ scale (about 30 whole openings, strips on some one-side pages).
 | A side job on a training GPU | slowed Nemotron from 11 s to 16-18 s a step and once left 211 MB free |
 | Building a real set without `--split-from-gt-test-lists` | the trainer refuses it; cost the control experiment 45 minutes |
 
+## The control experiment's answer (15 Nov 10:01)
+
+Nemotron 3.5 Parse pretrained one epoch on 53,490 random Svea pool pages with their old labels unfiltered
+(`nemotron-parse-svea-pretrain`, dev loss 2.07 to 1.81), then fine-tuned on the GT exactly as `nemotron-parse-all`
+(`nemotron-parse-svea-finetune`, dev loss 1.139 at its end against 1.155), read the 200 test pages with the guard:
+
+| Run | GT epochs | CER | WER |
+|---|---|---|---|
+| `nemotron-parse-all` | 2 | 7.55 % | 20.5 % |
+| `nemotron-parse-svea-finetune` (pool pretraining first) | 2 | **7.18 %** | 19.4 % |
+| `nemotron-parse-more` | 4 | **6.73 %** | 18.8 % |
+
+- Pretraining on the old labels helps a little: 0.37 points, better on 123 pages and worse on 52, but a bootstrap
+  over the pages puts the gain between -0.13 and +0.84 points (95 %): not shown beyond doubt on 200 pages.
+- Two more epochs on the GT helped more (0.82 points) for about twice the GPU time (9.5 h against 5 h).
+- By collection: the Svea hovrätt test pages 8.63 % to 6.25 % (6,863 characters only: few pages), andra arkiv's
+  collections 6.09 % to 5.36 % (as much as 4 GT epochs), the other collections (SSA, FNA) unchanged (8.57 % to 8.60 %).
+  The pool's pages teach the reader its own archives and nothing else.
+- So unfiltered old labels are worth little, and the gain sits where the pool's archives are. Not yet tried: filtered
+  and image-cut pages from both pools, and pretraining followed by the longer fine-tune.
+
 ## Open
 
-- **Old labels or our own reader's?** The control experiment (`nemotron-parse-svea-pretrain` on 53,490 unfiltered Svea
-  pages, then `nemotron-parse-svea-finetune`): compare with 6.73 %. If it does not help, re-read the pool pages with
-  our best reader and keep the old labels as a second opinion (CER-HV's method, arXiv 2601.16713).
+- **Old labels or our own reader's?** Unfiltered old labels gave a small gain (above). Next: filtered, image-cut pages
+  of both pools; or re-read the pool pages with our best reader and keep the old labels as a second opinion (CER-HV's
+  method, arXiv 2601.16713).
 - **The writing layer on ledgers and faint ink:** patchy, because it learnt from prose pages. Train it on ledger pages
   too, or a line finder fine-tuned on GT outlines (SAM 3: needs checkpoint access).
 - **The gutter network into the package:** a `gutter` step writing the image's gutter and its score for every scan, the page rows re-cut from it, then the GT and the 200 test pages re-cut and the readers re-scored once. Loose sheets lying side by side are its weak case.
@@ -172,6 +193,25 @@ clusters, 12 % noise.
    LLM; local models through Hugging Face or LlamaCpp, so no outside service) from each cluster's label texts or
    captions. Start on the 3,007 pages already embedded with DINOv3, then a stratified sample of about 50,000 pages on
    a GPU when the queue allows. Looked at by sampling every cluster, not by its size alone.
+
+   Research found 15 Nov (each read at its source) to fold in:
+   - **Score clusters, not only pages** (MinerU2.5-Pro, arXiv 2604.04771, 2026): cluster page embeddings, score a
+     sample a cluster by how far several readers agree, drop clusters of invalid content, weight clusters of easy
+     pages down and mixed ones up. Ours: our readers against the old label a cluster; a cluster with a high median
+     error is a kind of page or a labelling failure, a lone page with a high error a bad label (CER-HV's method).
+   - **Balance by cluster size to a power** (DynamiCS, arXiv 2604.27932, ECCV 2026, code released): sample a
+     cluster in proportion to its size^α (α = 0.2 in the paper), drawn afresh every epoch; k-means on DINOv2 there.
+   - **PLSCAN** (fast_plscan, BSD-3; arXiv 2512.16558): HDBSCAN without the minimum cluster size, giving the most
+     persistent layers; on 5-10-d reductions, compared with fast_hdbscan and EVoC.
+   - **SCALAR** (TutteInstitute/scalar, 2026): cluster representatives and spread the labels back by kNN, for the
+     full 5.4 million pages without a UMAP step.
+   - **HiRank** (TutteInstitute/hirank, 2026): an outlier score from reverse-kNN ranks: the pages least like any
+     other, to sample for non-handwriting and odd scans.
+   - **Settings**: DINOv3 was the best of five embedders for zero-shot clustering in a 2026 benchmark (Aalborg,
+     arXiv 2602.03894): label about 1,000 pages by kind and hand by hand and score the embedders and reductions by
+     V-measure the same way.
+   - **The nearest precedent**: HAICu (Twente, Groningen; Zenodo 17606825, poster, no code) mapped ~4 million Dutch
+     colonial archive scans with DINOv2 + openTSNE and saw hands, tables and density separate.
 
 ## Backlog, in order (agreed 14 Nov)
 

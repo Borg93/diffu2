@@ -291,6 +291,9 @@ of 51 characters, the model reads 1,300 of the rest of the page).
 - `nemotron-parse-more` ended 14 Nov 18:16 (dev loss 1.167, never under the first run's 1.155) and read the 200 pages
   with the guard at **6.73 %** (WER 18.8 %): better than the first run's 7.55 % in spite of its dev loss. Score test pages;
   the dev loss misleads here.
+- The control experiment (15 Nov 10:01): one epoch of pretraining on 53,490 unfiltered Svea pool pages, then the GT
+  fine-tune as `nemotron-parse-all`: **7.18 %** (WER 19.4 %) against 7.55 %; 4 GT epochs alone gave 6.73 %. Details
+  and the split by collection: CURATION.md.
 - The pools of old-labelled scans as a pretraining set, the control experiment (`runs/htr/svea_pilot.sh`) and everything
   learnt about them: [CURATION.md](CURATION.md).
 
