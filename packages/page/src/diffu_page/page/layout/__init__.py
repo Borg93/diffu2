@@ -3,7 +3,15 @@
 written into its running-text lines (:func:`refill`)."""
 
 from diffu_page.page.layout.model import ROLE_NAMES, CellRef, Layout, LineKind, PageBox, Production, Rule, TextLine
-from diffu_page.page.layout.pages import PageSide, ScanPage, gutter, is_unsplit_spread, scan_pages
+from diffu_page.page.layout.pages import (
+    PageSide,
+    ScanPage,
+    gutter,
+    is_unsplit_spread,
+    scan_pages,
+    split_at,
+    whole_page,
+)
 from diffu_page.page.layout.text_refill import refill, rewritten, running_text
 from diffu_page.page.layout.xml_replay import load_xml_layout
 
@@ -25,4 +33,6 @@ __all__ = [
     "rewritten",
     "running_text",
     "scan_pages",
+    "split_at",
+    "whole_page",
 ]

@@ -112,13 +112,24 @@ def scan_pages(layout: Layout) -> list[ScanPage]:
     is a spread its lines cannot split, :func:`is_unsplit_spread`, which no caller takes for a page)."""
     split = gutter(layout)
     if split is None:
-        return [ScanPage(side=None, rect=(0.0, 0.0, float(layout.width), float(layout.height)), layout=layout)]
-    edge = round(split)
-    sides = (
+        return [whole_page(layout)]
+    return [page for page in split_at(layout, split) if page.layout.lines]
+
+
+def whole_page(layout: Layout) -> ScanPage:
+    """The scan as its one page."""
+    return ScanPage(side=None, rect=(0.0, 0.0, float(layout.width), float(layout.height)), layout=layout)
+
+
+def split_at(layout: Layout, x: float) -> tuple[ScanPage, ScanPage]:
+    """An opening's left and right pages, cut at ``x`` (page px, rounded): each holds the lines whose middle is on its
+    side, in its own coordinates, and is given even when it holds none. For a cut found otherwise than by the lines
+    (:func:`gutter`), as one read from the scan itself."""
+    edge = round(x)
+    return (
         _page(layout, PageSide.LEFT, (0, edge), [line for line in layout.lines if line.middle_x < edge]),
         _page(layout, PageSide.RIGHT, (edge, layout.width), [line for line in layout.lines if line.middle_x >= edge]),
     )
-    return [page for page in sides if page.layout.lines]
 
 
 def _page(layout: Layout, side: PageSide, span: tuple[int, int], lines: list[TextLine]) -> ScanPage:

@@ -10,7 +10,9 @@ with is said on the row, for a cut read from the image to settle:
   an empty opening.
 - ``whole`` and nearly square: a gutter is only looked for in a scan wider than tall.
 
-A row holds no image: :func:`open_page` crops the scan when a page is wanted.
+Given the gutters read from the scans (:mod:`diffu_curate.gutter`), a scan is cut at its gutter instead (``cut`` is
+``image``): both pages are rows, one without a labelled line too, a scan without a gutter is one page, and none of the
+three doubts is left. A row holds no image: :func:`open_page` crops the scan when a page is wanted.
 """
 
 from __future__ import annotations
@@ -22,14 +24,16 @@ from pathlib import Path
 from PIL import Image
 from pydantic import BaseModel
 
+from diffu_curate.gutter import Gutter
 from diffu_curate.settings import Pool
 from diffu_curate.table import append_rows, compact, held_values
 from diffu_page.data.reader_pages import COLLECTION_PREFIX, LabelFile, gt_split, label_files
-from diffu_page.page.layout.pages import ScanPage, is_unsplit_spread, page_id, scan_pages
+from diffu_page.page.layout.pages import ScanPage, is_unsplit_spread, page_id, scan_pages, split_at, whole_page
 from diffu_page.page.layout.xml_replay import load_xml_layout
 
 GROUND_TRUTH = "gt"  # the ground truth's name as a pool in the table
 WHOLE = "whole"  # the side of a page that is its scan whole
+BY_LINES, BY_IMAGE = "lines", "image"  # how a scan was cut: by its labelled lines, or at the gutter read from its image
 VOLUMES_A_WRITE = 200
 
 Image.MAX_IMAGE_PIXELS = None  # the scans are large; they are our own
@@ -59,6 +63,8 @@ class PageRow(BaseModel):
     y1: int | None = None
     lines: int | None = None
     chars: int | None = None
+    cut: str | None = None
+    gutter_score: float | None = None
     alone: bool | None = None
     spread: bool | None = None
     split: str | None = None
@@ -74,12 +80,13 @@ class Scan(BaseModel):
     name: str
     labels: Path
     image: Path
+    gutter: Gutter | None = None
     ids_below: Path | None = None
     collection: str | None = None
     split: str | None = None
 
 
-def _row(scan: Scan, page: ScanPage, *, alone: bool, spread: bool, size: tuple[int, int]) -> PageRow:
+def _row(scan: Scan, page: ScanPage, *, alone: bool | None, spread: bool | None, size: tuple[int, int]) -> PageRow:
     side = page.side.value if page.side else WHOLE
     name = page_id(scan.labels.relative_to(scan.ids_below), page) if scan.ids_below else f"{scan.name}_{side}"
     x0, y0, x1, y1 = (round(value) for value in page.rect)
@@ -99,6 +106,8 @@ def _row(scan: Scan, page: ScanPage, *, alone: bool, spread: bool, size: tuple[i
         y1=y1,
         lines=len(page.layout.lines),
         chars=sum(len(line.text) for line in page.layout.lines),
+        cut=BY_IMAGE if scan.gutter else BY_LINES,
+        gutter_score=scan.gutter.score if scan.gutter else None,
         alone=alone,
         spread=spread,
         split=scan.split,
@@ -107,7 +116,9 @@ def _row(scan: Scan, page: ScanPage, *, alone: bool, spread: bool, size: tuple[i
 
 
 def page_rows(scan: Scan) -> list[PageRow]:
-    """The rows of a scan's pages, cut by its labelled lines; one row with its error if its labels cannot be read."""
+    """The rows of a scan's pages; one row with its error if its labels cannot be read. A scan given with its gutter
+    is cut at it when the gutter is found, both pages given even when one holds no labelled line, and is one page
+    when it is not; a scan given without is cut by its labelled lines, as the set builder cuts it."""
     try:
         layout = load_xml_layout(scan.labels)
     except ValueError as error:
@@ -118,22 +129,29 @@ def page_rows(scan: Scan) -> list[PageRow]:
                 split=scan.split, collection=scan.collection,
             )
         ]  # fmt: skip
-    pages = scan_pages(layout)
-    alone = len(pages) == 1 and pages[0].side is not None
-    spread = is_unsplit_spread(layout)
-    return [_row(scan, page, alone=alone, spread=spread, size=(layout.width, layout.height)) for page in pages]
+    size = (layout.width, layout.height)
+    if scan.gutter is None:
+        pages = scan_pages(layout)
+        alone = len(pages) == 1 and pages[0].side is not None
+        return [_row(scan, page, alone=alone, spread=is_unsplit_spread(layout), size=size) for page in pages]
+    pages = split_at(layout, scan.gutter.x * layout.width) if scan.gutter.found else [whole_page(layout)]
+    return [_row(scan, page, alone=None, spread=None, size=size) for page in pages]
 
 
-def pool_scans(pool: Pool, volume: Path) -> list[Scan]:
-    """The scans of one of a pool's volumes, by name."""
-    return [
-        Scan(pool=pool.name, volume=volume.name, name=path.stem, labels=path, image=pool.scan_file(path.stem))
-        for path in sorted(volume.glob("*.xml"))
-    ]
+def pool_scans(pool: Pool, volume: Path, gutters: dict[str, Gutter] | None = None) -> list[Scan]:
+    """The scans of one of a pool's volumes, by name, each with its gutter where ``gutters`` (by image path) is
+    given and holds it."""
+    scans = []
+    for path in sorted(volume.glob("*.xml")):
+        image = pool.scan_file(path.stem)
+        gutter = gutters.get(str(image)) if gutters is not None else None
+        scans.append(Scan(pool=pool.name, volume=volume.name, name=path.stem, labels=path, image=image, gutter=gutter))
+    return scans
 
 
-def _truth_scan(label: LabelFile, ground_truth: Path, test_list: str) -> Scan:
+def _truth_scan(label: LabelFile, ground_truth: Path, test_list: str, gutters: dict[str, Gutter] | None) -> Scan:
     return Scan(
+        gutter=gutters.get(str(label.scan)) if gutters is not None else None,
         pool=GROUND_TRUTH,
         volume=label.path.parent.parent.name,
         name=label.scan.stem,
@@ -145,12 +163,12 @@ def _truth_scan(label: LabelFile, ground_truth: Path, test_list: str) -> Scan:
     )
 
 
-def truth_scans(ground_truth: Path, test_list: str) -> list[Scan]:
+def truth_scans(ground_truth: Path, test_list: str, gutters: dict[str, Gutter] | None = None) -> list[Scan]:
     """The ground truth's scans, one a scan as the set builder takes them (its second export of a collection and
     files without their scan left out), each with its collection and its split by ``test_list``."""
     root = ground_truth.resolve()
     labels, _ = label_files(root)
-    return [_truth_scan(label, root, test_list) for label in labels]
+    return [_truth_scan(label, root, test_list, gutters) for label in labels]
 
 
 def _rows_of(scans: list[Scan]) -> list[PageRow]:
@@ -173,10 +191,10 @@ def write_pages(groups: list[list[Scan]], table: Path, workers: int) -> Iterator
     compact(table)
 
 
-def pool_groups(pool: Pool, table: Path) -> list[list[Scan]]:
+def pool_groups(pool: Pool, table: Path, gutters: dict[str, Gutter] | None = None) -> list[list[Scan]]:
     """A pool's scans a volume, the volumes ``table`` already holds left out, so a stopped run goes on."""
     held = held_values(table, "volume", f"pool = '{pool.name}'")
-    return [pool_scans(pool, volume) for volume in pool.volumes() if volume.name not in held]
+    return [pool_scans(pool, volume, gutters) for volume in pool.volumes() if volume.name not in held]
 
 
 def open_page(row: PageRow) -> Image.Image:

@@ -18,6 +18,7 @@ from diffu_page.page.layout import (
     gutter,
     load_xml_layout,
     scan_pages,
+    split_at,
 )
 
 
@@ -111,3 +112,15 @@ def test_scan_pages_of_an_opening_leave_out_a_page_with_no_line() -> None:
     pages = scan_pages(layout)
 
     assert [(page.side, page.rect) for page in pages] == [(PageSide.LEFT, (0.0, 0.0, 1050.0, 1000.0))]
+
+
+def test_split_at_gives_both_pages_of_an_opening_even_one_with_no_line() -> None:
+    layout = Layout(width=2000, height=1000, lines=[_line(100, 700)])  # its fold at 1000, the right page blank
+
+    left, right = split_at(layout, 1000.4)
+
+    assert [(page.side, page.rect) for page in (left, right)] == [
+        (PageSide.LEFT, (0.0, 0.0, 1000.0, 1000.0)),
+        (PageSide.RIGHT, (1000.0, 0.0, 2000.0, 1000.0)),
+    ]
+    assert (len(left.layout.lines), len(right.layout.lines), right.layout.width) == (1, 0, 1000)
