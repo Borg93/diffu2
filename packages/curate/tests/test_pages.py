@@ -54,26 +54,33 @@ def test_write_pages_cuts_each_scan_into_its_pages(
 def test_write_pages_cuts_a_scan_at_its_gutter_when_given_one(
     pool: Pool, add_scan: Callable[[str, str], Path], alto: Callable[..., str], tmp_path: Path
 ) -> None:
+    sheet = [("ett blad", (100, 100, 700, 60))]
     add_scan("V1_0001", alto("htrflow", LEFT, size=OPENING))  # the facing page without a line
-    add_scan("V1_0002", alto("htrflow", LEFT + RIGHT, size=OPENING))  # the network sees no gutter: one page
+    add_scan("V1_0002", alto("htrflow", LEFT + RIGHT, size=OPENING))  # unsure, where the lines' gutter is (1000)
+    add_scan("V1_0003", alto("htrflow", LEFT + RIGHT, size=OPENING))  # unsure, elsewhere than the lines' gutter
+    add_scan("V1_0004", alto("htrflow", sheet, size=(1000, 1400)))  # no gutter by the image nor by the lines
     gutters = {
         str(pool.scan_file("V1_0001")): Gutter(score=0.9, x=0.5),
-        str(pool.scan_file("V1_0002")): Gutter(score=0.1, x=0.4),
+        str(pool.scan_file("V1_0002")): Gutter(score=0.4, x=0.52),
+        str(pool.scan_file("V1_0003")): Gutter(score=0.4, x=0.35),
+        str(pool.scan_file("V1_0004")): Gutter(score=0.1, x=0.4),
     }
     table = tmp_path / "pages.lance"
 
     list(write_pages(pool_groups(pool, table, gutters), table, workers=1))
 
     written = rows(table)
-    assert sorted(written) == ["V1_0001_left", "V1_0001_right", "V1_0002_whole"]
+    assert sorted(written) == [
+        "V1_0001_left", "V1_0001_right", "V1_0002_left", "V1_0002_right", "V1_0003_whole", "V1_0004_whole",
+    ]  # fmt: skip
     left, right = written["V1_0001_left"], written["V1_0001_right"]
     assert (left.x0, left.x1, left.lines, left.cut, left.alone) == (0, 1000, 2, "image", None)
     assert (right.x0, right.x1, right.lines, right.gutter_score) == (1000, 2000, 0, pytest.approx(0.9))
-    assert (written["V1_0002_whole"].x1, written["V1_0002_whole"].lines, written["V1_0002_whole"].cut) == (
-        2000,
-        3,
-        "image",
-    )
+    agreed = written["V1_0002_left"]
+    assert (agreed.x1, agreed.lines, agreed.spread, written["V1_0002_right"].lines) == (1040, 2, False, 1)
+    uncut = written["V1_0003_whole"]
+    assert (uncut.x1, uncut.lines, uncut.spread, uncut.cut) == (2000, 3, True, "image")
+    assert (written["V1_0004_whole"].x1, written["V1_0004_whole"].spread) == (1000, False)
 
 
 def test_truth_scans_take_the_ground_truths_ids_and_splits(alto: Callable[..., str], tmp_path: Path) -> None:

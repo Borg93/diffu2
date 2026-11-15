@@ -11,8 +11,10 @@ with is said on the row, for a cut read from the image to settle:
 - ``whole`` and nearly square: a gutter is only looked for in a scan wider than tall.
 
 Given the gutters read from the scans (:mod:`diffu_curate.gutter`), a scan is cut at its gutter instead (``cut`` is
-``image``): both pages are rows, one without a labelled line too, a scan without a gutter is one page, and none of the
-three doubts is left. A row holds no image: :func:`open_page` crops the scan when a page is wanted.
+``image``): both pages are rows, one without a labelled line too. A scan the network finds no gutter in is still cut
+there when its lines' gutter falls at the same place (two readings that agree), is one page when its lines see no
+opening either, and is otherwise given whole with ``spread`` set: its lines say opening, the image does not say where,
+so it is not a page. A row holds no image: :func:`open_page` crops the scan when a page is wanted.
 """
 
 from __future__ import annotations
@@ -28,13 +30,15 @@ from diffu_curate.gutter import Gutter
 from diffu_curate.settings import Pool, collection_of
 from diffu_curate.table import append_rows, compact, held_values
 from diffu_page.data.reader_pages import LabelFile, gt_split, label_files
-from diffu_page.page.layout.pages import ScanPage, is_unsplit_spread, page_id, scan_pages, split_at, whole_page
+from diffu_page.page.layout.model import Layout
+from diffu_page.page.layout.pages import ScanPage, gutter, is_unsplit_spread, page_id, scan_pages, split_at, whole_page
 from diffu_page.page.layout.xml_replay import load_xml_layout
 
 GROUND_TRUTH = "gt"  # the ground truth's name as a pool in the table
 WHOLE = "whole"  # the side of a page that is its scan whole
 BY_LINES, BY_IMAGE = "lines", "image"  # how a scan was cut: by its labelled lines, or at the gutter read from its image
 VOLUMES_A_WRITE = 200
+AGREE = 0.04  # the lines' gutter and the image's are the same place within this share of the scan's width
 
 Image.MAX_IMAGE_PIXELS = None  # the scans are large; they are our own
 
@@ -117,8 +121,8 @@ def _row(scan: Scan, page: ScanPage, *, alone: bool | None, spread: bool | None,
 
 def page_rows(scan: Scan) -> list[PageRow]:
     """The rows of a scan's pages; one row with its error if its labels cannot be read. A scan given with its gutter
-    is cut at it when the gutter is found, both pages given even when one holds no labelled line, and is one page
-    when it is not; a scan given without is cut by its labelled lines, as the set builder cuts it."""
+    is cut as :func:`_cut_at_the_image` says, both pages given even when one holds no labelled line; a scan given
+    without is cut by its labelled lines, as the set builder cuts it."""
     try:
         layout = load_xml_layout(scan.labels)
     except ValueError as error:
@@ -134,8 +138,21 @@ def page_rows(scan: Scan) -> list[PageRow]:
         pages = scan_pages(layout)
         alone = len(pages) == 1 and pages[0].side is not None
         return [_row(scan, page, alone=alone, spread=is_unsplit_spread(layout), size=size) for page in pages]
-    pages = split_at(layout, scan.gutter.x * layout.width) if scan.gutter.found else [whole_page(layout)]
-    return [_row(scan, page, alone=None, spread=None, size=size) for page in pages]
+    pages, opening_uncut = _cut_at_the_image(layout, scan.gutter)
+    return [_row(scan, page, alone=None, spread=opening_uncut, size=size) for page in pages]
+
+
+def _cut_at_the_image(layout: Layout, found: Gutter) -> tuple[list[ScanPage], bool]:
+    """The scan's pages by the gutter read from its image, and whether it is an opening left uncut. Cut at the image's
+    gutter when the network finds one, or when it is unsure and the lines' gutter falls within :data:`AGREE` of it.
+    Else whole: an opening left uncut when the lines see a gutter elsewhere or text across the middle of a scan wider
+    than tall (of 36 such scans looked at, all held two pages or sheets, the right cut the lines' in some and the
+    image's in others)."""
+    by_lines = gutter(layout)
+    agreed = by_lines is not None and abs(by_lines / layout.width - found.x) <= AGREE
+    if found.found or agreed:
+        return list(split_at(layout, found.x * layout.width)), False
+    return [whole_page(layout)], by_lines is not None or is_unsplit_spread(layout)
 
 
 def pool_scans(pool: Pool, volume: Path, gutters: dict[str, Gutter] | None = None) -> list[Scan]:
