@@ -4,7 +4,7 @@ The ledger of the curation work: what was measured, what was seen, what works, w
 it the day a thing is learnt. The code is `packages/curate` (`diffu-curate`); the reader runs are in
 [HTR_RUNS.md](HTR_RUNS.md).
 
-## Start here: state and task list (updated 15 Nov 17:10)
+## Start here: state and task list (updated 15 Nov 19:00)
 
 Read this section, then "Rules". Update it whenever a job starts or ends or a task changes state.
 
@@ -12,10 +12,11 @@ Read this section, then "Rules". Update it whenever a job starts or ends or a ta
 
 | Where | Window | What | Writes | When it ends |
 |---|---|---|---|---|
-| CPU | `gutters` | `diffu-curate gutters`: the gutter network over every scan (1,320,000 of 3,184,889 at 17:00, ~57 scans/s, done about 02:00 on 16 Nov) | `runs/htr/curate/gutters.lance`, `gutters.log` | then `diffu-curate pages --gutters` into `pages_cut.lance` (task 1) |
-| GPU 1 | `gpu1queue` | Nemotron (`nemotron-parse-more/output/checkpoint-3094`, guard 10) reading 56,130 andra arkiv pool pages (`runs/htr/curate/gpu1_queue.sh`) | `runs/htr/curate/pool_read/andra_pilot.jsonl` | resumable: rerun the script |
-| GPU 1 | `poolread3` | a second reader on the andra arkiv pages, from the end (started 15 Nov 15:00; the first reader does not see its output, so stop both when their page counts sum to 56,130) | `pool_read/andra_pilot_rev.jsonl` | resumable |
-| GPU 2 | `poolread`, `poolread2` | the same reader on 53,490 Svea pool pages, one from the start, one from the end (`runs/htr/verify/pool_read.py`) | `pool_read/svea_pilot.jsonl`, `svea_pilot_rev.jsonl` | resumable |
+| CPU | `gutters` | `diffu-curate gutters`: the gutter network over every scan (1,700,000 of 3,184,889 at 19:00, ~57 scans/s, done about 02:00 on 16 Nov); then `pages --gutters` writes `pages_cut.lance`, **not to be used as it is** (task 1) | `runs/htr/curate/gutters.lance`, `gutters.log` | a table only; nothing reads it |
+| GPU 1 | `vlserve5` | Nemotron 3.5 Super VL served in Docker (`runs/htr/curate/serve_vl.sh 1 8011`; 96 GB of the GPU; stop with `docker stop nemotron-vl`) | `runs/htr/curate/vl/serve.log` | stays up while task 9 runs |
+| GPU 1 | `vldescribe` | the model describing 45,000 scans (20,000 Svea, 20,000 andra arkiv, 5,000 GT; `prototypes/vl_describe.py`, 2.7 scans/s, ~4.7 h from 18:50) | `runs/htr/curate/vl/sample.jsonl`, `sample.log` | resumable: rerun the same command |
+| GPU 2 | `poolread`, `poolread2` | Nemotron Parse reading 53,490 Svea pool pages, one from the start, one from the end (`runs/htr/verify/pool_read.py`) | `pool_read/svea_pilot.jsonl`, `svea_pilot_rev.jsonl` | resumable |
+| (stopped) | | the andra arkiv pool read, stopped 15 Nov 18:40 at 14,400 of 56,130 pages for the VL model's GPU; `runs/htr/curate/gpu1_queue.sh` resumes it (a second reader: the `poolread3` command with REVERSE) | `pool_read/andra_pilot.jsonl`, `andra_pilot_rev.jsonl` | restart when GPU 1 is free |
 
 **Tasks, in order.** 1-3 are the agreed backlog (below); 4-8 are experiments asked for. A GPU that falls idle takes the
 next GPU task at once.
@@ -29,7 +30,7 @@ next GPU task at once.
 | 5 | Reader disagreement with the old label, per page and per cluster | reads running (15 Nov 17:00: Svea 15,137 of 53,490, andra arkiv 11,069 of 56,130; ~2,300 and ~2,500 pages an hour); median disagreement 12 % and 11 % of characters; 10 % and 8 % of pages disagree by more than half, and 24 of those looked at (section "Pages where our reader and the old label disagree by more than half") | **the pilot sets use the old line-position cut, so part of the disagreement is bad cuts**: join the reads to the image gutter (`gutters.lance`) and redo the look on pages whose cut the image confirms, each text read against the image in full; then the bands under 5 %, 10-20 % and 20-50 %; then score clusters (MinerU2.5-Pro's method, below) |
 | 6 | Map the pools: embeddings and EVoC | embedders compared (TIPSv2 best for page similarity); EVoC run on 3,007 pages | tune PCA/UMAP/EVoC settings; name clusters with Toponymy and a local model; balance by cluster size^0.2 |
 | 7 | Curated pretraining: ~100,000 filtered, image-cut pages of both pools, then a 4-epoch GT fine-tune, against 6.73 % | not started | needs 1 and a filter from 4 and 5; the unfiltered control gave 7.18 % against 7.55 % |
-| 9 | **Describe each scan before cutting it** (Gabriel, 15 Nov evening): a vision-language model answers a fixed list of questions about a scan (what it is: handwriting, table or ledger, printed or typed card, reel target, blank, cover; one page or an opening, and whether one side is empty; columns of running text; writing up to the fold; turned writing), on a sample drawn from every cluster; a small head on the TIPSv2 / DINOv3 page embeddings spreads the answers to all scans; the answers decide whether a scan is dropped, kept whole or cut, and how carefully | NVIDIA Nemotron 3.5 Super VL (120 B, NVFP4, 75 GB, runs on one RTX PRO 6000 by its card, vLLM 0.32.0 in Docker) downloading to `/mnt/scratch/gabriel/models/nemotron-3.5-super-vl-nvfp4` (the root disk has 72 GB free: nothing large goes in `~/.cache`) | pilot: 300 scans whose kind is known from the groups looked at today, the model's answers checked by eye before anything is built on them; it needs a whole GPU, so one pool's readers stop for it (resumable) |
+| 9 | **Describe each scan before it is cut** (Gabriel, 15 Nov): a vision-language model answers a fixed form about a scan; the answers and captions name the clusters (Toponymy) and are spread to all scans by a head on the page embeddings; every answer a column, the filter chosen afterwards | pilot done (section "The vision-language model describing scans"): 267 of 268 scans answered, 11 of 12 looked at right, its fold position a guess (0.5 for three in four), 2.7 scans/s; 45,000 scans being described | when `sample.log` says 45000: look at 20 scans of every kind and layout it names; embed the same 45,000 scans whole (TIPSv2, DINOv3), cluster with EVoC, name the clusters with Toponymy from the captions (read its docs first: can it call this server?); train the head and score it on held-out scans; then the columns on `scans.lance` |
 | 8 | Line finder test: PaddleOCR's text detector against RF-DETR-Seg and the old YOLO, on GT PAGE polygons | proposed, **not approved** | ask before starting |
 
 **Every check is a column (Gabriel, 15 Nov evening).** What describes a scan before it is cut goes on `scans.lance`
@@ -363,6 +364,31 @@ Each scan drawn with the image's gutter and the old line cut on it, 12 a group
 - **What it means for the pilot sets and the pool reads:** both use the old line cut, so they hold `alone` pages
   with a strip of the facing page, tall openings as one page, and title cards cut in half. Pages whose rectangle
   changes in `pages_cut.lance` are to be read again; the rest of the reads stand.
+
+## The vision-language model describing scans (15 Nov evening, task 9's pilot)
+
+NVIDIA Nemotron 3.5 Super VL (120 B parameters, 12 B active, NVFP4, 75 GB; C-RADIO vision encoder) on GPU 1, asked
+to fill a form about a whole scan: caption, kind, layout, written side, columns of running text, table across the
+fold, writing at the fold, turned writing, where the fold is (`runs/htr/curate/prototypes/vl_describe.py`).
+
+- **Setting it up** (each cost a start): our vLLM environment cannot serve it (it holds no built flashinfer kernels
+  and cannot build them: its nvcc and CUDA headers disagree), so it runs in the card's container
+  (`vllm/vllm-openai:v0.32.0`, 33 GB on the root disk, which has 40 GB left) with the flags of NVIDIA's cookbook for
+  one RTX Pro 6000 (context 16,384, 128 sequences, 5 draft tokens). Scans are sent at 1,536 px on the longer side
+  (the cookbook's size for documents), thinking off, the JSON asked for in the prompt. **A schema forced by the server
+  gave broken JSON and "both pages empty" for nearly every opening**; the cookbook asks in the prompt, and so do we.
+- **Pilot: 268 Svea scans, 20 from each of the groups looked at today.** 267 answered; 2.7 scans a second with 32
+  requests in flight (2,270 tokens in, 104 out a scan): 45,000 scans in under 5 hours, all 3.15 million in 13 days,
+  so a sample and a head on the embeddings, not every scan.
+- **Its answers follow what the groups are:** the unsure wide scans without lines are signs and cards (15 of 20) and
+  "not a page"; the unsure tall ones covers and spines (10 of 20); the tall scans the gutter network cuts are
+  openings (19 of 20); the scans with one labelled side are "one page empty" (12 of 20). Of 12 looked at with their
+  answers, 11 right; the miss a single register page with a strip of the next page, called an opening with both
+  pages written.
+- **Its fold position is a guess:** 0.50 for 149 of the 198 scans it sees a fold in. It says that there is a fold and
+  which side is written, not where to cut. The cut's place still needs its own step.
+- Table across the fold: 1 % and turned writing: 0 % in the pilot: too few to judge those two answers; to check on
+  scans known to be such (ledgers over both pages; the orientation network's turned pages).
 
 ## Experiments queued (asked for)
 
