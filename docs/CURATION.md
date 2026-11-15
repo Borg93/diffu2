@@ -4,7 +4,7 @@ The ledger of the curation work: what was measured, what was seen, what works, w
 it the day a thing is learnt. The code is `packages/curate` (`diffu-curate`); the reader runs are in
 [HTR_RUNS.md](HTR_RUNS.md).
 
-## Start here: state and task list (updated 15 Nov 13:45)
+## Start here: state and task list (updated 15 Nov 17:10)
 
 Read this section, then "Rules". Update it whenever a job starts or ends or a task changes state.
 
@@ -12,7 +12,7 @@ Read this section, then "Rules". Update it whenever a job starts or ends or a ta
 
 | Where | Window | What | Writes | When it ends |
 |---|---|---|---|---|
-| CPU | `gutters` | `diffu-curate gutters`: the gutter network over every scan (520,000 of 3,184,889 at 13:00, ~33 scans/s, about a day left) | `runs/htr/curate/gutters.lance`, `gutters.log` | then `diffu-curate pages --gutters` into `pages_cut.lance` (task 1) |
+| CPU | `gutters` | `diffu-curate gutters`: the gutter network over every scan (1,320,000 of 3,184,889 at 17:00, ~57 scans/s, done about 02:00 on 16 Nov) | `runs/htr/curate/gutters.lance`, `gutters.log` | then `diffu-curate pages --gutters` into `pages_cut.lance` (task 1) |
 | GPU 1 | `gpu1queue` | Nemotron (`nemotron-parse-more/output/checkpoint-3094`, guard 10) reading 56,130 andra arkiv pool pages (`runs/htr/curate/gpu1_queue.sh`) | `runs/htr/curate/pool_read/andra_pilot.jsonl` | resumable: rerun the script |
 | GPU 1 | `poolread3` | a second reader on the andra arkiv pages, from the end (started 15 Nov 15:00; the first reader does not see its output, so stop both when their page counts sum to 56,130) | `pool_read/andra_pilot_rev.jsonl` | resumable |
 | GPU 2 | `poolread`, `poolread2` | the same reader on 53,490 Svea pool pages, one from the start, one from the end (`runs/htr/verify/pool_read.py`) | `pool_read/svea_pilot.jsonl`, `svea_pilot_rev.jsonl` | resumable |
@@ -26,7 +26,7 @@ next GPU task at once.
 | 2 | Calibration per single page: one estimate of a page's label error from all scores | not started | needs 1; inputs: page confidence, the writing layer's coverage (4), reader disagreement (5) |
 | 3 | The pipeline as code: drop, score, calibrate, deduplicate, balance, tagged training tables, a viewer | not started | needs 2 |
 | 4 | Writing layer (flags writing without a label) | tuned and checked (section "The writing layer, tuned and checked"): it separates pages with a quarter of their lines unlabelled from complete ones (AUC 0.95 on test), a tenth less well (0.88); DINOv3, TIPSv2 and both are equal, so DINOv3 alone, linear head, threshold 0.5; heads saved in `writing_tune/heads.pt` | move it into `diffu_curate` as a score column (`covered`: the share of predicted writing inside the labelled lines' closed region); run it on the 3,651 calibration scans and sample the lowest-scoring pool pages to see what real misses it finds |
-| 5 | Reader disagreement with the old label, per page and per cluster | reads running; so far the median disagreement is 12 % of characters on Svea (5,987 pages) and 11 % on andra arkiv (2,502); 7-11 % of pages disagree by more than half | sample and look at the pages above 50 % and below 5 %; then score clusters (MinerU2.5-Pro's method, below) |
+| 5 | Reader disagreement with the old label, per page and per cluster | reads running (15 Nov 17:00: Svea 15,137 of 53,490, andra arkiv 11,069 of 56,130; ~2,300 and ~2,500 pages an hour); median disagreement 12 % and 11 % of characters; 10 % and 8 % of pages disagree by more than half, and 24 of those looked at (section "Pages where our reader and the old label disagree by more than half") | look at 20 pages each of the bands under 5 %, 10-20 % and 20-50 %; then score clusters (MinerU2.5-Pro's method, below) |
 | 6 | Map the pools: embeddings and EVoC | embedders compared (TIPSv2 best for page similarity); EVoC run on 3,007 pages | tune PCA/UMAP/EVoC settings; name clusters with Toponymy and a local model; balance by cluster size^0.2 |
 | 7 | Curated pretraining: ~100,000 filtered, image-cut pages of both pools, then a 4-epoch GT fine-tune, against 6.73 % | not started | needs 1 and a filter from 4 and 5; the unfiltered control gave 7.18 % against 7.55 % |
 | 8 | Line finder test: PaddleOCR's text detector against RF-DETR-Seg and the old YOLO, on GT PAGE polygons | proposed, **not approved** | ask before starting |
@@ -280,6 +280,32 @@ volumes, confirmed on test volumes (400 pages, 92 of them colour ledgers and tab
   been scored; next is the calibration scans and a sample of the pool pages with the lowest `covered`. Ledgers on
   greyscale rest on 8 pages.
 - The earlier figure of 0.93 was against the ALTO boxes and is void.
+
+## Pages where our reader and the old label disagree by more than half (15 Nov, 24 looked at)
+
+Of the pool pages read so far, 1,549 of 15,137 Svea pages (10 %) and 841 of 11,069 andra arkiv pages (8 %) have an
+edit distance between Nemotron's reading and the old label above half the label's length. By length alone:
+
+| | Svea | Andra arkiv |
+|---|---|---|
+| old label under 100 characters | 549 | 277 |
+| reader over 1.5 times the label | 314 | 160 |
+| about the same length | 416 | 242 |
+| reader under two thirds of the label | 218 | 115 |
+| reader under 100 characters, label longer | 52 | 47 |
+
+12 drawn at random from each pool and looked at, image beside both texts:
+- **The label is incomplete, the reader reads the page** (about half): registers and ledgers where the old pipeline
+  labelled a heading or a few cells and the reader returns the whole table (a label of 98 characters against 775 on a
+  full register page; 15 against 1,157 on a full page of prose).
+- **Pages that are not a page of handwriting**: typed archive title cards and reel targets (2 of 12 in andra arkiv),
+  near-blank sheets with a stray word, a letter cover with an address, a page that is mostly a drawing.
+- **Hard pages where neither text can be trusted**: heavy bleed-through, faint microfilm; both texts are noise.
+- None of the 24 was a good old label spoiled by a bad reading.
+
+So a disagreement above half marks a page whose old label should not be trained on as it is: either the page is
+dropped, or the reader's text is the better label. It cannot tell those two apart by itself; the label's length against
+the reader's does part of it. A sample of 24: enough to see the kinds, not to count them.
 
 ## Experiments queued (asked for)
 
