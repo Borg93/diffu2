@@ -22,7 +22,7 @@ next GPU task at once.
 
 | # | Task | State | Next step |
 |---|---|---|---|
-| 1 | Single pages: every scan cut at its gutter from the image | gutter pass running | when `gutters.log` says done: `pages --gutters`, sample 20 cut pages per flag, re-cut the GT and the 200 test pages, re-score the readers once |
+| 1 | Single pages: every scan cut at its gutter from the image | gutter pass running; the cut looked at by group and one bug fixed (section "The image cut looked at before the re-cut") | when `gutters.log` says done: `pages --gutters`, sample 20 cut pages per group again on andra arkiv and the GT, re-cut the GT and the 200 test pages, re-score the readers once; re-read the pool pages whose rectangle changed |
 | 2 | Calibration per single page: one estimate of a page's label error from all scores | not started | needs 1; inputs: page confidence, the writing layer's coverage (4), reader disagreement (5) |
 | 3 | The pipeline as code: drop, score, calibrate, deduplicate, balance, tagged training tables, a viewer | not started | needs 2 |
 | 4 | Writing layer (flags writing without a label) | tuned and checked (section "The writing layer, tuned and checked"): it separates pages with a quarter of their lines unlabelled from complete ones (AUC 0.95 on test), a tenth less well (0.88); DINOv3, TIPSv2 and both are equal, so DINOv3 alone, linear head, threshold 0.5; heads saved in `writing_tune/heads.pt` | move it into `diffu_curate` as a score column (`covered`: the share of predicted writing inside the labelled lines' closed region); run it on the 3,651 calibration scans and sample the lowest-scoring pool pages to see what real misses it finds |
@@ -313,6 +313,36 @@ right" was judged from length and the first 90 characters.
 So what stands: a disagreement above half marks a page not to train on as it is. What does not stand: the shares of
 each kind, and any claim about which text is right. To redo on image-cut pages (task 1), reading each sampled page's
 two texts against the image in full.
+
+## The image cut looked at before the re-cut (15 Nov evening, ~170 Svea scans by group)
+
+Each scan drawn with the image's gutter and the old line cut on it, 12 a group
+(scratch scripts; groups from `gutters.lance` joined to `pages.lance`).
+
+| Group (Svea, share of scans) | What the 12 showed |
+|---|---|
+| score ≥ 0.9 (66 %) | 12 of 12 on the gutter |
+| score 0.7-0.9 (28 %) | on the gutter or within a few % of it in a blank band |
+| score 0.5-0.7 (3.6 %) | 11 of 12 on the gutter or a sheet's edge; one loose letter cut through |
+| image sure, lines' cut elsewhere (5 %) | the image right in ~11 of 12 |
+| image sure, facing page unlabelled (`alone`, 15 %) | 12 of 12 on the gutter; the old cut off in all |
+| image sure, scan taller than wide (0.4 %) | 12 of 12 are openings of narrow books: the old table took each for one page |
+| image sure, no labelled line (3.7 %) | openings cut right; one placeholder card cut at 0.18; two blank openings 5-8 % off |
+| **image unsure (< 0.5), lines say opening (1.4 %)** | **36 of 36 hold two pages or sheets** |
+| image unsure, no line, wider than tall (1.1 %) | reel targets, title cards, placeholders: one image each, rightly whole |
+| image unsure, taller than wide, lines (0.2 %) | 12 of 12 single pages |
+
+- **Bug, fixed (d1dd487):** a scan the network was unsure of became one whole "page". 17,082 Svea scans have lines
+  that say opening there. Now: cut at the image's gutter when the lines' gutter is within 4 % of the width of it
+  (5,783 scans; 24 of 24 looked at right), else whole with `spread` set, not a page (11,299: the right cut was the
+  lines' in some and the image's in others).
+- **Measured:** on 6,000 Svea scans the image cut passes through 3 or more labelled lines in 0.4-0.5 % of scans, at
+  every score from 0.5 up.
+- **Known, not fixed:** on blank or faint openings the gutter can sit 5-8 % of the width off (3 seen); the strip it
+  moves holds no writing. A loose sheet lying over an opening is cut through.
+- **What it means for the pilot sets and the pool reads:** both use the old line cut, so they hold `alone` pages
+  with a strip of the facing page, tall openings as one page, and title cards cut in half. Pages whose rectangle
+  changes in `pages_cut.lance` are to be read again; the rest of the reads stand.
 
 ## Experiments queued (asked for)
 
