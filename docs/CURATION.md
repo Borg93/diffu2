@@ -134,6 +134,21 @@ scale (about 30 whole openings, strips on some one-side pages).
 - Is the goal a better score on the mixed test pages, or a better reader for these archives? The pools are mostly
   microfilm of a few series.
 
+## Experiments queued (asked for)
+
+1. **Map the pools with image embeddings and EVoC** (asked for 15 Nov). Embed single pages with DINOv3 (the page
+   embedding above), TIPSv2 and EmbeddingGemma 2 (`google/embeddinggemma-2`, Oct 2026: one 768-d space for text,
+   images, video and audio, interleaved; 0.74 B parameters), cluster each with EVoC (TutteInstitute/evoc: UMAP +
+   HDBSCAN specialised to embedding vectors, CPU, several granularities, near-duplicate detection built in), and
+   compare: do the clusters separate the kinds of page we know (prose, ledgers, registers, letters, typed cards, reel
+   targets, placeholder sheets, blanks, turned pages) and the hands, and which model separates them best? fast_hdbscan
+   (TutteInstitute/fast_hdbscan) as the clustering under a 2-D map. EmbeddingGemma 2 can also embed a page with its
+   old label's text interleaved (`"<|image|> <label text>"`), which may separate pages whose label does not match the
+   image. Then name the clusters with Toponymy (TutteInstitute/toponymy: names clusters at several scales with an
+   LLM; local models through Hugging Face or LlamaCpp, so no outside service) from each cluster's label texts or
+   captions. Start on the 3,007 pages already embedded with DINOv3, then a stratified sample of about 50,000 pages on
+   a GPU when the queue allows. Looked at by sampling every cluster, not by its size alone.
+
 ## Backlog, in order (agreed 14 Nov)
 
 1. **Single pages first, as a Lance table of pointers.** Built; the image-based gutter to correct the 870,000
