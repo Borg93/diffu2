@@ -134,6 +134,30 @@ scale (about 30 whole openings, strips on some one-side pages).
 - Is the goal a better score on the mixed test pages, or a better reader for these archives? The pools are mostly
   microfilm of a few series.
 
+## EVoC on DINOv3 page embeddings (15 Nov, first step of the queued experiment)
+
+EVoC on the 3,007 pages embedded with DINOv3 (2,048-d: class token and mean patch token): four layers of 95, 55, 23
+and 9 clusters; at 23 clusters 22 % of pages are noise; 27 duplicate groups (54 pages). Every cluster looked at (12
+pages each):
+
+| Cluster | Pages | What it is |
+|---|---|---|
+| 0 | 65 | microfilm reel targets and typed archive title cards |
+| 4 | 62 | placeholder sheets: BLANK PAGES / BLANKA SIDOR, SLUT / END, BÖRJAN / BEGIN, FORTSÄTTNING / CONTINUED, Volym nn |
+| 12 | 48 | blank or near-blank microfilm openings |
+| 15, 18, 19 | 109 | microfilm pages with a few lines in a corner or folded letter covers |
+| 16 | 59 | blank colour pages, covers, paper edges |
+| 1, 2 | 155 | colour ruled registers, 57-82 % without a labelled line (Svea, 20th century) |
+| 3 | 116 | ledgers and tables (median 41 lines) |
+| 5, 8, 9 | 346 | colour prose |
+| 7, 11, 13, 14 | 1,044 | microfilm prose, split by contrast and density |
+| 17, 20, 21, 22 | 218 | one series in one hand with decorated headings (andra arkiv only) |
+| noise | 675 | mixed |
+
+So without labels, the non-handwriting kinds (clusters 0, 4, 12, 16: about 230 pages, 8 %), the unlabelled registers
+and a single series' hand each come out as their own cluster. fast_hdbscan on a 2-D UMAP of the same embeddings: 36
+clusters, 12 % noise.
+
 ## Experiments queued (asked for)
 
 1. **Map the pools with image embeddings and EVoC** (asked for 15 Nov). Embed single pages with DINOv3 (the page
