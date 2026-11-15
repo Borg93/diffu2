@@ -4,7 +4,7 @@ The ledger of the curation work: what was measured, what was seen, what works, w
 it the day a thing is learnt. The code is `packages/curate` (`diffu-curate`); the reader runs are in
 [HTR_RUNS.md](HTR_RUNS.md).
 
-## Start here: state and task list (updated 15 Nov 13:30)
+## Start here: state and task list (updated 15 Nov 13:45)
 
 Read this section, then "Rules". Update it whenever a job starts or ends or a task changes state.
 
@@ -14,7 +14,6 @@ Read this section, then "Rules". Update it whenever a job starts or ends or a ta
 |---|---|---|---|---|
 | CPU | `gutters` | `diffu-curate gutters`: the gutter network over every scan (520,000 of 3,184,889 at 13:00, ~33 scans/s, about a day left) | `runs/htr/curate/gutters.lance`, `gutters.log` | then `diffu-curate pages --gutters` into `pages_cut.lance` (task 1) |
 | GPU 1 | `gpu1queue` | Nemotron (`nemotron-parse-more/output/checkpoint-3094`, guard 10) reading 56,130 andra arkiv pool pages (`runs/htr/curate/gpu1_queue.sh`) | `runs/htr/curate/pool_read/andra_pilot.jsonl` | resumable: rerun the script |
-| GPU 1 | `weval` | the writing layer's check (`prototypes/writing_eval.py`) | `runs/htr/curate/writing_tune/eval.log`, `eval.json`, `heads.pt` | ~30 min; then task 4 |
 | GPU 2 | `poolread`, `poolread2` | the same reader on 53,490 Svea pool pages, one from the start, one from the end (`runs/htr/verify/pool_read.py`) | `pool_read/svea_pilot.jsonl`, `svea_pilot_rev.jsonl` | resumable |
 
 **Tasks, in order.** 1-3 are the agreed backlog (below); 4-8 are experiments asked for. A GPU that falls idle takes the
@@ -25,7 +24,7 @@ next GPU task at once.
 | 1 | Single pages: every scan cut at its gutter from the image | gutter pass running | when `gutters.log` says done: `pages --gutters`, sample 20 cut pages per flag, re-cut the GT and the 200 test pages, re-score the readers once |
 | 2 | Calibration per single page: one estimate of a page's label error from all scores | not started | needs 1; inputs: page confidence, the writing layer's coverage (4), reader disagreement (5) |
 | 3 | The pipeline as code: drop, score, calibrate, deduplicate, balance, tagged training tables, a viewer | not started | needs 2 |
-| 4 | Writing layer (flags writing without a label) | tuned: DINOv3, TIPSv2 and both within 0.01 IoU on test (0.723, 0.713, 0.729), so DINOv3 alone with a linear head; check running of what it is for (does its coverage score fall when lines are removed, by kind of page) | read `eval.log`; write the result here; if it separates, move it into `diffu_curate` as a score column |
+| 4 | Writing layer (flags writing without a label) | tuned and checked (section "The writing layer, tuned and checked"): it separates pages with a quarter of their lines unlabelled from complete ones (AUC 0.95 on test), a tenth less well (0.88); DINOv3, TIPSv2 and both are equal, so DINOv3 alone, linear head, threshold 0.5; heads saved in `writing_tune/heads.pt` | move it into `diffu_curate` as a score column (`covered`: the share of predicted writing inside the labelled lines' closed region); run it on the 3,651 calibration scans and sample the lowest-scoring pool pages to see what real misses it finds |
 | 5 | Reader disagreement with the old label, per page and per cluster | reads running; so far the median disagreement is 12 % of characters on Svea (5,987 pages) and 11 % on andra arkiv (2,502); 7-11 % of pages disagree by more than half | sample and look at the pages above 50 % and below 5 %; then score clusters (MinerU2.5-Pro's method, below) |
 | 6 | Map the pools: embeddings and EVoC | embedders compared (TIPSv2 best for page similarity); EVoC run on 3,007 pages | tune PCA/UMAP/EVoC settings; name clusters with Toponymy and a local model; balance by cluster size^0.2 |
 | 7 | Curated pretraining: ~100,000 filtered, image-cut pages of both pools, then a 4-epoch GT fine-tune, against 6.73 % | not started | needs 1 and a filter from 4 and 5; the unfiltered control gave 7.18 % against 7.55 % |
@@ -249,6 +248,38 @@ information).
   after a 20-page check of the output.
 - The page table's `collection` for GT pages and the calibration's were the GT root folder's name (it starts with GT-
   as the collections do); fixed (3417d95) and the GT rows and both calibrations rebuilt.
+
+## The writing layer, tuned and checked (15 Nov)
+
+A head on frozen patch features says "writing here"; trained on 1,600 GT pages' PAGE line polygons, chosen on val
+volumes, confirmed on test volumes (400 pages, 92 of them colour ledgers and tables drawn on purpose).
+`prototypes/writing_tune.py` (two resolutions, results only) and `writing_eval.py` (1,024 px, heads saved in
+`runs/htr/curate/writing_tune/heads.pt`, rows a page in `eval.json`).
+
+- **The embedder does not matter here.** Test IoU against the line polygons: DINOv3 + TIPSv2 0.729, DINOv3 0.723,
+  TIPSv2 0.713 (both − DINOv3 +0.006, 95 % 0.001 to 0.010); MLP against linear and 1,536 against 1,024 px: no
+  difference. So DINOv3 alone, a linear head, 1,024 px.
+- **IoU's ceiling is 0.84, not 1.** The line polygons themselves put on the 16-pixel patch grid and back overlap the
+  polygons by 0.841 on test (prose greyscale 0.899, prose colour 0.826, ledger colour 0.793). The heads' 0.72 is 86 %
+  of what any map on this grid can reach.
+- **What it is for: does it notice missing labels?** `covered` = the share of the predicted writing that lies inside
+  the labelled lines' region (polygons closed over the gaps between lines). On complete GT pages its median is 0.95
+  (ledger colour 0.92). With a run of consecutive lines' polygons removed, how often a degraded page scores below an
+  intact one (AUC over test pages; 0.5 is chance), DINOv3 linear at 0.5:
+
+  | Lines removed | All | Prose greyscale | Prose colour | Ledger colour (92) | Ledger greyscale (8) |
+  |---|---|---|---|---|---|
+  | 10 % | 0.883 | 0.955 | 0.873 | 0.836 | 0.938 |
+  | 25 % | 0.950 | 0.984 | 0.954 | 0.901 | 1.0 |
+  | 50 % | 0.972 | | | | |
+
+  Every feature set and head is within 0.01 of these. Recall of the polygons 0.88, 0.91 of the predicted writing
+  inside the closed region.
+- **What this does not show.** The removed lines are made up: a run of neighbouring lines of a page whose labels are
+  otherwise complete. The old pipeline's real misses (a whole margin, a faint hand, a register's columns) have not
+  been scored; next is the calibration scans and a sample of the pool pages with the lowest `covered`. Ledgers on
+  greyscale rest on 8 pages.
+- The earlier figure of 0.93 was against the ALTO boxes and is void.
 
 ## Experiments queued (asked for)
 
