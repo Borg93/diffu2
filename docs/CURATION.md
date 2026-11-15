@@ -340,6 +340,16 @@ Each scan drawn with the image's gutter and the old line cut on it, 12 a group
   every score from 0.5 up.
 - **Known, not fixed:** on blank or faint openings the gutter can sit 5-8 % of the width off (3 seen); the strip it
   moves holds no writing. A loose sheet lying over an opening is cut through.
+- **Corrected the same evening (Gabriel: the cuts still go through text).** The groups above were judged on
+  thumbnails, where a cut 1-2 % of the width off looks right. At full resolution, on 5,940 Svea scans with a gutter
+  found, the cut lies inside one or more label boxes in 2.2 % of scans, two or more in 0.9 %, three or more in 0.5 %.
+  Of 12 of the two-or-more looked at as strips: 4 cut letters or a column of numbers (tight bindings with writing
+  up to the fold, registers), the rest are label boxes that reach over the fold. Of 12 random scans: none cut text, 2
+  sit 2-5 % off in a blank band. The cause is how the network is made: 0.2 M parameters trained from nothing on
+  384x256 thumbnails, answering on 96 columns (1 % of the width each, 40-60 scan pixels), taught the middle of the
+  gap between the two pages' labelled text, not the fold, and never scored against folds marked by hand. It finds
+  that a scan is an opening; it does not place the cut to the pixel. To do: a second step that places the cut at
+  full resolution near the network's answer, scored against folds marked by hand on a few hundred scans.
 - **What it means for the pilot sets and the pool reads:** both use the old line cut, so they hold `alone` pages
   with a strip of the facing page, tall openings as one page, and title cards cut in half. Pages whose rectangle
   changes in `pages_cut.lance` are to be read again; the rest of the reads stand.
