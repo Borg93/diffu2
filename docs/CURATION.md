@@ -26,7 +26,7 @@ next GPU task at once.
 | 2 | Calibration per single page: one estimate of a page's label error from all scores | not started | needs 1; inputs: page confidence, the writing layer's coverage (4), reader disagreement (5) |
 | 3 | The pipeline as code: drop, score, calibrate, deduplicate, balance, tagged training tables, a viewer | not started | needs 2 |
 | 4 | Writing layer (flags writing without a label) | tuned and checked (section "The writing layer, tuned and checked"): it separates pages with a quarter of their lines unlabelled from complete ones (AUC 0.95 on test), a tenth less well (0.88); DINOv3, TIPSv2 and both are equal, so DINOv3 alone, linear head, threshold 0.5; heads saved in `writing_tune/heads.pt` | move it into `diffu_curate` as a score column (`covered`: the share of predicted writing inside the labelled lines' closed region); run it on the 3,651 calibration scans and sample the lowest-scoring pool pages to see what real misses it finds |
-| 5 | Reader disagreement with the old label, per page and per cluster | reads running (15 Nov 17:00: Svea 15,137 of 53,490, andra arkiv 11,069 of 56,130; ~2,300 and ~2,500 pages an hour); median disagreement 12 % and 11 % of characters; 10 % and 8 % of pages disagree by more than half, and 24 of those looked at (section "Pages where our reader and the old label disagree by more than half") | look at 20 pages each of the bands under 5 %, 10-20 % and 20-50 %; then score clusters (MinerU2.5-Pro's method, below) |
+| 5 | Reader disagreement with the old label, per page and per cluster | reads running (15 Nov 17:00: Svea 15,137 of 53,490, andra arkiv 11,069 of 56,130; ~2,300 and ~2,500 pages an hour); median disagreement 12 % and 11 % of characters; 10 % and 8 % of pages disagree by more than half, and 24 of those looked at (section "Pages where our reader and the old label disagree by more than half") | **the pilot sets use the old line-position cut, so part of the disagreement is bad cuts**: join the reads to the image gutter (`gutters.lance`) and redo the look on pages whose cut the image confirms, each text read against the image in full; then the bands under 5 %, 10-20 % and 20-50 %; then score clusters (MinerU2.5-Pro's method, below) |
 | 6 | Map the pools: embeddings and EVoC | embedders compared (TIPSv2 best for page similarity); EVoC run on 3,007 pages | tune PCA/UMAP/EVoC settings; name clusters with Toponymy and a local model; balance by cluster size^0.2 |
 | 7 | Curated pretraining: ~100,000 filtered, image-cut pages of both pools, then a 4-epoch GT fine-tune, against 6.73 % | not started | needs 1 and a filter from 4 and 5; the unfiltered control gave 7.18 % against 7.55 % |
 | 8 | Line finder test: PaddleOCR's text detector against RF-DETR-Seg and the old YOLO, on GT PAGE polygons | proposed, **not approved** | ask before starting |
@@ -301,11 +301,18 @@ edit distance between Nemotron's reading and the old label above half the label'
 - **Pages that are not a page of handwriting**: typed archive title cards and reel targets (2 of 12 in andra arkiv),
   near-blank sheets with a stray word, a letter cover with an address, a page that is mostly a drawing.
 - **Hard pages where neither text can be trusted**: heavy bleed-through, faint microfilm; both texts are noise.
-- None of the 24 was a good old label spoiled by a bad reading.
 
-So a disagreement above half marks a page whose old label should not be trained on as it is: either the page is
-dropped, or the reader's text is the better label. It cannot tell those two apart by itself; the label's length against
-the reader's does part of it. A sample of 24: enough to see the kinds, not to count them.
+**Corrected the same day (Gabriel, looking at the 24): the sample itself is partly wrong pages.** The two pilot sets
+were built before the image gutter, with the cut from the old labels' line positions; 15,084 of the 15,137 Svea pages
+read are a `_left` or `_right` half. At least 6 of the 24 are bad cuts: a strip of the neighbouring page inside the
+crop (3 Svea), a page cut through its text so the label holds only the margin's words (the "15 against 1,157" page
+above), and two typed title cards (a volume's scan 00001) cut in half. On those the disagreement comes from the cut,
+not from the label or the reader. And the readings were not checked line by line against the images: "the reader is
+right" was judged from length and the first 90 characters.
+
+So what stands: a disagreement above half marks a page not to train on as it is. What does not stand: the shares of
+each kind, and any claim about which text is right. To redo on image-cut pages (task 1), reading each sampled page's
+two texts against the image in full.
 
 ## Experiments queued (asked for)
 
