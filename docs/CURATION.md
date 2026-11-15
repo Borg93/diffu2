@@ -64,7 +64,7 @@ is in the section named; scripts are under `runs/htr/curate/prototypes/` unless 
 | E6 | Orientation network | done 15 Nov | 99.94 % in-domain; typed pages fool it | `orientation.py`; "What works" |
 | E7 | DINOv3 page embeddings + EVoC on 3,007 pages | done 15 Nov | kinds of page come out as their own clusters | `page_embed.py`; "EVoC on DINOv3 page embeddings" |
 | E8 | Which embedder groups pages (TIPSv2, DINOv3, EmbeddingGemma 2) | done 15 Nov | TIPSv2 0.726 same volume, DINOv3 0.653, EmbeddingGemma 2 0.42-0.43 | `embed_pages.py`, `embed_gemma.py`, `compare_embedders.py`; "Which embedder" |
-| E9 | The same for Qwen3-VL-Embedding 2B and 8B | **running** (GPU 2, from 15 Nov 21:00) | | `embed_qwen.py`; to add to "Which embedder" |
+| E9 | The same for Qwen3-VL-Embedding 2B and 8B | 2B done 15 Nov 23:00; **8B running** (GPU 2) | 2B: 0.381 same volume, 0.531 same collection (0.430, 0.647 with the label's text): level with EmbeddingGemma 2, far behind TIPSv2 and DINOv3 | `embed_qwen.py`, `compare_neighbours.py`; "Which embedder" |
 | E10 | Writing layer tuned on PAGE polygons (embedder, head, resolution) | done 15 Nov | all within 0.01 IoU (0.71-0.73 of a possible 0.84): DINOv3, linear | `writing_tune.py`; "The writing layer, tuned and checked" |
 | E11 | Does the writing layer notice missing labels | done 15 Nov | AUC 0.95 with a quarter of the lines removed, 0.88 with a tenth; real misses untested | `writing_eval.py`; same section |
 | E12 | Our reader against the old labels on pool pages | **running** (Svea, GPU 2); andra arkiv stopped at 14,400 | median disagreement 12 % and 11 %; the pages are cut the old way, so part of it is the cut | `runs/htr/verify/pool_read.py`; "Pages where our reader and the old label disagree" |
@@ -283,10 +283,17 @@ information).
 | DINOv3 ViT-L | 0.653 | 0.799 | 0.520 |
 | EmbeddingGemma 2, image + label text | 0.434 | 0.648 | 0.329 |
 | EmbeddingGemma 2, image | 0.424 | 0.570 | 0.216 |
+| Qwen3-VL-Embedding 2B, image + label text (2,048-d) | 0.430 | 0.647 | not run |
+| Qwen3-VL-Embedding 2B, image | 0.381 | 0.531 | not run |
 
 - TIPSv2 places a page among its own volume's pages more often than DINOv3 (0.726 against 0.653); their EVoC clusters
   match the collections equally. EmbeddingGemma 2 is far behind on page images, and adding the label's text helps it
   only a little.
+- Qwen3-VL-Embedding 2B (added 15 Nov evening, the same pages at the same 896 px, through Sentence Transformers
+  with its default instruction): level with EmbeddingGemma 2 and as far behind the two vision models. The
+  general-purpose image-and-text embedders place a page by what kind of document it is; the vision models by how it
+  looks, which is what tells one volume's pages from another's. The 8B is running. `compare_neighbours.py` gives the
+  two neighbour columns for every embedding in the folder and reproduces the four earlier rows to the digit.
 - A volume is a scribe's or a few scribes' series and also one scanning session, so "same volume" mixes hand with
   camera, paper and lighting. It measures how well a model groups pages that belong together, not hands alone.
 - The first run of the DINOv3/TIPSv2 job wrote nothing: an edit deleted a constant and a blanket `except` turned the
