@@ -48,6 +48,16 @@ archives (the pools are mostly microfilm of a few series)? Start task 8? SAM 3 n
 
 **The artifact** (claude.ai/artifact/HXE6bQA4rhE5AkS9JvNkVm, version 10, 15 Nov 19:10) carries everything up to the vision-language model's pilot; its source is a scratch file of one session, so a new session reads it with the Artifact tool before changing it.
 
+**Two kinds of embedding, two jobs (Gabriel, 16 Nov).** They are not rivals and are not to be ranked in one table.
+- **DINOv3 and TIPSv2** give a vector for every patch of a page. Their job is where the writing is: the writing
+  layer, its overlap with the labels, the layout, the PCA pictures.
+- **Nemotron Embed, Qwen3-VL-Embedding, EmbeddingGemma** give one vector for a page. Their job is making sense of the
+  collection: clusters with EVoC, oddities with HiRank, names with Toponymy.
+The "Which embedder" table below scores both kinds by one yardstick (does a page's neighbour come from its own
+volume), which rewards pages that look alike; it says nothing of which gives the more useful clusters. For that the
+clusters are judged against what the scans are (the VL model's answers), E21.
+
+
 ## Experiment register
 
 Every experiment has a row here, added the day it starts and closed the day its result is known. The result's detail
@@ -75,10 +85,10 @@ is in the section named; scripts are under `runs/htr/curate/prototypes/` unless 
 | E18 | Placing the cut at full resolution near the gutter network's answer, from the image alone | done 15 Nov (prototype) | the column dark down its whole height (the fold) beats the network's place in 14 of 40 scans judged blind, loses in 2, ties in 24; a fold is found in 68 % of scans; "the column with the least writing" is worse than the network | `cut_place.py`; "Placing the cut on the fold" |
 | E19 | Does a sharper question make the VL model tell tables from running text | done 15 Nov | yes: with each option defined, 33-35 of 35 scans judged by eye (alone, with thinking, or in a two-question form), against about half with the first form's bare option names; thinking adds nothing | `vl_table_ask.py`; "What the model's answers are worth, kind by kind" |
 | E20 | A second pass over the 45,000 scans asking table or running text, and turned writing, with definitions | done 16 Nov 02:30 | tables 11 % of scans (Svea 17 %, GT 11 %, andra arkiv 5 %); of the first form's 7,911 "tables" 4,554 are tables; some turned writing 1.2 %, most turned 0.0 % | `vl_ask2.py` -> `runs/htr/curate/vl/sample_pass2.jsonl` |
-| E21 | NVIDIA Nemotron 3.5 Embed 8B (a retrieval model trained on document pages) on the embedder comparison, ground-truth pages first | **running** since 16 Nov 08:30 (GPU 2, tmux `embednv`, ~1.1 pages/s beside the readers, 10,000 GT pages in ~2.5 h) | | `embed_nvembed.py`, `compare_neighbours.py`; "Which embedder" |
+| E21 | Which image-and-text embedder gives the best clusters of scans: Nemotron 3.5 Embed 8B (trained on document pages) against Qwen3-VL-Embedding 8B and EmbeddingGemma 2, each clustered with EVoC and judged against the VL model's answers; a map of each | **running** since 16 Nov 09:10 (GPU 2, tmux `semembed`: 15,000 of the described scans, image alone; EmbeddingGemma 2, then Qwen 8B, then Nemotron Embed, ~3.5 h in all). The first run on the page sample's GT pages was stopped: the described scans have the answers to judge clusters by | | `embed_scans_semantic.py`, `scan_maps.py` |
 | E22 | The VL model's two passes over the remaining 25,632 ground-truth scans, so every GT page (the 200 test pages among them) has its kind and readers can be scored by kind of page | **running** since 16 Nov 08:10 (GPU 1, tmux `vlgt`, ~4.5 h for both passes) | | `vl_describe.py`, `vl_ask2.py` -> `runs/htr/curate/vl/gt_rest.jsonl`, `gt_rest_pass2.jsonl` |
 
-Queued, not started: Toponymy names for the clusters (needs E15); the rare kinds' recall (needs E15); a step placing
+Queued, not started: Nemotron 3.5 Parse's double pass with our fine-tuned reader (the page parsed once, then each region it calls a table cut out and parsed again at higher detail and merged back: NVIDIA's card gives 72.7 -> 74.9 on ParseBench; our tables are 11 % of scans and the reader's weakest kind), on the test pages by kind once E22 gives every GT page its kind; Toponymy names for the clusters (needs E15); the rare kinds' recall (needs E15); a step placing
 the cut at full resolution, scored against folds marked by hand; Jev's page score on the calibration scans; the
 writing layer on the calibration scans; HiRank and duplicate columns; curated pretraining (task 7); the line finder
 test (task 8, not approved).
