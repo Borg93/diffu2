@@ -202,6 +202,30 @@ Whether to cut, on all 150 (8 not to be cut):
 - Scans not to be cut are about 5 % of described scans (8 of 150).
 - Rows: `runs/htr/curate/fold_marks_random_scored.json`, `vl/cut_or_not_random.jsonl`.
 
+## Marks in bulk, and a head on the embeddings that spreads them (E34 to E36, 16 Nov)
+
+Gabriel marked every one of the 14,985 scans on the embedding map in the gallery (`mark_gallery.py`, cluster by
+cluster, select then answer; `cut_marks.lance`): cut 13,454, odd layout 428, do not cut 419, single page 380, not a
+page 304. He also marked 962 by region on the map page (`region_marks.lance`). The gallery's 14,985 are every scan
+of a random 15,000 of the 45,000 first described, so their shares hold for those: **10 % are not to be cut.**
+
+- **The first form is wrong on most of them.** Of the 1,531 scans not marked "cut" it calls 889 an opening to cut:
+  335 of the 419 "do not cut", 404 of the 428 odd layouts, 114 of the 304 that are not pages. It finds 42 % of the
+  scans not to be cut. The 150-scan random sample (E33, 8 such scans) was too small to show this.
+- **A head on the embeddings does it** (logistic regression on Qwen3-VL-Embedding 8B's vector, five answers). With
+  whole volumes held out, on the first 7,418 marks: 94.1 % right against the first form's 85.5 %; it finds 95.4 % of
+  the scans not to be cut and holds back 4.8 % of those to cut. Asking for more certainty (P(cut) under 0.8 counts as
+  not to cut) finds 98.3 % and holds back 13.8 %.
+- **Checked on marks made one scan at a time**, since the gallery was marked a cluster at a time and its marks
+  follow the clusters the head also sees: trained on the gallery marks, tested on the 350 scans of the fold page
+  (none in the training): it finds 39 of the 41 not to be cut and holds back 21 of 309; the first form 32 and 33.
+  On the 150 drawn at random among them: 6 of 8 found, 10 of 142 held back.
+- **So bulk marking and the embeddings together answer "cut or not" for the pool:** the head runs on any scan with a
+  vector. Every described scan is being embedded (`embed_images.py`, GPU 2, 6 scans a second; vectors in
+  `scan_embeddings.lance`, 4,096 float16, by `embeddings_to_lance.py`).
+- The trusted-cut rule of E33 changes: the head's answer takes the place of the first form's, beside the VL
+  model's defined question and the placer's fold line.
+
 **16 Nov, 12:00: the root disk filled (21 MB free) and every job stopped.** Not this work: two Docker volumes of the
 rask setup hold 923 GB and 432 GB. Each output file lost one half-written last line, removed; the jobs were
 restarted at 12:20 and the disk had 938 GB free by 13:20. Follow-ons queued on a log line must match what a
@@ -247,8 +271,9 @@ is in the section named; scripts are under `runs/htr/curate/prototypes/` unless 
 | E31 | Folds marked by hand on 200 scans of hard kinds, every cutter scored against them | done 16 Nov (Gabriel's marks, 17 minutes) | **the gutter network is worse than cutting at the middle (60 % against 37 % off by more than 1 % of the width); the placer searching ±6 % around the middle finds a fold line in 87 % of scans and is then off by more than 1 % in 2 %**; whether to cut at all is not solved: the network says gutter for 32 of the 33 scans not to be cut | `mark_folds.py`; "Folds marked by hand" |
 | E32 | Does the VL model decide better whether a scan is to be cut (cut / must not be cut / single page) when shown marked scans as examples; scored on the 200 marked scans, each left out of its own examples | done 16 Nov | **marked examples do not help the VL model overall (86 % right with definitions only, 88 % with six examples; 13 scans gained, 9 lost); they make it more cautious about saying "do not cut".** Scans not to be cut found, and openings wrongly held back, of 33 and 167: the first form's columns 28 and 32; the three answers defined 28 and 16; with examples 22 and 6; definitions or the first form 33 and 41. No rule finds all 33 without holding back a quarter of the hard openings. A missed one, looked at: a register whose rows run across both pages. The sample is of hard kinds, so the rates are not the pools'
 | E33 | The cutters and the cut-or-not rules on 150 scans drawn at random and marked by hand, for rates that hold for the pools | done 16 Nov (Gabriel's marks) | placer ±6 % around the middle: 3 % of folds off by more than 1 %, 1 of 133 where a fold line is found; gutter network 36 %. **Trusted-cut rule (VL "cut" to the defined question, no objection from the first form, a fold line found) keeps 128 of 150 scans, 2 of them wrong.** Scans not to be cut are about 5 % | `mark_folds.py random`; "The same on 150 scans drawn at random" |
-| E34 | Marking cut-or-not in bulk in a gallery: 1,129 scans, twenty a screen, each starting at the first form's guess, only the wrong ones clicked | **page up 16 Nov** (port 7862), marks awaited | | `mark_gallery.py` -> `cut_marks.lance` |
-| E35 | Marking by region of the embedding map (after marimo's bulk-labelling example): the 14,985 scans with a Qwen 8B vector on their UMAP map, a box dragged over a region, twenty of its scans shown, one button marking the box | **page up 16 Nov** (port 7863, marimo run with `uv run --with`, not added to the project), marks awaited | the clusters do separate the question: 4 of the 50 clusters hold 68 % of the scans the first form calls single or a table across the fold; 36 clusters (11,749 scans) hold under 2 % of them | `mark_map.py`, `scan_map.lance` -> `region_marks.lance` |
+| E34 | Marking cut-or-not in bulk in a gallery: 1,129 scans, twenty a screen, each starting at the first form's guess, only the wrong ones clicked | done 16 Nov: all 14,985 scans of the map marked | cut 13,454, odd layout 428, do not cut 419, single page 380, not a page 304; 10 % of scans are not to be cut, and the first form calls 58 % of those an opening to cut
+| E35 | Marking by region of the embedding map (after marimo's bulk-labelling example): the 14,985 scans with a Qwen 8B vector on their UMAP map, a box dragged over a region, twenty of its scans shown, one button marking the box | done 16 Nov: 962 scans marked by region; the gallery by cluster proved the quicker page | the clusters do separate the question: 4 of the 50 clusters hold 68 % of the scans the first form calls single or a table across the fold; 36 clusters (11,749 scans) hold under 2 % of them | `mark_map.py`, `scan_map.lance` -> `region_marks.lance` |
+| E36 | A head on Qwen 8B's embeddings trained on the bulk marks, to answer cut-or-not for every scan | done 16 Nov; **every described scan being embedded to apply it** (GPU 2, tmux `embedall`) | volumes held out: 94.1 % right (first form 85.5 %), 95.4 % of the scans not to be cut found, 4.8 % of the others held back. On 350 scans marked one at a time, outside the training: 39 of 41 found, 21 of 309 held back | "Marks in bulk"; `embed_images.py`, `embeddings_to_lance.py` -> `scan_embeddings.lance` |
 
 Queued, not started: Nemotron 3.5 Parse's double pass with our fine-tuned reader (the page parsed once, then each region it calls a table cut out and parsed again at higher detail and merged back: NVIDIA's card gives 72.7 -> 74.9 on ParseBench; our tables are 11 % of scans and the reader's weakest kind), on the test pages by kind once E22 gives every GT page its kind; Toponymy names for the clusters (needs E15); the rare kinds' recall (needs E15); a step placing
 the cut at full resolution, scored against folds marked by hand; Jev's page score on the calibration scans; the
