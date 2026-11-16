@@ -72,12 +72,9 @@ def add_features(table: Path, features: pa.Table, key: str = "image") -> int:
     replaced = [name for name in features.column_names if name != key and name in held.schema.names]
     if replaced:
         held.drop_columns(replaced)
+    matched = len(set(keys.to_pylist()) & set(held.to_table(columns=[key]).column(key).to_pylist()))
     held.merge(features, key)
-    return held.count_rows(filter=f"{key} IN ({', '.join(_quoted(value) for value in keys.to_pylist())})") if len(keys) else 0
-
-
-def _quoted(value: str) -> str:
-    return "'" + value.replace("'", "''") + "'"
+    return matched
 
 
 def held_values(table: Path, column: str, where: str) -> set[str]:

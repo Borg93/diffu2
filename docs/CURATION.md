@@ -66,6 +66,28 @@ volume), which rewards pages that look alike; it says nothing of which gives the
 clusters are judged against what the scans are (the VL model's answers), E21.
 
 
+## One table: features are columns of `scans.lance` (16 Nov)
+
+Read first: Lance's guides and format spec at the installed version (13.0.0): data evolution, merge, JSON, row ids,
+scalar indexes, maintenance. What follows from them, and what is built:
+
+- `scans.lance` holds every scan, both pools and the ground truth (3,184,889 rows), keyed by `image` (unique). The
+  version before this work is tagged `before-features`.
+- A feature becomes a column by `diffu_curate.table.add_features(table, features, key="image")`: Lance `merge`, which
+  attaches the columns as their own files without rewriting the rows; rows without a value hold null. `merge` refuses
+  a column that exists, so the helper drops and adds it again: each refresh carries every row that holds a value.
+- The VL model's whole answer is the JSON column `vl` (stored as JSONB), filtered with
+  `json_get_string(vl, 'writing_layout') = 'table'`; JSON functions filter but cannot be selected, so the fields
+  filtered on are typed columns too (`vl_kind`, `vl_layout`, `vl_written_side`, `vl_text_columns`,
+  `vl_table_across_fold`, `vl_writing_at_fold`, `vl_fold_x`, `vl_writing_layout`, `vl_turned`, `vl_caption`).
+- Also joined: `gutter_score`, `gutter_x` (every scan), `fold_*` (the full-resolution placer, 19,660 scans).
+- Bitmap indexes on `pool`, `vl_kind`, `vl_layout`, `vl_writing_layout`, `vl_turned`; B-tree on `image`.
+- `runs/htr/curate/prototypes/to_lance.py` rebuilds the `vl_*` and `fold_*` columns from every result file found; run
+  it again when a run ends. Checked 16 Nov: 77,440 described scans in the table, none differing from the files.
+- Still files, to move: the pool reads (to `pages.lance`), the embeddings (their own table keyed by `image`, since a
+  4,096-wide column over 3.18 M rows is untested), clusters, maps, HiRank scores. The run scripts still write JSONL
+  and are changed to write Lance when the running VL job has ended.
+
 ## Experiment register
 
 Every experiment has a row here, added the day it starts and closed the day its result is known. The result's detail
