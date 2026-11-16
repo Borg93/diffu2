@@ -1,29 +1,28 @@
 """A gallery for marking in bulk whether a scan is to be cut (CURATION E34).
 
-Scans are shown twenty at a time, each screen holding scans the first form gives one answer (a table across the fold,
-a single page, an opening), every scan starting at that guess. An answer is picked (cut, must not be cut, single page, not a page) and a click
-on a scan gives it that answer; "Save and next" stores the twenty marks. Only the wrong ones need a click.
-Marks go to cut_marks.lance (image, mark, guess, marked_at); the sample, drawn once, is cut_marks_sample.lance.
+A plain page served by Python's own http server: sixty small thumbnails a screen, every scan starting at the first
+form's guess. An answer is picked (keys 1 to 4) and a click on a scan gives it that answer; the frames change in the
+browser, with no round trip, and "Save and next" (Enter) stores the screen's marks. A click with Shift held opens the
+scan large. Marks go to cut_marks.lance (image, mark, guess, marked_at); the sample, drawn once, is
+cut_marks_sample.lance: 1,129 described scans, screens of one guess.
 
     uv run python runs/htr/curate/prototypes/mark_gallery.py     # then open http://localhost:7862
 """
+import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from hashlib import sha1
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-import gradio as gr
 import lance
 import pandas as pd
 import pyarrow as pa
-from PIL import Image, ImageDraw
+from PIL import Image
 
 Image.MAX_IMAGE_PIXELS = None
 HOME = Path("runs/htr/curate"); SAMPLE = HOME / "cut_marks_sample.lance"; MARKS = HOME / "cut_marks.lance"
-THUMBS = Path("/mnt/scratch/gabriel/htr/cut_mark_thumbs"); WIDE, SCREEN = 640, 20
-ANSWERS = ["cut", "no_cut", "single", "not_a_page"]
-SAYS = {"cut": "CUT: two pages, each reads alone", "no_cut": "DO NOT CUT: one table or text across the fold", "single": "SINGLE PAGE", "not_a_page": "NOT A PAGE"}
-COLOUR = {"cut": (27, 175, 122), "no_cut": (235, 104, 52), "single": (42, 120, 214), "not_a_page": (140, 140, 140)}
+THUMBS = Path("/mnt/scratch/gabriel/htr/cut_mark_thumbs_small"); LARGE = Path("/mnt/scratch/gabriel/htr/cut_mark_thumbs"); SCREEN = 60
 ROW = pa.schema([("image", pa.utf8()), ("mark", pa.utf8()), ("guess", pa.utf8()), ("marked_at", pa.timestamp("s", "UTC"))])
 
 
@@ -43,19 +42,19 @@ def draw_sample() -> pd.DataFrame:
     return pd.concat(parts)[["image", "pool", "guess"]].reset_index(drop=True)
 
 
-def thumb(image: str) -> Path:
-    path = THUMBS / f"{sha1(image.encode()).hexdigest()}.jpg"
+def thumb(image: str, folder: Path = THUMBS, side: int = 320) -> Path:
+    path = folder / f"{sha1(image.encode()).hexdigest()}.jpg"
     if not path.exists():
         with Image.open(image) as scan:
-            scan.draft("RGB", (WIDE * 2, WIDE * 2)); scan = scan.convert("RGB"); scan.thumbnail((WIDE, WIDE)); scan.save(path, "JPEG", quality=82)
+            scan.draft("RGB", (side * 2, side * 2)); scan = scan.convert("RGB"); scan.thumbnail((side, side)); scan.save(path, "JPEG", quality=78)
     return path
 
 
 if not SAMPLE.exists():
     lance.write_dataset(pa.Table.from_pandas(draw_sample(), preserve_index=False), str(SAMPLE))
 sample = lance.dataset(str(SAMPLE)).to_table().to_pandas()
-THUMBS.mkdir(parents=True, exist_ok=True)
-with ThreadPoolExecutor(24) as pool: list(pool.map(thumb, sample.image))
+for folder in (THUMBS, LARGE): folder.mkdir(parents=True, exist_ok=True)
+with ThreadPoolExecutor(24) as workers: list(workers.map(thumb, sample.image))
 screens = [list(range(start, min(start + SCREEN, len(sample)))) for start in range(0, len(sample), SCREEN)]
 
 
@@ -65,52 +64,81 @@ def held() -> dict[str, str]:
     return dict(zip(rows.image, rows.mark))
 
 
-def shown(screen: int, marks: list[str]):
-    """The screen's scans, each framed in its mark's colour with the mark written under it."""
-    cards = []
-    for at, mark in zip(screens[screen], marks):
-        card = Image.open(thumb(sample.image[at])).convert("RGB"); pen = ImageDraw.Draw(card)
-        pen.rectangle((0, 0, card.width - 1, card.height - 1), outline=COLOUR[mark], width=14)
-        cards.append((card, SAYS[mark].split(":")[0]))
-    done = len(set(held()) & set(sample.image)); guess = sample.guess[screens[screen][0]]
-    return cards, f"**Screen {screen + 1} of {len(screens)}** · {done} of {len(sample)} scans saved · these start as **{SAYS[guess]}**: click the ones that are something else"
+def screen(number: int) -> dict:
+    saved = held(); rows = screens[number]
+    return {"screen": number, "screens": len(screens), "saved": len(set(saved) & set(sample.image)), "scans": len(sample), "guess": sample.guess[rows[0]],
+            "first_unsaved": next((i for i, r in enumerate(screens) if sample.image[r[0]] not in saved), len(screens) - 1),
+            "items": [{"at": at, "mark": saved.get(sample.image[at], sample.guess[at]), "guess": sample.guess[at], "pool": sample.pool[at]} for at in rows]}
 
 
-def start(screen: int):
-    saved = held(); marks = [saved.get(sample.image[at], sample.guess[at]) for at in screens[screen]]
-    return (screen, marks, *shown(screen, marks))
-
-
-def paint(screen: int, marks: list[str], brush: str, event: gr.SelectData):
-    """The clicked scan takes the brush's answer; clicked again with the same brush, it goes back to the guess."""
-    marks = list(marks); at = event.index
-    marks[at] = sample.guess[screens[screen][at]] if marks[at] == brush else brush
-    return (marks, *shown(screen, marks))
-
-
-def save_and_go(screen: int, marks: list[str], by: int):
-    now = datetime.now(UTC).replace(microsecond=0); rows = screens[screen]
-    table = pa.table({"image": [sample.image[at] for at in rows], "mark": marks, "guess": [sample.guess[at] for at in rows], "marked_at": [now] * len(rows)}, schema=ROW)
+def save(marks: dict[str, str]) -> None:
+    now = datetime.now(UTC).replace(microsecond=0); rows = [(int(at), mark) for at, mark in marks.items()]
+    table = pa.table({"image": [sample.image[at] for at, _ in rows], "mark": [mark for _, mark in rows], "guess": [sample.guess[at] for at, _ in rows], "marked_at": [now] * len(rows)}, schema=ROW)
     lance.write_dataset(table, str(MARKS), mode="append" if MARKS.exists() else "create")
-    return start(min(len(screens) - 1, max(0, screen + by)))
 
 
-def first_unsaved() -> int:
-    saved = held(); return next((i for i, rows in enumerate(screens) if sample.image[rows[0]] not in saved), 0)
+PAGE = """<!doctype html><meta charset="utf-8"><title>Cut or not</title>
+<style>
+body{font:15px system-ui,sans-serif;margin:0;background:#16181c;color:#e8e8e8}
+header{position:sticky;top:0;background:#16181c;padding:10px 16px;border-bottom:1px solid #333;z-index:5;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+button{font:inherit;padding:7px 14px;border-radius:6px;border:2px solid #555;background:#23262b;color:#e8e8e8;cursor:pointer}
+button.on{background:#e8e8e8;color:#16181c}
+.cut{border-color:#1baf7a}.no_cut{border-color:#eb6834}.single{border-color:#2a78d6}.not_a_page{border-color:#8c8c8c}
+#grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px;padding:12px 16px}
+#grid div{border:6px solid;border-radius:4px;cursor:pointer;background:#000;position:relative;line-height:0}
+#grid div.changed::after{content:"changed";position:absolute;top:4px;left:4px;background:#fff;color:#000;font-size:11px;padding:1px 5px;line-height:1.4;border-radius:3px}
+#grid img{width:100%;height:170px;object-fit:contain}
+#big{position:fixed;inset:0;background:#000d;display:none;align-items:center;justify-content:center;z-index:9}#big img{max-width:96%;max-height:96%}
+small{color:#aaa}
+</style>
+<header><b id="where"></b>
+<span id="brushes"></span>
+<button id="back">&larr; Save and back</button><button id="next" style="border-color:#e8e8e8">Save and next &rarr; (Enter)</button>
+<small>Pick an answer (keys 1-4), click the scans that should have it; click again to undo. Shift-click: see it large.</small></header>
+<div id="grid"></div><div id="big"><img></div>
+<script>
+const SAYS={cut:"1 Cut",no_cut:"2 Do not cut",single:"3 Single page",not_a_page:"4 Not a page"}, KEYS=Object.keys(SAYS);
+let brush="cut", now=null;
+const el=id=>document.getElementById(id);
+function brushes(){el("brushes").innerHTML="";KEYS.forEach(k=>{const b=document.createElement("button");b.textContent=SAYS[k];b.className=k+(k===brush?" on":"");b.onclick=()=>{brush=k;brushes()};el("brushes").append(b)})}
+function draw(){el("where").textContent=`Screen ${now.screen+1} of ${now.screens} · ${now.saved} of ${now.scans} saved · these start as: ${SAYS[now.guess].slice(2)}`;
+  el("grid").innerHTML="";now.items.forEach(it=>{const d=document.createElement("div");const set=()=>{d.className=it.mark+(it.mark!==it.guess?" changed":"")};set();
+    d.innerHTML=`<img loading="lazy" src="thumb/${it.at}">`;
+    d.onclick=e=>{if(e.shiftKey){el("big").firstChild.src="large/"+it.at;el("big").style.display="flex";return}it.mark=(it.mark===brush&&it.mark!==it.guess)?it.guess:brush;set()};el("grid").append(d)});window.scrollTo(0,0)}
+async function load(n){now=await (await fetch("screen/"+n)).json();draw()}
+async function go(by){const marks={};now.items.forEach(it=>marks[it.at]=it.mark);await fetch("save",{method:"POST",body:JSON.stringify(marks)});load(Math.max(0,Math.min(now.screens-1,now.screen+by)))}
+el("next").onclick=()=>go(1);el("back").onclick=()=>go(-1);el("big").onclick=()=>el("big").style.display="none";
+document.onkeydown=e=>{if(e.key>="1"&&e.key<="4"){brush=KEYS[e.key-1];brushes()}else if(e.key==="Enter"){go(1)}else if(e.key==="Escape"){el("big").style.display="none"}};
+brushes();fetch("screen/0").then(r=>r.json()).then(s=>load(s.first_unsaved));
+</script>"""
 
 
-with gr.Blocks(title="Cut or not") as page:
-    screen, marks = gr.State(0), gr.State([])
-    gr.Markdown("### Cut or not, in bulk\nEvery scan starts at the system's guess, shown by its frame: green CUT, orange DO NOT CUT, blue SINGLE PAGE, grey NOT A PAGE. **Pick the right answer below, then click every scan that should have it** (click again to undo). Then **Save and next**. A scan is *cut* when it shows two pages that each read on their own; *do not cut* when one table, ledger row or text runs across the fold.")
-    status = gr.Markdown()
-    with gr.Row():
-        brush = gr.Radio([(SAYS[answer], answer) for answer in ANSWERS], value="cut", label="A click sets the scan to", scale=4)
-        back, onward = gr.Button("← Save and back", scale=1), gr.Button("Save and next →", variant="primary", scale=1)
-    gallery = gr.Gallery(columns=5, height=1500, allow_preview=False, object_fit="contain", show_label=False)
-    gallery.select(paint, [screen, marks, brush], [marks, gallery, status])
-    back.click(lambda s, m: save_and_go(s, m, -1), [screen, marks], [screen, marks, gallery, status])
-    onward.click(lambda s, m: save_and_go(s, m, 1), [screen, marks], [screen, marks, gallery, status])
-    page.load(lambda: start(first_unsaved()), None, [screen, marks, gallery, status])
+class Handler(BaseHTTPRequestHandler):
+    def send(self, body: bytes, kind: str, cache: bool = False) -> None:
+        self.send_response(200); self.send_header("Content-Type", kind); self.send_header("Content-Length", str(len(body)))
+        if cache: self.send_header("Cache-Control", "max-age=86400")
+        self.end_headers(); self.wfile.write(body)
+
+    def do_GET(self) -> None:  # noqa: N802 (the server's name for it)
+        part = self.path.strip("/").split("/")
+        try:
+            if part == [""]: self.send(PAGE.encode(), "text/html; charset=utf-8")
+            elif part[0] == "screen": self.send(json.dumps(screen(int(part[1]))).encode(), "application/json")
+            elif part[0] == "thumb": self.send(thumb(sample.image[int(part[1])]).read_bytes(), "image/jpeg", cache=True)
+            elif part[0] == "large": self.send(thumb(sample.image[int(part[1])], LARGE, 1400).read_bytes(), "image/jpeg", cache=True)
+            else: self.send_error(404)
+        except (ValueError, IndexError, KeyError):
+            self.send_error(404)
+
+    def do_POST(self) -> None:  # noqa: N802
+        if self.path.strip("/") != "save": self.send_error(404); return
+        marks = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        if not all(mark in ("cut", "no_cut", "single", "not_a_page") and 0 <= int(at) < len(sample) for at, mark in marks.items()): self.send_error(400); return
+        save(marks); self.send(b"{}", "application/json")
+
+    def log_message(self, format: str, *args: object) -> None: pass  # noqa: A002 (the server's signature)
+
 
 if __name__ == "__main__":
-    page.launch(server_name="127.0.0.1", server_port=7862)
+    print("http://localhost:7862", flush=True)
+    ThreadingHTTPServer(("127.0.0.1", 7862), Handler).serve_forever()

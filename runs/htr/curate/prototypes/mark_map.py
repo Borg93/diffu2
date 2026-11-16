@@ -1,8 +1,8 @@
 """Marking scans in bulk on the map of their embeddings (CURATION E35), after marimo's bulk-labelling example.
 
 The 14,985 scans with a Qwen3-VL-Embedding 8B vector, laid out by UMAP (scan_map.lance) and coloured by cluster,
-by the vision-language model's answer or by the marks made so far. Drag a box over a region of the map: twenty of
-its scans are shown, and one button marks every scan in the box. Marks go to region_marks.lance (image, mark,
+by the vision-language model's answer or by the marks made so far. Drag a box over a region of the map: a hundred of
+its scans are shown (or forty, two hundred, all), and one button marks every scan in the box. Marks go to region_marks.lance (image, mark,
 marked_at); the last row of an image is its mark.
 
     uv run --with marimo --with altair marimo run runs/htr/curate/prototypes/mark_map.py --host 127.0.0.1 --port 7863 --headless --no-token
@@ -15,6 +15,7 @@ app = marimo.App(width="full")
 @app.cell
 def _():
     from datetime import UTC, datetime
+    from concurrent.futures import ThreadPoolExecutor
     from hashlib import sha1
     from pathlib import Path
 
@@ -28,11 +29,11 @@ def _():
     Image.MAX_IMAGE_PIXELS = None
     HOME = Path("runs/htr/curate")
     MARKS = HOME / "region_marks.lance"
-    THUMBS = Path("/mnt/scratch/gabriel/htr/cut_mark_thumbs")
+    THUMBS = Path("/mnt/scratch/gabriel/htr/cut_mark_thumbs_small")
     ANSWERS = {"cut": "Cut", "no_cut": "Do not cut", "single": "Single page", "not_a_page": "Not a page"}
     ROW = pa.schema([("image", pa.utf8()), ("mark", pa.utf8()), ("marked_at", pa.timestamp("s", "UTC"))])
     alt.data_transformers.disable_max_rows()
-    return ANSWERS, HOME, Image, MARKS, ROW, THUMBS, UTC, alt, datetime, lance, mo, pa, pd, sha1
+    return ANSWERS, HOME, Image, MARKS, ROW, THUMBS, ThreadPoolExecutor, UTC, alt, datetime, lance, mo, pa, pd, sha1
 
 
 @app.cell
@@ -55,7 +56,8 @@ def _(mo):
         {"Cluster": "cluster", "The model's answer": "said", "Table or running text": "vl_writing_layout", "Pool": "pool", "Your marks": "mark"},
         value="The model's answer", label="Colour by",
     )
-    return colour_by, get_saves, set_saves
+    how_many = mo.ui.dropdown({"40": 40, "100": 100, "200": 200, "all in the box (slow over 300)": 100000}, value="100", label="Scans shown from the box")
+    return colour_by, get_saves, how_many, set_saves
 
 
 @app.cell
@@ -76,7 +78,7 @@ def _(alt, colour_by, mo, points):
         alt.Chart(points[["at", "map_x", "map_y", "cluster", "said", "vl_writing_layout", "pool", "mark"]])
         .mark_circle(size=9, opacity=0.6)
         .encode(x=alt.X("map_x:Q", axis=None), y=alt.Y("map_y:Q", axis=None), color=alt.Color(f"{colour_by.value}:N", legend=alt.Legend(columns=2, symbolLimit=60)))
-        .properties(width=820, height=640)
+        .properties(width=560, height=560)
     )
     chart = mo.ui.altair_chart(_chart, chart_selection="interval", legend_selection=False)
     return (chart,)
@@ -89,10 +91,10 @@ def _(Image, THUMBS, sha1):
         if not path.exists():
             THUMBS.mkdir(parents=True, exist_ok=True)
             with Image.open(image) as scan:
-                scan.draft("RGB", (1280, 1280))
+                scan.draft("RGB", (640, 640))
                 scan = scan.convert("RGB")
-                scan.thumbnail((640, 640))
-                scan.save(path, "JPEG", quality=82)
+                scan.thumbnail((320, 320))
+                scan.save(path, "JPEG", quality=78)
         return str(path)
 
     return (thumb,)
@@ -123,13 +125,15 @@ def _(ANSWERS, MARKS, ROW, UTC, datetime, lance, mo, pa, selected, set_saves):
 
 
 @app.cell
-def _(mo, selected, thumb):
+def _(ThreadPoolExecutor, how_many, mo, selected, thumb):
     if len(selected):
-        _shown = selected.sample(min(20, len(selected)), random_state=0)
+        _shown = selected.sample(min(how_many.value, len(selected)), random_state=0)
+        with ThreadPoolExecutor(16) as _workers:
+            _paths = list(_workers.map(thumb, _shown.image))
         _mix = ", ".join(f"{name} {count}" for name, count in selected.said.value_counts().head(5).items())
         gallery = mo.vstack([
-            mo.md(f"**{len(selected)} scans in the box.** The model's answers: {_mix}. Twenty of them, drawn at random:"),
-            mo.hstack([mo.image(src=thumb(image), width=230) for image in _shown.image], wrap=True, justify="start"),
+            mo.md(f"**{len(selected)} scans in the box.** The model's answers: {_mix}. Showing {len(_shown)} of them, drawn at random:"),
+            mo.hstack([mo.image(src=path, width=150) for path in _paths], wrap=True, justify="start", gap=0.3),
         ])
     else:
         gallery = mo.md("Drag a box over a part of the map to see its scans.")
@@ -137,11 +141,11 @@ def _(mo, selected, thumb):
 
 
 @app.cell
-def _(buttons, chart, colour_by, gallery, marked, mo, points):
+def _(buttons, chart, colour_by, gallery, how_many, marked, mo, points):
     mo.vstack([
-        mo.md(f"### Mark scans by region of the map\n{len(points):,} scans, each a dot; scans that look alike lie together. Drag a box, look at the twenty shown, and if they are all one answer mark the whole box. **{len(marked):,} marked so far.**"),
-        colour_by,
-        mo.hstack([chart, mo.vstack([buttons, gallery])], widths=[1, 1], align="start"),
+        mo.md(f"### Mark scans by region of the map\n{len(points):,} scans, each a dot; scans that look alike lie together. Drag a box, look at the scans shown, and if they are all one answer mark the whole box. **{len(marked):,} marked so far.**"),
+        mo.hstack([colour_by, how_many], justify="start"),
+        mo.hstack([chart, mo.vstack([buttons, gallery])], widths=[2, 3], align="start"),
     ])
     return
 
