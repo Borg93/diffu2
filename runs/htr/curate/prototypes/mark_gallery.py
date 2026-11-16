@@ -1,15 +1,15 @@
-"""A gallery for marking in bulk whether a scan is to be cut (CURATION E34).
+"""A gallery for marking in bulk whether a scan is to be cut, cluster by cluster (CURATION E34).
 
-A plain page served by Python's own http server: sixty small thumbnails a screen, every scan starting at the first
-form's guess. An answer is picked (keys 1 to 4) and a click on a scan gives it that answer; the frames change in the
-browser, with no round trip, and "Save and next" (Enter) stores the screen's marks. A click with Shift held opens the
-scan large. Marks go to cut_marks.lance (image, mark, guess, marked_at); the sample, drawn once, is
-cut_marks_sample.lance: 1,129 described scans, screens of one guess.
+A plain page served by Python's own http server. The 14,985 scans on the embedding map (scan_map.lance) are grouped
+by their cluster; a cluster is picked from a list that says how many scans it holds and what the first form calls
+them, and its scans are shown 120 small thumbnails a screen, each starting at the first form's guess. An answer is
+picked (keys 1 to 4) and a click on a scan gives it that answer, or one button gives it to every scan on the screen;
+frames change in the browser with no round trip, and "Save and next" (Enter) stores the screen. Shift-click opens a
+scan large. Marks go to cut_marks.lance (image, mark, guess, marked_at); the last row of an image is its mark.
 
     uv run python runs/htr/curate/prototypes/mark_gallery.py     # then open http://localhost:7862
 """
 import json
-from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from hashlib import sha1
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -22,24 +22,8 @@ from PIL import Image
 
 Image.MAX_IMAGE_PIXELS = None
 HOME = Path("runs/htr/curate"); SAMPLE = HOME / "cut_marks_sample.lance"; MARKS = HOME / "cut_marks.lance"
-THUMBS = Path("/mnt/scratch/gabriel/htr/cut_mark_thumbs_small"); LARGE = Path("/mnt/scratch/gabriel/htr/cut_mark_thumbs"); SCREEN = 60
+THUMBS = Path("/mnt/scratch/gabriel/htr/cut_mark_thumbs_small"); LARGE = Path("/mnt/scratch/gabriel/htr/cut_mark_thumbs"); SCREEN = 120
 ROW = pa.schema([("image", pa.utf8()), ("mark", pa.utf8()), ("guess", pa.utf8()), ("marked_at", pa.timestamp("s", "UTC"))])
-
-
-def draw_sample() -> pd.DataFrame:
-    """1,200 described scans: every kind the first form says is not to be cut, as far as there are scans, and as many
-    openings; the pools and the ground truth alike; scans marked on the fold page left out. Screens of one guess."""
-    scans = lance.dataset(str(HOME / "scans.lance")).to_table(columns=["image", "pool", "vl_layout", "vl_table_across_fold"], filter="vl_layout IS NOT NULL").to_pandas()
-    seen = set(lance.dataset(str(HOME / "fold_marks.lance")).to_table(columns=["image"]).column("image").to_pylist())
-    scans = scans[~scans.image.isin(seen)]
-    kinds = [("no_cut", 300, scans.vl_table_across_fold.fillna(False).astype(bool)), ("single", 400, scans.vl_layout == "single_page"),
-             ("not_a_page", 60, scans.vl_layout.isin(["not_a_page", "several_loose_sheets"])), ("cut", 440, scans.vl_layout.isin(["opening_both_pages_written", "opening_one_page_empty"]))]
-    taken, parts = pd.Series(False, index=scans.index), []
-    for guess, count, fits in kinds:
-        left = scans[fits & ~taken]; pools = sorted(left.pool.unique())
-        part = pd.concat(left[left.pool == pool].sample(min((count + i) // len(pools), (left.pool == pool).sum()), random_state=3) for i, pool in enumerate(pools))
-        taken[part.index] = True; parts.append(part.sample(frac=1, random_state=3).assign(guess=guess))
-    return pd.concat(parts)[["image", "pool", "guess"]].reset_index(drop=True)
 
 
 def thumb(image: str, folder: Path = THUMBS, side: int = 320) -> Path:
@@ -50,12 +34,21 @@ def thumb(image: str, folder: Path = THUMBS, side: int = 320) -> Path:
     return path
 
 
-if not SAMPLE.exists():
-    lance.write_dataset(pa.Table.from_pandas(draw_sample(), preserve_index=False), str(SAMPLE))
-sample = lance.dataset(str(SAMPLE)).to_table().to_pandas()
+def load_scans() -> pd.DataFrame:
+    """The map's scans with their cluster and the first form's guess, in the order they are shown: by cluster."""
+    placed = lance.dataset(str(HOME / "scan_map.lance")).to_table(columns=["image", "cluster"]).to_pandas()
+    said = lance.dataset(str(HOME / "scans.lance")).to_table(columns=["image", "pool", "vl_layout", "vl_table_across_fold"], filter="vl_layout IS NOT NULL").to_pandas()
+    scans = placed.merge(said, on="image", how="left")
+    scans["guess"] = "cut"
+    scans.loc[scans.vl_layout.isin(["not_a_page", "several_loose_sheets"]), "guess"] = "not_a_page"
+    scans.loc[scans.vl_layout == "single_page", "guess"] = "single"
+    scans.loc[scans.vl_table_across_fold.fillna(False).astype(bool), "guess"] = "no_cut"
+    return scans.sort_values(["cluster", "guess", "image"]).reset_index(drop=True)[["image", "pool", "cluster", "guess"]]
+
+
+sample = load_scans()
 for folder in (THUMBS, LARGE): folder.mkdir(parents=True, exist_ok=True)
-with ThreadPoolExecutor(24) as workers: list(workers.map(thumb, sample.image))
-screens = [list(range(start, min(start + SCREEN, len(sample)))) for start in range(0, len(sample), SCREEN)]
+rows_of = {int(cluster): rows.index.to_list() for cluster, rows in sample.groupby("cluster")}
 
 
 def held() -> dict[str, str]:
@@ -64,11 +57,22 @@ def held() -> dict[str, str]:
     return dict(zip(rows.image, rows.mark))
 
 
-def screen(number: int) -> dict:
-    saved = held(); rows = screens[number]
-    return {"screen": number, "screens": len(screens), "saved": len(set(saved) & set(sample.image)), "scans": len(sample), "guess": sample.guess[rows[0]],
-            "first_unsaved": next((i for i, r in enumerate(screens) if sample.image[r[0]] not in saved), len(screens) - 1),
-            "items": [{"at": at, "mark": saved.get(sample.image[at], sample.guess[at]), "guess": sample.guess[at], "pool": sample.pool[at]} for at in rows]}
+def clusters() -> list[dict]:
+    """Every cluster with its size, how many of its scans are saved and what the first form calls them; those with
+    the most scans not guessed "cut" first, since those are the ones that need eyes."""
+    saved = held(); listed = []
+    for cluster, rows in rows_of.items():
+        part = sample.loc[rows]; mix = part.guess.value_counts()
+        listed.append({"cluster": cluster, "scans": len(rows), "saved": int(part.image.isin(saved.keys()).sum()), "other": int(len(rows) - mix.get("cut", 0)),
+                       "mix": ", ".join(f"{name.replace('_', ' ')} {count}" for name, count in mix.items())})
+    return sorted(listed, key=lambda row: -row["other"] / row["scans"])
+
+
+def screen(cluster: int, number: int) -> dict:
+    saved = held(); rows = rows_of[cluster]; pages = max(1, -(-len(rows) // SCREEN)); number = min(max(0, number), pages - 1)
+    shown = rows[number * SCREEN:(number + 1) * SCREEN]
+    return {"cluster": cluster, "screen": number, "screens": pages, "scans": len(rows), "saved": int(sample.loc[rows].image.isin(saved.keys()).sum()),
+            "items": [{"at": at, "mark": saved.get(sample.image[at], sample.guess[at]), "guess": sample.guess[at], "saved": sample.image[at] in saved} for at in shown]}
 
 
 def save(marks: dict[str, str]) -> None:
@@ -80,36 +84,44 @@ def save(marks: dict[str, str]) -> None:
 PAGE = """<!doctype html><meta charset="utf-8"><title>Cut or not</title>
 <style>
 body{font:15px system-ui,sans-serif;margin:0;background:#16181c;color:#e8e8e8}
-header{position:sticky;top:0;background:#16181c;padding:10px 16px;border-bottom:1px solid #333;z-index:5;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
-button{font:inherit;padding:7px 14px;border-radius:6px;border:2px solid #555;background:#23262b;color:#e8e8e8;cursor:pointer}
+header{position:sticky;top:0;background:#16181c;padding:8px 16px;border-bottom:1px solid #333;z-index:5;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+button,select{font:inherit;padding:6px 12px;border-radius:6px;border:2px solid #555;background:#23262b;color:#e8e8e8;cursor:pointer}
 button.on{background:#e8e8e8;color:#16181c}
 .cut{border-color:#1baf7a}.no_cut{border-color:#eb6834}.single{border-color:#2a78d6}.not_a_page{border-color:#8c8c8c}
-#grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px;padding:12px 16px}
-#grid div{border:6px solid;border-radius:4px;cursor:pointer;background:#000;position:relative;line-height:0}
-#grid div.changed::after{content:"changed";position:absolute;top:4px;left:4px;background:#fff;color:#000;font-size:11px;padding:1px 5px;line-height:1.4;border-radius:3px}
-#grid img{width:100%;height:170px;object-fit:contain}
+#grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px;padding:10px 16px}
+#grid div{border:5px solid;border-radius:4px;cursor:pointer;background:#000;position:relative;line-height:0}
+#grid div.changed::after{content:"changed";position:absolute;top:3px;left:3px;background:#fff;color:#000;font-size:11px;padding:1px 5px;line-height:1.4;border-radius:3px}
+#grid img{width:100%;height:135px;object-fit:contain}
 #big{position:fixed;inset:0;background:#000d;display:none;align-items:center;justify-content:center;z-index:9}#big img{max-width:96%;max-height:96%}
-small{color:#aaa}
+#help{padding:6px 16px;color:#bbb;font-size:13.5px;line-height:1.5;border-bottom:1px solid #333}#help b{color:#e8e8e8}
 </style>
-<header><b id="where"></b>
-<span id="brushes"></span>
-<button id="back">&larr; Save and back</button><button id="next" style="border-color:#e8e8e8">Save and next &rarr; (Enter)</button>
-<small>Pick an answer (keys 1-4), click the scans that should have it; click again to undo. Shift-click: see it large.</small></header>
+<div id="help"><b>Is there handwriting to read?</b> No: <b>4 Not a page</b> (cover, blank, card, target). &nbsp; <b>Only one page?</b> <b>3 Single page</b>. &nbsp;
+<b>Two pages: follow a line across the middle.</b> It continues on the other page (a ledger or table across the fold): <b>2 Do not cut</b>. Each page has its own text: <b>1 Cut</b>.<br>
+Pick an answer (keys 1-4), then click the scans that should have it; click again to undo. Shift-click: see a scan large. Enter: save and next.</div>
+<header><select id="clusters"></select><b id="where"></b>
+<span id="brushes"></span><button id="all">Set all on this screen</button>
+<button id="back">&larr; Save, back</button><button id="next" style="border-color:#e8e8e8">Save and next &rarr;</button></header>
 <div id="grid"></div><div id="big"><img></div>
 <script>
 const SAYS={cut:"1 Cut",no_cut:"2 Do not cut",single:"3 Single page",not_a_page:"4 Not a page"}, KEYS=Object.keys(SAYS);
-let brush="cut", now=null;
+let brush="cut", now=null, list=[];
 const el=id=>document.getElementById(id);
-function brushes(){el("brushes").innerHTML="";KEYS.forEach(k=>{const b=document.createElement("button");b.textContent=SAYS[k];b.className=k+(k===brush?" on":"");b.onclick=()=>{brush=k;brushes()};el("brushes").append(b)})}
-function draw(){el("where").textContent=`Screen ${now.screen+1} of ${now.screens} · ${now.saved} of ${now.scans} saved · these start as: ${SAYS[now.guess].slice(2)}`;
-  el("grid").innerHTML="";now.items.forEach(it=>{const d=document.createElement("div");const set=()=>{d.className=it.mark+(it.mark!==it.guess?" changed":"")};set();
+function brushes(){el("brushes").innerHTML="";KEYS.forEach(k=>{const b=document.createElement("button");b.textContent=SAYS[k];b.className=k+(k===brush?" on":"");b.onclick=()=>{brush=k;brushes()};el("brushes").append(b)});el("all").textContent="Set all on this screen to: "+SAYS[brush].slice(2)}
+function draw(){el("where").textContent=`screen ${now.screen+1} of ${now.screens} · ${now.saved} of ${now.scans} saved`;
+  el("grid").innerHTML="";now.items.forEach(it=>{const d=document.createElement("div");it.set=()=>{d.className=it.mark+(it.mark!==it.guess?" changed":"")};it.set();
     d.innerHTML=`<img loading="lazy" src="thumb/${it.at}">`;
-    d.onclick=e=>{if(e.shiftKey){el("big").firstChild.src="large/"+it.at;el("big").style.display="flex";return}it.mark=(it.mark===brush&&it.mark!==it.guess)?it.guess:brush;set()};el("grid").append(d)});window.scrollTo(0,0)}
-async function load(n){now=await (await fetch("screen/"+n)).json();draw()}
-async function go(by){const marks={};now.items.forEach(it=>marks[it.at]=it.mark);await fetch("save",{method:"POST",body:JSON.stringify(marks)});load(Math.max(0,Math.min(now.screens-1,now.screen+by)))}
+    d.onclick=e=>{if(e.shiftKey){el("big").firstChild.src="large/"+it.at;el("big").style.display="flex";return}it.mark=(it.mark===brush&&it.mark!==it.guess)?it.guess:brush;it.set()};el("grid").append(d)});window.scrollTo(0,0)}
+async function menu(keep){list=await (await fetch("clusters")).json();el("clusters").innerHTML="";list.forEach(c=>{const o=document.createElement("option");o.value=c.cluster;
+  o.textContent=`${c.saved>=c.scans?"✓ ":c.saved?"◐ ":""}Cluster ${c.cluster} · ${c.scans} scans · ${c.mix}`;el("clusters").append(o)});if(keep!==undefined)el("clusters").value=keep}
+async function load(cluster,n){now=await (await fetch(`screen/${cluster}/${n}`)).json();el("clusters").value=cluster;draw()}
+async function go(by){const marks={};now.items.forEach(it=>marks[it.at]=it.mark);await fetch("save",{method:"POST",body:JSON.stringify(marks)});
+  const next=now.screen+by; if(next>=now.screens){await menu();const i=list.findIndex(c=>c.cluster==now.cluster);const after=list.slice(i+1).concat(list.slice(0,i)).find(c=>c.saved<c.scans)||list[i];load(after.cluster,0)}
+  else{menu(now.cluster);load(now.cluster,Math.max(0,next))}}
 el("next").onclick=()=>go(1);el("back").onclick=()=>go(-1);el("big").onclick=()=>el("big").style.display="none";
-document.onkeydown=e=>{if(e.key>="1"&&e.key<="4"){brush=KEYS[e.key-1];brushes()}else if(e.key==="Enter"){go(1)}else if(e.key==="Escape"){el("big").style.display="none"}};
-brushes();fetch("screen/0").then(r=>r.json()).then(s=>load(s.first_unsaved));
+el("all").onclick=()=>now.items.forEach(it=>{it.mark=brush;it.set()});
+el("clusters").onchange=e=>load(+e.target.value,0);
+document.onkeydown=e=>{if(e.target.tagName==="SELECT")return;if(e.key>="1"&&e.key<="4"){brush=KEYS[e.key-1];brushes()}else if(e.key==="Enter"){go(1)}else if(e.key==="Escape"){el("big").style.display="none"}};
+brushes();menu().then(()=>{const first=list.find(c=>c.saved<c.scans)||list[0];load(first.cluster,0)});
 </script>"""
 
 
@@ -123,7 +135,8 @@ class Handler(BaseHTTPRequestHandler):
         part = self.path.strip("/").split("/")
         try:
             if part == [""]: self.send(PAGE.encode(), "text/html; charset=utf-8")
-            elif part[0] == "screen": self.send(json.dumps(screen(int(part[1]))).encode(), "application/json")
+            elif part[0] == "clusters": self.send(json.dumps(clusters()).encode(), "application/json")
+            elif part[0] == "screen": self.send(json.dumps(screen(int(part[1]), int(part[2]))).encode(), "application/json")
             elif part[0] == "thumb": self.send(thumb(sample.image[int(part[1])]).read_bytes(), "image/jpeg", cache=True)
             elif part[0] == "large": self.send(thumb(sample.image[int(part[1])], LARGE, 1400).read_bytes(), "image/jpeg", cache=True)
             else: self.send_error(404)
