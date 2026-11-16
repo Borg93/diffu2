@@ -59,10 +59,31 @@ def draw_random(count: int = 150) -> pd.DataFrame:
 
 if not SAMPLE.exists():
     lance.write_dataset(pa.Table.from_pandas(draw_sample(), preserve_index=False), str(SAMPLE))
-RANDOM = HOME / "fold_marks_sample_random.lance"
+def draw_targeted(each: int = 75) -> pd.DataFrame:
+    """Scans where marks are thin: those the first form calls a single page or a table across the fold (most are not
+    to be cut: examples for a don't-cut model, and how often the form is wrong), and openings where the placer finds
+    no fold line (marks for a trained placer); the pools and the ground truth alike, none marked before."""
+    scans = lance.dataset(str(HOME / "scans.lance")).to_table(columns=["image", "pool", "gutter_x", "vl_layout", "vl_table_across_fold"], filter="vl_layout IS NOT NULL").to_pandas()
+    lost = set(lance.dataset(str(HOME / "folds.lance")).to_table(columns=["image"], filter="fold_found = false").column("image").to_pylist())
+    seen = set().union(*(set(lance.dataset(str(path)).to_table(columns=["image"]).column("image").to_pylist()) for path in (SAMPLE, RANDOM) if path.exists()))
+    scans = scans[~scans.image.isin(seen)]
+    kinds = [("first form: table across the fold", scans.vl_table_across_fold.fillna(False).astype(bool)),
+             ("first form: single page", scans.vl_layout == "single_page"), ("no fold line found", scans.image.isin(lost))]
+    taken, parts = pd.Series(False, index=scans.index), []
+    for name, fits in kinds:
+        left = scans[fits & ~taken]; pools = sorted(left.pool.unique())
+        part = pd.concat(left[left.pool == pool].sample(min((each + i) // len(pools), (left.pool == pool).sum()), random_state=2) for i, pool in enumerate(pools))
+        taken[part.index] = True; parts.append(part.assign(stratum=name))
+    return pd.concat(parts).sample(frac=1, random_state=2)[["image", "pool", "stratum", "gutter_x"]].reset_index(drop=True)
+
+
+RANDOM = HOME / "fold_marks_sample_random.lance"; TARGETED = HOME / "fold_marks_sample_targeted.lance"
 if "random" in sys.argv[1:]:
     if not RANDOM.exists(): lance.write_dataset(pa.Table.from_pandas(draw_random(), preserve_index=False), str(RANDOM))
     sample = lance.dataset(str(RANDOM)).to_table().to_pandas()
+elif "targeted" in sys.argv[1:]:
+    if not TARGETED.exists(): lance.write_dataset(pa.Table.from_pandas(draw_targeted(), preserve_index=False), str(TARGETED))
+    sample = lance.dataset(str(TARGETED)).to_table().to_pandas()
 else:
     sample = lance.dataset(str(SAMPLE)).to_table().to_pandas()
 
