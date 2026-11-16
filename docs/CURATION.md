@@ -97,6 +97,7 @@ is in the section named; scripts are under `runs/htr/curate/prototypes/` unless 
 | E22 | The VL model's two passes over the remaining 25,632 ground-truth scans, so every GT page (the 200 test pages among them) has its kind and readers can be scored by kind of page | **running** since 16 Nov 08:10 (GPU 1, tmux `vlgt`, ~4.5 h for both passes) | | `vl_describe.py`, `vl_ask2.py` -> `runs/htr/curate/vl/gt_rest.jsonl`, `gt_rest_pass2.jsonl` |
 | E23 | EVoC tuned, not run at its defaults: noise level (0, 0.25, 0.5), neighbours (15, 40) and smallest cluster (5, 25) varied for each one-vector embedder, every layer scored on all scans with the unclustered counted against it | EmbeddingGemma 2 and TIPSv2 done 16 Nov 08:50; **Qwen 8B and Nemotron Embed queued behind their embeddings** (tmux `aftersem`, which then also redraws the maps) | so far: no setting brings the unclustered share under about 40 % (noise_level 0: 48 % and 45 %), and the agreement with the kinds of scan hardly moves (0.18-0.19; 0.23-0.24): EVoC's settings are not the lever; the unclustered scans need assigning to their nearest cluster, or another clusterer | `evoc_tune.py` -> `embed_scans/evoc_tune_<name>.json` |
 | E24 | The VL model's two passes on 60,000 more pool scans (30,000 from each pool, none described before), for more examples of the rare kinds and a better head | **queued 16 Nov 09:20**, starts by itself when E22 ends (GPU 1, tmux `vlmore`, about 10 h) | | `vl_describe.py`, `vl_ask2.py` -> `runs/htr/curate/vl/sample2.jsonl`, `sample2_pass2.jsonl` |
+| E25 | Full coverage for the clusters (SCALAR), and oddities (HiRank), on Qwen3-VL-Embedding 8B's vectors of 14,985 scans | first run 16 Nov 10:00; **to repeat on Nemotron Embed and to tune** | EVoC alone leaves 54 % unclustered; SCALAR (4,000 k-means representatives, EVoC on them, labels spread back by 5 neighbours) leaves 7 % with the same agreement with the kinds of scan (0.237 against 0.232); voting EVoC's unclustered scans in covers all but swells one cluster to 14 %. HiRank: the oddest scans are not the non-handwriting (signs and reel targets are many alike, so dense: AUC 0.18); 1,465 scans tie at the lowest score, the 18 looked at mostly ordinary openings with a few one-offs (a letter with a drawing, a fold-out) | `scalar_hirank.py`; "SCALAR and HiRank" |
 
 Queued, not started: Nemotron 3.5 Parse's double pass with our fine-tuned reader (the page parsed once, then each region it calls a table cut out and parsed again at higher detail and merged back: NVIDIA's card gives 72.7 -> 74.9 on ParseBench; our tables are 11 % of scans and the reader's weakest kind), on the test pages by kind once E22 gives every GT page its kind; Toponymy names for the clusters (needs E15); the rare kinds' recall (needs E15); a step placing
 the cut at full resolution, scored against folds marked by hand; Jev's page score on the calibration scans; the
@@ -546,6 +547,26 @@ The truth here is the model's answer, which the eye found right for these answer
 - Where the head is unsure (a single page against an opening with an empty side), the scan can go to the model
   itself: the unsure share decides how many scans that is. Not yet measured: the head's probabilities and how many
   scans fall under a threshold.
+
+## SCALAR and HiRank (16 Nov, E25, first run on Qwen3-VL-Embedding 8B's vectors)
+
+- **EVoC does not cluster every scan, and its settings do not change that (E23).** At about 50 clusters it leaves 54 %
+  of the 14,985 scans in none.
+- **SCALAR does what was missing.** Its pipeline: k-means representatives of the scans, EVoC on the representatives,
+  every scan given the label its nearest representatives vote for (`ClusterScalar`, `KMeansDownsampler`,
+  `KNNUpsampler`; read at a566b3f). With 4,000 representatives and the noise vote at 0, 7 % stay unclustered, 51
+  clusters, the largest 8 % of scans, and the agreement with the kinds of scan is the same as EVoC's on the scans it
+  kept (0.237 against 0.232). With 1,500 representatives 14 %. It is also the form that reaches 3.15 million scans:
+  EVoC only ever sees the representatives.
+- The cheap alternative, voting EVoC's unclustered scans into their neighbours' clusters, covers every scan but one
+  cluster swells to 14 % of them.
+- **HiRank finds one-offs, not the non-handwriting.** `RankOD` (15 neighbours, rank up to 100, cosine): its score is a
+  density, low for an odd scan (its README says the opposite of its docstring; checked on the numbers). Signs, reel
+  targets and covers are many of a kind, so they are dense, not odd: scored against running-text openings their AUC
+  as outliers is 0.18. 1,465 scans tie at density 0, so the "oddest 18" drawn are an arbitrary 18 of those: mostly
+  ordinary openings, with a letter with a drawing, a fold-out and a sheet laid across. To use it: a longer rank list
+  so the ties break, then the lowest hundred looked at; non-handwriting is the head's and the clusters' job.
+- Not yet: either tool on Nemotron Embed's vectors; a look at SCALAR's clusters by sampling scans from each.
 
 ## Experiments queued (asked for)
 
