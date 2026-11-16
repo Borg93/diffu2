@@ -171,6 +171,37 @@ Distance from the marked fold, in percent of the scan's width, on the 167 scans 
 - Scored rows: `runs/htr/curate/fold_marks_scored.json`, `fold_marks_placer.json` (to move into `scans.lance`).
 
 
+### The same on 150 scans drawn at random (E33, 16 Nov)
+
+Gabriel marked 150 more, drawn at random from the described scans, 50 from each pool and the ground truth
+(`mark_folds.py random`; `fold_marks_sample_random.lance`): 142 with a fold, 4 not to be cut, 4 single pages. These
+rates hold for described scans as they come; the 200 above were hard kinds.
+
+| Cutter, on the 142 with a fold | Median | Off by more than 0.5 % | more than 1 % | more than 2 % |
+|---|---|---|---|---|
+| Gutter network | 0.72 | 61 % | 36 % | 20 % |
+| The middle of the scan | 0.49 | 49 % | 23 % | 6 % |
+| Placer, ±6 % around the middle | 0.25 | 16 % | 3 % | 0 % |
+| the same, where it finds a fold line (133) | 0.23 | 12 % | 1 % (1 scan) | 0 % |
+
+Whether to cut, on all 150 (8 not to be cut):
+
+| Rule for "do not cut" | Found, of 8 | Openings held back, of 142 |
+|---|---|---|
+| First form (single page, or table across the fold) | 4 | 1 |
+| The three answers defined (E32's question) | 7 | 6 |
+| Either | 7 | 7 |
+| Either, or the placer finds no fold line | 7 | 15 |
+
+- **The rule for a trusted cut:** the VL model answers "cut" to the defined question, the first form does not say
+  single page or table across the fold, and the placer finds a fold line. It keeps 128 of the 150 scans; of those,
+  1 was not to be cut (a Svea register across the fold the model called "cut") and 1 has its cut more than 1 % off:
+  2 of 128 wrong, which on this sample puts the true share under about 5.5 % with 95 % confidence.
+- The gutter network is off by more than 1 % on a third of ordinary openings too; it is kept only for finding
+  candidate openings, not for placing or deciding.
+- Scans not to be cut are about 5 % of described scans (8 of 150).
+- Rows: `runs/htr/curate/fold_marks_random_scored.json`, `vl/cut_or_not_random.jsonl`.
+
 **16 Nov, 12:00: the root disk filled (21 MB free) and every job stopped.** Not this work: two Docker volumes of the
 rask setup hold 923 GB and 432 GB. Each output file lost one half-written last line, removed; the jobs were
 restarted at 12:20 and the disk had 938 GB free by 13:20. Follow-ons queued on a log line must match what a
@@ -215,6 +246,7 @@ is in the section named; scripts are under `runs/htr/curate/prototypes/` unless 
 | E30 | One Lance table of scans with every feature as a column, built from the Lance docs read at their source | **first columns in 16 Nov**; pool reads, embeddings, clusters and scores to move; run scripts to write Lance | `scans.lance`: 3,184,889 scans (pools and GT) keyed by `image`; gutters, the VL model's answers (typed and as JSON) and fold placements joined; a refresh of 79,000 described scans takes 12 s; none differs from the result files | `diffu_curate.table.add_features`, `prototypes/to_lance.py`; "One table" |
 | E31 | Folds marked by hand on 200 scans of hard kinds, every cutter scored against them | done 16 Nov (Gabriel's marks, 17 minutes) | **the gutter network is worse than cutting at the middle (60 % against 37 % off by more than 1 % of the width); the placer searching ±6 % around the middle finds a fold line in 87 % of scans and is then off by more than 1 % in 2 %**; whether to cut at all is not solved: the network says gutter for 32 of the 33 scans not to be cut | `mark_folds.py`; "Folds marked by hand" |
 | E32 | Does the VL model decide better whether a scan is to be cut (cut / must not be cut / single page) when shown marked scans as examples; scored on the 200 marked scans, each left out of its own examples | done 16 Nov | **marked examples do not help the VL model overall (86 % right with definitions only, 88 % with six examples; 13 scans gained, 9 lost); they make it more cautious about saying "do not cut".** Scans not to be cut found, and openings wrongly held back, of 33 and 167: the first form's columns 28 and 32; the three answers defined 28 and 16; with examples 22 and 6; definitions or the first form 33 and 41. No rule finds all 33 without holding back a quarter of the hard openings. A missed one, looked at: a register whose rows run across both pages. The sample is of hard kinds, so the rates are not the pools'
+| E33 | The cutters and the cut-or-not rules on 150 scans drawn at random and marked by hand, for rates that hold for the pools | done 16 Nov (Gabriel's marks) | placer ±6 % around the middle: 3 % of folds off by more than 1 %, 1 of 133 where a fold line is found; gutter network 36 %. **Trusted-cut rule (VL "cut" to the defined question, no objection from the first form, a fold line found) keeps 128 of 150 scans, 2 of them wrong.** Scans not to be cut are about 5 % | `mark_folds.py random`; "The same on 150 scans drawn at random" |
 
 Queued, not started: Nemotron 3.5 Parse's double pass with our fine-tuned reader (the page parsed once, then each region it calls a table cut out and parsed again at higher detail and merged back: NVIDIA's card gives 72.7 -> 74.9 on ParseBench; our tables are 11 % of scans and the reader's weakest kind), on the test pages by kind once E22 gives every GT page its kind; Toponymy names for the clusters (needs E15); the rare kinds' recall (needs E15); a step placing
 the cut at full resolution, scored against folds marked by hand; Jev's page score on the calibration scans; the
