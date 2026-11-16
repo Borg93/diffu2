@@ -4,7 +4,7 @@ The ledger of the curation work: what was measured, what was seen, what works, w
 it the day a thing is learnt. The code is `packages/curate` (`diffu-curate`); the reader runs are in
 [HTR_RUNS.md](HTR_RUNS.md).
 
-## Start here: state and task list (updated 15 Nov 23:30)
+## Start here: state and task list (updated 16 Nov 08:40; the gutter pass and `pages_cut.lance` finished 16 Nov, the table is not to be used as it is (task 1); **the root disk has 15 GB free and something outside this work wrote 46 GB to it overnight**)
 
 Read this section, then "Rules". Update it whenever a job starts or ends or a task changes state, and give every
 experiment a row in the "Experiment register" below the day it starts.
@@ -13,10 +13,9 @@ experiment a row in the "Experiment register" below the day it starts.
 
 | Where | Window | What | Writes | When it ends |
 |---|---|---|---|---|
-| CPU | `gutters` | `diffu-curate gutters`: the gutter network over every scan (1,700,000 of 3,184,889 at 19:00, ~57 scans/s, done about 02:00 on 16 Nov); then `pages --gutters` writes `pages_cut.lance`, **not to be used as it is** (task 1) | `runs/htr/curate/gutters.lance`, `gutters.log` | a table only; nothing reads it |
 | GPU 1 | `vlserve5` | Nemotron 3.5 Super VL served in Docker (`runs/htr/curate/serve_vl.sh 1 8011`; 96 GB of the GPU; stop with `docker stop nemotron-vl`) | `runs/htr/curate/vl/serve.log` | stays up while task 9 runs |
-| GPU 1 | `vlpass2` | the model's second pass over the 45,000 scans: table or running text, turned writing, each option defined (`prototypes/vl_ask2.py`, 3.5 scans/s, ends about 02:40 on 16 Nov) | `runs/htr/curate/vl/sample_pass2.jsonl`, `sample_pass2.log` | resumable: rerun the same command |
-| GPU 2 | `embedqwen` | Qwen3-VL-Embedding 2B, then 8B, on the embedder comparison's 49,998 pages, image alone and image with label text (`prototypes/embed_qwen.py`, started 15 Nov 21:00, beside the readers; it runs from a scratch environment of this session, `venv_egemma`, which must not be deleted before it ends) | `runs/htr/curate/embed/qwen2b_*.npy`, `qwen8b_*.npy`, `qwen2B.log` | then scored like the others (`compare_embedders.py`) into the embedder table |
+| GPU 1 | `vlgt` | the VL model's two passes over the 25,632 GT scans not yet described (E22) | `runs/htr/curate/vl/gt_rest.jsonl`, `gt_rest_pass2.jsonl` | resumable; about 12:40 on 16 Nov |
+| GPU 2 | `embednv` | Nemotron 3.5 Embed 8B on the comparison's 10,000 GT pages (E21); needs the scratch environment `venv_egemma` | `runs/htr/curate/embed/nvembed8b_*.npy` | about 11:00 on 16 Nov |
 | GPU 2 | `poolread`, `poolread2` | Nemotron Parse reading 53,490 Svea pool pages, one from the start, one from the end (`runs/htr/verify/pool_read.py`) | `pool_read/svea_pilot.jsonl`, `svea_pilot_rev.jsonl` | resumable |
 | (stopped) | | the andra arkiv pool read, stopped 15 Nov 18:40 at 14,400 of 56,130 pages for the VL model's GPU; `runs/htr/curate/gpu1_queue.sh` resumes it (a second reader: the `poolread3` command with REVERSE) | `pool_read/andra_pilot.jsonl`, `andra_pilot_rev.jsonl` | restart when GPU 1 is free |
 
@@ -64,7 +63,7 @@ is in the section named; scripts are under `runs/htr/curate/prototypes/` unless 
 | E6 | Orientation network | done 15 Nov | 99.94 % in-domain; typed pages fool it | `orientation.py`; "What works" |
 | E7 | DINOv3 page embeddings + EVoC on 3,007 pages | done 15 Nov | kinds of page come out as their own clusters | `page_embed.py`; "EVoC on DINOv3 page embeddings" |
 | E8 | Which embedder groups pages (TIPSv2, DINOv3, EmbeddingGemma 2) | done 15 Nov | TIPSv2 0.726 same volume, DINOv3 0.653, EmbeddingGemma 2 0.42-0.43 | `embed_pages.py`, `embed_gemma.py`, `compare_embedders.py`; "Which embedder" |
-| E9 | The same for Qwen3-VL-Embedding 2B and 8B | 2B done 15 Nov 23:00; **8B running** (GPU 2) | 2B: 0.381 same volume, 0.531 same collection (0.430, 0.647 with the label's text): level with EmbeddingGemma 2, far behind TIPSv2 and DINOv3 | `embed_qwen.py`, `compare_neighbours.py`; "Which embedder" |
+| E9 | The same for Qwen3-VL-Embedding 2B and 8B | done 16 Nov | 2B: 0.381 same volume, 0.531 same collection (0.430, 0.647 with the label's text); 8B: 0.514, 0.676 (0.454, 0.677 with text): the 8B the best of the image-and-text embedders, still behind DINOv3 (0.653, 0.799) and TIPSv2 (0.726, 0.863) | `embed_qwen.py`, `compare_neighbours.py`; "Which embedder" |
 | E10 | Writing layer tuned on PAGE polygons (embedder, head, resolution) | done 15 Nov | all within 0.01 IoU (0.71-0.73 of a possible 0.84): DINOv3, linear | `writing_tune.py`; "The writing layer, tuned and checked" |
 | E11 | Does the writing layer notice missing labels | done 15 Nov | AUC 0.95 with a quarter of the lines removed, 0.88 with a tenth; real misses untested | `writing_eval.py`; same section |
 | E12 | Our reader against the old labels on pool pages | **running** (Svea, GPU 2); andra arkiv stopped at 14,400 | median disagreement 12 % and 11 %; the pages are cut the old way, so part of it is the cut | `runs/htr/verify/pool_read.py`; "Pages where our reader and the old label disagree" |
@@ -75,7 +74,9 @@ is in the section named; scripts are under `runs/htr/curate/prototypes/` unless 
 | E17 | AnyUp, INSID3 segment-by-example, ink mask, NeMo Curator | done, **do not work** | 0.803 against 0.855 bilinear; 0.72 against 0.85 | "What does not work" |
 | E18 | Placing the cut at full resolution near the gutter network's answer, from the image alone | done 15 Nov (prototype) | the column dark down its whole height (the fold) beats the network's place in 14 of 40 scans judged blind, loses in 2, ties in 24; a fold is found in 68 % of scans; "the column with the least writing" is worse than the network | `cut_place.py`; "Placing the cut on the fold" |
 | E19 | Does a sharper question make the VL model tell tables from running text | done 15 Nov | yes: with each option defined, 33-35 of 35 scans judged by eye (alone, with thinking, or in a two-question form), against about half with the first form's bare option names; thinking adds nothing | `vl_table_ask.py`; "What the model's answers are worth, kind by kind" |
-| E20 | A second pass over the 45,000 scans asking table or running text, and turned writing, with definitions | **running** since 15 Nov 23:05 (GPU 1, tmux `vlpass2`, 3.5 scans/s, ends about 02:40) | | `vl_ask2.py` -> `runs/htr/curate/vl/sample_pass2.jsonl` |
+| E20 | A second pass over the 45,000 scans asking table or running text, and turned writing, with definitions | done 16 Nov 02:30 | tables 11 % of scans (Svea 17 %, GT 11 %, andra arkiv 5 %); of the first form's 7,911 "tables" 4,554 are tables; some turned writing 1.2 %, most turned 0.0 % | `vl_ask2.py` -> `runs/htr/curate/vl/sample_pass2.jsonl` |
+| E21 | NVIDIA Nemotron 3.5 Embed 8B (a retrieval model trained on document pages) on the embedder comparison, ground-truth pages first | **running** since 16 Nov 08:30 (GPU 2, tmux `embednv`, ~1.1 pages/s beside the readers, 10,000 GT pages in ~2.5 h) | | `embed_nvembed.py`, `compare_neighbours.py`; "Which embedder" |
+| E22 | The VL model's two passes over the remaining 25,632 ground-truth scans, so every GT page (the 200 test pages among them) has its kind and readers can be scored by kind of page | **running** since 16 Nov 08:10 (GPU 1, tmux `vlgt`, ~4.5 h for both passes) | | `vl_describe.py`, `vl_ask2.py` -> `runs/htr/curate/vl/gt_rest.jsonl`, `gt_rest_pass2.jsonl` |
 
 Queued, not started: Toponymy names for the clusters (needs E15); the rare kinds' recall (needs E15); a step placing
 the cut at full resolution, scored against folds marked by hand; Jev's page score on the calibration scans; the
@@ -284,6 +285,8 @@ information).
 | EmbeddingGemma 2, image + label text | 0.434 | 0.648 | 0.329 |
 | EmbeddingGemma 2, image | 0.424 | 0.570 | 0.216 |
 | Qwen3-VL-Embedding 2B, image + label text (2,048-d) | 0.430 | 0.647 | not run |
+| Qwen3-VL-Embedding 8B, image (4,096-d) | 0.514 | 0.676 | not run |
+| Qwen3-VL-Embedding 8B, image + label text | 0.454 | 0.677 | not run |
 | Qwen3-VL-Embedding 2B, image | 0.381 | 0.531 | not run |
 
 - TIPSv2 places a page among its own volume's pages more often than DINOv3 (0.726 against 0.653); their EVoC clusters
