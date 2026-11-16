@@ -90,15 +90,17 @@ button.on{background:#e8e8e8;color:#16181c}
 .cut{border-color:#1baf7a}.no_cut{border-color:#eb6834}.single{border-color:#2a78d6}.not_a_page{border-color:#8c8c8c}
 #grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px;padding:10px 16px}
 #grid div{border:5px solid;border-radius:4px;cursor:pointer;background:#000;position:relative;line-height:0}
-#grid div.changed::after{content:"changed";position:absolute;top:3px;left:3px;background:#fff;color:#000;font-size:11px;padding:1px 5px;line-height:1.4;border-radius:3px}
+#grid span{position:absolute;left:0;bottom:0;right:0;font-size:12px;font-weight:600;padding:2px 6px;line-height:1.5;color:#fff;text-align:center}
+#grid .cut span{background:#1baf7a}#grid .no_cut span{background:#eb6834}#grid .single span{background:#2a78d6}#grid .not_a_page span{background:#8c8c8c}
+#grid div.changed{outline:3px solid #fff}
 #grid img{width:100%;height:135px;object-fit:contain}
 #big{position:fixed;inset:0;background:#000d;display:none;align-items:center;justify-content:center;z-index:9}#big img{max-width:96%;max-height:96%}
 #help{padding:6px 16px;color:#bbb;font-size:13.5px;line-height:1.5;border-bottom:1px solid #333}#help b{color:#e8e8e8}
 </style>
 <div id="help"><b>Is there handwriting to read?</b> No: <b>4 Not a page</b> (cover, blank, card, target). &nbsp; <b>Only one page?</b> <b>3 Single page</b>. &nbsp;
 <b>Two pages: follow a line across the middle.</b> It continues on the other page (a ledger or table across the fold): <b>2 Do not cut</b>. Each page has its own text: <b>1 Cut</b>.<br>
-Pick an answer (keys 1-4), then click the scans that should have it; click again to undo. Shift-click: see a scan large. Enter: save and next.</div>
-<header><select id="clusters"></select><b id="where"></b>
+<b>How:</b> every scan already has an answer, written under it: the system's guess. <b>You only fix the wrong ones.</b> Choose the right answer in the row below (it turns white), then click each scan that should have that answer; its label changes. Click it again to undo. When the whole screen is right, press <b>Save and next</b>. Nothing is saved before that. &nbsp; Shift-click: see a scan large.</div>
+<header><b style="color:#eda100">Cluster gallery</b><select id="clusters"></select><b id="where"></b>
 <span id="brushes"></span><button id="all">Set all on this screen</button>
 <button id="back">&larr; Save, back</button><button id="next" style="border-color:#e8e8e8">Save and next &rarr;</button></header>
 <div id="grid"></div><div id="big"><img></div>
@@ -106,10 +108,10 @@ Pick an answer (keys 1-4), then click the scans that should have it; click again
 const SAYS={cut:"1 Cut",no_cut:"2 Do not cut",single:"3 Single page",not_a_page:"4 Not a page"}, KEYS=Object.keys(SAYS);
 let brush="cut", now=null, list=[];
 const el=id=>document.getElementById(id);
-function brushes(){el("brushes").innerHTML="";KEYS.forEach(k=>{const b=document.createElement("button");b.textContent=SAYS[k];b.className=k+(k===brush?" on":"");b.onclick=()=>{brush=k;brushes()};el("brushes").append(b)});el("all").textContent="Set all on this screen to: "+SAYS[brush].slice(2)}
+function brushes(){el("brushes").innerHTML="";KEYS.forEach(k=>{const b=document.createElement("button");b.textContent=SAYS[k];b.className=k+(k===brush?" on":"");b.onclick=()=>{brush=k;brushes()};el("brushes").append(b)});el("all").textContent="Make ALL on this screen: "+SAYS[brush].slice(2)}
 function draw(){el("where").textContent=`screen ${now.screen+1} of ${now.screens} · ${now.saved} of ${now.scans} saved`;
-  el("grid").innerHTML="";now.items.forEach(it=>{const d=document.createElement("div");it.set=()=>{d.className=it.mark+(it.mark!==it.guess?" changed":"")};it.set();
-    d.innerHTML=`<img loading="lazy" src="thumb/${it.at}">`;
+  el("grid").innerHTML="";now.items.forEach(it=>{const d=document.createElement("div");d.innerHTML=`<img loading="lazy" src="thumb/${it.at}"><span></span>`;
+    it.set=()=>{d.className=it.mark+(it.mark!==it.guess?" changed":"");d.lastChild.textContent=SAYS[it.mark].slice(2).toUpperCase()+(it.mark!==it.guess?"  (you changed it)":"")};it.set();
     d.onclick=e=>{if(e.shiftKey){el("big").firstChild.src="large/"+it.at;el("big").style.display="flex";return}it.mark=(it.mark===brush&&it.mark!==it.guess)?it.guess:brush;it.set()};el("grid").append(d)});window.scrollTo(0,0)}
 async function menu(keep){list=await (await fetch("clusters")).json();el("clusters").innerHTML="";list.forEach(c=>{const o=document.createElement("option");o.value=c.cluster;
   o.textContent=`${c.saved>=c.scans?"✓ ":c.saved?"◐ ":""}Cluster ${c.cluster} · ${c.scans} scans · ${c.mix}`;el("clusters").append(o)});if(keep!==undefined)el("clusters").value=keep}
@@ -128,7 +130,7 @@ brushes();menu().then(()=>{const first=list.find(c=>c.saved<c.scans)||list[0];lo
 class Handler(BaseHTTPRequestHandler):
     def send(self, body: bytes, kind: str, cache: bool = False) -> None:
         self.send_response(200); self.send_header("Content-Type", kind); self.send_header("Content-Length", str(len(body)))
-        if cache: self.send_header("Cache-Control", "max-age=86400")
+        self.send_header("Cache-Control", "max-age=86400" if cache else "no-store")
         self.end_headers(); self.wfile.write(body)
 
     def do_GET(self) -> None:  # noqa: N802 (the server's name for it)
