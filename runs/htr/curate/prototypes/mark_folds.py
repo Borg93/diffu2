@@ -6,8 +6,12 @@ and kept in fold_marks_sample.lance. Each scan is shown whole and as a strip aro
 a click on the strip marks the fold, a click on the whole scan moves the strip. No cutter's answer is drawn, so the
 mark is not led by one. Every mark is appended to fold_marks.lance (the last row of an image is its mark).
 
-    uv run python runs/htr/curate/prototypes/mark_folds.py          # then open http://localhost:7861
+    uv run python runs/htr/curate/prototypes/mark_folds.py [random]   # then open http://localhost:7861
+
+With ``random``: 150 described scans drawn at random instead (fold_marks_sample_random.lance), for rates that hold
+for the pools.
 """
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -44,9 +48,23 @@ def draw_sample() -> pd.DataFrame:
     return pd.concat(parts).sample(frac=1, random_state=0)[["image", "pool", "stratum", "gutter_x"]].reset_index(drop=True)
 
 
+def draw_random(count: int = 150) -> pd.DataFrame:
+    """Described scans drawn at random, a third from each pool and the ground truth, none marked before: for rates
+    that hold for the pools, which the hard kinds of the first 200 do not give."""
+    scans = lance.dataset(str(HOME / "scans.lance")).to_table(columns=["image", "pool", "gutter_x"], filter="vl_layout IS NOT NULL").to_pandas()
+    scans = scans[~scans.image.isin(set(lance.dataset(str(SAMPLE)).to_table(columns=["image"]).column("image").to_pylist()))]
+    parts = [scans[scans.pool == pool].sample(count // 3, random_state=1) for pool in sorted(scans.pool.unique())]
+    return pd.concat(parts).sample(frac=1, random_state=1).assign(stratum="random")[["image", "pool", "stratum", "gutter_x"]].reset_index(drop=True)
+
+
 if not SAMPLE.exists():
     lance.write_dataset(pa.Table.from_pandas(draw_sample(), preserve_index=False), str(SAMPLE))
-sample = lance.dataset(str(SAMPLE)).to_table().to_pandas()
+RANDOM = HOME / "fold_marks_sample_random.lance"
+if "random" in sys.argv[1:]:
+    if not RANDOM.exists(): lance.write_dataset(pa.Table.from_pandas(draw_random(), preserve_index=False), str(RANDOM))
+    sample = lance.dataset(str(RANDOM)).to_table().to_pandas()
+else:
+    sample = lance.dataset(str(SAMPLE)).to_table().to_pandas()
 
 
 def marks() -> dict[str, tuple[str, float | None]]:
