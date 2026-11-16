@@ -4,10 +4,17 @@ The ledger of the curation work: what was measured, what was seen, what works, w
 it the day a thing is learnt. The code is `packages/curate` (`diffu-curate`); the reader runs are in
 [HTR_RUNS.md](HTR_RUNS.md).
 
-## Start here: state and task list (updated 16 Nov 08:40; the gutter pass and `pages_cut.lance` finished 16 Nov, the table is not to be used as it is (task 1); **the root disk has 15 GB free and something outside this work wrote 46 GB to it overnight**)
+## Start here: state and task list (updated 16 Nov 09:45 (handover: Gabriel changing user); the gutter pass and `pages_cut.lance` finished 16 Nov, the table is not to be used as it is (task 1); **the root disk has 15 GB free and something outside this work wrote 46 GB to it overnight**)
 
 Read this section, then "Rules". Update it whenever a job starts or ends or a task changes state, and give every
 experiment a row in the "Experiment register" below the day it starts.
+
+**If you pick this up (16 Nov 09:45):** nothing needs a decision to keep going. In order: (1) when `sem_nvembed8b.npy`
+exists, run `scan_maps.py` and look at `maps.png` and `maps.json`; put the result in the register (E21) and the
+artifact; (2) when `vl/gt_rest_pass2.log` says 25632, every GT scan has its kind: join to the test pages and score the
+readers by kind (E22); (3) GPU 1 is then free of work: restart the andra arkiv pool read (`gpu1_queue.sh`) only if the
+VL server is stopped first (`docker stop nemotron-vl`; it holds the whole GPU), or give the server its next job
+(Toponymy names, the scans the head is unsure of). Watch the root disk (15 GB free at 08:30).
 
 **Running** (all in tmux session `htr`; machine dmlpai01, GPUs 1 and 2 only, GPU 0 is another user's):
 
@@ -15,7 +22,7 @@ experiment a row in the "Experiment register" below the day it starts.
 |---|---|---|---|---|
 | GPU 1 | `vlserve5` | Nemotron 3.5 Super VL served in Docker (`runs/htr/curate/serve_vl.sh 1 8011`; 96 GB of the GPU; stop with `docker stop nemotron-vl`) | `runs/htr/curate/vl/serve.log` | stays up while task 9 runs |
 | GPU 1 | `vlgt` | the VL model's two passes over the 25,632 GT scans not yet described (E22) | `runs/htr/curate/vl/gt_rest.jsonl`, `gt_rest_pass2.jsonl` | resumable; about 12:40 on 16 Nov |
-| GPU 2 | `embednv` | Nemotron 3.5 Embed 8B on the comparison's 10,000 GT pages (E21); needs the scratch environment `venv_egemma` | `runs/htr/curate/embed/nvembed8b_*.npy` | about 11:00 on 16 Nov |
+| GPU 2 | `semembed` | E21: EmbeddingGemma 2 (done 09:25), then Qwen3-VL-Embedding 8B, then Nemotron 3.5 Embed 8B on 15,000 described scans, image alone (`prototypes/embed_scans_semantic.py`; needs the scratch environment `venv_egemma` of session f297928e, do not delete it) | `runs/htr/curate/embed_scans/sem_<name>.npy`, `sem_<name>.log` | about 12:30 on 16 Nov; then `uv run --with evoc --with umap-learn --with matplotlib python runs/htr/curate/prototypes/scan_maps.py` clusters each with EVoC, scores the clusters against the VL model's answers and writes `embed_scans/maps.json` and `maps.png` (first run of it started 09:30, slow: EVoC and UMAP five times over) |
 | GPU 2 | `poolread`, `poolread2` | Nemotron Parse reading 53,490 Svea pool pages, one from the start, one from the end (`runs/htr/verify/pool_read.py`) | `pool_read/svea_pilot.jsonl`, `svea_pilot_rev.jsonl` | resumable |
 | (stopped) | | the andra arkiv pool read, stopped 15 Nov 18:40 at 14,400 of 56,130 pages for the VL model's GPU; `runs/htr/curate/gpu1_queue.sh` resumes it (a second reader: the `poolread3` command with REVERSE) | `pool_read/andra_pilot.jsonl`, `andra_pilot_rev.jsonl` | restart when GPU 1 is free |
 
