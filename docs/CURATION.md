@@ -133,6 +133,44 @@ scored as before (edits summed over characters of truth).
 
 Not yet done by eye: the table pages and the one-page-empty pages.
 
+## Folds marked by hand: the yardstick (E31, 16 Nov)
+
+Gabriel marked 200 scans in 17 minutes (`prototypes/mark_folds.py`; marks in `runs/htr/curate/fold_marks.lance`, the
+sample in `fold_marks_sample.lance`): 40 from each of four hard kinds, 20 single pages the network would cut, 20 plain
+openings, each kind a third Svea, andra arkiv and ground truth. 167 got a fold, 27 "must not be cut" (one table or
+text across the fold), 6 "single page". The sample is of hard kinds, not of the pools: the shares below are for
+choosing a cutter and for finding what breaks it, not rates for the pools.
+
+Distance from the marked fold, in percent of the scan's width, on the 167 scans with a fold:
+
+| Cutter | Median | Off by more than 0.5 % | more than 1 % | more than 2 % |
+|---|---|---|---|---|
+| Gutter network | 1.48 | 69 % | 60 % | 41 % |
+| The middle of the scan (0.5) | 0.65 | 59 % | 37 % | 12 % |
+| Placer, ±3 % around the network (as built) | 0.39 | 43 % | 35 % | 30 % |
+| Placer, ±6 % around the middle | 0.26 | 23 % | 8 % | 5 % |
+| Placer, ±10 % around the network | 0.23 | 24 % | 10 % | 6 % |
+| VL model's `fold_x` (115 scans) | 0.49 | | 25 % | |
+
+- **The gutter network places the cut worse than the middle of the scan does** on these scans. The marked folds lie
+  between 0.48 and 0.52 of the width in nine scans of ten; the network's answers between 0.42 and 0.55. Its earlier
+  0.44 % median was against the labels' gap, on scans where the labels show one. Looked at: the worst misses are the
+  network's, the marks sit on the fold.
+- **The placer's band was too narrow.** With ±3 % around a network answer that is itself off by more, the fold lay
+  outside the band in 62 scans. Searching ±6 % around the middle, without the network, finds a fold line in 145 of
+  167 scans; **where it finds one, 2 % are off by more than 1 %** (median 0.22 %, about the precision of a mark);
+  where it finds none (22 scans), half are off by more than 1 %. By kind, off by more than 1 % where found: cutters
+  disagree 7.5 % (40 scans), writing at the fold 3 % (33), the other kinds 0 %. By pool 2 to 4 %.
+- **So a cut can be trusted where the placer, searching around the middle, finds a fold line.** That is the rule for
+  the first curated training set; the rest wait for the trained placer.
+- **Whether to cut at all is the open half.** Of the 33 scans not to be cut the network says "gutter" for 32. The VL
+  model calls all 6 single pages single; of the 27 not to be cut it calls 30 % single and 52 % a table across the
+  fold; but of its 40 "table across the fold" scans 26 can be cut. Next: the marked scans as reference examples in
+  the VL model's question (cut / must not be cut), and the same decision spread by nearest neighbours in the
+  semantic embedding, both scored on these 200 leaving each scan out in turn.
+- Scored rows: `runs/htr/curate/fold_marks_scored.json`, `fold_marks_placer.json` (to move into `scans.lance`).
+
+
 **16 Nov, 12:00: the root disk filled (21 MB free) and every job stopped.** Not this work: two Docker volumes of the
 rask setup hold 923 GB and 432 GB. Each output file lost one half-written last line, removed; the jobs were
 restarted at 12:20 and the disk had 938 GB free by 13:20. Follow-ons queued on a log line must match what a
@@ -175,6 +213,7 @@ is in the section named; scripts are under `runs/htr/curate/prototypes/` unless 
 | E28 | Consensus entropy (Zhang et al., CVPR 2026, arXiv 2504.11101; `consensus-entropy` on PyPI, MIT): each page read by several readers, a reading scored by its mean normalised edit distance to the others; the page's lowest score says how far the readers agree, the reading with it is the label to keep. Ours: Nemotron Parse, LightOnOCR-3 and the old label; on the calibration scans first, where the truth says whether low entropy means low error and whether the chosen reading beats each reader | **queued 16 Nov** (needs LightOnOCR-3's readings of the calibration scans: a GPU job) | | to write |
 | E29 | NeMo Data Designer (NVIDIA-NeMo/DataDesigner, Apache-2.0) as the harness for the VL model's judging and describing: seed rows with images, `LLMJudgeColumnConfig` with named scores whose every option is described, an OpenAI-compatible provider (our server), parallel requests, traces. Pilot: the cut judge of E27 rebuilt in it, the same 40 scans, the same answers expected; whether its judge column forces a JSON format, which broke this model's answers once | **queued 16 Nov** | | to write |
 | E30 | One Lance table of scans with every feature as a column, built from the Lance docs read at their source | **first columns in 16 Nov**; pool reads, embeddings, clusters and scores to move; run scripts to write Lance | `scans.lance`: 3,184,889 scans (pools and GT) keyed by `image`; gutters, the VL model's answers (typed and as JSON) and fold placements joined; a refresh of 79,000 described scans takes 12 s; none differs from the result files | `diffu_curate.table.add_features`, `prototypes/to_lance.py`; "One table" |
+| E31 | Folds marked by hand on 200 scans of hard kinds, every cutter scored against them | done 16 Nov (Gabriel's marks, 17 minutes) | **the gutter network is worse than cutting at the middle (60 % against 37 % off by more than 1 % of the width); the placer searching ±6 % around the middle finds a fold line in 87 % of scans and is then off by more than 1 % in 2 %**; whether to cut at all is not solved: the network says gutter for 32 of the 33 scans not to be cut | `mark_folds.py`; "Folds marked by hand" |
 
 Queued, not started: Nemotron 3.5 Parse's double pass with our fine-tuned reader (the page parsed once, then each region it calls a table cut out and parsed again at higher detail and merged back: NVIDIA's card gives 72.7 -> 74.9 on ParseBench; our tables are 11 % of scans and the reader's weakest kind), on the test pages by kind once E22 gives every GT page its kind; Toponymy names for the clusters (needs E15); the rare kinds' recall (needs E15); a step placing
 the cut at full resolution, scored against folds marked by hand; Jev's page score on the calibration scans; the
