@@ -31,18 +31,20 @@ def test_add_features_joins_columns_on_the_key_and_leaves_rows_without_a_feature
     ]
 
 
-def test_add_features_replaces_a_column_the_table_holds_already(tmp_path: Path) -> None:
+def test_add_features_updates_a_column_the_table_holds_and_keeps_the_values_it_does_not_name(tmp_path: Path) -> None:
     table = scans(tmp_path / "scans.lance")
-    add_features(table, pa.table({"image": ["a.jpg"], "kind": ["text"]}))
+    add_features(table, pa.table({"image": ["a.jpg", "c.jpg"], "kind": ["text", "blank"]}))
+    lance.dataset(str(table)).create_scalar_index("kind", "BITMAP")
 
-    add_features(table, pa.table({"image": ["a.jpg", "b.jpg"], "kind": ["table", "text"]}))
+    add_features(table, pa.table({"image": ["a.jpg", "b.jpg"], "kind": ["table", "text"], "odd": [0.5, 0.1]}))
 
-    held = lance.dataset(str(table)).to_table(columns=["image", "kind", "lines"]).to_pylist()
-    assert held == [
-        {"image": "a.jpg", "kind": "table", "lines": 10},
-        {"image": "b.jpg", "kind": "text", "lines": 20},
-        {"image": "c.jpg", "kind": None, "lines": 30},
+    held = lance.dataset(str(table))
+    assert held.to_table(columns=["image", "lines", "kind", "odd"]).to_pylist() == [
+        {"image": "a.jpg", "lines": 10, "kind": "table", "odd": 0.5},
+        {"image": "b.jpg", "lines": 20, "kind": "text", "odd": 0.1},
+        {"image": "c.jpg", "lines": 30, "kind": "blank", "odd": None},
     ]
+    assert held.to_table(columns=["image"], filter="kind = 'table'").column("image").to_pylist() == ["a.jpg"]
 
 
 def test_add_features_refuses_two_rows_for_one_key(tmp_path: Path) -> None:

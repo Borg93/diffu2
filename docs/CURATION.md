@@ -73,9 +73,13 @@ scalar indexes, maintenance. What follows from them, and what is built:
 
 - `scans.lance` holds every scan, both pools and the ground truth (3,184,889 rows), keyed by `image` (unique). The
   version before this work is tagged `before-features`.
-- A feature becomes a column by `diffu_curate.table.add_features(table, features, key="image")`: Lance `merge`, which
-  attaches the columns as their own files without rewriting the rows; rows without a value hold null. `merge` refuses
-  a column that exists, so the helper drops and adds it again: each refresh carries every row that holds a value.
+- A feature becomes a column by `diffu_curate.table.add_features(table, features, key="image")`. A new column goes
+  in by Lance `merge`, which attaches it as its own files without rewriting the rows; rows without a value hold null.
+  A column that exists is updated in place, fragment by fragment (`LanceFragment.update_columns`, committed as one
+  `Update`): rows named take the new value, the others keep theirs, no row moves, and the indexes are brought up to
+  date. `merge` itself refuses a column that exists, and the transaction spec calls it the operation that conflicts
+  with every other write, so nothing else may write the table during a join. A refresh of the 79,000 described scans
+  takes 12 s.
 - The VL model's whole answer is the JSON column `vl` (stored as JSONB), filtered with
   `json_get_string(vl, 'writing_layout') = 'table'`; JSON functions filter but cannot be selected, so the fields
   filtered on are typed columns too (`vl_kind`, `vl_layout`, `vl_written_side`, `vl_text_columns`,
@@ -84,9 +88,20 @@ scalar indexes, maintenance. What follows from them, and what is built:
 - Bitmap indexes on `pool`, `vl_kind`, `vl_layout`, `vl_writing_layout`, `vl_turned`; B-tree on `image`.
 - `runs/htr/curate/prototypes/to_lance.py` rebuilds the `vl_*` and `fold_*` columns from every result file found; run
   it again when a run ends. Checked 16 Nov: 77,440 described scans in the table, none differing from the files.
-- Still files, to move: the pool reads (to `pages.lance`), the embeddings (their own table keyed by `image`, since a
-  4,096-wide column over 3.18 M rows is untested), clusters, maps, HiRank scores. The run scripts still write JSONL
-  and are changed to write Lance when the running VL job has ended.
+- Still files, to move: the pool reads (to `pages.lance`), the embeddings, clusters, maps, HiRank scores. The run
+  scripts still write JSONL and are changed to write Lance when the running VL job has ended.
+- From the docs, for what comes next. Vectors: a fixed-size-list column (float16 is supported), exact search without
+  an index, `IVF_RQ` as the first index to try, `prefilter=True` to search within a kind of scan; scans of wide
+  vectors need a smaller `batch_size` (the default 8,192 rows of 4,096 float16 is 64 MB a batch). Images: plain
+  binary inline is right below a few tens of KB (thumbnails), a blob column from about 1 MB (page crops); neither
+  is used yet, the tables point at the scans on disk. Text: an `INVERTED` index gives BM25 search over captions and
+  readings. Every write makes a version and old column files stay until `cleanup_old_versions` (default: older than
+  two weeks; tagged versions are kept), so the table grows with each refresh until cleaned.
+- Read in full (16 Nov, Lance repo at f7ef212): every guide but the cloud sections of `object_store`; of the format
+  spec `table/index`, `schema`, `transaction`, `table_config`, `clustering`, `versioning`, and the configuration part
+  of `file/encoding`. Not read: the index file layouts (`format/index/*`), `mem_wal`, `fragment_metadata`,
+  `data_overlay_file` (not yet supported by any library), `row_id_lineage`, `layout`, `branch_tag`, the blob spec,
+  and the page layouts of `file/encoding`.
 
 ## Experiment register
 

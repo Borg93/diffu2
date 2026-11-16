@@ -56,24 +56,35 @@ def json_column(values: Sequence[object | None]) -> pa.Array:
 def add_features(table: Path, features: pa.Table, key: str = "image") -> int:
     """Join ``features`` to the Lance table at ``table`` as columns, on ``key``; return how many of its rows matched.
 
-    Lance attaches the new columns as their own files beside the table's rows, which are not rewritten. A row of the
-    table without a feature holds null; a feature row whose key the table lacks is left out. A column the table holds
-    already is replaced whole, so ``features`` carries every row that is to hold a value.
+    A column new to the table is attached as its own files beside the rows (Lance ``merge``); a row without a feature
+    holds null. A column the table holds already is updated in place, fragment by fragment: rows the features name
+    take the new value, the others keep theirs, and no row moves. A feature row whose key the table lacks is left
+    out. Indexes on updated columns are brought up to date. Nothing else may write the table meanwhile: both
+    operations conflict with every concurrent write.
 
     Raises:
         ValueError: If ``features`` holds two rows for one key.
     """
     keys = features.column(key)
-    counts = keys.value_counts()
-    twice = [entry["values"].as_py() for entry in counts if entry["counts"].as_py() > 1]
+    twice = [entry["values"].as_py() for entry in keys.value_counts() if entry["counts"].as_py() > 1]
     if twice:
         raise ValueError(f"{len(twice)} keys of the features twice, the first {twice[0]}")
     held = lance.dataset(str(table))
-    replaced = [name for name in features.column_names if name != key and name in held.schema.names]
-    if replaced:
-        held.drop_columns(replaced)
     matched = len(set(keys.to_pylist()) & set(held.to_table(columns=[key]).column(key).to_pylist()))
-    held.merge(features, key)
+    names = [name for name in features.column_names if name != key]
+    known = [name for name in names if name in held.schema.names]
+    if len(known) < len(names):
+        held.merge(features.select([key, *(name for name in names if name not in known)]), key)
+    if known:
+        updated, modified = [], set()
+        for fragment in held.get_fragments():
+            metadata, fields = fragment.update_columns(features.select([key, *known]), left_on=key, right_on=key)
+            updated.append(metadata)
+            modified.update(fields)
+        operation = lance.LanceOperation.Update(updated_fragments=updated, fields_modified=sorted(modified))
+        held = lance.LanceDataset.commit(str(table), operation, read_version=held.version)
+        if held.describe_indices():
+            held.optimize.optimize_indices()
     return matched
 
 
