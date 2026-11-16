@@ -1,7 +1,7 @@
 """Clusters and maps of the described scans from each one-vector-a-scan embedder (CURATION E21).
 
 For every embedding of the 15,000 scans found in runs/htr/curate/embed_scans (sem_<name>.npy; the whole-scan TIPSv2
-and DINOv3 vectors are added as a reference, their own job being elsewhere): EVoC's layers of clusters, a 2-D UMAP,
+and DINOv3 vectors only with WITH_PATCH_MODELS=1: their job is where the writing is, not clustering): EVoC's layers of clusters, a 2-D UMAP,
 and how well each tells apart what the scans are by the vision-language model's answers:
 
 - neighbours: of a scan's 10 nearest, the share of its own class, averaged over the classes (so the common class
@@ -35,7 +35,9 @@ print(len(d), "scans,", int(known.sum()), "with both passes' answers;", d.what.v
 found = {name: (E / f"sem_{name}.npy", E / f"sem_{name}_ok.npy") for name in ("nvembed8b", "qwen8b", "egemma2") if (E / f"sem_{name}.npy").exists()}
 vectors = {name: (np.load(v).astype(np.float32), np.load(o)) for name, (v, o) in found.items()}
 whole_ok = np.load(E / "ok.npy")[rows]
-for name in ("tipsv2", "dinov3"): vectors[name + " (reference)"] = (np.load(E / f"{name}.npy")[rows].astype(np.float32), whole_ok)
+import os
+if os.environ.get("WITH_PATCH_MODELS"):  # off by default: DINOv3 and TIPSv2 have another job (where the writing is), not this one
+    for name in ("tipsv2", "dinov3"): vectors[name + " (reference)"] = (np.load(E / f"{name}.npy")[rows].astype(np.float32), whole_ok)
 results, maps = [], {}
 for name, (X, ok) in vectors.items():
     use = ok & known; X = X[use]; X /= np.linalg.norm(X, axis=1, keepdims=True) + 1e-8; y = d.what.to_numpy()[use]
