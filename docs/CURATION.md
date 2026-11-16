@@ -102,6 +102,37 @@ scalar indexes, maintenance. What follows from them, and what is built:
   `data_overlay_file` (not yet supported by any library), `row_id_lineage`, `layout`, `branch_tag`, the blob spec,
   and the page layouts of `file/encoding`.
 
+## Readers by kind of page (E22, 16 Nov)
+
+The 200 test pages joined to their scans' kinds in `scans.lance` (every page matched), each reader's stored reading
+scored as before (edits summed over characters of truth).
+
+| Kind (VL model) | Pages | Nemotron Parse | LightOnOCR-3 |
+|---|---|---|---|
+| all | 200 | 6.73 | 8.32 |
+| running text | 174 | 5.73 | 5.24 |
+| table or ledger | 26 | 14.08 | 30.82 |
+| opening, both pages written | 181 | 6.54 | 8.25 |
+| opening, one page empty | 10 | 16.79 | 16.70 |
+| single page | 9 | 4.40 | 4.30 |
+| left page | 93 | 5.47 | 5.51 |
+| right page | 97 | 8.03 | 11.50 |
+
+- **Tables.** The gap to running text is 8 points for Nemotron Parse (bootstrap 95 % interval 2 to 14). Within tables
+  the right-hand pages read at 21 % and the left at 5 % (12 and 10 pages): too few to say why; to look at.
+- **LightOnOCR-3 reads running text a little better** (0.5 points, interval 0.04 to 0.96) and tables twice as badly.
+- **The errors are concentrated:** ten pages carry 44 % of Nemotron Parse's edits.
+- **Two test pages have a partial truth** (looked at): `e6e45ddcae8c_right` holds a full page and its truth is the last
+  line (51 characters); `4c7c6e97ab16_left` holds a full page and its truth starts at the session heading low on the
+  page. Both readers read the whole page, 4 % and 8 % apart from each other, 1,225 to 1,273 edits from the truth.
+  Without the two: Nemotron Parse 5.45 %, LightOnOCR-3 7.07 %. The sign is cheap and is consensus entropy's (E28):
+  two readers agree with each other and both read far more than the truth holds. To run over the whole ground
+  truth, where the same pages would teach a reader to stop early.
+- "One page empty" (10 pages, 17 % for both readers) is the next to look at: a cut or a truth problem, not known yet.
+- Unlimited-OCR 2's stored reading scores 63.7 % as before and is left out.
+
+Not yet done by eye: the table pages and the one-page-empty pages.
+
 **16 Nov, 12:00: the root disk filled (21 MB free) and every job stopped.** Not this work: two Docker volumes of the
 rask setup hold 923 GB and 432 GB. Each output file lost one half-written last line, removed; the jobs were
 restarted at 12:20 and the disk had 938 GB free by 13:20. Follow-ons queued on a log line must match what a
@@ -135,7 +166,7 @@ is in the section named; scripts are under `runs/htr/curate/prototypes/` unless 
 | E19 | Does a sharper question make the VL model tell tables from running text | done 15 Nov | yes: with each option defined, 33-35 of 35 scans judged by eye (alone, with thinking, or in a two-question form), against about half with the first form's bare option names; thinking adds nothing | `vl_table_ask.py`; "What the model's answers are worth, kind by kind" |
 | E20 | A second pass over the 45,000 scans asking table or running text, and turned writing, with definitions | done 16 Nov 02:30 | tables 11 % of scans (Svea 17 %, GT 11 %, andra arkiv 5 %); of the first form's 7,911 "tables" 4,554 are tables; some turned writing 1.2 %, most turned 0.0 % | `vl_ask2.py` -> `runs/htr/curate/vl/sample_pass2.jsonl` |
 | E21 | Which image-and-text embedder gives the best clusters of scans: Nemotron 3.5 Embed 8B (trained on document pages) against Qwen3-VL-Embedding 8B and EmbeddingGemma 2, each clustered with EVoC and judged against the VL model's answers; a map of each | done 16 Nov 11:35 | **Qwen3-VL-Embedding 8B is the best of the three; Nemotron Embed 8B the weakest.** Neighbours of the same kind of scan, classes balanced, chance 0.20: Qwen 8B 0.75, EmbeddingGemma 2 0.66, Nemotron Embed 0.60. All three alike on running text and tables (0.78-0.93); Nemotron Embed fails on single pages (0.14, Qwen 0.61) and half-empty openings (0.37, Qwen 0.59). Best EVoC agreement with the kinds (AMI): 0.31, 0.27, 0.29. Numbers only: the clusters are not yet looked at by eye
-| E22 | The VL model's two passes over the remaining 25,632 ground-truth scans, so every GT page (the 200 test pages among them) has its kind and readers can be scored by kind of page | VL passes done 16 Nov 12:45 (no errors); **the join to the test pages and the reader scores by kind still to do** | 25,632 GT scans: 23,033 running text, 2,489 tables, 110 without handwriting
+| E22 | The VL model's two passes over the remaining 25,632 ground-truth scans, so every GT page (the 200 test pages among them) has its kind and readers can be scored by kind of page | done 16 Nov | **tables are the hard kind; two test pages have a truth that covers only part of the page.** Nemotron Parse (6.73 % overall) reads running text at 5.7 % (174 pages) and tables at 14.1 % (26 pages; difference 8 points, 95 % interval 2 to 14). LightOnOCR-3 is ahead on running text (5.2 %, by 0.5 points, interval 0.04 to 0.96) and far behind on tables (30.8 %). Right-hand pages of tables read at 21 %, left at 5 % (12 and 10 pages). Ten pages carry 44 % of all errors; the two worst are not reading errors: the truth transcribes one line, or the lower part, of a full page that both readers read whole and alike (4-8 % apart). Without those two pages Nemotron reads at 5.45 %, LightOnOCR-3 at 7.07 %. See "Readers by kind of page"
 | E23 | EVoC tuned, not run at its defaults: noise level (0, 0.25, 0.5), neighbours (15, 40) and smallest cluster (5, 25) varied for each one-vector embedder, every layer scored on all scans with the unclustered counted against it | done 16 Nov 11:33 for all four embedders | so far: no setting brings the unclustered share under about 40 % (noise_level 0: 48 % and 45 %), and the agreement with the kinds of scan hardly moves (0.18-0.19; 0.23-0.24): EVoC's settings are not the lever; the unclustered scans need assigning to their nearest cluster, or another clusterer | `evoc_tune.py` -> `embed_scans/evoc_tune_<name>.json` |
 | E24 | The VL model's two passes on 60,000 more pool scans (30,000 from each pool, none described before), for more examples of the rare kinds and a better head | **running** since 16 Nov 12:48 (GPU 1, tmux `vlmore2`, started by hand: the queued start waited for a log line the restarted run never wrote); first pass ends about 18:30, the second follows by itself | | `vl_describe.py`, `vl_ask2.py` -> `runs/htr/curate/vl/sample2.jsonl`, `sample2_pass2.jsonl` |
 | E25 | Full coverage for the clusters (SCALAR), and oddities (HiRank), on Qwen3-VL-Embedding 8B's vectors of 14,985 scans | first run 16 Nov 10:00; **to repeat on Nemotron Embed and to tune** | EVoC alone leaves 54 % unclustered; SCALAR (4,000 k-means representatives, EVoC on them, labels spread back by 5 neighbours) leaves 7 % with the same agreement with the kinds of scan (0.237 against 0.232); voting EVoC's unclustered scans in covers all but swells one cluster to 14 %. HiRank: the oddest scans are not the non-handwriting (signs and reel targets are many alike, so dense: AUC 0.18); 1,465 scans tie at the lowest score, the 18 looked at mostly ordinary openings with a few one-offs (a letter with a drawing, a fold-out) | `scalar_hirank.py`; "SCALAR and HiRank" |
