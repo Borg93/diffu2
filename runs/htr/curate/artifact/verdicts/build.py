@@ -1,5 +1,5 @@
 """Builds index.html, the verdicts page (claude.ai/artifact/98423D2V376HLajHfbhpS2): every curation experiment of
-docs/CURATION.md (E1 to E39) with its verdict, why it was run, what it found and what it taught us; five results as
+docs/CURATION.md (E1 to E41) with its verdict, why it was run, what it found and what it taught us; five results as
 bar charts; and the two archify diagrams as snapshots (snapshots.sh makes them and the interactive pages).
 
 Publish index.html with the Artifact tool under the same URL. The texts and numbers below are copied from the
@@ -132,6 +132,11 @@ E = [
         ("What we found", "130,666 scans are now described and embedded, 100,083 of them from the pools. The trusted set doubled: 77,258 pool scans pass the rule."),
         ("What we learned", "Describing and embedding now limit the size of the training set: 130,666 of 3.15 million scans."),
     ]),
+    (41, "describe", "measured", "Is the VL model needed everywhere", "Is the vision-language model needed on every scan?", [
+        ("Why we did it", "The model would need over a month for 3 million scans. Its answers were compared with the classifier's on the 15,110 marked scans, and a small classifier was taught its table answer."),
+        ("What we found", "Cut or not: the model's two answers find 65 % of the scans not to cut, and 4.1 % of what they would cut is of the wrong kind. The classifier finds 96 % and leaves 0.5 %. Table or running text: a small classifier agrees with the model on 97 % of 44,269 scans and finds 96 % of its tables."),
+        ("What we learned", "The model is the teacher on a sample: it describes scans and names the tables. Classifiers trained on its answers and on the hand marks carry both to every scan. For cut-or-not the hand marks are the better teacher."),
+    ]),
     (29, "describe", "queued", "Data Designer harness", "NeMo Data Designer as the harness for the vision-language model", [
         ("Why it is planned", "A ready-made harness for judging and describing: named options that are each described, parallel requests and traces, in place of our own scripts."),
         ("Where it is", "Not started."),
@@ -166,6 +171,11 @@ E = [
         ("Why we did it", "Only 100,083 of 3.15 million pool scans had been through the checks, because the vision-language model and the 8B embedder are slow. Can the classifier run on vectors from a model a twentieth the size?"),
         ("What we found", "On 15,110 marked scans, whole volumes held out. Qwen 8B: 95.5 % right, finds 95.3 % of the scans not to cut. DINOv3 alone: 94.0 % right, finds 96.0 %, and holds back 5.6 % of good openings where Qwen holds back 3.9 %. Of the scans either would cut, about 0.5 % are not to be cut."),
         ("What we learned", "The small vision models are enough for cut-or-not. They embedded 45,000 scans at 35 a second on one GPU, so all 3.15 million pool scans take about 13 hours on two GPUs, and the vision-language model is not needed at that scale."),
+    ]),
+    (40, "decide", "queued", "Whole pools through the rule", "The whole pools through the cut rule", [
+        ("Why it is planned", "Only 3 % of the pools has been through the checks. With a small model's vectors and the fold placer, every scan can be."),
+        ("Where it is", "Queued to start by itself when the training ends: every pool scan with labelled lines is embedded on both GPUs, about 13 hours, and every fold is placed on the CPU. Checked on 40 scans: the new vectors match the ones the classifier was trained on."),
+        ("What it should give", "About 2.4 million scans to cut, 4.4 million pages. One epoch of pretraining covers about 280,000 pages a day, so the size of the next set is a choice of GPU days."),
     ]),
     (7, "embed", "worked", "DINOv3 + EVoC clusters", "DINOv3 page embeddings clustered with EVoC", [
         ("Why we did it", "To map what the pools hold without any labels, and to find what is not handwriting."),
@@ -239,7 +249,7 @@ LESSONS = [
     ("Judge at full resolution", "Thumbnails hid cuts that were 1 to 2 % off. A sample of bad labels turned out to be partly bad cuts.", "E12, E13"),
     ("Simple image evidence beat a trained network", "The fold is a dark line near the middle of the scan. Searching for it is off on 3 % of openings; the network on 36 %.", "E5, E18, E31, E33"),
     ("The model says what a scan is; it cannot say where the fold is", "Define every option. Ask for JSON in the prompt. Few-shot examples and thinking mode added nothing.", "E14, E19, E27, E32"),
-    ("Marks plus embeddings spread a human decision", "A frozen embedder and a logistic head reach 95 % once there are thousands of marks. Marking by cluster makes thousands feasible.", "E34 to E37"),
+    ("Marks plus embeddings spread a human decision", "A frozen embedder and a logistic head reach 95 % once there are thousands of marks. The same works for the model's own answers, so the slow model describes a sample and small classifiers reach every scan.", "E34 to E37, E39, E41"),
     ("Two kinds of embedding, two jobs", "Patch models show where the writing is. One-vector models carry what a scan is. They are not ranked together.", "E8, E9, E21"),
     ("The old labels are a weak teacher", "They read at 10.7 % where our reader is at 6.7 %. Unfiltered, they gave 0.37 points, on the pools' own archives only.", "E1, E2, E3"),
     ("Score the test pages, and by kind", "Dev loss pointed the wrong way. Tables read at 14 % against 6 % for running text. Two test pages have a partial truth.", "E4, E22"),
