@@ -165,7 +165,7 @@ footer code { font-family: var(--mono); font-size: 12px; }
 </header>
 
 <section aria-labelledby="h-counts">
-  <h2 id="h-counts">38 experiments, six verdicts</h2>
+  <h2 id="h-counts">{{N}} experiments, six verdicts</h2>
   <div class="tiles">{{TILES}}</div>
 </section>
 
@@ -214,7 +214,7 @@ footer code { font-family: var(--mono); font-size: 12px; }
 <section aria-labelledby="h-ledger">
   <h2 id="h-ledger">Every experiment: why, what, and what it taught us</h2>
   <div class="filters" role="group" aria-label="Show experiments by verdict">{{FILTERS}}</div>
-  <p id="filter-status" role="status">Showing all 38 experiments.</p>
+  <p id="filter-status" role="status">Showing all {{N}} experiments.</p>
   <div>{{LEDGER}}</div>
 </section>
 
@@ -223,7 +223,7 @@ footer code { font-family: var(--mono); font-size: 12px; }
   <dl class="open">{{OPEN}}</dl>
 </section>
 
-<footer>The numbers come from the experiment register in <code>docs/CURATION.md</code> (E1 to E38) and the reader runs in <code>docs/HTR_RUNS.md</code>. Reader training before 14 November (the line readers and their comparisons) is in the second file and is not repeated here.</footer>
+<footer>The numbers come from the experiment register in <code>docs/CURATION.md</code> (E1 to E{{N}}) and the reader runs in <code>docs/HTR_RUNS.md</code>. Reader training before 14 November (the line readers and their comparisons) is in the second file and is not repeated here.</footer>
 </div>
 <div id="tip" role="tooltip" hidden></div>
 
@@ -242,7 +242,7 @@ footer code { font-family: var(--mono); font-size: 12px; }
     });
     groups.forEach(function (group) { group.hidden = !group.querySelector('.exp:not([hidden])'); });
     buttons.forEach(function (button) { button.setAttribute('aria-pressed', String(button.getAttribute('data-filter') === filter)); });
-    status.textContent = filter === 'all' ? 'Showing all 38 experiments.' : 'Showing ' + shown + ' of 38 experiments.';
+    status.textContent = filter === 'all' ? 'Showing all {{N}} experiments.' : 'Showing ' + shown + ' of {{N}} experiments.';
   }
   buttons.forEach(function (button) {
     button.addEventListener('click', function () { apply(button.getAttribute('data-filter')); });

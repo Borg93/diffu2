@@ -1,5 +1,5 @@
 """Builds index.html, the verdicts page (claude.ai/artifact/98423D2V376HLajHfbhpS2): every curation experiment of
-docs/CURATION.md (E1 to E38) with its verdict, why it was run, what it found and what it taught us; five results as
+docs/CURATION.md (E1 to E39) with its verdict, why it was run, what it found and what it taught us; five results as
 bar charts; and the two archify diagrams as snapshots (snapshots.sh makes them and the interactive pages).
 
 Publish index.html with the Artifact tool under the same URL. The texts and numbers below are copied from the
@@ -162,6 +162,11 @@ E = [
         ("What we found", "The classifier refitted on all 15,288 marks: 95.4 % right, finds 95.2 %, holds back 3.7 %. The rule keeps 77,258 of 100,083 described pool scans (77 %). Of 48 drawn at random and looked at with the fold drawn, 47 are cut on the fold."),
         ("What we learned", "The rule: the form says opening with no table across the fold, the defined question says cut, the classifier says cut, and the placer finds a fold line."),
     ]),
+    (39, "decide", "worked", "Small-model classifier", "The cut classifier on a small vision model's vectors", [
+        ("Why we did it", "Only 100,083 of 3.15 million pool scans had been through the checks, because the vision-language model and the 8B embedder are slow. Can the classifier run on vectors from a model a twentieth the size?"),
+        ("What we found", "On 15,110 marked scans, whole volumes held out. Qwen 8B: 95.5 % right, finds 95.3 % of the scans not to cut. DINOv3 alone: 94.0 % right, finds 96.0 %, and holds back 5.6 % of good openings where Qwen holds back 3.9 %. Of the scans either would cut, about 0.5 % are not to be cut."),
+        ("What we learned", "The small vision models are enough for cut-or-not. They embedded 45,000 scans at 35 a second on one GPU, so all 3.15 million pool scans take about 13 hours on two GPUs, and the vision-language model is not needed at that scale."),
+    ]),
     (7, "embed", "worked", "DINOv3 + EVoC clusters", "DINOv3 page embeddings clustered with EVoC", [
         ("Why we did it", "To map what the pools hold without any labels, and to find what is not handwriting."),
         ("What we found", "On 3,007 pages, every cluster looked at: reel targets and title cards, placeholder sheets, blank openings, ruled registers without labels and one series' hand each come out as their own cluster. About 8 % of pages are not handwriting."),
@@ -255,7 +260,7 @@ OPEN = [
     ("Filtering the labels", "Our reader has to read the 139,937 trusted pages. On the 1,881 that have a reading, about 6 % disagree with the old label by more than half."),
     ("Tables", "6 % of the trusted set and the reader's weakest kind. Nemotron Parse's double pass on table regions is queued."),
     ("Openings without a fold line", "About one in ten. The trained placer (E26) is for these."),
-    ("Scale", "130,666 of 3.15 million scans are described and embedded. A gain in E38 is the reason to describe more."),
+    ("Scale", "The 139,937 pages come from the 100,083 pool scans checked so far, 3 % of the pools. By the same rule the pools hold about 4.4 million pages. With E39 every scan can be embedded in about 13 hours on two GPUs. Training time then sets the size: one epoch covers about 280,000 pages a day."),
     ("Still to look at by eye", "The table test pages, the test pages with one side empty, and a sample from each cluster."),
     ("Partial ground truth", "Found on two test pages. The check over the whole ground truth needs two readers' readings (E28)."),
 ]
@@ -312,7 +317,7 @@ def pill(verdict: str) -> str:
 
 
 counts = {key: sum(1 for row in E if row[2] == key) for key in VERDICTS}
-assert sum(counts.values()) == 38 and sorted(row[0] for row in E) == list(range(1, 39)), counts
+assert sum(counts.values()) == len(E) and sorted(row[0] for row in E) == list(range(1, len(E) + 1)), counts
 
 tiles = "".join(
     f'<div class="tile v-{key}"><b>{counts[key]}</b><span><svg class="ic" aria-hidden="true"><use href="#{icon}"/></svg>{label}</span><small>{esc(meaning)}</small></div>'
@@ -354,7 +359,7 @@ for key, name in THEMES:
                     f"<h4>{esc(title)}</h4>{pill(verdict)}</header><div class=\"cols\">{cols}</div></article>")
     ledger += f'<section class="theme" data-theme-group><h3>{esc(name)} <span>{len(rows)}</span></h3>{entries}</section>'
 
-filters = '<button type="button" id="filter-all" data-filter="all" aria-pressed="true">All <span>38</span></button>' + "".join(
+filters = f'<button type="button" id="filter-all" data-filter="all" aria-pressed="true">All <span>{len(E)}</span></button>' + "".join(
     f'<button type="button" id="filter-{key}" data-filter="{key}" aria-pressed="false" class="v-{key}"><svg class="ic" aria-hidden="true"><use href="#{icon}"/></svg>{label} <span>{counts[key]}</span></button>'
     for key, (label, icon, _) in VERDICTS.items()
 )
@@ -364,7 +369,7 @@ open_items = "".join(f"<div><dt>{esc(head)}</dt><dd>{esc(text)}</dd></div>" for 
 
 page = (HERE / "template.html").read_text(encoding="utf-8")
 for slot, value in {
-    "STATE": esc(STATE), "PROGRESS": esc(PROGRESS), "TILES": tiles, "BOARD": board, "CHARTS": charts, "LESSONS": lessons,
+    "N": str(len(E)), "STATE": esc(STATE), "PROGRESS": esc(PROGRESS), "TILES": tiles, "BOARD": board, "CHARTS": charts, "LESSONS": lessons,
     "LEDGER": ledger, "FILTERS": filters, "ALSO": also, "OPEN": open_items,
     "PIPE_LIGHT": uri("snap_pipeline_light.png"), "PIPE_DARK": uri("snap_pipeline_dark.png"),
     "CUT_LIGHT": uri("snap_cut_light.png"), "CUT_DARK": uri("snap_cut_dark.png"),
