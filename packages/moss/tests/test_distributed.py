@@ -26,19 +26,21 @@ from diffu_moss.train.loop import LOG, TrainSettings, entry_tokens, train
 STEPS = 3
 
 
-def _torchrun(world: int, run: Path, dit: Path, cache: Path, *options: str) -> None:
+def _torchrun(world: int, run: Path, dit: Path, cache: Path, *options: str, samples: int = 2) -> str:
     """A full fine-tune of ``dit`` on ``cache`` (scored on it too) launched by torchrun on ``world`` CPU processes: 3
-    steps of 2 samples, an average of the weights, a checkpoint with its state after every step."""
+    steps of ``samples`` samples, an average of the weights, a checkpoint with its state after every step; what it
+    printed."""
     command = [
         *(sys.executable, "-m", "torch.distributed.run", "--standalone", f"--nproc-per-node={world}"),
         *("-m", "diffu_moss.train.loop", "--full", "--device", "cpu"),
         *("--transformer", str(dit), "--cache", str(cache), "--val-cache", str(cache), "--out", str(run)),
-        *("--steps", str(STEPS), "--samples-per-step", "2", "--save-every", "1", "--val-every", str(STEPS)),
+        *("--steps", str(STEPS), "--samples-per-step", str(samples), "--save-every", "1", "--val-every", str(STEPS)),
         *("--learning-rate", "1e-3", "--ema", "0.9", "--save-state", *options),
     ]
     env = {**os.environ, "CUDA_VISIBLE_DEVICES": "", "OMP_NUM_THREADS": "1"}
     done = subprocess.run(command, env=env, capture_output=True, text=True, check=False)
     assert done.returncode == 0, done.stderr[-3000:]
+    return done.stdout
 
 
 def _log(run: Path) -> list[dict[str, object]]:
@@ -159,6 +161,70 @@ def test_full_fine_tune_with_a_bfloat16_muon_momentum_resumed_at_world_size_2_go
     assert momenta == [[torch.bfloat16] * 18] * 2
     assert sorted(states[0]) == sorted(states[1])
     assert [name for name in states[1] if not torch.equal(states[0][name], states[1][name])] == []
+
+
+def _close(run: Path, reference: Path) -> None:
+    """``run`` logged and checkpointed as ``reference`` did, but for the rounding of a gradient's sum taken in another
+    order: the same samples and noise levels, the losses, gradient norms and every tensor within float32's rounding."""
+    logs = _log(run), _log(reference)
+    numbers = ("loss", "grad_norm", "val_loss")
+    assert [{k: v for k, v in row.items() if not k.startswith(numbers)} for row in logs[0]] == [
+        {k: v for k, v in row.items() if not k.startswith(numbers)} for row in logs[1]
+    ]
+    for ours, theirs in zip(*logs, strict=True):
+        for key in ours:
+            if key.startswith(numbers):
+                assert ours[key] == pytest.approx(theirs[key], rel=1e-5, abs=1e-7), key
+    tensors = _tensors(_checkpoint(run, STEPS)), _tensors(_checkpoint(reference, STEPS))
+    assert sorted(tensors[0]) == sorted(tensors[1])
+    far = [
+        name
+        for name in tensors[1]
+        if not torch.allclose(tensors[0][name].float(), tensors[1][name].float(), rtol=1e-3, atol=1e-5)
+    ]
+    assert far == []
+
+
+@pytest.fixture(scope="module")
+def four_sample_run(tiny_moss_dit: Path, tiny_pair_cache: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The full fine-tune at world size 1 with 4 samples a step: the reference HSDP is measured against."""
+    run = tmp_path_factory.mktemp("four_samples") / "world_1"
+    _torchrun(1, run, tiny_moss_dit, tiny_pair_cache, samples=4)
+    return run
+
+
+def test_full_fine_tune_under_hsdp_on_4_ranks_in_2_groups_trains_as_one_process_does(
+    tiny_moss_dit: Path, tiny_pair_cache: Path, four_sample_run: Path, tmp_path: Path
+) -> None:
+    run = tmp_path / "hsdp"
+
+    printed = _torchrun(4, run, tiny_moss_dit, tiny_pair_cache, "--replicas", "2", samples=4)
+
+    assert "HSDP: the DiT copied over 2 groups of 2 ranks" in printed
+    _close(run, four_sample_run)
+
+
+def test_full_fine_tune_resumed_under_hsdp_from_a_world_size_1_state_goes_on_as_the_run_went(
+    tiny_moss_dit: Path, tiny_pair_cache: Path, four_sample_run: Path, tmp_path: Path
+) -> None:
+    resumed = tmp_path / "run"
+    shutil.copytree(four_sample_run, resumed)
+    for step in range(2, STEPS + 1):
+        shutil.rmtree(_checkpoint(resumed, step))
+
+    _torchrun(
+        4,
+        resumed,
+        tiny_moss_dit,
+        tiny_pair_cache,
+        "--replicas",
+        "2",
+        "--resume",
+        str(_checkpoint(resumed, 1)),
+        samples=4,
+    )
+
+    _close(resumed, four_sample_run)
 
 
 def test_training_refuses_samples_a_step_that_do_not_share_out_evenly_among_the_ranks(

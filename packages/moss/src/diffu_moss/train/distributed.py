@@ -10,6 +10,12 @@ the rest of the DiT (the embedders, the text refiner, the modulations and the ou
 its gradient and its optimizer state sharded by rows over the ranks, each unit's weights gathered in bfloat16 for its
 forward and backward and its gradients reduced in float32 (:data:`MIXED_PRECISION`); the forward still runs in
 bfloat16 autocast, as on one GPU. Without ``torchrun`` nothing here runs: one process trains as before.
+
+With ``replicas`` above 1 (HSDP) the mesh has two dimensions, :data:`REPLICATE` by :data:`SHARD`: the ranks fall into
+``replicas`` groups of consecutive ranks (with ``torchrun``'s numbering, a node's GPUs), each holding the whole DiT
+sharded over its own ranks, so the weights are gathered inside a group and only the gradients are averaged across the
+groups. Every row-wise collective of a sharded tensor (:func:`row_group`) then runs within a group, each group computing
+the same rows alike.
 """
 
 from __future__ import annotations
@@ -33,6 +39,7 @@ from diffu_moss.transformer import MossTransformer
 MIXED_PRECISION = MixedPrecisionPolicy(
     param_dtype=torch.bfloat16, reduce_dtype=torch.float32, cast_forward_inputs=False
 )
+REPLICATE, SHARD = "replicate", "shard"  # an HSDP mesh's dimensions: across the groups, within one
 
 
 class Ranks(BaseModel):
@@ -63,11 +70,18 @@ class Ranks(BaseModel):
         return total.tolist()
 
 
-def joined(device: str) -> tuple[Ranks, str]:
+def joined(device: str, replicas: int = 1) -> tuple[Ranks, str]:
     """This process's place in a ``torchrun`` launch and the device it trains on (its local GPU for ``cuda``); outside
-    one, one process on ``device``."""
+    one, one process on ``device``. With ``replicas`` above 1 the mesh is HSDP's (the module's docstring).
+
+    Raises:
+        ValueError: If the launch's ranks do not split into ``replicas`` groups of at least two.
+    """
     if "WORLD_SIZE" not in os.environ:
         return Ranks(), device
+    world = int(os.environ["WORLD_SIZE"])
+    if replicas < 1 or world % replicas or (replicas > 1 and world // replicas < 2):
+        raise ValueError(f"{world} ranks do not split into {replicas} groups of two or more")
     kind = torch.device(device).type
     if kind == "cuda":
         local = int(os.environ["LOCAL_RANK"])
@@ -76,8 +90,11 @@ def joined(device: str) -> tuple[Ranks, str]:
         dist.init_process_group("nccl", device_id=torch.device(device))
     else:
         dist.init_process_group("gloo")
-    mesh = init_device_mesh(kind, (dist.get_world_size(),))
-    return Ranks(rank=dist.get_rank(), world=dist.get_world_size(), mesh=mesh), device
+    if replicas == 1:
+        mesh = init_device_mesh(kind, (world,))
+    else:
+        mesh = init_device_mesh(kind, (replicas, world // replicas), mesh_dim_names=(REPLICATE, SHARD))
+    return Ranks(rank=dist.get_rank(), world=world, mesh=mesh), device
 
 
 def left() -> None:
@@ -93,6 +110,14 @@ def shard(transformer: MossTransformer, mesh: DeviceMesh, *, reshard_after_forwa
     for block in transformer.layers:
         fully_shard(block, mesh=mesh, mp_policy=MIXED_PRECISION, reshard_after_forward=reshard_after_forward)
     fully_shard(transformer, mesh=mesh, mp_policy=MIXED_PRECISION)
+
+
+def row_group(mesh: DeviceMesh) -> tuple[dist.ProcessGroup, int]:
+    """The process group a sharded tensor's rows are spread over, and its size: the mesh's one dimension, or an HSDP
+    mesh's :data:`SHARD` dimension (this rank's group)."""
+    if mesh.ndim == 1:
+        return mesh.get_group(), mesh.size()
+    return mesh.get_group(SHARD), mesh.size(1)  # (REPLICATE, SHARD), as joined builds it
 
 
 def whole(tensor: Tensor) -> Tensor:
@@ -141,6 +166,7 @@ def clip_sharded_gradients(parameters: Iterable[Tensor], max_norm: float) -> flo
     ``torch.nn.utils.clip_grad_norm_`` scales them), and their norm before: the sum of squares of each gradient's rows
     taken on the rank that holds the row, gathered, and summed in one order on every rank, so the norm and the clip are
     the same bits on any number of ranks (torch's sums each rank's shard first, which rounds by the ranks' count).
+    Under HSDP each group of ranks gathers its own rows, the same in every group.
 
     Raises:
         ValueError: If a gradient is not sharded (one process: use torch's).
@@ -154,8 +180,7 @@ def clip_sharded_gradients(parameters: Iterable[Tensor], max_norm: float) -> flo
         grads.append(parameter.grad)
     if not grads:
         return 0.0
-    mesh = grads[0].device_mesh
-    group, world = mesh.get_group(), mesh.size()
+    group, world = row_group(grads[0].device_mesh)
     counts = [shard_rows(grad.shape[0], world) for grad in grads]
     mine = []
     for grad in grads:

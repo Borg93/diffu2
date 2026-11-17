@@ -38,7 +38,7 @@ from torch import Tensor
 from torch.distributed.tensor import DTensor
 from torch.optim import Optimizer
 
-from diffu_moss.train.distributed import shard_rows
+from diffu_moss.train.distributed import row_group, shard_rows
 
 NEWTON_SCHULZ = (3.4445, -4.7750, 2.0315)
 NEWTON_SCHULZ_STEPS = 5
@@ -163,8 +163,7 @@ class Muon(Optimizer):
     def _step_sharded(self, matrices: list[tuple[DTensor, DTensor, dict[str, Any]]]) -> None:
         """The sharded matrices' updates (each a DTensor of this rank's rows) orthogonalised by their owners and their
         rows sent back (the module's docstring); every matrix shares one mesh, sharded on its rows."""
-        mesh = matrices[0][0].device_mesh
-        group, world = mesh.get_group(), mesh.size()
+        group, world = row_group(matrices[0][0].device_mesh)  # under HSDP each group steps its own copy alike
         rank = dist.get_rank(group)
         sent = []
         for index, (parameter, update, _) in enumerate(matrices):

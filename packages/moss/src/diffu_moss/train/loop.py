@@ -127,6 +127,7 @@ RESUMABLE_CHANGES = {
         "gradient_checkpointing": True,
         "uncheckpointed_blocks": True,
         "reshard_after_forward": True,
+        "replicas": True,
     },
 }
 
@@ -830,6 +831,16 @@ def main(
             "the 5 B DiT, half the gathers; the same training)",
         ),
     ] = True,
+    replicas: Annotated[
+        int,
+        typer.Option(
+            min=1,
+            help="with --full under torchrun: HSDP, the ranks split into this many groups of consecutive ranks (give "
+            "the number of nodes: each node's GPUs one group), each holding the whole DiT sharded over its own ranks, "
+            "so the weights are gathered within a node and only the gradients cross between nodes (more memory a GPU; "
+            "the same training up to the rounding of the gradients' sums); 1 shards over every rank",
+        ),
+    ] = 1,
     muon_momentum_dtype: Annotated[
         MomentumDtype,
         typer.Option(
@@ -909,15 +920,19 @@ def main(
         or not gradient_checkpointing
         or not reshard_after_forward
         or uncheckpointed_blocks
+        or replicas != 1
     ):
         raise typer.BadParameter(
             "--ema, --save-state, --resume, --muon-momentum-dtype, --no-gradient-checkpointing, "
-            "--uncheckpointed-blocks and --no-reshard-after-forward are a full fine-tune's: give --full"
+            "--uncheckpointed-blocks, --no-reshard-after-forward and --replicas are a full fine-tune's: give --full"
         )
     if model is not None and not encode_text:
         raise typer.BadParameter("--model gives the text encoder of --encode-text: give --encode-text")
     rate = {} if learning_rate is None else {"learning_rate": learning_rate}  # else each kind's own default
-    ranks, device = joined(device)
+    ranks, device = joined(device, replicas)
+    if ranks.main and ranks.mesh is not None and ranks.mesh.ndim == 2:
+        groups, size = ranks.mesh.shape
+        console.print(f"HSDP: the DiT copied over {groups} groups of {size} ranks, sharded within each")
     try:  # a ValidationError (an --ema outside (0, 1)) is a ValueError too
         full_settings = {
             "ema": ema,
@@ -925,6 +940,7 @@ def main(
             "momentum_dtype": muon_momentum_dtype,
             "gradient_checkpointing": gradient_checkpointing,
             "reshard_after_forward": reshard_after_forward,
+            "replicas": replicas,
             "uncheckpointed_blocks": uncheckpointed_blocks,
             **rate,
         }

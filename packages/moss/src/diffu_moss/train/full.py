@@ -85,7 +85,8 @@ class FullSettings(BaseModel):
     recompute), and, sharded,
     whether each block's gathered weights are dropped after its forward pass and gathered again for its backward
     (``reshard_after_forward``, FSDP2's default) or kept, about 10 GB a GPU more for half the gathers; the training is
-    the same either way."""
+    the same either way; and over how many groups of ranks the DiT is copied (``replicas``, HSDP:
+    :mod:`diffu_moss.train.distributed`), the same training up to the rounding of the gradients' sums."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -100,6 +101,7 @@ class FullSettings(BaseModel):
     gradient_checkpointing: bool = True
     uncheckpointed_blocks: int = Field(default=0, ge=0)
     reshard_after_forward: bool = True
+    replicas: int = Field(default=1, ge=1)
 
 
 def full_transformer(
