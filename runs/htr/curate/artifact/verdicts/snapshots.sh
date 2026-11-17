@@ -15,7 +15,7 @@ for name in pipeline cut; do
   done
 done
 # Cut each pair of snapshots below the legend, at the same height in both themes.
-uv run python - <<'PY'
+uv run --with numpy --with pillow python - <<'PY'
 import numpy as np
 from PIL import Image
 
