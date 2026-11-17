@@ -1,5 +1,5 @@
 """Builds index.html, the verdicts page (claude.ai/artifact/98423D2V376HLajHfbhpS2): every curation experiment of
-docs/CURATION.md (E1 to E41) with its verdict, why it was run, what it found and what it taught us; five results as
+docs/CURATION.md (E1 to E42) with its verdict, why it was run, what it found and what it taught us; five results as
 bar charts; and the two archify diagrams as snapshots (snapshots.sh makes them and the interactive pages).
 
 Publish index.html with the Artifact tool under the same URL. The texts and numbers below are copied from the
@@ -66,6 +66,11 @@ E = [
         ("Why we did it", "One overall score hides where a reader fails. Once every ground-truth scan had its kind from the vision-language model, the 200 test pages could be split by kind."),
         ("What we found", "Nemotron Parse: running text 5.73 % (174 pages), tables 14.08 % (26 pages). LightOnOCR-3: 5.24 % and 30.82 %. Ten pages carry 44 % of all errors. Two test pages have a ground truth that covers only part of the page; without them the scores are 5.45 % and 7.07 %."),
         ("What we learned", "Tables are the weak kind and the next thing to train for. Some ground truth is partial: when two readers agree with each other and both read far more than the truth holds, the truth is the problem."),
+    ]),
+    (42, "reader", "measured", "Table pages looked at", "Table pages: the truth, the reader and the old labels", [
+        ("Why we did it", "Tables read at 14 % against 6 % for running text. Before training for them we needed to know what a table is in our data, and whether the pools' table pages are worth learning from."),
+        ("What we found", "Only 201 of 49,491 ground-truth training pages carry a table with rows and cells. The 26 table test pages are all transcribed as plain lines, and they hold 25 % of all errors. Old labels against truth on Svea tables: 19 % error on matched lines, a wrong number in 46 % of lines, 35 % of labelled lines matching no true line. On andra arkiv tables: 7 % error."),
+        ("What we learned", "The reader reads our tables as lines and has seen almost no table structure. Part of the table error is reading order, numbers and dot leaders, and one of four pages looked at was no table at all. The pools' table labels are a poor teacher, Svea's most of all, so pool tables get no extra weight."),
     ]),
     (38, "reader", "running", "Trusted-cut pretraining", "Pretrain on pages with a trusted cut, then fine-tune", [
         ("Why we are doing it", "This is the test the curation leads to: does pretraining on pool pages with a trusted cut beat the unfiltered control (7.18 %) and the best reader (6.73 %)?"),
@@ -268,7 +273,7 @@ ALSO = [
 OPEN = [
     ("The score of E38", "On 18 November, against 7.18 % (unfiltered control) and 6.73 % (best reader)."),
     ("Filtering the labels", "Our reader has to read the 139,937 trusted pages. On the 1,881 that have a reading, about 6 % disagree with the old label by more than half."),
-    ("Tables", "6 % of the trusted set and the reader's weakest kind. Nemotron Parse's double pass on table regions is queued."),
+    ("Tables", "6 % of the trusted set and the reader's weakest kind. The pools' labels on tables are poor (E42), so better table reading has to come from ground truth, a fixed reading order, or the double pass on table regions, which is queued."),
     ("Openings without a fold line", "About one in ten. The trained placer (E26) is for these."),
     ("Scale", "The 139,937 pages come from the 100,083 pool scans checked so far, 3 % of the pools. By the same rule the pools hold about 4.4 million pages. With E39 every scan can be embedded in about 13 hours on two GPUs. Training time then sets the size: one epoch covers about 280,000 pages a day."),
     ("Still to look at by eye", "The table test pages, the test pages with one side empty, and a sample from each cluster."),
