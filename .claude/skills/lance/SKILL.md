@@ -1,57 +1,65 @@
 ---
 name: lance
-description: Rules for this project's Lance tables (scans.lance, pages.lance, vectors). Use before reading, joining columns into, appending to, indexing or designing any Lance table.
+description: Lance tables of this project (scans.lance, pages.lance, vector tables). Load before joining a column, appending rows, building an index, storing vectors, or designing a table.
 ---
 
 # Lance in this project
 
-Installed: pylance 13.0.0, data storage version 2.2. The references were written from the Lance docs at
-15.0.0-beta.23 (all of `docs/src/guide` and `docs/src/format`, read 17 Nov 2026); each marks what is newer than 13.
-Check a rule against the installed library with a small test before relying on it for something new.
+Rules cached from the Lance docs (all of `docs/src/guide` and `docs/src/format` at 15.0.0-beta.23) and from
+measurements on the installed pylance. The references mark what is newer than the installed version: confirm a rule
+new to you with a ten-line test on a throwaway table.
 
-## The design
+## Join a column
 
-- One row a scan in `runs/htr/curate/scans.lance`, keyed by the unique string `image`; every check is a column, a
-  training set is a filter. The columns asked for and their state: `prototypes/column_state.py`.
-- Join through `diffu_curate.table.add_features(table, features, key="image")` and nothing else: new columns by
-  `merge`, existing ones in place by `LanceFragment.update_columns` + one `LanceOperation.Update`, then
-  `optimize_indices()`. It refuses two feature rows for one key (which one wins is undefined in Lance).
-- **Vectors:** a fixed-size-list column costs its full width for a null row (measured: 1 % filled is as large as
-  100 %). A vector held for every scan may be a column of the scan table (filtered nearest-neighbour search only
-  sees columns of the same table); a vector held for few scans goes in a table beside, keyed by `image`.
-  `pa.list_(pa.float16(), n)`; read wide columns with `batch_size` about 1,024.
-- Thumbnails: plain `binary` inline. Blob columns only from about 1 MB a value.
-- A model's whole answer: `pa.json_()`; `json_get_*` filter but cannot be selected, so typed columns beside it.
+Every check is a column of the scan table, keyed by the unique string `image`; a training set is a filter.
 
-## Writing: what may run at once
+1. Run the join alone: a new column (`merge`) is lost against any concurrent write to that table.
+2. Join through `diffu_curate.table.add_features(table, features, key)`: it adds new columns by `merge`, updates held
+   ones in place (`LanceFragment.update_columns`, one `LanceOperation.Update`), then refreshes the indexes.
+3. Give `features` one row a key: Lance leaves undefined which of two rows wins, so the helper refuses them.
+4. Done when `column_state.py` prints the column's new count and a filter on it returns the rows expected.
 
-- `merge` (a new column) fails or is lost against any other concurrent write. Nothing else writes the table then.
-- Append and append are compatible: two processes may append to one table. Rows appended after a merge hold null.
-- In-place column update and compaction on the same fragments clash: never compact during a join.
-- An update drops the changed fragments from that column's index until `optimize_indices()`; appended rows are
-  unindexed until then too. Results stay right, only slower.
-- `merge_insert` and `update` move changed rows to the end of the table; do not use them for feature columns.
+Rows appended after a join hold null in the joined column. `merge_insert` and `update` move changed rows to the end
+of the table: keep them for row tables, use the helper for feature columns.
+
+## Append rows
+
+Two processes may append to one table at once. A long job appends in batches and compacts once at its end with
+`optimize.compact_files(defer_index_remap=True)`; compaction and a join on the same fragments clash, so compact
+between joins.
+
+## Vectors
+
+A fixed-size-list column costs its full width for every row, null or not (measured: 1 % filled is as large as
+100 %).
+
+- Held for every scan: a column of the scan table, `pa.list_(pa.float16(), n)`. Filtered nearest-neighbour search
+  sees only columns of its own table (`scanner(nearest=..., filter=..., prefilter=True)`).
+- Held for few scans: a table beside, keyed by `image`.
+- Read wide columns with `batch_size` near 1,024. Search is exact without an index; first index IVF_PQ, then IVF_RQ.
+
+## Other column types
+
+- A model's whole answer: `pa.json_()`. `json_get_*` filters only, so the fields filtered on are typed columns too.
+- Thumbnails: plain `binary`. Blob columns from about 1 MB a value.
 
 ## Indexes
 
-BITMAP for few-valued strings and booleans (`pool`, `mark`, `head_cut`, `vl_*`), BTREE for `image` and scores,
-INVERTED for captions (set the language, test spellings with `lance.tokenize`). Compact with
-`optimize.compact_files(defer_index_remap=True)` before building or optimizing an index. First vector index to try:
-IVF_PQ, then IVF_RQ; without an index search is exact.
+BITMAP for few-valued strings and booleans, BTREE for `image` and scores, INVERTED for captions (try spellings with
+`lance.tokenize` first). Updated fragments and appended rows stay out of a column's index until
+`optimize.optimize_indices()`: results stay right, filters run slower.
 
-## Housekeeping
+## Versions and place
 
-- Every write is a version; old files stay until `cleanup_old_versions` (tagged versions are kept). Tag before a
-  risky change: `scans.lance` has `before-features`.
-- Tens of thousands of fragments are fine; long jobs appending 2,000 rows a time compact at their end.
-- Keep tables on the local disk. The docs say nothing about NFS; do not write a Lance table on `/mnt/scratch` from
-  two processes.
-- Not in 13.0.0: `local_fsync`, `CleanupPolicy`, the `strategy` option of `update_columns`, format 2.3.
+Every write is a version, and old files stay until `cleanup_old_versions`; tagged versions are kept, so tag before
+a risky change. Tables live on the local disk: the docs are silent on NFS.
 
-## References (read the one that fits before a new kind of work)
+## References
 
-- [write-evolve-types.md](references/write-evolve-types.md): reading, writing, adding and updating columns, JSON, types
+Read the one that fits before a kind of work new to this file.
+
+- [write-evolve-types.md](references/write-evolve-types.md): read, write, add and update columns, JSON, data types
 - [vectors-blobs-indexes.md](references/vectors-blobs-indexes.md): vector search, blobs, scalar indexes, distributed writes
 - [performance-search-storage.md](references/performance-search-storage.md): batch sizes, compaction, text search, stores
-- [table-format.md](references/table-format.md): fragments, transactions and the full conflict rules, versions, tags
-- [file-and-index-format.md](references/file-and-index-format.md): encodings, null cost, every index type
+- [table-format.md](references/table-format.md): fragments, transactions, the full table of which writes clash, tags
+- [file-and-index-format.md](references/file-and-index-format.md): encodings, the cost of nulls, every index type
