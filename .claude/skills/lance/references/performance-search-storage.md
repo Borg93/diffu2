@@ -1,454 +1,135 @@
-# Lance: performance, full-text search, tokenizers, object store
+Covers: scan and index-build memory, threads, caches, fragment sizing, compaction clashes, full-text search and tokenizers for Swedish text, local-disk write safety, logging.
+Read when: tuning a scan or an index build, building or querying an INVERTED index, choosing a fragment size, or judging what a local write guarantees.
 
-Source: Lance docs at 15.0.0-beta, `docs/src/guide/`. Installed: pylance 13.0.0 (`.venv`).
-Names marked **[not in 13.0.0]** were checked against the installed package (Python signatures and
-strings in the compiled library) and are absent. See the last section.
+Each section names its page of the Lance docs (15.0.0-beta, `docs/src/guide/`). **[absent 13.0.0]**: the name is missing from the installed pylance (Python signatures and strings of the compiled library; a missing string is strong but not final evidence). **[unverified 13.0.0]**: not checked either way.
 
-What these four pages do NOT cover: `cleanup_old_versions`, auto cleanup, the cost of many versions,
-compaction thresholds (`target_rows_per_fragment` etc.), NFS, file locking on local disks. Look in
-the pages on data evolution / table maintenance / transactions for those.
+## Scan within a memory budget
 
----
+(guide/performance.md)
 
-## docs/src/guide/performance.md
-
-### Logging and tracing (Python)
-
-- pylance logs to stderr by default. Environment variables:
-  - `LANCE_LOG`: level and target filter (env_logger syntax); replaces `RUST_LOG`.
-  - `LANCE_TRACING`: tracing level, default `info`; `debug` gives more spans for performance work.
-  - `LANCE_LOG_STYLE`: `auto` | `always` | `never`.
-  - `LANCE_LOG_TS_PRECISION`: `ns` | `us` | `ms` | `s`.
-  - `LANCE_LOG_FILE`: write logs to this path (parent directories created; falls back to stderr).
-- Trace events appear in pylance logs under the prefix `lance::events::`, e.g.
-  `LANCE_LOG="warn,lance::events::object_store::throttle=info"`.
-- Event targets and fields:
-  - `lance::file_audit`: `mode` (create, delete, delete_unverified), `type` (manifest, data file,
-    index file, deletion file).
-  - `lance::dataset_events`: `event` (loading, writing, committed, deleting, ...), `uri`, `mode`,
-    `operation`, `predicate`, `columns`.
-  - `lance::io_events`: `type` (open_scalar_index, open_vector_index, load_vector_part,
-    load_scalar_part). Not emitted when the index comes from the in-memory cache, so they show
-    cache misses.
-  - `lance::execution`: `type` (only `plan_run`), `output_rows`, `iops`, `bytes_read`,
-    `indices_loaded`, `parts_loaded`, `index_comparisons`, `peak_reserved_bytes`.
-  - `lance::object_store::throttle`: cloud stores only.
-  - `lance::memory`: Linux only, on with `LANCE_MEMORY_OBSERVE=1`; covers index builds
-    (`create_index`, `merge_index_metadata`), fields `event`, `pid`, `operation_id`, `operation`,
-    `index_type`, `stage`, `peak_bytes`, `rss_bytes`, `cgroup_bytes`, `cgroup_limit_bytes`.
-    A start with no completion = the build failed, was cancelled, or the process died (e.g. OOM).
-    `LANCE_MEMORY_OBSERVE=1 LANCE_LOG="warn,lance::events::memory=info"` logs only these.
-
-### Threads
-
-- Lance APIs are thread-safe and may be called concurrently unless stated otherwise. Operations may
-  run in parallel on one table; some conflict (see conflict handling below).
-- Two pools:
-  - I/O pool: local stores 8 threads by default, cloud stores 64. Override: `LANCE_IO_THREADS`.
-    If raised, raise `io_buffer_size` too.
-  - Compute pool: number of cores. Override: `LANCE_CPU_THREADS`. Set it when several Lance
-    processes share a machine. Decoding is compute-heavy, so a scan that looks I/O-bound still
-    needs compute threads.
-
-### Caches
-
-- Metadata cache: LRU sized in bytes, default 1 GiB; holds manifests, transactions, deletion files,
-  row id structures, index metadata, file metadata. Keys are scoped to the dataset URI.
-- Index cache: LRU sized in bytes, default 6 GiB; set with `index_cache_size_bytes` when opening
-  (`lance.dataset(uri, index_cache_size_bytes=...)`). `index_cache_size` (entries) is deprecated
-  since 0.30.0.
-- Neither cache is shared between tables by default. Rule: open a dataset once and share the
-  object across the application, or create one session and pass it when opening tables
-  (`lance.dataset(..., session=...)`).
-- `dataset.session().size_bytes()`: deep-size estimate of the session.
-- `dataset.session().cache_diagnostics()`, `cache_diagnostics(refresh=True)`,
-  `cache_diagnostics(by_type=True)`; `session.set_index_cache_capacity(...)`,
-  `session.set_metadata_cache_capacity(...)` **[not in 13.0.0]**. Returned dict:
-  `diagnostics["index"]`, `diagnostics["metadata"]`, each with `["activity"]["hits"]`,
-  `["activity"]["misses"]`, `["backend"]["size_bytes"]`, `["backend"]["capacity_bytes"]`,
-  `["utilization"]`.
-- Reading diagnostics: a cold run raises `misses`, `loads_started`, `loads_succeeded`; a warm repeat
-  should raise only `hits`. Growing `size_removals` with repeated loads = cache too small. A full
-  cache alone means little; compare hit/miss deltas around the same operation.
-
-### Scan memory
-
-- Scans stream, but memory is set by `io_buffer_size` and `batch_size`.
-- Pages are typically 8 to 32 MB: allow about 32 MB per I/O thread.
-- `io_buffer_size` default 2 GB (64 pages). It is a soft limit (cannot read less than one page).
-- `batch_size` default 8192 rows. Each CPU thread holds one decoded batch.
-- Aim for batches around 1 MB for scalar data. For wide columns turn `batch_size` down:
-  1024-dim float32 x 8192 rows = 32 MB per batch; x 16 CPU threads = 512 MB per scan. The page
-  suggests 1024 rows per batch for such columns.
-- Upper bound: `(2 * io_buffer_size) + (batch_size * num_compute_threads)` bytes (batch size in
-  bytes here).
-- Batches handed to the application are no longer tracked: do not collect them all (`to_table`) if
-  memory matters; iterate `scanner.to_batches()`.
-- Lance reads whole encoded pages: a smaller `batch_size` shrinks decoded batches, not the first
-  range request (one encoded page per selected column).
-- Scanner controls:
-  - `fragment_readahead`: fragments with reads scheduled at once. `1` = one fragment at a time.
-  - `batch_readahead`: concurrent batch decoding; does not change storage request sizes.
-  - `io_buffer_size`: buffered I/O bytes; applies backpressure when decoding falls behind.
-  - `scan_in_order=True`: orders the returned batches only; fragment reads still overlap.
-  - `LANCE_IO_THREADS`: concurrent storage requests for the whole process.
-- Conservative settings for a slow or shared connection (the page writes this for remote stores;
-  applying it to NFS is our inference):
+- Memory is set by `io_buffer_size` (default 2 GB = 64 pages; a soft limit, one page is the minimum read) and `batch_size` (default 8192 rows; each CPU thread holds one decoded batch). Pages are typically 8 to 32 MB: allow about 32 MB per I/O thread.
+- Upper bound: `(2 * io_buffer_size) + (batch_size * num_compute_threads)`. The docs mix rows and bytes here: read `batch_size` as bytes per batch.
+- Aim for batches near 1 MB for scalar data. 1024-dim float32 x 8192 rows = 32 MB a batch, x 16 CPU threads = 512 MB a scan: hence 1024 rows for wide columns.
+- Iterate `scanner.to_batches()` when memory matters: batches handed to the application are no longer tracked, so `to_table` holds them all.
+- A smaller `batch_size` shrinks decoded batches only; the first range request stays one whole encoded page per selected column.
+- Scanner arguments: `fragment_readahead` (fragments with reads scheduled at once; `1` = one at a time), `batch_readahead` (concurrent batch decoding; storage request sizes unchanged), `io_buffer_size` (backpressure when decoding falls behind), `scan_in_order=True` (orders returned batches only; fragment reads still overlap).
+- Slow or shared connection (written for remote stores; applying it to NFS is our inference):
 
 ```python
 # LANCE_IO_THREADS=8 python scan.py
-scanner = dataset.scanner(
-    fragment_readahead=1,
-    batch_readahead=2,
-    io_buffer_size=64 * 1024 * 1024,
-)
-for batch in scanner.to_batches():
-    process(batch)
+scanner = dataset.scanner(fragment_readahead=1, batch_readahead=2, io_buffer_size=64 * 1024 * 1024)
+for batch in scanner.to_batches(): ...
 ```
 
-- Transparent huge pages for big scans (long strings, JSON, vectors): opt in with
-  `GLIBC_TUNABLES=glibc.malloc.hugetlb=1 python scan.py` when
-  `/sys/kernel/mm/transparent_hugepage/enabled` is `madvise`. Measured on an 11 GB string scan:
-  9x fewer page faults, scan 2 to 3.5x faster, full rewrite to 2.2 about 1.5x faster. Takes of a
-  few rows unaffected. Pitfall: with `/sys/kernel/mm/transparent_hugepage/defrag` = `madvise` and
-  fragmented memory, one 256 MiB allocation went from 0.09 s to 1.2 s. Measure on the host first.
+- Big scans of long strings, JSON or vectors: opt in to transparent huge pages with `GLIBC_TUNABLES=glibc.malloc.hugetlb=1 python scan.py` when `/sys/kernel/mm/transparent_hugepage/enabled` is `madvise`. Measured on an 11 GB string scan (2.0 and 2.2 files, [unverified 13.0.0]): 9x fewer page faults, scan 2 to 3.5x faster, full rewrite to 2.2 about 1.5x faster; takes of a few rows unaffected. Pitfall: with `.../transparent_hugepage/defrag` = `madvise` and fragmented memory, one 256 MiB allocation went from 0.09 s to 1.2 s. Measure on the host first.
 
-### Cloud throttling (not relevant to local disks)
+## Set threads and caches
 
-- S3/GCS/Azure are wrapped in an AIMD rate limiter; local and in-memory stores are not throttled.
-- Options `lance_aimd_initial_rate` (2000), `lance_aimd_min_rate` (1), `lance_aimd_max_rate`
-  (10000), `lance_aimd_decrease_factor` (0.5), `lance_aimd_additive_increment` (300),
-  `lance_aimd_burst_capacity` (100); env vars are the upper-case names with `LANCE_` prefix.
-  Replaces the old `LANCE_PROCESS_IO_THREADS_LIMIT`.
+(guide/performance.md)
 
-### Fragment sizing
+- I/O pool: 8 threads for local stores; `LANCE_IO_THREADS` sets it for the whole process; raise `io_buffer_size` with it.
+- Compute pool: number of cores; `LANCE_CPU_THREADS`. Set it when several Lance processes share a machine. Decoding is compute-heavy, so a scan that looks I/O-bound still needs compute threads.
+- Open a dataset once and share the object, or pass one session to every open (`lance.dataset(..., session=...)`): the caches are per table otherwise.
+- Metadata cache: LRU, default 1 GiB (manifests, transactions, deletion files, row id structures, index and file metadata), keyed by dataset URI. Index cache: LRU, default 6 GiB, `lance.dataset(uri, index_cache_size_bytes=...)`; `index_cache_size` (entries) is deprecated since 0.30.0.
+- `dataset.session().size_bytes()` gives a deep-size estimate. 13.0.0's session has only `index_cache_size_bytes`, `is_same_as`, `size_bytes`.
+- **[absent 13.0.0]** `session.cache_diagnostics(refresh=, by_type=)`, `session.set_index_cache_capacity`, `session.set_metadata_cache_capacity`. Reading diagnostics: compare hit/miss deltas around one operation (a warm repeat should raise only `hits`); `size_removals` growing with repeated loads = cache too small; a full cache alone means little.
 
-- Manifest-level cost grows with the NUMBER of fragments: every mutation (append, metadata update,
-  schema change, compaction) rewrites the manifest; opening a dataset, listing fragments, planning
-  a scan and dataset-level conflict resolution all walk it.
-- Fragment-level cost grows with the SIZE of a fragment: scans of a matching fragment, compaction,
-  updates, deletes, `merge_insert`. Conflict detection for these is per fragment.
-- Numbers:
-  - Default 1M rows per fragment (`max_rows_per_file=1048576` in `lance.write_dataset`); good up to
-    about 1B rows. Beyond that, about 100M rows per fragment is reasonable.
-  - "Tens of thousands of fragments per table is generally fine."
-  - 10 GB to 100 GB per fragment is a reasonable upper range; 1 TB is a hard ceiling (S3 object
-    cap is 5 TB).
-  - Many concurrent updates, deletes or `merge_insert`: prefer more fragments (fewer retries).
-- For us: 3.2 M rows appended 2,000 at a time = about 1,600 fragments, inside the "generally fine"
-  range on fragment count. The page gives no rule on the number of versions and no small-fragment
-  threshold that forces compaction.
+## Choose a fragment size
 
-### Conflicts and compaction
+(guide/performance.md)
 
-- Optimistic concurrency. On conflict one operation is retried automatically; the retry repeats
-  work already done.
-- Common conflicts: (1) compaction running with index building (both modify the same indices);
-  (2) updates that touch the same fragments (both rewrite the same data files).
-- Compaction is among the most expensive writes: it rewrites data files and, by default, remaps
-  every index to the new row addresses. Concurrent with index building it tends to fail and retry;
-  repeated failure degrades the table layout.
-- Fragment Reuse Index: compaction records old-to-new row address mapping instead of remapping
-  indices; the mapping is applied when an index is loaded into the cache (small load cost, no
-  query cost once cached). Compaction and index building then no longer conflict.
+- Cost per NUMBER of fragments: every mutation (append, metadata update, schema change, compaction) rewrites the manifest; open, fragment listing, scan planning and dataset-level conflict resolution walk it.
+- Cost per SIZE of a fragment: scans of a matching fragment, compaction, updates, deletes, `merge_insert`; their conflict detection is per fragment, so many concurrent ones favour more fragments (fewer retries).
+- Default 1M rows a fragment (`max_rows_per_file=1048576` in `lance.write_dataset`), good to about 1B rows; beyond, about 100M rows a fragment. "Tens of thousands of fragments per table is generally fine." 10 to 100 GB a fragment is a reasonable upper range; 1 TB a hard ceiling.
+- Ours: 3.2 M rows appended 2,000 at a time = about 1,600 fragments, inside "generally fine".
 
-```python
-dataset.optimize.compact_files(defer_index_remap=True)
-```
+## Compact beside index builds and updates
 
-  (`defer_index_remap` is present in 13.0.0's `compact_files` signature.)
+(guide/performance.md)
 
-### Index costs
+- Concurrency is optimistic: on a conflict one operation retries automatically and repeats its work. Common clashes: compaction with index building (same indices); updates touching the same fragments (same data files).
+- Compaction rewrites data files and by default remaps every index to the new row addresses; clashing with an index build it fails and retries, and repeated failure degrades the table layout.
+- `dataset.optimize.compact_files(defer_index_remap=True)` writes a Fragment Reuse Index instead: the old-to-new address mapping is applied when an index loads into the cache (small load cost, no query cost once cached), and compaction no longer clashes with index building.
 
-- BTree: sorted copy of the column plus 4 bytes per value for the row id (as stated) plus a lookup
-  structure of about 0.001 % of the column. Trained with an external sort, spills to disk, low
-  memory. Updating merges new sorted values in linear time (no full re-sort). Loaded into the
-  index cache in pages of 4096 values. Sort is O(n log n).
-- Bitmap: one Roaring bitmap per distinct value. Training needs at least 8 bytes of memory per row
-  plus the hash map keys; many distinct values at scale is memory-heavy. Fast for equality and
-  very small ranges; large ranges are "extremely slow", use BTree for those.
-- `parts_loaded` in `lance::execution` = pages (BTree) or bitmaps (Bitmap) read from disk.
-- Vector index:
-  - IVF training sample in memory: `num_partitions * sample_rate * dimension * sizeof(data_type)`;
-    default `sample_rate` 256. Example: 1024 partitions x 256 x 768 x 4 bytes = 768 MiB. If the
-    dataset has fewer rows than `num_partitions * sample_rate`, all rows are used.
-  - Shuffle: streams the whole column; 2 GiB I/O readahead (`LANCE_DEFAULT_IO_BUFFER_SIZE`),
-    batches of 8,192 rows, `num_cpus - 2` batches in flight (`LANCE_CPU_THREADS`). Memory about
-    `io_readahead_buffer + num_cpu_threads * batch_size * (raw_vector_size + transformed_vector_size)`.
-    About 8 MiB writer buffer per partition.
-  - On disk per row: PQ `num_sub_vectors + 8` bytes; SQ `dimension + 8` bytes; RQ (RaBitQ) 1-bit
-    `dimension / 8 + 20`, multi-bit
-    `dimension / 8 + round_up(dimension, 64) * (num_bits - 1) / 8 + 28`; new RQ indexes default to
-    5 bits per dimension; `num_bits=1` minimises size at lower recall.
-  - Centroids: `num_partitions * dimension * sizeof(data_type)` (10K x 768 float32 = 30 MiB).
-  - AMX: automatic on Linux x86_64 with AMX-FP16 for `float16` vectors with `dot` distance,
-    `dimension >= 32`, `num_centroids >= 32`; disable with `LANCE_DISABLE_AMX=1`. Changes partition
-    assignment (exact instead of approximate), so indexes built with and without differ.
+## Budget an index build
 
----
+(guide/performance.md)
 
-## docs/src/guide/full_text_search.md
+- BTREE: sorted copy of the column + 4 bytes a value for the row id (as stated; vector indexes state an 8-byte row id) + a lookup structure of about 0.001 % of the column. External sort that spills to disk: low memory, O(n log n). An update merges new sorted values in linear time. Cached in pages of 4096 values.
+- BITMAP: one Roaring bitmap per distinct value. Training needs at least 8 bytes of memory a row plus the hash-map keys: many distinct values at scale is memory-heavy. Use it for equality and very small ranges; large ranges are "extremely slow", give those a BTREE.
+- Vector, IVF training sample in memory: `num_partitions * sample_rate * dimension * sizeof(data_type)`, `sample_rate` default 256 (1024 x 256 x 768 x 4 bytes = 768 MiB); with fewer rows than `num_partitions * sample_rate`, all rows are used.
+- Vector, shuffle: streams the whole column with 2 GiB readahead (`LANCE_DEFAULT_IO_BUFFER_SIZE`), batches of 8,192 rows, `num_cpus - 2` batches in flight (`LANCE_CPU_THREADS`). Memory about `io_readahead_buffer + num_cpu_threads * batch_size * (raw_vector_size + transformed_vector_size)`, plus about 8 MiB writer buffer a partition.
+- Vector, on disk a row: PQ `num_sub_vectors + 8` bytes; SQ `dimension + 8`; RQ 1-bit `dimension / 8 + 20`; RQ multi-bit `dimension / 8 + round_up(dimension, 64) * (num_bits - 1) / 8 + 28`. New RQ indexes default to 5 bits a dimension [unverified 13.0.0]; `num_bits=1` is smallest at lower recall. Centroids: `num_partitions * dimension * sizeof(data_type)` (10K x 768 float32 = 30 MiB).
+- AMX is automatic on Linux x86_64 with AMX-FP16 for `float16` vectors with `dot` distance, `dimension >= 32`, `num_centroids >= 32`. It makes partition assignment exact, so indexes built with and without it differ: set `LANCE_DISABLE_AMX=1` when two builds must match.
 
-- Engine: inverted index, BM25 scoring, result column `_score` (higher is better). Supports token
-  match, boolean, exact phrase, fuzzy, multi-column.
-- Substring filters (`contains(...)`) are a different thing: use an N-gram or FM scalar index; no
-  BM25 ranking there.
+## Build a full-text index on Swedish text
 
-### Create
+(guide/full_text_search.md, guide/tokenizer.md)
+
+- `dataset.create_scalar_index("body", "INVERTED", with_position=True)`. Phrase queries need `with_position=True` (larger index, other queries as fast). Stop words are absent from indexed positions: build with `remove_stop_words=False` when phrases must contain them.
+- Default index name `<column>_idx`; pass `name=...` when one column carries two indexes (inverted and N-gram). Substring filters (`contains(...)`) use an N-gram or FM scalar index, with no BM25 ranking.
+- Analyzer keyword arguments: `base_tokenizer` (`simple`, `whitespace`, `raw`, `icu`, language-specific), `lower_case`, `stem`, `remove_stop_words`, `ascii_folding`, `language` (stemming and default stop words), `max_token_length`. Large builds: `num_workers`, `memory_limit` (both in 13.0.0's source).
+- Swedish has no tokenizer of its own on these pages: use `language` + `stem` with `simple` or `icu`. Which `language` values exist is not listed.
+- `base_tokenizer="icu"`: Unicode word boundaries, data bundled, good for mixed-language text; `"icu/split"` also splits punctuation-delimited identifiers. The string `icu` is in 13.0.0's `create_scalar_index` source; no index was built to test it.
+- `max_token_length` is exclusive and in UTF-8 BYTES, default 40: `"x" * 39` kept, `"x" * 40` dropped, `"é" * 20` dropped. å, ä, ö are 2 bytes each, so long Swedish compounds reach the limit early: set 41 or more, or `None` to disable. Omitting the argument keeps 40; other options set to `None` take the analyzer profile's default.
+- Test real transcription lines first with `lance.tokenize(text, **the same options)` (present in 13.0.0): `[(t.text, t.position) for t in lance.tokenize("the Cats and Dogs")]` gives `[("cat", 0), ("dog", 2)]`. Positions keep the gaps left by stop words and filters, as phrase matching sees them. Check what stemming, stop-word removal and `ascii_folding` (å/ä/ö would fold to a/a/o) do to historical spellings.
+- Leave aside: `analyzer="code"` (needs FTS format v3; `analyzer` and `split_identifiers` are not in 13.0.0's Python source, though `**kwargs` pass through) and Jieba/Lindera (Chinese, Japanese/Korean; downloaded models).
+
+## Query full text
+
+(guide/full_text_search.md)
+
+Scoring is BM25 in column `_score`, higher is better. Full-text and vector search combine in one scanner.
 
 ```python
-dataset.create_scalar_index("body", "INVERTED")
-dataset.create_scalar_index("body", "INVERTED", with_position=True)   # needed for phrase queries
-```
-
-- Default index name: `<column>_idx`. Pass `name=...` when one column needs two indexes (e.g.
-  inverted and N-gram).
-- `with_position=True`: larger index, no effect on non-phrase query speed.
-- Analyzer options (keyword arguments to `create_scalar_index`):
-  - `base_tokenizer`: `simple`, `whitespace`, `raw`, `icu`, or language-specific tokenizers.
-  - `lower_case`, `stem`, `remove_stop_words`, `ascii_folding`.
-  - `language`: language for stemming and default stop words.
-  - `max_token_length`: exclusive limit in UTF-8 bytes; tokens at or over it are dropped.
-  - `analyzer="code"`: code profile **[`analyzer` not seen in 13.0.0's `create_scalar_index`]**.
-- Large builds: `num_workers` and `memory_limit` control parallelism and memory (both appear in
-  13.0.0's `create_scalar_index` source).
-
-### Query (Python)
-
-```python
-from lance.query import (BooleanQuery, CombinedFieldsQuery, FullTextOperator,
-                         MatchQuery, MultiMatchQuery, Occur, PhraseQuery)
-
-dataset.to_table(full_text_query="train Boston")            # string: all indexed text columns
-dataset.to_table(full_text_query=MatchQuery("train Boston", "body", operator=FullTextOperator.AND))
-dataset.to_table(full_text_query=MatchQuery("ramen broth", "body", operator=FullTextOperator.OR))
+dataset.to_table(full_text_query="train Boston")   # a string searches all indexed text columns
 dataset.to_table(full_text_query=MatchQuery("train", "body"), filter="category = 'travel'")
-dataset.to_table(full_text_query=PhraseQuery("ramen broth", "body"))
-dataset.to_table(full_text_query=BooleanQuery([
-    (Occur.MUST, MatchQuery("train", "body")),
-    (Occur.MUST_NOT, MatchQuery("Boston", "body")),
-]))
-dataset.to_table(full_text_query=MatchQuery("ramen", "body", fuzziness=1, max_expansions=50))
-dataset.to_table(full_text_query=MultiMatchQuery("columnar guide", ["title", "body"], boosts=[2.0, 1.0]))
-dataset.to_table(full_text_query=CombinedFieldsQuery("Lance multimodal", ["title", "body"],
-                                                     operator=FullTextOperator.AND))
+dataset.to_table(full_text_query=BooleanQuery([(Occur.MUST, MatchQuery("train", "body")),
+                                               (Occur.MUST_NOT, MatchQuery("Boston", "body"))]))
 ```
 
-- `MatchQuery`: Levenshtein fuzzy matching with `fuzziness`; `fuzziness=None` = automatic by term
-  length; `prefix_length` = exact prefix required before edits; `max_expansions` (50 in examples).
-  Useful for historical spelling variants.
-- `MultiMatchQuery`: best score from any column wins; `boosts` per column.
-- `CombinedFieldsQuery` (BM25F): terms may be spread across columns, corpus statistics combined.
-  The columns must use the same tokenizer and index configuration.
-- Phrase queries require an index built with `with_position=True`. Stop words are absent from
-  indexed positions: if phrases must contain stop words, build with `remove_stop_words=False`.
-- 13.0.0 signatures (verified): `MatchQuery(query, column, *, boost=1.0, fuzziness=0,
-  max_expansions=50, operator=FullTextOperator.OR, prefix_length=0, document_granularity=None)`;
-  `PhraseQuery(query, column, *, slop=0, document_granularity=None)`;
-  `MultiMatchQuery(query, columns, *, boosts=None, operator=OR)`;
-  `CombinedFieldsQuery(query, columns, *, boosts=None, operator=OR)`;
-  `BooleanQuery(queries: list[tuple[Occur, FullTextQuery]])`.
+13.0.0 signatures (verified), all in `lance.query` with `FullTextOperator` and `Occur`:
 
-### Maintain
+- `MatchQuery(query, column, *, boost=1.0, fuzziness=0, max_expansions=50, operator=FullTextOperator.OR, prefix_length=0, document_granularity=None)`. `fuzziness` is Levenshtein distance, the tool for historical spelling variants; `prefix_length` = exact prefix required before edits. `fuzziness=None` = automatic by term length in the docs [unverified 13.0.0: typed `int = 0`].
+- `PhraseQuery(query, column, *, slop=0, document_granularity=None)`.
+- `MultiMatchQuery(query, columns, *, boosts=None, operator=OR)`: the best score from any column wins.
+- `CombinedFieldsQuery(query, columns, *, boosts=None, operator=OR)`: BM25F, terms may spread across columns; the columns must share tokenizer and index configuration.
+- `BooleanQuery(queries: list[tuple[Occur, FullTextQuery]])`.
 
-- Appended rows stay searchable: indexed search is combined with a scan of unindexed rows. That
-  scan grows with unindexed data, so fold new fragments in periodically:
+## Keep a text index current
 
-```python
-dataset.insert(new_rows)
-dataset.optimize.optimize_indices(index_names=["body_idx"])
-stats = dataset.stats.index_stats("body_idx")
-print(stats["num_unindexed_rows"], stats["num_indexed_rows"])
-```
+(guide/full_text_search.md)
 
-- `optimize_indices()` adds new data to existing indexes; it does NOT change analyzer settings.
-- After changing tokenizer or analyzer settings: `create_scalar_index(..., replace=True)` to
-  rebuild over the whole dataset.
-- No numeric threshold is given for when to run `optimize_indices`.
-- Full-text and vector search can be combined in one scanner (see `vector_search.md`).
+- Appended rows stay searchable through a scan of unindexed rows that grows with them. Fold them in with `dataset.optimize.optimize_indices(index_names=["body_idx"])` (`index_names` [unverified 13.0.0]: the method takes `**kwargs`). The docs give no threshold: watch `dataset.stats.index_stats("body_idx")["num_unindexed_rows"]` against `["num_indexed_rows"]`.
+- `optimize_indices` keeps the analyzer settings. After changing tokenizer or analyzer: `create_scalar_index(..., replace=True)` rebuilds over the whole dataset.
 
----
+## Write to the local disk safely
 
-## docs/src/guide/tokenizer.md
+(guide/object_store.md)
 
-- Built-in: ICU, Jieba, Lindera. ICU has bundled segmenter data (no download). Jieba (Chinese) and
-  Lindera (Japanese/Korean: `ipadic`, `ko-dic`, `unidic`) need downloaded models. No Swedish-specific
-  tokenizer is on this page; Swedish goes through `language` + `stem` (see full_text_search.md) with
-  `simple` or `icu`.
-- Model directory: env `LANCE_LANGUAGE_MODEL_HOME`, default
-  `${system data directory}/lance/language_models`. Own models go in that directory.
+- A plain path is the local filesystem. Store options go in `storage_options={...}` (string values) on `lance.dataset` and `lance.write_dataset`, or in environment variables.
+- Durability: Lance does not fsync local writes before returning. `storage_options={"local_fsync": "true"}` **[absent 13.0.0]** syncs data, transaction and manifest files and their directory entries before success, at higher write latency; it is a store setting, so pass it at every open for writing. On 13.0.0 no documented way makes a local write durable: a power loss right after a commit can lose it.
+- Commit safety: the page states nothing on how local commits are made atomic, on several processes writing one local table, or on NFS (atomic rename, locking, close-to-open caching). Keep a table on NFS to one writer at a time until tested.
+- Use one Lance version among all writers of a table and quiesce writers before upgrading: a commit guarantee holds only when every writer uses the same commit handler (stated for GooseFS, a caution elsewhere).
+- `commit_lock` (in 13.0.0 on `lance.write_dataset` and `lance.dataset`): a callback taking the manifest version and returning a context manager that locks on entry and releases on exit, also when the commit raises. Every writer needs the same lock service and key; a process-local lock does not span processes. Reads never need it.
+- `block_size`: gap in bytes under which two reads of one file merge into one request; default `4096` local, `65536` object stores. Larger = fewer requests for scattered reads (a `take` across a file) at the price of the bytes between. Raising it on NFS is our inference, to be measured.
+- **[absent 13.0.0]** `scheduler_error_mode` (`best_effort` default | `fail_fast`), `object_store_cache_prune_threshold`.
+- Cloud, in three lines. The URI scheme picks the store (`s3://`, `gs://`, `az://`, `hf://datasets/...`, others); S3-compatible stores need both `region` and `endpoint`.
+  Concurrent `s3://` writes are safe only where create-only `PutObject` with `If-None-Match: *` is enforced atomically: some stores (Garage is named) ignore the header and acknowledged data is silently lost; Lance does not check.
+  Cloud stores alone are throttled (AIMD, `lance_aimd_*` options) and use 64 I/O threads.
 
-### Inspect tokens without an index
+## Trace what Lance did
 
-```python
-import lance
-tokens = lance.tokenize("the Cats and Dogs")
-[(token.text, token.position) for token in tokens]
-# [("cat", 0), ("dog", 2)]
-```
+(guide/performance.md)
 
-- `lance.tokenize` exists in 13.0.0. It accepts the tokenizer options of
-  `LanceDataset.create_scalar_index` (custom stop words, n-grams, code analyzer).
-- Positions start at the first kept token and keep the gaps left by stop words and filters (same
-  representation as phrase matching).
-- Options set to `None` take the analyzer profile's default. Exception: omitting
-  `max_token_length` keeps the limit of 40 UTF-8 bytes; `max_token_length=None` disables it.
-- Use this to test historical Swedish spellings before building an index: check what stemming,
-  `ascii_folding` (å/ä/ö would fold to a/a/o) and stop-word removal do to real transcription lines.
+- pylance logs to stderr. `LANCE_LOG` (level and target filter, env_logger syntax; replaces `RUST_LOG`), `LANCE_TRACING` (default `info`; `debug` adds spans), `LANCE_LOG_STYLE`, `LANCE_LOG_TS_PRECISION`, `LANCE_LOG_FILE` (falls back to stderr).
+- Events sit under the prefix `lance::events::`, e.g. `LANCE_LOG="warn,lance::events::memory=info"`:
+  - `lance::file_audit`: files created and deleted, by `mode` and `type`.
+  - `lance::dataset_events`: `event` (loading, writing, committed, deleting, ...) with `uri`, `operation`, `predicate`, `columns`.
+  - `lance::io_events`: `type` (open_scalar_index, open_vector_index, load_vector_part, load_scalar_part). Emitted only on an index-cache miss, so they count misses.
+  - `lance::execution`: `type` (only `plan_run`), `output_rows`, `iops`, `bytes_read`, `indices_loaded`, `parts_loaded` (BTREE pages or bitmaps read from disk), `index_comparisons`, `peak_reserved_bytes` **[absent 13.0.0]**.
+  - `lance::memory` **[absent 13.0.0]**: Linux, `LANCE_MEMORY_OBSERVE=1`, index builds; fields include `stage`, `peak_bytes`, `rss_bytes`, `cgroup_limit_bytes`. A start with no completion = the build failed, was cancelled, or the process died (e.g. OOM).
 
-### Token length limit
+## Silent in these pages
 
-- `max_token_length` is exclusive and in UTF-8 BYTES, default 40. `"x" * 39` kept, `"x" * 40`
-  dropped; `"é" * 20` (40 bytes) dropped. To keep a 40-byte token set at least 41, or `None`.
-- Pitfall for Swedish: å, ä, ö are 2 bytes each, so long compounds reach the limit sooner than
-  their character count suggests.
-
-### ICU
-
-```python
-ds.create_scalar_index("text", "INVERTED", base_tokenizer="icu")
-ds.create_scalar_index("text", "INVERTED", base_tokenizer="icu/split")
-```
-
-- Unicode word-boundary rules; good for mixed-language text. `icu/split` also splits
-  punctuation-delimited identifiers into searchable parts.
-
-### Code analyzer (not for our text)
-
-- `analyzer="code"` or `base_tokenizer="code"`; requires FTS format v3. Flags:
-  `split_identifiers` (False), `split_on_numerics` (True), `preserve_original` (True),
-  `index_operators` (False). Disables stemming and stop-word removal. Existing code indices must be
-  rebuilt to get the new length normalisation.
-
-### Jieba / Lindera
-
-- `python -m lance.download jieba`; model in `${LANCE_LANGUAGE_MODEL_HOME}/jieba/default`;
-  `base_tokenizer="jieba/default"`; user dictionaries via `config.json` (`"main"`, `"users"`).
-- `python -m lance.download lindera -l [ipadic|ko-dic|unidic]` (needs `lindera-cli` to compile);
-  `base_tokenizer="lindera/ipadic"`; `config.yml` in the model root or `LINDERA_CONFIG_PATH`.
-
----
-
-## docs/src/guide/object_store.md
-
-### How configuration is passed
-
-- The store is chosen by the URI scheme of the dataset path. A plain path is the local filesystem.
-- Options: environment variables (global) or `storage_options={...}` (per dataset) on
-  `lance.dataset(...)` and `lance.write_dataset(...)`. Values are strings.
-
-### Local filesystem
-
-- `block_size`: gap in bytes under which two reads of one file are merged into one request.
-  Default `4096` for local files, `65536` for object stores. Larger = fewer requests for scattered
-  reads (e.g. a `take` of rows spread across a file) at the price of reading the bytes between.
-  The page gives no NFS advice; raising it for a table on NFS is our inference, to be measured.
-- Durability, `local_fsync` **[not in 13.0.0: the string is absent from the compiled library]**:
-
-```python
-lance.write_dataset(
-    pa.table({"id": [1]}),
-    "/path/to/data.lance",
-    storage_options={"local_fsync": "true"},
-)
-```
-
-  - Default `"false"`: by default Lance does NOT fsync local writes before returning.
-  - When `"true"`: data, transaction and manifest files are synced before a write reports success
-    (also files copied in deep clones); on Unix also their directory entries, including new
-    directories. Raises write latency.
-  - It is a store setting, not a dataset property: pass it again every time the dataset is reopened
-    for writing. Only `"true"` and `"false"` are accepted.
-- Bulk copies and deep clones on local paths ignore `LANCE_IO_SERVER_SIDE_COPY_ENABLED`.
-- `scheduler_error_mode`: `best_effort` (default) or `fail_fast` (first error cancels the other
-  physical reads of the same logical request) **[string absent from 13.0.0's library]**.
-
-### NFS
-
-- The page does not mention NFS at all: no statement on atomic rename, locking, close-to-open
-  caching, or whether concurrent writers are safe on a network filesystem. Treat a table on NFS
-  with one writer at a time until tested or confirmed from the transaction/commit documentation.
-
-### Commit safety and concurrent writers
-
-- Nothing on this page states how commits are made safe on a local filesystem. The stated rules are
-  for object stores:
-  - `s3://`: safe concurrent writes need the store to enforce create-only `PutObject` with
-    `If-None-Match: *` atomically. Some S3-compatible stores (Garage is named) accept the header and
-    ignore it: two writers both report success and acknowledged data is silently lost. Lance does
-    not check for this.
-  - Tencent COS: a custom commit lock is required for writes.
-  - `goosefs://`: uses `ConditionalPutCommitHandler`; older Lance releases use `UnsafeCommitHandler`
-    there, so mixed-version writers are not safe.
-- Reads never need a commit lock (stated for S3 and COS).
-- Custom commit lock (Python): pass `commit_lock` to `lance.write_dataset` when creating or
-  appending, and to `lance.dataset` when opening for later writes. The callback takes the manifest
-  version to commit and returns a context manager that takes the lock on entry and releases it on
-  exit, also when the commit raises. Every writer of the dataset must use the same lock service and
-  key; a process-local lock is not enough across processes. (`commit_lock` is in 13.0.0's
-  signatures of both functions.)
-- General lesson stated for GooseFS and applicable as caution: a commit guarantee holds only when
-  every writer uses the same commit handler, so do not mix Lance versions among writers of one
-  table; quiesce writers before upgrading.
-
-### Other general options
-
-- `timeout` (default `30s`, whole request), `connect_timeout` (`5s`), `download_retry_count` (`3`),
-  `client_max_retries` (`3`), `client_retry_timeout` (`180` s), `allow_http`,
-  `allow_invalid_certificates`, `user_agent`, `proxy_url`, `proxy_ca_certificate`, `proxy_excludes`,
-  `object_store_cache_prune_threshold` (default `64`, `0` disables). These concern HTTP stores.
-- Per-base options: `base_<id>.<key>` applies to one registered base path; ids from
-  `ds.base_paths()`; `base_store_params` (keyed by base URI) takes precedence.
-- Deep clone: four concurrent non-local files by default; `LANCE_DEEP_CLONE_STREAM_CONCURRENCY`.
-
-### Cloud stores (three lines)
-
-- S3 `s3://` (`region`, `endpoint`, `access_key_id`, `secret_access_key`, `session_token`,
-  `aws_provider_scheme` = `token` | `ecs` | `irsa`, `s3_express`); S3-compatible stores need both
-  `region` and `endpoint`; Apache Ozone goes through the S3 path.
-- GCS `gs://` (`service_account`), Azure `az://` (`account_name`, `account_key`), OSS `oss://`,
-  TOS `tos://`, COS `cos://`, GooseFS `goosefs://`.
-- Hugging Face `hf://datasets/<owner>/<repo>/<path>` (`hf_token`, `hf_revision`,
-  `hf_download_mode` = `http` | `xet`, `hf_enable_resolve_cache`).
-
----
-
-## Unclear or possibly newer than 13.0.0
-
-Checked against the installed pylance 13.0.0 (Python signatures, and strings in the compiled
-library; a missing string is strong but not final evidence):
-
-- Absent in 13.0.0:
-  - `local_fsync` storage option. So on 13.0.0 there is no documented way to make local writes
-    durable before they return; a power loss right after a commit can lose it.
-  - `session.cache_diagnostics(...)`, `session.set_index_cache_capacity(...)`,
-    `session.set_metadata_cache_capacity(...)`. 13.0.0's session has only
-    `index_cache_size_bytes`, `is_same_as`, `size_bytes`.
-  - `scheduler_error_mode`, `object_store_cache_prune_threshold`.
-  - `LANCE_MEMORY_OBSERVE` and the `lance::memory` events; `peak_reserved_bytes` in
-    `lance::execution`.
-  - `analyzer="code"`, `split_identifiers` in `create_scalar_index` (not in its Python source; the
-    arguments pass through `**kwargs`, so not fully excluded).
-- Present in 13.0.0: `lance.tokenize`, `lance.download`, all five query classes,
-  `compact_files(defer_index_remap=...)`, `optimize_indices(**kwargs)`, scanner arguments
-  `fragment_readahead`, `batch_readahead`, `io_buffer_size`, `batch_size`, `scan_in_order`;
-  `commit_lock`, `session=`, `index_cache_size_bytes`, `metadata_cache_size_bytes`,
-  `base_store_params`, `ds.base_paths()`; env strings `LANCE_IO_THREADS`, `LANCE_CPU_THREADS`,
-  `LANCE_DEFAULT_IO_BUFFER_SIZE`, `LANCE_LOG_FILE`, `LANCE_DISABLE_AMX`,
-  `LANCE_LANGUAGE_MODEL_HOME`, `LANCE_IO_SERVER_SIDE_COPY_ENABLED`,
-  `LANCE_DEEP_CLONE_STREAM_CONCURRENCY`, `lance_aimd_initial_rate`.
-- Not verified either way: `fuzziness=None` (13.0.0 types it `int = 0`); the default RaBitQ
-  5 bits per dimension; huge-page timings (measured on 2.0 and 2.2 files); whether
-  `dataset.optimize.optimize_indices(index_names=[...])` accepts `index_names` in 13.0.0 (it takes
-  `**kwargs`); the ICU tokenizer names `icu` and `icu/split` (the string `icu` appears in
-  `create_scalar_index`'s source, not tested by building an index).
-- Unclear in the docs themselves:
-  - BTree "additional 4 bytes per value ... to store the row ID" while vector indexes state an
-    8-byte row id.
-  - `(2 * io_buffer_size) + (batch_size * num_compute_threads)` mixes bytes and rows; read
-    `batch_size` as bytes per batch.
-  - Nothing on NFS, on how local commits are made atomic, or on several processes writing one
-    local table.
-  - Nothing on the number of versions, on `cleanup_old_versions`, or on a small-fragment threshold
-    for compaction; only `compact_files(defer_index_remap=True)` and the fragment sizing numbers.
-  - Which `language` values exist (Swedish stemming and stop words are not listed on these pages).
+`cleanup_old_versions`, auto cleanup, the cost of many versions, a small-fragment threshold or other compaction thresholds (`target_rows_per_fragment` etc.), file locking on local disks: look in the pages on data evolution, table maintenance and transactions.

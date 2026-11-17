@@ -1,406 +1,151 @@
-# Lance: vectors, blobs, indexes, distributed write, observability
+# Lance: vector search, indexes, blobs, multi-worker writes
 
-Source: Lance docs at 15.0.0-beta, `docs/src/guide/`, each page read in full. Installed: pylance 13.0.0.
-Only what the pages state. Items that may be newer than 13.0.0 are collected in the last section; check them
-against the installed package before relying on them.
+Covers nearest-neighbour search, vector and scalar indexes and their upkeep, blob columns, commits assembled from several workers, and metrics.
+Read it before building or tuning an index, running a filtered vector search, storing values near 1 MB, or committing fragments by hand.
 
-Contents:
-1. `guide/vector_search.md`
-2. `guide/blob.md`
-3. `guide/indexing.md`
-4. `guide/scalar_indexing.md`
-5. `guide/distributed_indexing.md`
-6. `guide/distributed_write.md`
-7. `guide/observability.md`
-8. What the pages do not say (for the vectors-in-scan-table decision)
-9. Unclear or possibly newer than 13.0.0
+`[13?]` marks what may be absent or different in pylance 13.0.0: confirm it with `help(...)` or the installed source first.
 
----
+## Search nearest neighbours
 
-## 1. `docs/src/guide/vector_search.md`
+- Exact search: `ds.to_table(columns=[..., "_distance"], nearest={"column": "vector", "q": q, "k": 10})`. An explicit `columns` list returns the distance only when it names `"_distance"`. With an index present, `nearest["use_index"] = False` forces exact search: the correctness baseline. (guide/vector_search.md)
+- The docs ask for a fixed-size list or fixed-shape tensor of one dimension and name no element type: whether float16 is accepted by exact search or by any index type is unstated, so test it on a throwaway table. Null vectors and their treatment by index build and search are also unstated. (guide/vector_search.md)
+- Metrics: `l2` (= `euclidean`, squared distance), `cosine`, `dot`; smaller is closer in all three (the page gives no formula for `dot`). Query with the metric the index was built with; normalise vectors when `dot` is meant to rank like cosine.
+- Filtered search: `ds.scanner(nearest={...}, filter="category = 'science'", prefilter=True).to_table()`. `prefilter=False` is the default: top-k first, then the filter, rejected rows are not replaced, so fewer than `k` rows come back. `prefilter=True` restricts candidates first; it costs more, leaves an approximate index approximate, and runs faster with a scalar index on the filter column. A filter can trigger extra probing to reach `k` rows, so the probe budget does not cap the work. Deletions and explicit fragment scopes restrict candidates in either mode.
+- Text plus vector: `filter={"search_filter": lance.query.MatchQuery("words", "text"), "expr_filter": "category = 'science'"}`; needs an INVERTED index on the text column and a vector index on the embedding column.
 
-### Column type
-- Vector columns "should use an Arrow fixed-size list or fixed-shape tensor type with a consistent dimension".
-- The page names no element type (float16/float32/float64 are not mentioned). The only typed example is Rust `Float32Array`.
+## Build a vector index
 
-### Exact search (no index)
-```python
-result = dataset.to_table(
-    columns=["id", "category", "_distance"],
-    nearest={"column": "vector", "q": query_vector, "k": 10},
-)
-```
-- With an explicit `columns` list, include `"_distance"` to get the distance.
-- Without a usable vector index, Lance computes distances against the vectors in the search scope: exact, a correctness baseline.
-- Force exact search when an index exists: `nearest["use_index"] = False`.
+`ds.create_index("vector", index_type=..., metric="l2", num_partitions=256, ...)`. Vector indexes default to `replace=False`: pass `replace=True` to rebuild under the same name. Default name `<column>_idx`; `name=` allows several indexes on one column. (guide/vector_search.md, guide/indexing.md)
 
-### Metrics
-- `l2` (also `euclidean`): squared Euclidean distance; smaller is closer.
-- `cosine`: cosine distance; smaller is closer.
-- `dot`: dot-product distance; smaller is closer.
-- Use the same metric for index creation and querying. Dot may need normalised vectors when a cosine-like ranking is meant.
-
-### Index types (all `IVF_*` partition with an IVF coarse quantizer first)
-| Type | Stores | Strength | Tradeoff |
+| Type | Stores | Choose for | Cost |
 |---|---|---|---|
-| `IVF_FLAT` | original vectors | exact distances within searched partitions; no quantizer training | larger index, more candidate I/O |
-| `IVF_PQ` | product-quantized | small index, low candidate I/O | lower recall without enough probes/refinement; requires `num_sub_vectors` |
-| `IVF_SQ` | scalar-quantized | simple compression, more information per dimension than typical PQ | more storage than PQ |
-| `IVF_RQ` | RaBitQ-quantized | compact, multi-bit distance estimates | tune `num_bits`; more bits = better estimates, more build work and storage |
-| `IVF_HNSW_FLAT` | original vectors + HNSW graph | graph navigation within partitions; exact candidate distances | larger graph and storage |
-| `IVF_HNSW_SQ` | scalar-quantized + HNSW graph | graph search with compressed storage | more build parameters, graph overhead |
-| `IVF_HNSW_PQ` | product-quantized + HNSW graph | graph search with small storage | quantization and graph tuning both affect recall |
+| `IVF_FLAT` | original vectors | exact distances inside probed partitions, no quantizer training | larger index, more candidate I/O |
+| `IVF_PQ` | product-quantized | smallest index, GPU training | lower recall without probes or refinement; `num_sub_vectors` required |
+| `IVF_SQ` | scalar-quantized | simple compression, more information a dimension than PQ | larger than PQ |
+| `IVF_RQ` `[13?]` | RaBitQ | compact multi-bit estimates; the docs' default recommendation | tune `num_bits` |
+| `IVF_HNSW_FLAT` / `_SQ` / `_PQ` | as above plus an HNSW graph a partition | graph search when latency and recall call for it | graph storage, more parameters (`m`, `max_level`, `ef_construction`) |
 
-- The page's recommendation: "Start with `IVF_RQ` for most vector-search workloads." `IVF_PQ` when the smaller footprint or GPU-accelerated training matters; `IVF_HNSW_*` when graph search fits the latency and recall needs.
-- Validate by measured recall and latency on representative data, not by index size.
-- Index-size formulas and training memory estimates are in `performance.md#vector-index` (not read here).
+- `num_partitions`: more partitions mean less work a probe and more probes for the same recall.
+- `num_bits`: PQ takes 4 or 8; RQ defaults to 5 `[13?]`. RQ with `num_bits=1` gives the smallest index and build I/O, and searches lose the multi-bit estimate: measure recall.
+- `ivf_centroids`, `pq_codebook`: pre-trained artifacts. `accelerator="cuda"` or `"mps"`: GPU training, named for IVF_PQ only.
+- Size formulas and training memory are in `performance.md#vector-index` (not read for this file).
 
-### Create
-```python
-dataset.create_index("vector", index_type="IVF_RQ", metric="l2", num_partitions=256)
+## Tune search and check recall
 
-dataset.create_index("vector", index_type="IVF_PQ", metric="l2",
-                     num_partitions=256, num_sub_vectors=16)
+- Choose an index by measured recall and latency, not by size: recall is the overlap of the ids from an indexed search with those from the same search under `"use_index": False`, averaged over representative queries, under the same data, filter, cache and storage.
+- Keys of `nearest`: `nprobes` (partitions searched), `minimum_nprobes`, `maximum_nprobes`, `refine_factor` (fetch `k * refine_factor` candidates, re-rank with more accurate distances), `ef` (HNSW breadth).
+- `search_effort` `[13?]` in `[0, 1]`, interpolated between targets of mean routing recall: 0.1 = 80 %, 0.25 = 90 %, 0.5 (default) = 95 %, 1.0 = all partitions. It overrides `nprobes`; `minimum_nprobes` and `maximum_nprobes` still apply. Calibrated for l2, cosine and dot with `k <= 100000` on unfiltered data; the target is average coverage of the true neighbours' partitions, and quantization, refinement, filtering and HNSW move final Recall@k. Without it, tune `nprobes` and `refine_factor`. (guide/vector_search.md)
 
-dataset.create_index("vector", index_type="IVF_HNSW_SQ", metric="l2",
-                     num_partitions=256, m=20, ef_construction=100)
-```
-- `num_partitions`: number of IVF partitions. More partitions = less work per probe, more probes for the same recall.
-- `num_sub_vectors`: PQ sub-vectors; required for PQ variants.
-- `num_bits`: RQ defaults to 5; PQ supports 4 or 8. `num_bits=1` for RQ minimises index size and build I/O, but searches cannot use the multi-bit estimate: measure recall.
-- `ivf_centroids`, `pq_codebook`: optional pre-trained artifacts.
-- `m`, `max_level`, `ef_construction`: HNSW graph parameters.
-- `accelerator="cuda"` or `"mps"`: optional GPU acceleration for IVF_PQ training (only IVF_PQ is named).
-- Default index name: `<column>_idx`.
-- Vector index creation is `replace=False` by default; pass `replace=True` to replace an index of the same name.
+## Build a scalar index and make a filter use it
 
-### Search parameters
-```python
-dataset.to_table(nearest={"column": "vector", "q": q, "k": 10, "search_effort": 0.25})
-dataset.to_table(nearest={"column": "vector", "q": q, "k": 10, "nprobes": 20, "refine_factor": 5})
-```
-- `search_effort` in `[0, 1]`, continuous, interpolated between anchors:
-  - `0.1`: 80 % mean routing recall target
-  - `0.25`: 90 %
-  - `0.5` (default): 95 %
-  - `1.0`: search all available partitions (caller maximum still applies)
-- Calibrated for L2, cosine, dot with `k <= 100000`. Hamming and larger `k` keep the old interpolation with no calibrated target.
-- Targets are average coverage of the true neighbours' partitions on unfiltered calibration data: not a guarantee per query, dataset or final Recall@k. Quantization, refinement, filtering and HNSW change final recall.
-- Explicit `search_effort` overrides `nprobes`; explicit `minimum_nprobes` and `maximum_nprobes` still apply.
-- Filters can trigger more probing to obtain `k` rows, so the initial budget is not a limit on total work.
-- `nprobes`: IVF partitions searched. `refine_factor`: fetch up to `k * refine_factor` candidates, re-rank with more accurate distances, return top `k`. `ef`: HNSW search breadth.
+`ds.create_scalar_index("id", "BTREE")`, `ds.create_scalar_index("text", "INVERTED", name="text_fts_idx", with_position=True)`. Scalar indexes default to `replace=True`. The index yields candidate rows and Lance then evaluates the whole filter, so the choice of index changes speed only. (guide/scalar_indexing.md)
 
-### Recall check
-```python
-exact  = dataset.to_table(nearest={"column": "vector", "q": q, "k": 10, "use_index": False})
-approx = dataset.to_table(nearest={"column": "vector", "q": q, "k": 10, "nprobes": 20})
-recall = len(set(exact["id"].to_pylist()) & set(approx["id"].to_pylist())) / 10
-```
-- Average over a representative set of queries; compare latency under the same data, filter, cache and storage.
+| Type | Column | Speeds up | Limit |
+|---|---|---|---|
+| `BTREE` | many distinct values | `=`, ranges, `IN`, null predicates | larger than skipping structures |
+| `BITMAP` | few distinct values | `=`, small ranges, set membership | many distinct values grow size and build memory |
+| `LABEL_LIST` | lists of few distinct elements | `array_has`, `array_contains`, `array_has_all`, `array_has_any` | high-cardinality arrays |
+| `ZONEMAP` | roughly sorted | ranges, by skipping zones | little gain on random order |
+| `NGRAM` | strings | `contains(col, 'sub')` | candidates may need rechecking |
+| `BLOOMFILTER` | membership | `=` and `!=` | inexact, few predicates |
+| `FM` `[13?]` | strings | exact `contains`, also one-character patterns | specialised |
+| `LISTELEMENT` `[13?]`, experimental | `list<struct>` | `any_element(col, 'predicate')` | predicate must fix the first key |
 
-### Filtered nearest-neighbour search
-```python
-result = dataset.scanner(
-    nearest={"column": "vector", "q": query_vector, "k": 10},
-    filter="category = 'science'",
-    prefilter=True,
-).to_table()
-```
-- `prefilter=False` is the DEFAULT: top-k first, then the SQL filter. Rejected rows are not replaced, so fewer than `k` rows may come back.
-- `prefilter=True`: restrict candidates to matching rows, then top-k. "Usually the desired behavior for metadata-constrained retrieval"; can be more expensive; does not make an approximate index exact.
-- A scalar index on the filter column can accelerate prefiltering.
-- Deletions and explicit fragment scopes restrict candidates regardless of `prefilter`.
-- The filter is a SQL filter on columns of the same dataset as the vector column (the page shows no filter across tables).
+- An `OR` uses an index only when every branch holds an indexed predicate: `id = 1 OR unindexed = 2` may scan; `(id = 1 AND unindexed = 2) OR id = 3` uses the index on `id`.
+- Confirm use: `ds.scanner(filter="id >= 100").explain_plan()` shows `ScalarIndexQuery` or `MaterializeIndex`. `use_scalar_index=False` on the scanner turns indexes off for one query.
+- Nulls follow SQL three-valued logic: a filter that evaluates to null is not true. Write `col IS NOT NULL AND col = 'x'` to exclude them, and test on null values, null list elements, empty lists and all-null columns.
 
-### Full-text + vector
-```python
-from lance.query import MatchQuery
-dataset.scanner(
-    nearest={"column": "vector", "q": q, "k": 10},
-    filter={"search_filter": MatchQuery("machine learning", "text"),
-            "expr_filter": "category = 'science'"},
-).to_table()
-```
-- Needs an inverted index on the text column and a vector index on the embedding column.
+## Keep indexes current
 
-### Maintenance
-- Appending rows does NOT add them to existing vector indexes. By default Lance combines index results with exact search over unindexed data: new rows stay visible, unindexed search cost grows.
-- Add new data: `dataset.optimize.optimize_indices(index_names=["vector_idx"])`. Assigns new vectors to existing IVF partitions and quantizer models, no retraining.
-- Retrain when the distribution changed: `dataset.optimize.optimize_indices(index_names=["vector_idx"], retrain=True)`. More expensive.
-- `fast_search=True`: only when skipping recently appended unindexed data is acceptable. Check first:
-```python
-stats = dataset.stats.index_stats("vector_idx")
-print(stats["num_unindexed_rows"], stats["num_indexed_rows"])
-```
+- Coverage: `ds.stats.index_stats("vector_idx")` gives `num_indexed_rows` and `num_unindexed_rows`. `ds.describe_indices()` (`.name`, `.index_type`, `.field_names`, `.num_rows_indexed`) `[13?]`. (guide/indexing.md)
+- After appends: `ds.optimize.optimize_indices(index_names=["text_idx", "vector_idx"])`; omit `index_names` for all. For a vector index this assigns new vectors to the existing partitions and quantizer without retraining; add `retrain=True` when the distribution changed (a full rebuild, expensive).
+- Order: compact first, then optimize or rebuild indexes; physical rewrites invalidate the row addresses indexes hold and Lance remaps them. Stable row ids keep identity across compaction and still need this upkeep.
+- `fast_search=True` searches indexed rows only: check `num_unindexed_rows` first. The page writes only `fast_search=True` and leaves unclear whether it is a scanner argument or a key of `nearest`. For rows changed by an update `[13?]` ("overlay files"): stale index entries are always excluded; scalar filters always see current values; vector search, full-text search and MinHash see changed rows by default and skip them with `fast_search=True`.
+- Change type, metric, tokenizer or training parameters: create again under the same name with `replace=True`. Remove: `ds.drop_index("id_idx")`.
 
----
+## Store large binary values (blobs)
 
-## 2. `docs/src/guide/blob.md`
+- Choose a blob column when values average roughly 1 MB or more, or when partial or streaming reads are needed. Inline `binary` is always read whole, and compaction and some updates copy inline payloads forward unchanged (write amplification); blob payloads sit in `.blob` files that are referenced. Below a few tens of KB with whole-value reads, inline `binary` is simplest and fastest. (guide/blob.md)
+- Write Blob v2 (needs file format `>= 2.2`):
+  ```python
+  from lance import blob_array, blob_field
+  schema = pa.schema([pa.field("id", pa.int64()), blob_field("blob")])   # blob_field(name, nullable=True)
+  table = pa.table({"id": [1], "blob": blob_array([b"bytes"])}, schema=schema)
+  lance.write_dataset(table, uri, data_storage_version="2.2")
+  ```
+  `blob_array` takes `bytes`, a URI string, `Blob.from_uri(uri, position=..., size=...)` or `None`, mixed in one column. An empty blob is inline `b""`; a range needs `uri` and `size > 0`.
+- Placement by default: up to 64 KiB inline in the data file, up to 4 MiB packed into shared `.blob` sidecars, larger in a dedicated `.blob` file. Per column `[13?]`: `blob_field(..., inline_size_threshold=..., dedicated_size_threshold=...)`; the thresholds live in the schema and an append giving other values for that column is rejected. `blob_pack_file_size_threshold` `[13?]` is a write option that only rolls sidecar files.
+- External URIs must map to a registered base path outside the dataset root; otherwise pass `allow_external_blob_outside_bases=True` on write.
+- Blob v2 on an existing table: appending with `data_storage_version="2.2"` to a 2.0 or 2.1 table starts v2 with no upgrade step `[13?]`. From the first v2 file on, descriptor scans return the struct `kind, position, size, blob_id, blob_uri` for all fragments: adapt code that reads descriptors by position or compares exact schemas. `0.1` files cannot mix with `2.x` and need a rewrite.
+- Legacy blobs (format `<= 2.1`): `pa.field("video", pa.large_binary(), metadata={"lance-encoding:blob": "true"})`. Convert by scanning with `blob_handling="all_binary"`, rebuilding with `blob_field` / `blob_array`, and writing at `"2.2"`, in batches (the page's example holds every payload in memory).
+- Errors: "Blob v2 requires file version >= 2.2": the table was created below 2.2. "Legacy blob columns ... are not supported for file version >= 2.2": a low-level file writer received legacy metadata; write through the dataset writer.
+- Blob v2 nested in structs and lists, and file format 2.3 `[13?]`.
+- Managed blobs `[13?]` (schema metadata `lance.blob.managed = "true"`, payloads at `_blobs/<uuid>.blob`, formats 2.2 and 2.3): the opt-in sets a capability flag at once and for good, and older clients (the page names v11.0.0) running cleanup can delete sidecars still referenced. Turn it on only when every client that maintains the table supports it, and run cleanup without `delete_unverified=True` while uploads are prepared. Sharing is explicit, within one table, with no deduplication; the writer API is in guide/blob.md.
 
-### Blob column or inline binary (the page's own rule)
-- Plain Arrow `binary` / `large_binary` stores bytes inline, interleaved with the other columns: "simplest and fastest for really small blobs (e.g., thumbnail images)".
-- Use a blob column when either holds:
-  - partial or streaming reads are needed (inline binary is always read in full; no byte-range fetch);
-  - values are large, "roughly 1 MB or more on average": compaction and some updates rewrite whole rows and copy inline payloads forward even when unchanged (write amplification). Blob columns keep payloads in separate `.blob` files that are referenced, not re-copied.
-- Rule of thumb: average payload below "a few tens of KB" and only whole-value reads: plain inline binary is fine. Above ~1 MB or file-like access: blob column.
-- Blob v2 default placement: up to 64 KiB inline in the data file; over 64 KiB and up to 4 MiB packed into shared `.blob` sidecars; over 4 MiB a dedicated `.blob` file. Configurable per column.
+## Read blobs
 
-### Versions
-- `data_storage_version` = the Lance file format version of a dataset. A dataset has a default; append and compaction can select another exact `2.x` version without rewriting files or changing the default. `0.1` cannot be mixed with `2.x`.
-- Blob v2 (`lance.blob.v2`) needs file format `>= 2.2`. `0.1`, `2.0`, `2.1`: legacy blob metadata (`lance-encoding:blob`) only.
-- At `>= 2.2` dataset writers accept legacy blob-marked binary input and write it as Blob v2. Older files keep their encoding.
-- Appending with `data_storage_version="2.2"` to a `2.0`/`2.1` dataset starts Blob v2 with no upgrade step. Once the first v2 file is committed, descriptor scans return the v2 struct `kind, position, size, blob_id, blob_uri` for all fragments; code reading descriptors by position or comparing exact schemas must adapt.
-
-### Write
-```python
-import lance, pyarrow as pa
-from lance import blob_array, blob_field
-
-schema = pa.schema([pa.field("id", pa.int64()), blob_field("blob")])
-table = pa.table({"id": [1], "blob": blob_array([b"hello blob v2"])}, schema=schema)
-ds = lance.write_dataset(table, "./blobs_v22.lance", data_storage_version="2.2")
-```
-- `blob_field("blob", nullable=True)`; `blob_array([...])` accepts in one column: inline `bytes`, a URI string, `Blob.from_uri(uri, position=..., size=...)`, `None`.
-- Field tag: `ARROW:extension:name = "lance.blob.v2"`. Logical shapes: Minimal (`data: LargeBinary?`, `uri: Utf8?`) or Complete (plus `position: UInt64?`, `size: UInt64?`). Python `blob_field` and `BlobType` use the Complete shape.
-- Every non-null row sets exactly one of `data` and `uri`. `position` and `size` both set or both null; a range needs `uri`; explicit range needs `size > 0`. Empty blob = inline `b""`.
-- Thresholds per column: `blob_field(..., inline_size_threshold=..., dedicated_size_threshold=...)`. Dedicated threshold is checked first. Stored in the dataset schema; an append that gives different thresholds for the same column is rejected.
-- `blob_pack_file_size_threshold`: write option for rolling packed `.blob` sidecars; does not control inline-vs-packed.
-- External URIs must map to a registered non-dataset-root base path by default; otherwise `allow_external_blob_outside_bases=True` on write (embedded mode).
-- Blob v2 fields can nest inside structs and variable-length lists.
-
-### Read
-| API | Returns | When |
+| Call | Returns | Use for |
 |---|---|---|
-| `ds.read_blobs(col, indices=/ids=/addresses=)` | `List[Tuple[int, Optional[bytes]]]` (row address, payload) | whole payloads in memory: loaders, batch work |
-| `ds.read_blob_ranges(col, requests=[(row, offset, length)], selector="indices")` | `List[Tuple[int, int, Optional[bytes]]]` (request_index, row address, data) | byte ranges from many rows |
-| `ds.take_blobs(col, indices=/ids=/addresses=)` | `List[Optional[BlobFile]]` | file-like: streaming, seeking, partial reads |
-| `lance.read_blob_files(handles)` / `lance.read_blob_file_ranges([(handle, offset, length)])` | `(request_index, data)` pairs | repeated reads of handles already held (skips the descriptor lookup) |
-| `ds.scanner(columns=["blob"], blob_handling="all_binary").to_table()` | Arrow binary column | blob column in a scan result |
+| `ds.read_blobs(col, indices=/ids=/addresses=)` `[13?]` | `[(row address, bytes or None)]` | whole payloads: loaders, batch work |
+| `ds.read_blob_ranges(col, requests=[(row, offset, length)], selector="indices")` `[13?]` | `[(request_index, row address, bytes or None)]` | byte ranges from many rows |
+| `ds.take_blobs(col, indices=/ids=/addresses=)` | `[BlobFile or None]` | file-like streaming and seeking |
+| `lance.read_blob_files(handles)`, `lance.read_blob_file_ranges([(handle, offset, length)])` `[13?]` | `(request_index, data)` pairs | repeated reads of handles already held; `io_parallelism`, `io_buffer_size` |
+| `ds.scanner(columns=["blob"], blob_handling="all_binary")` | binary column | blobs in a scan result |
 
-- Exactly one selector for `read_blobs` / `take_blobs`: `ids`, `indices` or `addresses`. Error otherwise: "Exactly one of ids, indices, or addresses must be specified".
-- `indices`: positional, stable within one snapshot. `ids`: logical row ids, stable when row ids are available. `addresses`: physical, unstable.
-- Row ids / addresses: `ds.to_table(columns=[], with_row_id=True).column("_rowid")`, `ds.to_table(columns=[], with_row_address=True).column("_rowaddr")`.
-- Do NOT wrap `take_blobs` in a thread pool to call `read()` on each; use `read_blobs`, which plans batched reads through Lance's scheduler.
-- One result per selected row; null blob = `None`; empty blob = non-null empty payload.
-- `BlobFile` sequential reads are buffered, 512 KiB by default; `buffer_size=0` for unbuffered. `read_range` / `read_ranges` do not use the buffer.
-- `read_blob_files`: `io_parallelism` and `io_buffer_size` keyword arguments (positive). Handles keep the locations resolved when opened; later commits do not re-resolve them.
+- Pass exactly one of `indices` (positional, stable within one version), `ids` (logical row ids, stable when the table has them) and `addresses` (physical, unstable). Get them with `ds.to_table(columns=[], with_row_id=True)` (`_rowid`) or `with_row_address=True` (`_rowaddr`).
+- For many whole payloads call `read_blobs`, which batches reads through Lance's scheduler; a thread pool calling `read()` on `take_blobs` handles bypasses it.
+- A null blob comes back as `None`, an empty one as an empty payload. `BlobFile` buffers sequential reads at 512 KiB (`buffer_size=0` turns it off `[13?]`); `read_range` / `read_ranges` skip the buffer. Handles keep the locations resolved when opened, whatever is committed later. (guide/blob.md)
 
-### Legacy (file format <= 2.1)
-```python
-pa.field("video", pa.large_binary(), metadata={"lance-encoding:blob": "true"})
-```
-- Rewrite to v2: scan with `blob_handling="all_binary"`, rebuild with `blob_field` / `blob_array`, write with `data_storage_version="2.2"`. The page's example loads all payloads in memory; batch it for large datasets. `0.1` tables need a rewrite to enter `2.x`.
+## Write from several workers, commit once
 
-### Managed blobs (advanced)
-- Schema metadata `lance.blob.managed` = `"true"` stores out-of-line payloads as `_blobs/<uuid>.blob`. Works with file formats 2.2 and 2.3.
-- Committing the opt-in sets a reader/writer capability flag at once and for good: clients that do not understand it must refuse to open the snapshot. All maintenance clients must support Managed Blobs before activation; older clients (the page names v11.0.0) running cleanup through old handles can delete sidecars still referenced.
-- Explicit sharing: `LanceFileSession(uri).open_managed_blob_writer()`, `writer.write_blob(bytes)`, `writer.finish()` returns descriptors; `lance.BlobDescriptorArrayBuilder("blob")` with `.append(descriptor)`, `.finish()`, `.field`; `append_managed(uri, offset, size, base_id=None)`; `writer.finish_column(field_name)`. No content comparison, no automatic deduplication, same table only.
-- Do not run cleanup with `delete_unverified=True` while preparing uploads.
+Workers write fragments; one process commits their metadata in a single operation. (guide/distributed_write.md)
 
-### Troubleshooting
-- "Blob v2 requires file version >= 2.2": write to a dataset created with `data_storage_version="2.2"` or newer.
-- "Legacy blob columns ... are not supported for file version >= 2.2": a lower-level file writer got legacy metadata; use the dataset writer.
-
----
-
-## 3. `docs/src/guide/indexing.md`
-
-- Indexes do not change logical contents; stored with the dataset; part of its transactional versioning.
-- Create: scalar and full-text with `LanceDataset.create_scalar_index`, vector with `LanceDataset.create_index`:
-```python
-dataset.create_scalar_index("id", "BTREE")
-dataset.create_scalar_index("text", "INVERTED", with_position=True)
-dataset.create_index("vector", index_type="IVF_RQ", num_partitions=256)
-```
-- Default name `<column>_idx`; `name=...` for another, e.g. several indexes on one column.
-- Inspect:
-```python
-for index in dataset.describe_indices():
-    print(index.name, index.index_type, index.num_rows_indexed)
-stats = dataset.stats.index_stats("text_idx")
-print(stats["num_indexed_rows"], stats["num_unindexed_rows"])
-print(dataset.scanner(filter="id >= 100").explain_plan())   # look for ScalarIndexQuery or MaterializeIndex
-```
-- Appends do not update indexes. Searches combine indexed results with unindexed scans by default; latency grows with unindexed data.
-```python
-dataset.insert(new_rows)
-dataset.optimize.optimize_indices(index_names=["text_idx", "vector_idx"])   # omit index_names for all
-dataset.optimize.optimize_indices(index_names=["vector_idx"], retrain=True) # rebuilds; expensive
-```
-- `fast_search=True`: search only indexed coverage; may skip recently appended rows.
-- Updates stored in overlay files: stale index entries are excluded in every mode. Changed rows are evaluated with current values for scalar filtering in both modes; for vector search, full-text search and MinHash they are evaluated by default and SKIPPED with `fast_search=True`.
-- Physical rewrites can invalidate row addresses used by indexes. Run compaction BEFORE rebuilding or optimizing indexes, and let Lance remap. Stable row IDs keep logical identity across updates and compaction but do not remove index maintenance.
-- Drop: `dataset.drop_index("id_idx")`.
-- Change index type, metric, tokenizer or training parameters: create again with `replace=True` and the same name. Scalar: `replace=True` is the default. Vector: pass it explicitly.
-
----
-
-## 4. `docs/src/guide/scalar_indexing.md`
-
-- Lance uses the index to produce candidate rows, then evaluates the full filter: index choice never changes results.
-
-| Type | For | Accelerates | Limitation |
-|---|---|---|---|
-| `BTREE` | high-cardinality scalars (IDs, timestamps) | equality, ranges, `IN`, null predicates | larger than skipping structures |
-| `BITMAP` | low-cardinality, many rows per value (categories) | equality, small ranges, set membership | many unique values grow index size and build memory |
-| `LABEL_LIST` | list columns with low-cardinality elements (tags) | `array_has`, `array_contains`, `array_has_all`, `array_has_any` | not for high-cardinality arrays |
-| `ZONEMAP` | approximately sorted columns | range predicates by skipping zones | little benefit on randomly distributed values |
-| `NGRAM` | substring search | `contains(column, 'substring')` | candidates may need rechecking |
-| `BLOOMFILTER` | membership-style equality | equality and inequality filters | inexact, limited predicates |
-| `FM` | exact substring search, including one-character patterns | `contains(column, 'substring')` | specialised |
-| `LISTELEMENT` (experimental) | fields of elements of a `list<struct>` column | `any_element(column, 'predicate')` | predicate must fix the first key |
-
-- "B-tree is the usual default for scalar columns." Bitmap for genuinely low-cardinality columns; zone maps when data is sorted or nearly sorted.
-```python
-dataset.create_scalar_index("id", "BTREE")
-dataset.create_scalar_index("category", "BITMAP")
-dataset.create_scalar_index("created_at", "ZONEMAP")
-dataset.create_scalar_index("tags", "LABEL_LIST")
-dataset.create_scalar_index("text", "NGRAM", name="text_ngram_idx")
-dataset.create_scalar_index("text", "INVERTED", name="text_fts_idx", with_position=True)
-```
-- Python `create_scalar_index` replaces an index of the same name by default (`replace=True`).
-- No special query API; indexes are chosen from the SQL filter:
-```python
-dataset.to_table(columns=["id", "category"], filter="category = 'tech' AND id >= 100", limit=10)
-dataset.to_table(filter="array_has_any(tags, ['python', 'rust'])")
-```
-- Indexed predicates combine with `AND` / `OR`. `id = 1 OR unindexed_column = 2` may not use the index on `id`. `(id = 1 AND unindexed_column = 2) OR id = 3` still uses it (every branch has an indexed predicate).
-- Disable for one query: `use_scalar_index=False` on the scanner.
-- Verify: `dataset.scanner(filter="id >= 100").explain_plan()` shows `ScalarIndexQuery` or `MaterializeIndex`. Coverage: `describe_indices()` (`.name`, `.index_type`, `.field_names`, `.num_rows_indexed`); `dataset.stats.index_stats("id_idx")`.
-- Appends are not indexed automatically; new rows are found by scanning unindexed fragments. Run `dataset.optimize.optimize_indices(index_names=["id_idx", "category_idx"])` periodically.
-- Nulls: scalar indexes keep SQL three-valued logic. A filter that evaluates to null is not true. Test on data with null values, null list elements, empty lists and all-null columns. Exclude nulls explicitly: `filter="category IS NOT NULL AND category = 'tech'"`.
-
----
-
-## 5. `docs/src/guide/distributed_indexing.md`
-
-- Lance gives APIs for an external distributed build; no scheduler or orchestration. The caller launches workers and drives the flow.
-- Terms: Segment = one worker output under `indices/<segment_uuid>/` (`index.idx`, `auxiliary.idx`); Physical segment = ready to commit; Logical index = the named index, one or more physical segments.
-- Flow:
-  1. Each worker: Python `create_index_uncommitted(..., fragment_ids=...)` (Rust `create_index_builder(...).fragments(...).execute_uncommitted()`); writes one segment.
-  2. Caller either commits worker outputs as they are with `commit_existing_index_segments(...)`, or groups them and calls `merge_existing_index_segments(...)` per group, then commits the final list with `commit_existing_index_segments(...)`.
-- Within one commit, segments must have disjoint fragment coverage.
-- `merge_existing_index_segments(...)` supports vector, inverted, bitmap, BTree and zone map segments. Other scalar families can commit several compatible segments but not merge them.
-- Vector model scope:
-  - Shared: train IVF centroids once, pass the same artifacts to every worker; for IVF-PQ segments meant to be merged, the same PQ codebook too.
-  - Independent: each worker trains on its own `fragment_ids`; segments can be committed together as one logical index without shared centroids.
-  - Query fans out: each segment ranks partitions with its own centroids, results merged by `_distance`. Independently trained segments return valid results.
-  - Physical merge needs shared compatible model artifacts; otherwise keep segments separate.
-- Shuffle memory: `LANCE_SHUFFLE_MAX_PRELOADED_OFFSETS_BYTES`, default `268435456` (256 MiB), per shuffle (adds up across concurrent builds); `0` disables offset preloading; invalid values error. Does not bound total process memory.
-- Segments never committed stay as unreferenced index directories; `cleanup_old_versions(...)` removes them by the same age rules as other unreferenced index files.
-
----
-
-## 6. `docs/src/guide/distributed_write.md`
-
-- Ray and Spark integrations exist (`lance-ray`, `lance-spark`); this page is for custom setups (slurm, Kubernetes).
-- Two phases: workers write `lance.LanceFragment`s in parallel; one process commits all `lance.FragmentMetadata` in one `lance.LanceOperation`.
-
-### New data
 ```python
 from lance.fragment import write_fragments
-fragments = write_fragments(data, data_uri, schema=schema)          # on each worker
-payload = [json.dumps(f.to_json()) for f in fragments]               # ship to committer
-
-from lance import FragmentMetadata, LanceOperation
-all_fragments = [FragmentMetadata.from_json(f) for f in payloads]
-op = lance.LanceOperation.Overwrite(schema, all_fragments)           # create or overwrite
-lance.LanceDataset.commit(data_uri, op, read_version=0)              # 0: dataset was empty
+fragments = write_fragments(data, uri, schema=schema)             # each worker
+payload = [json.dumps(f.to_json()) for f in fragments]            # send to the committer
+frags = [lance.FragmentMetadata.from_json(p) for p in payloads]
+lance.LanceDataset.commit(uri, lance.LanceOperation.Overwrite(schema, frags), read_version=0)   # new table
+lance.LanceDataset.commit(uri, lance.LanceOperation.Append(frags), read_version=ds.version)     # append
 ```
-### Append
-```python
-ds = lance.dataset(data_uri)
-op = lance.LanceOperation.Append(all_fragments)
-lance.LanceDataset.commit(data_uri, op, read_version=ds.version)
-```
-### Add columns (no copy of existing data files; new data files linked by metadata)
-```python
-def name_len(names: RecordBatch) -> RecordBatch:
-    return RecordBatch.from_arrays([pc.utf8_length(names["name"])], ["name_len"])
 
-new_fragment1, new_schema = dataset.get_fragments()[0].merge_columns(name_len, ["name"])   # worker 1
-new_fragment2, _          = dataset.get_fragments()[1].merge_columns(name_len, ["name"])   # worker 2
-op = lance.LanceOperation.Merge([new_fragment1, new_fragment2], schema=new_schema)
-lance.LanceDataset.commit(uri, op, read_version=dataset.version)
-```
-- Every fragment must be covered in the page's example (both fragments get the new column before the `Merge` commit).
+- The page shows `id=0` for fragments from both workers and does not explain how ids are assigned at commit.
+- Add a column: `new_frag, new_schema = fragment.merge_columns(fn, ["name"])` on each fragment (`fn` maps a `RecordBatch` to a `RecordBatch` of the new columns), then `LanceOperation.Merge([...], schema=new_schema)`. Existing data files are linked, not copied. The page's example covers every fragment before the commit.
+- Update a column: `frag, fields = ds.get_fragment(i).update_columns(data, left_on="id", right_on="id")`, then `LanceOperation.Update(updated_fragments=[...], fields_modified=list(set(...)))`. It is a left-outer join: no match keeps the old value, several matches take the value of a random matching row, so give the update data one row a key. The join is an in-memory hash join or a spillable sort-merge join (`update_join.md`, not read) `[13?]`.
 
-### Update columns per fragment
-```python
-updated_fragment0, fields_modified0 = dataset.get_fragment(0).update_columns(
-    update_data1, left_on="id", right_on="id")
-op = lance.LanceOperation.Update(
-    updated_fragments=[updated_fragment0, updated_fragment1],
-    fields_modified=list(set(fields_modified0 + fields_modified1)))
-lance.LanceDataset.commit(str(dataset_uri), op, read_version=dataset.version)
-```
-- Left-outer join of the fragment with the new data on `left_on` / `right_on`. No match: old value kept. One match: new value. Several matches: the value of a RANDOM matching row (so the key in the update data must be unique).
-- In-memory hash join or spillable sort-merge join; see `update_join.md` (not read here).
+## Rewrite rows and keep their row ids
 
-### Stable row ids when assembling a transaction by hand
-- Dataset created with `enable_stable_row_ids=True`: a row keeps its `_rowid` for life. When you rewrite rows yourself you must carry the ids: read with `with_row_id=True`, then
+Applies to tables created with `enable_stable_row_ids=True` when you assemble the transaction yourself. All of it `[13?]`. (guide/distributed_write.md)
+
 ```python
 from lance.fragment import RowIdSequence, write_fragments
-fragments[0].row_id_meta = RowIdSequence(rewritten["_rowid"]).to_inline_metadata()
-updated_fragment = dataset.get_fragments()[0].delete("id in (2, 3)")      # tombstone old copies
-op = lance.LanceOperation.Update(updated_fragments=[updated_fragment], new_fragments=fragments)
-dataset = lance.LanceDataset.commit(dataset_uri, op, read_version=dataset.version)
+fragments[0].row_id_meta = RowIdSequence(rewritten["_rowid"]).to_inline_metadata()   # rows read with with_row_id=True
+old = ds.get_fragments()[0].delete("id in (2, 3)")                                   # tombstone the old copies
+op = lance.LanceOperation.Update(updated_fragments=[old], new_fragments=fragments)
+ds = lance.LanceDataset.commit(uri, op, read_version=ds.version)
 ```
-- PITFALL: a fragment written without `row_id_meta` commits without error and silently gives every rewritten row a new `_rowid`.
-- Mixed fragment: rewritten rows FIRST, new rows last; pass only the rewritten rows' ids. Never invent ids for new rows (the commit assigns them after conflict resolution). More ids than rows is rejected.
-- Leave `created_at_version_meta` and `last_updated_at_version_meta` as `None`; Lance derives them. Lineage columns: `_row_created_at_version`, `_row_last_updated_at_version`.
 
----
+- Pitfall: a fragment written without `row_id_meta` commits without error and silently gives every rewritten row a new `_rowid`. Set it on every rewritten fragment.
+- In a fragment mixing rewritten and new rows, put the rewritten rows first and pass ids for those rows only; the commit assigns ids to new rows after conflict resolution, and more ids than rows is rejected.
+- Leave `created_at_version_meta` and `last_updated_at_version_meta` as `None`: Lance derives them (columns `_row_created_at_version`, `_row_last_updated_at_version`).
 
-## 7. `docs/src/guide/observability.md`
+## Build an index across workers
 
-- The metric catalogue is NOT in this page: it is included from `rust/lance/src/metrics.md` (`--8<--` include), which was not among the pages read. One metric name appears as an example: `lance_object_store_request_duration_seconds` (histogram).
-- Python: only OpenTelemetry (no pluggable recorder). pylance wheels are built with the `metrics` feature.
-```bash
-pip install "pylance[otel]"
-```
-```python
-from lance.otel import instrument_lance_metrics
-instrument_lance_metrics()            # global MeterProvider; or meter_provider=...
-```
-- Memory metrics are empty until memory observation is on: set `LANCE_MEMORY_OBSERVE=1` before the process starts, or
-```python
-from lance.otel import set_memory_observation
-set_memory_observation(True)
-```
-- Histograms are exported as three observable counters: `<name>_bucket` (with an `le` attribute, cumulative, `le="+Inf"` = total), `<name>_count`, `<name>_sum`.
-- With no recorder installed, emission is a cheap no-op (stated for Rust).
+All of it `[13?]`. Lance supplies the calls; the caller launches workers and drives the flow. (guide/distributed_indexing.md)
 
----
+1. Each worker: `create_index_uncommitted(..., fragment_ids=...)` writes one segment under `indices/<segment_uuid>/` (the page writes `_indices/` once).
+2. The caller commits the segments with `commit_existing_index_segments(...)`, optionally after `merge_existing_index_segments(...)` on each group. Segments in one commit cover disjoint fragments.
 
-## 8. What the pages do not say (for the vectors-in-scan-table decision)
+- Merging works for vector, inverted, bitmap, BTree and zone map segments; other scalar types commit as several segments.
+- Vector segments merge only when trained on shared artifacts: the same IVF centroids for every worker, and for IVF_PQ the same PQ codebook. Segments trained independently on their own fragments commit together as one index and return valid results (each ranks partitions with its own centroids; results merge by `_distance`): keep them separate.
+- `LANCE_SHUFFLE_MAX_PRELOADED_OFFSETS_BYTES`: default 268435456 (256 MiB) a shuffle, summed over concurrent builds; `0` turns preloading off; it does not bound process memory.
+- Segments never committed are removed by `cleanup_old_versions(...)` under its usual age rules.
 
-None of the seven pages states any of the following; measure or read other pages (`performance.md`, `read_and_write.md`, `row_ids.md`) before deciding:
-- Whether float16 vectors are accepted for exact search or for any index type. No element type is named.
-- How null vectors (a vector column filled for only a subset of rows) are stored, what they cost on disk, or how index building and search treat them.
-- Scan cost or batch size for wide vector columns; no `batch_size` advice appears in these pages.
-- A recommendation for or against a separate vector table. What bears on it indirectly:
-  - `prefilter=True` takes a SQL filter on the same dataset as the vector column, and a scalar index on that column speeds it up. A filter on scan features with vectors in another table is not shown.
-  - Columns can be added to an existing table without copying existing data files (`merge_columns` + `LanceOperation.Merge`).
-  - Compaction and some updates rewrite whole rows and copy large inline payloads forward (stated for binary; the reason given for blob columns).
-  - Indexes need `optimize_indices` after appends; compaction comes before index rebuild or optimize.
+## Export metrics
 
----
+All of it `[13?]`. Python exports through OpenTelemetry only. (guide/observability.md)
 
-## Unclear or possibly newer than 13.0.0
-
-Check each against pylance 13.0.0 (`help(...)`, the installed source) before use:
-- `IVF_RQ` as the recommended default index, and its `num_bits=5` default. May be newer or behave differently in 13.
-- `search_effort` in `nearest` and its calibrated targets (0.1 / 0.25 / 0.5 / 1.0, `k <= 100000`). Likely new; fall back to `nprobes`, `minimum_nprobes`, `maximum_nprobes`, `refine_factor`.
-- `dataset.describe_indices()` with `.num_rows_indexed`, `.field_names`, "segment UUIDs".
-- "Updates stored in overlay files" and the `fast_search` table for changed rows.
-- Scalar index types `FM` and `LISTELEMENT` (experimental), and `any_element(...)`.
-- Blob: `read_blobs`, `read_blob_ranges`, `lance.read_blob_files`, `lance.read_blob_file_ranges`, `buffer_size` on `BlobFile`, `inline_size_threshold` / `dedicated_size_threshold` on `blob_field`, `blob_pack_file_size_threshold`, mixing legacy and v2 files by append, Blob v2 nested in structs and lists, file format `2.3`.
-- Managed Blobs: `lance.blob.managed`, `LanceFileSession.open_managed_blob_writer`, `ManagedBlobWriter`, `BlobDescriptorArrayBuilder`, `append_managed`, `finish_column`, descriptor kinds 4 and 5. The page itself warns that v11.0.0 clients mishandle cleanup.
-- Distributed indexing: `create_index_uncommitted(..., fragment_ids=...)`, `merge_existing_index_segments`, `commit_existing_index_segments`, independent segment models, `LANCE_SHUFFLE_MAX_PRELOADED_OFFSETS_BYTES`. The page says `indices/<segment_uuid>/` in most places and `_indices/` once: the directory name is inconsistent in the page.
-- Distributed write: `RowIdSequence(...).to_inline_metadata()`, `row_id_meta`, `new_fragments=` on `LanceOperation.Update`, `created_at_version_meta` / `last_updated_at_version_meta`, the lineage columns, and the pointer to `update_join.md` (spillable sort-merge join).
-- Observability: `lance.otel`, `instrument_lance_metrics`, `set_memory_observation`, `LANCE_MEMORY_OBSERVE`, the `pylance[otel]` extra.
-- Unclear in the page: `write_fragments` output shows `id=0` for both workers' fragments; the page does not explain id assignment at commit.
-- Unclear in the page: whether `fast_search` is a scanner argument or a key of `nearest`; it is only written as `fast_search=True`.
-- Unclear in the page: `dot` is called "dot-product distance; smaller is closer" with no formula.
+- Install `pylance[otel]`, then `lance.otel.instrument_lance_metrics()` (global MeterProvider, or `meter_provider=...`).
+- Memory metrics stay empty until `LANCE_MEMORY_OBSERVE=1` is set before the process starts, or `lance.otel.set_memory_observation(True)` is called.
+- A histogram arrives as three counters: `<name>_bucket` (cumulative, attribute `le`, `le="+Inf"` = total), `<name>_count`, `<name>_sum`.
+- The metric catalogue is in `rust/lance/src/metrics.md` (not read); the page shows one name, `lance_object_store_request_duration_seconds`.
