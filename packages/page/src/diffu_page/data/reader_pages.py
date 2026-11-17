@@ -29,9 +29,10 @@ the GT's own: a scan a test list of its volume names is a test page, never a tra
 
 from __future__ import annotations
 
+import json
 import random
 import xml.etree.ElementTree as ET
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from enum import StrEnum
 from functools import cache
 from itertools import chain
@@ -51,8 +52,9 @@ from diffu_page.page.layout import (
     load_xml_layout,
     scan_pages,
 )
+from diffu_page.page.layout.model import Layout
 from diffu_page.page.layout.page_xml import SCAN_SUFFIXES, local_name
-from diffu_page.page.layout.pages import digest, page_id
+from diffu_page.page.layout.pages import digest, page_id, split_at
 
 DRAWN_BY = "diffu_page"  # who a drawn page's PAGE file names as its Creator, its ALTO file as its softwareName
 
@@ -342,11 +344,38 @@ def _volume(path: Path) -> str:
     return path.parent.parent.name if path.parent.name in ("page", "alto") else ""
 
 
+def read_cuts(path: Path) -> dict[str, float]:
+    """The folds a cuts file gives: a JSON object of each scan's name (its file's stem) and where its fold is, as a
+    fraction of its width.
+
+    Raises:
+        ValueError: If the file is not such an object, or a fold lies outside the scan.
+    """
+    cuts = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(cuts, dict) or not all(isinstance(x, float) and 0 < x < 1 for x in cuts.values()):
+        raise ValueError(f"{path} is not a JSON object of scan names and folds between 0 and 1")
+    return cuts
+
+
+def _cut(layout: Layout, fold: float | None) -> list[ScanPage]:
+    """The scan's pages that hold a line: cut at ``fold`` (a fraction of its width, read from the scan itself), or by
+    its lines when there is none."""
+    if fold is None:
+        return scan_pages(layout)
+    return [page for page in split_at(layout, fold * layout.width) if page.layout.lines]
+
+
 def label_scans(
-    label: LabelFile, root: Path, *, split_of: Callable[[Path], Split | None], excluded: frozenset[str]
+    label: LabelFile,
+    root: Path,
+    *,
+    split_of: Callable[[Path], Split | None],
+    excluded: frozenset[str],
+    cuts: Mapping[str, float] | None = None,
 ) -> Iterator[ReaderScan | Skipped]:
     """A label file's scan as its pages to write (none when no page is left), ``root`` the folder its ids are taken
-    below, ``split_of`` its split, and what of it is left out: the scan, or a page ``excluded`` names."""
+    below, ``split_of`` its split, and what of it is left out: the scan, or a page ``excluded`` names. A scan ``cuts``
+    names is an opening cut at the fold given there, whatever its lines say."""
     try:
         layout = load_xml_layout(label.path)
         with open_scan(label.scan) as scan:
@@ -361,13 +390,14 @@ def label_scans(
     if not layout.lines:
         yield Skipped(labels=str(label.path), reason=SkipReason.NO_TEXT)
         return
-    if is_unsplit_spread(layout):
+    fold = (cuts or {}).get(label.scan.stem)
+    if fold is None and is_unsplit_spread(layout):
         yield Skipped(labels=str(label.path), reason=SkipReason.SPREAD)
         return
     below = label.path.relative_to(root) if label.path.is_relative_to(root) else label.path
     split = split_of(label.path)
     pages: list[ReaderPage] = []
-    for page in scan_pages(layout):
+    for page in _cut(layout, fold):
         if page_names(label, page.side) & excluded:
             yield Skipped(labels=str(label.path), side=page.side, reason=SkipReason.EXCLUDED)
             continue
@@ -411,10 +441,11 @@ def xml_scans(
     split_of: Callable[[Path], Split | None],
     excluded: frozenset[str],
     selection: Selection | None = None,
+    cuts: Mapping[str, float] | None = None,
 ) -> Iterator[ReaderScan | Skipped]:
     """The scans of the PAGE or ALTO files ``source`` gives (a folder, or a list of them) as their pages to write, each
     read as it is taken, in path order (or ``selection``'s) after the files left out (:func:`label_files`,
-    :func:`label_scans`); a file of a collection ``selection`` does not take is passed over, and so is its record of
+    :func:`label_scans`, which cuts the scans ``cuts`` names at their folds); a file of a collection ``selection`` does not take is passed over, and so is its record of
     being left out.
 
     Raises:
@@ -433,5 +464,7 @@ def xml_scans(
     skipped = [item for item in skipped if selection.keeps(_collection(Path(item.labels)))]
     if selection.seed is not None:
         random.Random(selection.seed).shuffle(labels)
-    scans = (item for label in labels for item in label_scans(label, root, split_of=split_of, excluded=excluded))
+    scans = (
+        item for label in labels for item in label_scans(label, root, split_of=split_of, excluded=excluded, cuts=cuts)
+    )
     return chain(skipped, scans)

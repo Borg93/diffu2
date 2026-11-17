@@ -76,7 +76,7 @@ from __future__ import annotations
 
 import math
 from collections import Counter
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from concurrent.futures import ProcessPoolExecutor
 from contextlib import ExitStack
 from enum import StrEnum
@@ -100,6 +100,7 @@ from diffu_page.data.reader_pages import (
     Split,
     gt_split,
     open_scan,
+    read_cuts,
     read_exclusions,
     run_scans,
     unsplit,
@@ -687,7 +688,12 @@ def _run_items(run: Path) -> list[ReaderScan]:
 
 
 def _xml_items(
-    xml: Path, *, split_of: Callable[[Path], Split | None], excluded: frozenset[str], selection: Selection
+    xml: Path,
+    *,
+    split_of: Callable[[Path], Split | None],
+    excluded: frozenset[str],
+    selection: Selection,
+    cuts: Mapping[str, float] | None,
 ) -> Iterable[ReaderScan | Skipped]:
     """The scans of the PAGE or ALTO files ``xml`` gives, and what of them is left out (:func:`xml_scans`).
 
@@ -695,7 +701,7 @@ def _xml_items(
         typer.BadParameter: If ``xml`` gives no PAGE or ALTO file.
     """
     try:
-        return xml_scans(xml, split_of=split_of, excluded=excluded, selection=selection)
+        return xml_scans(xml, split_of=split_of, excluded=excluded, selection=selection, cuts=cuts)
     except ValueError as error:
         raise typer.BadParameter(str(error), param_hint="--xml") from error
 
@@ -711,6 +717,7 @@ class SetOptions(BaseModel):
     split_from_gt_test_lists: bool
     gt_test_lists: str | None = None  # which of a volume's lists name its test pages (all: test_*)
     exclude: str | None
+    cuts: str | None = None  # the file of folds read from the scans
     selection: Selection
     limits: Limits
     samples: dict[str, int]  # by split ("all": the set is not split)
@@ -826,6 +833,15 @@ def reader_set(
             "GT's TrOCR baseline does"
         ),
     ] = False,
+    cuts: Annotated[
+        Path | None,
+        typer.Option(
+            exists=True,
+            dir_okay=False,
+            help="--xml: a JSON object of scan names (file stems) and folds (fractions of the width), read from the "
+            "scans themselves: a scan it names is cut there into its two pages, whatever its lines say",
+        ),
+    ] = None,
     workers: Annotated[
         int,
         typer.Option(
@@ -847,7 +863,7 @@ def reader_set(
         include=tuple(sorted(set(collection or ()))), exclude=tuple(sorted(set(exclude_collection or ()))), seed=seed
     )
     if run is not None and xml is None:
-        if split_from_gt_test_lists or exclude is not None or selection != Selection():
+        if split_from_gt_test_lists or exclude is not None or cuts is not None or selection != Selection():
             raise typer.BadParameter(
                 "a run's pages are drawn, neither split by the GT's test lists, left out by a list nor of collections: "
                 "give --xml",
@@ -857,7 +873,11 @@ def reader_set(
     elif xml is not None and run is None:
         excluded = read_exclusions(exclude) if exclude is not None else frozenset[str]()
         split_of = partial(gt_split, lists=gt_test_list) if split_from_gt_test_lists else unsplit
-        items = _xml_items(xml, split_of=split_of, excluded=excluded, selection=selection)
+        try:
+            folds = read_cuts(cuts) if cuts is not None else None
+        except ValueError as error:
+            raise typer.BadParameter(str(error), param_hint="--cuts") from error
+        items = _xml_items(xml, split_of=split_of, excluded=excluded, selection=selection, cuts=folds)
     else:
         raise typer.BadParameter("give the pages as --run or as --xml, one of them", param_hint="--run, --xml")
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -875,6 +895,7 @@ def reader_set(
         split_from_gt_test_lists=split_from_gt_test_lists,
         gt_test_lists=gt_test_list if split_from_gt_test_lists else None,
         exclude=str(exclude.resolve()) if exclude else None,
+        cuts=str(cuts.resolve()) if cuts else None,
         selection=selection,
         limits=limits,
         samples={str(split or "all"): count for split, count in written.samples.items()},

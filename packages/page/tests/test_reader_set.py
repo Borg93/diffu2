@@ -395,6 +395,33 @@ def test_reader_set_parses_each_page_of_an_opening_as_unlimited_ocr_2_on_the_pag
     ]
 
 
+def test_reader_set_cuts_an_opening_at_the_fold_a_cuts_file_gives_and_not_where_its_lines_would(
+    tmp_path: Path,
+) -> None:
+    xml = _opening(tmp_path / "gt")
+    cuts = tmp_path / "cuts.json"
+    cuts.write_text(json.dumps({"o": 0.51}), encoding="utf-8")
+    out = tmp_path / "set" / "uocr.jsonl"
+
+    result = CliRunner().invoke(
+        app, ["--xml", str(tmp_path / "gt"), "--model", "unlimited-ocr-2", "--cuts", str(cuts), "--out", str(out)]
+    )
+
+    left, right = _ids(xml, tmp_path / "gt")
+    pages = [tmp_path / "set" / "uocr_pages" / f"{page}.jpg" for page in (left, right)]
+    assert result.exit_code == 0, result.output
+    assert [load_rgb(page).size for page in pages] == [(1020, 1200), (980, 1200)]
+    assert [sample["messages"][1]["content"] for sample in _lines(out)] == [
+        "<PAGE><BLOCK>page_number[863, 17, 941, 50]<FORK>12\n"
+        "<BLOCK>title[196, 67, 882, 117]<FORK>Förteckning öfver gods\n"
+        "<BLOCK>text[196, 167, 882, 267]<FORK>Anno 1715 den 4 maj\nkom för rätten\n"
+        "<BLOCK>aside_text[20, 167, 176, 217]<FORK>Nota",
+        "<PAGE><BLOCK>text[20, 500, 939, 550]<FORK>Summa 2\n"
+        "<BLOCK>table[20, 333, 939, 433]<FORK>"
+        "<table><tr><td>Namn</td><td>Ort</td></tr><tr><td>Anders</td><td>Bro</td></tr></table>",
+    ]
+
+
 def _mean_difference(a: Image.Image, b: Image.Image) -> float:
     """How far apart two images of one size are, on average, in levels of 255 (JPEG's loss is a level or so; the two
     halves of the opening's scan are some 127 apart in green)."""
@@ -963,6 +990,7 @@ def test_reader_set_takes_the_collections_it_is_given_caps_their_training_side_a
         "split_from_gt_test_lists": True,
         "gt_test_lists": "test_*",
         "exclude": None,
+        "cuts": None,
         "selection": selection,
         "limits": {
             "max_crop_pixels": None,
