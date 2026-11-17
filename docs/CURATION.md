@@ -54,7 +54,40 @@ label's error; over the pools only if it does (it chose the better of two readin
 **Questions waiting on Gabriel:** is the goal a better score on the mixed 200 test pages, or a better reader for these
 archives (the pools are mostly microfilm of a few series)? Start task 8? SAM 3 needs checkpoint access on Hugging Face.
 
-**What Gabriel asked for on 17 Nov, 22:00, and where each column stands.** One Lance dataset over every scan, every check a column, so that a training set (and a set of tables apart) is a filter. In `scans.lance` for all 3.15 million pool scans: the old labels' statistics and confidence, `gutter_score`. For the 100,083 described scans only: `vl_*` (kind, layout, table or running text, turned, caption), `vl_cut`, `head_cut`, `head_p_cut`. Joined 17 Nov by `marks_to_lance.py`: `mark` (15,288 hand marks), `mark_fold_x` (309), `fold_x`, `fold_found` (145,838), `cluster`, `map_x`, `map_y` (14,985). **Missing, in the order to do them:** (1) vectors of every scan (E40, queued) and from them `head_cut`, a table-or-not head and a kind head for every scan; (2) folds of every scan (E40); (3) orientation by the small network, per page; (4) the writing layer's `covered`, per page; (5) Jev's page score, first on the calibration scans; (6) cluster and its name for every scan (SCALAR, Toponymy); (7) the vectors themselves and a PCA of them as columns or a table beside, to decide from the Lance docs; (8) examples of what Jev and the writing layer catch, shown to Gabriel, when the training ends (he chose to wait).
+### Columns asked for (Gabriel, 17 Nov): the one dataset every training set is filtered from
+
+One Lance dataset over every scan, every check a column, so that a training set, and a set of tables apart, is a
+filter. **The list of columns is `WANTED` in `runs/htr/curate/prototypes/column_state.py`; the table below is that
+script's output, read from `scans.lance` itself (17 Nov 22:20). Run it at the start of a session and after every
+join, and paste its output here; add a line to `WANTED` the day a column is asked for.** Order of work: vectors and
+folds for every scan (E40), then the heads' columns (`head_cut`, `table`, kind), orientation, the writing layer, Jev
+on the calibration scans, clusters and names for every scan, the vectors' place (read the Lance skill first).
+
+| Column | What it says | Pool scans with a value (of 3,154,257) | Made by |
+|---|---|---|---|
+| `page_confidence` | the old pipeline's confidence | 3,153,409 | diffu-curate features |
+| `polygon_cover` | statistics of the old labels (lines, digits, cover ...) | 3,154,257 | diffu-curate features |
+| `gutter_score` | the small gutter network's opening score | 3,154,180 | diffu-curate gutter |
+| `vl_caption` | the VL model's caption | 100,083 | vl_describe.py (a sample: too slow for every scan) |
+| `vl_kind` | the VL model's kind of scan | 100,083 | vl_describe.py, then a head for every scan |
+| `vl_writing_layout` | table or running text, by the VL model | 99,831 | vl_ask2.py |
+| `table` | table or running text for every scan, by a head | **missing** | to do: head on the patch vectors (E41) |
+| `vl_turned` | turned writing, by the VL model | 99,831 | vl_ask2.py |
+| `orientation` | which way up the writing is, by the small network | **missing** | to do: orientation.py over the pools |
+| `mark` | the class marked by hand (cut, no_cut, single, not_a_page, odd) | 13,481 | marks_to_lance.py |
+| `head_cut` | the class by the head on the marks | 100,148 | cut_head.py; for every scan after E40 |
+| `fold_x` | where the fold is | 118,105 | place_folds.py; for every scan after E40 |
+| `fold_found` | whether a fold line was found | 118,105 | place_folds.py |
+| `cluster` | the cluster on the map | 13,290 | scalar_hirank.py; to do for every scan |
+| `cluster_name` | the cluster's name | **missing** | to do: Toponymy |
+| `covered` | writing layer: share of the writing under a label | **missing** | to do: writing_eval.py's layer over the pools |
+| `jev_page` | Jev's score of the page's lines | **missing** | to do: first on the calibration scans |
+| `read_disagreement` | our reader against the old label | **missing** | pages.lance holds it for 64,950 pages; to do on the trusted pages |
+| `dinov3` | DINOv3's vector of the scan | **missing** | embed_pool.py (E40); a table beside or a column: to decide |
+| `tipsv2` | TIPSv2's vector of the scan | **missing** | embed_pool.py (E40) |
+| `qwen8b` | Qwen3-VL-Embedding 8B's vector | **missing** | scan_embeddings.lance holds 130,733 |
+| `pca` | a PCA of the vectors | **missing** | to do |
+
 
 **The artifacts.** Results: claude.ai/artifact/VFK6knSmeTYdhGXcE1Yzsq (17 Nov; source a scratch file of one session, read it with the Artifact tool before changing it). Verdicts of all 38 experiments with two archify diagrams: claude.ai/artifact/98423D2V376HLajHfbhpS2 (17 Nov 20:15); its sources are kept in `runs/htr/curate/artifact/verdicts/` (the two diagram specs, `build.py`, `template.html`, `snapshots.sh`). The first artifact (HXE6bQA4rhE5AkS9JvNkVm) is not writable from this account.
 
