@@ -1,0 +1,222 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "How the cut was solved",
+    "quality_profile": "showcase",
+    "legend": {
+      "entries": {
+        "backend": {
+          "label": "Works"
+        },
+        "external": {
+          "label": "Dropped"
+        },
+        "database": {
+          "label": "Hand marks"
+        },
+        "security": {
+          "label": "Rule"
+        }
+      }
+    }
+  },
+  "lanes": [
+    {
+      "id": "works",
+      "label": "Works: in the pipeline"
+    },
+    {
+      "id": "hand",
+      "label": "Marked by hand: the yardstick"
+    },
+    {
+      "id": "dropped",
+      "label": "Tried and dropped",
+      "variant": "exception"
+    }
+  ],
+  "mainPath": [
+    "linecut",
+    "gutter",
+    "clicks",
+    "placer",
+    "classifier",
+    "rule"
+  ],
+  "nodes": [
+    {
+      "id": "question",
+      "lane": "works",
+      "col": 2,
+      "type": "backend",
+      "label": "Cut question",
+      "sublabel": "every option defined",
+      "width": 140
+    },
+    {
+      "id": "placer",
+      "lane": "works",
+      "col": 3,
+      "type": "backend",
+      "label": "Fold placer",
+      "sublabel": "off on 3 % of scans",
+      "width": 140
+    },
+    {
+      "id": "classifier",
+      "lane": "works",
+      "col": 4,
+      "type": "backend",
+      "label": "Classifier",
+      "sublabel": "finds 95 % not to cut",
+      "width": 140
+    },
+    {
+      "id": "rule",
+      "lane": "works",
+      "col": 5,
+      "type": "security",
+      "label": "Trusted cut",
+      "sublabel": "77 % of scans pass",
+      "width": 140
+    },
+    {
+      "id": "clicks",
+      "lane": "hand",
+      "col": 2,
+      "type": "database",
+      "label": "Fold clicks",
+      "sublabel": "350 scans marked",
+      "width": 140
+    },
+    {
+      "id": "bulk",
+      "lane": "hand",
+      "col": 3,
+      "type": "database",
+      "label": "Bulk marks",
+      "sublabel": "14,985 scans marked",
+      "width": 140
+    },
+    {
+      "id": "linecut",
+      "lane": "dropped",
+      "col": 0,
+      "type": "external",
+      "label": "Line cut",
+      "sublabel": "leaves page strips",
+      "width": 140
+    },
+    {
+      "id": "gutter",
+      "lane": "dropped",
+      "col": 1,
+      "type": "external",
+      "label": "Gutter net",
+      "sublabel": "off on 36 % of scans",
+      "width": 140
+    },
+    {
+      "id": "firstform",
+      "lane": "dropped",
+      "col": 2,
+      "type": "external",
+      "label": "First form",
+      "sublabel": "misses 58 % not to cut",
+      "width": 140
+    }
+  ],
+  "edges": [
+    {
+      "id": "line-to-gutter",
+      "from": "linecut",
+      "to": "gutter",
+      "label": "replaced by",
+      "role": "main"
+    },
+    {
+      "id": "gutter-judged",
+      "from": "gutter",
+      "to": "clicks",
+      "label": "judged by",
+      "role": "main"
+    },
+    {
+      "id": "clicks-score",
+      "from": "clicks",
+      "to": "placer",
+      "label": "scores",
+      "variant": "emphasis",
+      "role": "main"
+    },
+    {
+      "id": "form-judged",
+      "from": "firstform",
+      "to": "bulk",
+      "label": "judged by",
+      "role": "branch"
+    },
+    {
+      "id": "bulk-trains",
+      "from": "bulk",
+      "to": "classifier",
+      "label": "trains",
+      "variant": "emphasis",
+      "role": "branch"
+    },
+    {
+      "id": "question-says",
+      "from": "question",
+      "to": "placer",
+      "label": "says cut",
+      "variant": "security",
+      "role": "branch"
+    },
+    {
+      "id": "fold-found",
+      "from": "placer",
+      "to": "classifier",
+      "label": "fold found",
+      "variant": "emphasis",
+      "role": "main"
+    },
+    {
+      "id": "classifier-says",
+      "from": "classifier",
+      "to": "rule",
+      "label": "says cut",
+      "variant": "emphasis",
+      "role": "main"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Where the fold is",
+      "items": [
+        "Cutting by the old labels' line positions left strips of the facing page and threw away 154,874 scans",
+        "The gutter network is off by more than 1 % of the width on 36 % of ordinary openings",
+        "The placer, searching 6 % either side of the middle, is off on 3 %"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Whether to cut at all",
+      "items": [
+        "10 % of scans must not be cut: tables across the fold, single pages, odd layouts",
+        "The VL model's first form misses 58 % of them",
+        "A classifier trained on the bulk marks finds 95 %"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "What the marks cost",
+      "items": [
+        "200 fold clicks took 17 minutes and settled which cutter to trust",
+        "14,985 scans were marked in a gallery, cluster by cluster",
+        "Few-shot examples for the VL model gave no gain: 86 % to 88 %"
+      ]
+    }
+  ]
+}

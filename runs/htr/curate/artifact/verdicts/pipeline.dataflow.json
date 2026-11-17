@@ -1,0 +1,305 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "From pool scans to a training set",
+    "quality_profile": "showcase",
+    "legend": {
+      "entries": {
+        "emphasis": {
+          "label": "Main path"
+        },
+        "security": {
+          "label": "Required check"
+        },
+        "default": {
+          "label": "Supporting input"
+        }
+      }
+    },
+    "viewBox": [
+      1080,
+      640
+    ]
+  },
+  "stages": [
+    {
+      "label": "Scans"
+    },
+    {
+      "label": "Describe each scan"
+    },
+    {
+      "label": "Decide and place"
+    },
+    {
+      "label": "Select"
+    },
+    {
+      "label": "Train and score"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "pools",
+      "type": "database",
+      "label": "Two pools",
+      "sublabel": "3.15 M scans, old labels",
+      "stage": 0,
+      "row": 1
+    },
+    {
+      "id": "vl",
+      "type": "backend",
+      "label": "VL form",
+      "sublabel": "130,666 scans described",
+      "stage": 1,
+      "row": 1,
+      "tag": "E14-E24"
+    },
+    {
+      "id": "embed",
+      "type": "backend",
+      "label": "Qwen 8B",
+      "sublabel": "one vector a scan",
+      "stage": 1,
+      "row": 2,
+      "tag": "E21"
+    },
+    {
+      "id": "marks",
+      "type": "external",
+      "label": "Hand marks",
+      "sublabel": "15,288 scans marked",
+      "stage": 1,
+      "row": 3,
+      "tag": "E34"
+    },
+    {
+      "id": "vlcut",
+      "type": "backend",
+      "label": "Cut question",
+      "sublabel": "cut, do not cut, single",
+      "stage": 2,
+      "row": 0,
+      "tag": "E32",
+      "width": 124
+    },
+    {
+      "id": "placer",
+      "type": "backend",
+      "label": "Fold placer",
+      "sublabel": "dark column near middle",
+      "stage": 2,
+      "row": 1,
+      "tag": "E31"
+    },
+    {
+      "id": "head",
+      "type": "backend",
+      "label": "Classifier",
+      "sublabel": "finds 95 % not to cut",
+      "stage": 2,
+      "row": 2,
+      "tag": "E36"
+    },
+    {
+      "id": "rule",
+      "type": "security",
+      "label": "Trusted cut",
+      "sublabel": "77 % of scans pass",
+      "stage": 3,
+      "row": 1,
+      "tag": "E37"
+    },
+    {
+      "id": "pretrain",
+      "type": "backend",
+      "label": "Pretrain",
+      "sublabel": "Nemotron 3.5 Parse",
+      "stage": 4,
+      "row": 1,
+      "tag": "E38 running"
+    },
+    {
+      "id": "finetune",
+      "type": "backend",
+      "label": "Fine-tune",
+      "sublabel": "49,491 GT pages",
+      "stage": 4,
+      "row": 2,
+      "tag": "queued"
+    },
+    {
+      "id": "test",
+      "type": "security",
+      "label": "Test pages",
+      "sublabel": "200 pages, best 6.73 %",
+      "stage": 4,
+      "row": 3,
+      "tag": "score"
+    }
+  ],
+  "flows": [
+    {
+      "id": "scans-to-vl",
+      "from": "pools",
+      "to": "vl",
+      "label": "scans at 1,536 px",
+      "variant": "emphasis",
+      "route": "straight"
+    },
+    {
+      "id": "scans-to-embed",
+      "from": "pools",
+      "to": "embed",
+      "label": "scans at 896 px",
+      "variant": "default",
+      "fromSide": "bottom",
+      "toSide": "left",
+      "via": [
+        [
+          100,
+          385
+        ]
+      ]
+    },
+    {
+      "id": "openings-to-judge",
+      "from": "vl",
+      "to": "vlcut",
+      "label": "openings to judge",
+      "variant": "default",
+      "fromSide": "top",
+      "toSide": "left",
+      "via": [
+        [
+          315,
+          157
+        ]
+      ]
+    },
+    {
+      "id": "openings-to-place",
+      "from": "vl",
+      "to": "placer",
+      "label": "openings",
+      "variant": "emphasis",
+      "route": "straight"
+    },
+    {
+      "id": "vectors",
+      "from": "embed",
+      "to": "head",
+      "label": "vectors",
+      "variant": "default",
+      "route": "straight"
+    },
+    {
+      "id": "marks-to-head",
+      "from": "marks",
+      "to": "head",
+      "label": "cut-or-not marks",
+      "variant": "default",
+      "fromSide": "right",
+      "toSide": "bottom",
+      "via": [
+        [
+          530,
+          499
+        ]
+      ]
+    },
+    {
+      "id": "vl-says-cut",
+      "from": "vlcut",
+      "to": "rule",
+      "label": "says cut",
+      "variant": "security",
+      "fromSide": "right",
+      "toSide": "top",
+      "via": [
+        [
+          745,
+          157
+        ]
+      ]
+    },
+    {
+      "id": "fold-found",
+      "from": "placer",
+      "to": "rule",
+      "label": "fold line found",
+      "variant": "emphasis",
+      "route": "straight"
+    },
+    {
+      "id": "head-says-cut",
+      "from": "head",
+      "to": "rule",
+      "label": "says cut",
+      "variant": "security",
+      "fromSide": "right",
+      "toSide": "bottom",
+      "via": [
+        [
+          745,
+          385
+        ]
+      ]
+    },
+    {
+      "id": "pages",
+      "from": "rule",
+      "to": "pretrain",
+      "label": "139,937 pages",
+      "variant": "emphasis",
+      "route": "straight"
+    },
+    {
+      "id": "weights",
+      "from": "pretrain",
+      "to": "finetune",
+      "label": "weights",
+      "variant": "emphasis",
+      "labelDy": 24
+    },
+    {
+      "id": "readings",
+      "from": "finetune",
+      "to": "test",
+      "label": "readings",
+      "variant": "emphasis",
+      "labelDy": 24
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "What carries the weight",
+      "items": [
+        "The placer cuts within 1 % of a hand-marked fold on 97 % of ordinary openings",
+        "A head on frozen vectors, taught by 15,288 marks, finds 95 % of the scans not to cut",
+        "Three independent checks must agree before a scan is cut"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Dropped on the way",
+      "items": [
+        "The gutter network: 36 % of its cuts are off by more than 1 %",
+        "The VL model's own fold position: 0.50 for three scans in four",
+        "The VL model's first form as the decider: it misses 58 % of the scans not to cut"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Not yet tested",
+      "items": [
+        "The labels are the old pipeline's, unfiltered by how well they read",
+        "Tables are 6 % of the set and the reader's weakest kind",
+        "The score on the 200 test pages comes after the fine-tune"
+      ]
+    }
+  ]
+}

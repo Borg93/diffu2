@@ -1,0 +1,292 @@
+<title>Curation Experiment Verdicts</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: one 1120px column. Verdict counts first, every experiment by verdict, the two diagrams, four results in
+   numbers, the lessons, then the full register grouped by theme. */
+:root {
+  --bg: #f3f5f9; --surface: #ffffff; --surface-2: #e9edf5; --ink: #0f172a; --ink-2: #42506a; --muted: #66758d;
+  --rule: #d7deea; --accent: #1f66c1; --bar: #2a78d6; --frame: #ffffff;
+  --good: #0a8f0a; --warn: #b37600; --bad: #c93434; --neutral: #55647e;
+  --good-wash: #e6f4e6; --warn-wash: #f8eed9; --bad-wash: #f9e4e4; --neutral-wash: #e9edf4;
+  --show-light: block; --show-dark: none;
+  --display: "Space Grotesk", "Inter", system-ui, sans-serif;
+  --body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #060a17; --surface: #0d1426; --surface-2: #151e38; --ink: #e8edf7; --ink-2: #b0bbcf; --muted: #8593ab;
+  --rule: #232e4b; --accent: #74b0f7; --bar: #3987e5; --frame: #090f21;
+  --good: #2bb84a; --warn: #fab219; --bad: #ef7a7a; --neutral: #9aa8bf;
+  --good-wash: #0f2a1c; --warn-wash: #2e2511; --bad-wash: #321a1f; --neutral-wash: #18223c;
+  --show-light: none; --show-dark: block; color-scheme: dark;
+} }
+:root[data-theme="dark"] {
+  --bg: #060a17; --surface: #0d1426; --surface-2: #151e38; --ink: #e8edf7; --ink-2: #b0bbcf; --muted: #8593ab;
+  --rule: #232e4b; --accent: #74b0f7; --bar: #3987e5; --frame: #090f21;
+  --good: #2bb84a; --warn: #fab219; --bad: #ef7a7a; --neutral: #9aa8bf;
+  --good-wash: #0f2a1c; --warn-wash: #2e2511; --bad-wash: #321a1f; --neutral-wash: #18223c;
+  --show-light: none; --show-dark: block; color-scheme: dark;
+}
+body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.6; }
+.wrap { max-width: 1120px; margin: 0 auto; padding-block: 36px 64px; padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 52px; }
+section, header.top { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+h1, h2, h3, h4, h5, p, dl, dd, dt, ul, figure { margin: 0; }
+h1 { font-family: var(--display); font-weight: 600; font-size: clamp(28px, 4.2vw, 42px); line-height: 1.12; letter-spacing: -0.01em; text-wrap: balance; max-width: 22ch; }
+h2 { font-family: var(--display); font-weight: 600; font-size: 23px; line-height: 1.2; text-wrap: balance; }
+h3 { font-family: var(--display); font-weight: 600; font-size: 16px; line-height: 1.3; text-wrap: balance; }
+p { max-width: 70ch; }
+a { color: var(--accent); text-underline-offset: 3px; }
+a:focus-visible, button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tag { font-family: var(--mono); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.lede { font-size: 17px; color: var(--ink-2); }
+.sub { color: var(--ink-2); }
+.state { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 14px 16px; max-width: 78ch; }
+.state b { font-weight: 600; }
+.ic { width: 12px; height: 12px; flex: none; color: var(--v, var(--neutral)); }
+.v-worked { --v: var(--good); --vw: var(--good-wash); }
+.v-partly { --v: var(--warn); --vw: var(--warn-wash); }
+.v-failed { --v: var(--bad); --vw: var(--bad-wash); }
+.v-measured, .v-running, .v-queued { --v: var(--neutral); --vw: var(--neutral-wash); }
+
+.tiles { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; }
+.tile { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 14px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.tile b { font-family: var(--display); font-weight: 600; font-size: 36px; line-height: 1; }
+.tile span { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 14px; }
+.tile small { color: var(--muted); font-size: 12.5px; line-height: 1.4; }
+
+.board { display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; }
+.row { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 12px; padding: 12px 14px; border-top: 1px solid var(--rule); align-items: start; }
+.row:first-child { border-top: 0; }
+.row-head { display: flex; align-items: center; gap: 7px; font-weight: 600; font-size: 14px; padding-top: 4px; }
+.row-head em { font-style: normal; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.chip { display: inline-flex; align-items: baseline; gap: 6px; padding: 3px 9px; border: 1px solid var(--rule); border-radius: 4px; background: var(--vw);
+  color: var(--ink); text-decoration: none; font-size: 13px; line-height: 1.5; }
+.chip b { font-family: var(--mono); font-weight: 600; font-size: 11.5px; color: var(--ink-2); }
+.chip:hover { border-color: var(--v); }
+
+.diagram { display: flex; flex-direction: column; gap: 10px; }
+.diagram .frame { background: var(--frame); border: 1px solid var(--rule); border-radius: 6px; overflow-x: auto; }
+.diagram .frame .inner { min-width: 760px; }
+.diagram img { width: 100%; height: auto; max-width: 100%; }
+.diagram img.light-only { display: var(--show-light); }
+.diagram img.dark-only { display: var(--show-dark); }
+figcaption { color: var(--ink-2); font-size: 14px; max-width: 86ch; }
+
+.charts { display: grid; gap: 14px; }
+.charts.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.charts.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.chart { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 16px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.chart .unit { color: var(--muted); font-size: 12.5px; margin-bottom: 6px; }
+.bar-row { display: flex; flex-direction: column; gap: 2px; padding: 5px 6px; border-radius: 4px; }
+.bar-row:hover, .bar-row:focus-visible { background: var(--surface-2); }
+.bar-label { font-size: 13px; color: var(--ink-2); }
+.bar-track { display: flex; align-items: center; gap: 8px; min-height: 18px; border-left: 1px solid var(--muted); }
+.bar { height: 14px; width: calc(var(--w) * (100% - 78px)); min-width: 2px; background: var(--bar); border-radius: 0 4px 4px 0; }
+.bar-row:hover .bar, .bar-row:focus-visible .bar { filter: brightness(1.15); }
+.bar-val { font-family: var(--mono); font-size: 12.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bar-pending { font-size: 12.5px; color: var(--muted); padding-left: 8px; }
+.chart-note { color: var(--muted); font-size: 12.5px; margin-top: 8px; }
+#tip { position: fixed; z-index: 20; pointer-events: none; background: var(--ink); color: var(--bg); padding: 7px 10px; border-radius: 4px;
+  font-size: 12.5px; line-height: 1.45; max-width: 280px; display: flex; flex-direction: column; }
+#tip strong { font-family: var(--mono); font-size: 14px; }
+#tip .d { opacity: 0.8; }
+
+.lessons { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px 28px; }
+.lesson { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--rule); padding-top: 12px; min-width: 0; }
+.lesson p { color: var(--ink-2); font-size: 14px; }
+.refs { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+.also { padding-left: 18px; display: flex; flex-direction: column; gap: 6px; color: var(--ink-2); font-size: 14px; max-width: 86ch; }
+
+.filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.filters button { display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 13.5px; font-weight: 500; color: var(--ink); background: var(--surface);
+  border: 1px solid var(--rule); border-radius: 4px; padding: 6px 10px; cursor: pointer; }
+.filters button span { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+.filters button:hover { border-color: var(--ink-2); }
+.filters button[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.filters button[aria-pressed="true"] span, .filters button[aria-pressed="true"] .ic { color: var(--bg); }
+#filter-status { color: var(--muted); font-size: 13px; }
+.theme { gap: 0; }
+.theme > h3 { font-size: 18px; padding: 18px 0 10px; display: flex; align-items: baseline; gap: 8px; }
+.theme > h3 span { font-family: var(--mono); font-weight: 500; font-size: 12px; color: var(--muted); }
+.exp { border-top: 1px solid var(--rule); padding: 16px 8px; display: flex; flex-direction: column; gap: 10px; border-radius: 4px; transition: background-color 0.4s; }
+.exp.flash { background: var(--surface-2); }
+.exp header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; }
+.eid { font-family: var(--mono); font-weight: 600; font-size: 12.5px; color: var(--ink-2); border: 1px solid var(--rule); border-radius: 4px; padding: 0 6px; background: var(--surface); }
+.exp h4 { font-family: var(--body); font-weight: 600; font-size: 15.5px; line-height: 1.35; flex: 1 1 260px; min-width: 0; }
+.pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; padding: 2px 9px; border-radius: 4px; background: var(--vw); border: 1px solid var(--rule); white-space: nowrap; }
+.cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 26px; }
+.cols h5 { font-family: var(--mono); font-weight: 500; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin-bottom: 3px; }
+.cols p { font-size: 14px; color: var(--ink-2); }
+
+.open { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 28px; }
+.open div { border-top: 1px solid var(--rule); padding-top: 10px; min-width: 0; }
+.open dt { font-weight: 600; }
+.open dd { color: var(--ink-2); font-size: 14px; }
+footer { color: var(--muted); font-size: 13px; border-top: 1px solid var(--rule); padding-top: 16px; }
+footer code { font-family: var(--mono); font-size: 12px; }
+
+@media (min-width: 1200px) {
+  .diagram .frame { width: min(1360px, calc(100vw - 64px)); margin-left: calc((100% - min(1360px, calc(100vw - 64px))) / 2); }
+}
+@media (max-width: 900px) {
+  .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .charts.two, .charts.three, .open { grid-template-columns: minmax(0, 1fr); }
+  .lessons { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cols { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 560px) {
+  .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .lessons { grid-template-columns: minmax(0, 1fr); }
+  .row { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+}
+@media (prefers-reduced-motion: reduce) { .exp { transition: none; } }
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="i-check" viewBox="0 0 12 12"><path d="M2.2 6.5l2.5 2.5 5.1-5.6" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-cross" viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></symbol>
+    <symbol id="i-half" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.1" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 1.9a4.1 4.1 0 0 0 0 8.2z" fill="currentColor"/></symbol>
+    <symbol id="i-diamond" viewBox="0 0 12 12"><path d="M6 1.4L10.6 6 6 10.6 1.4 6z" fill="currentColor"/></symbol>
+    <symbol id="i-play" viewBox="0 0 12 12"><path d="M3.6 2.2v7.6L10 6z" fill="currentColor"/></symbol>
+    <symbol id="i-ring" viewBox="0 0 12 12"><circle cx="6" cy="6" r="3.9" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  </defs>
+</svg>
+
+<div class="wrap">
+<header class="top">
+  <span class="tag">GT-Lejonet · curating the pretraining pools · 14 to 17 November 2026</span>
+  <h1>What worked, what did not, and what we learned</h1>
+  <p class="lede">Two pools of archive scans, 3.15 million in all, were read years ago by the old YOLO and TrOCR pipeline. We want to turn them into pretraining data for a whole-page reader. This page gives every experiment so far its verdict: why we ran it, what came out, and what it taught us.</p>
+  <p class="state"><b>Where it stands, {{STATE}}.</b> The cut into single pages is solved for about nine openings in ten. A first set of 139,937 pages with a trusted cut is pretraining Nemotron 3.5 Parse ({{PROGRESS}}). The score that says whether it helped comes on 18 November.</p>
+</header>
+
+<section aria-labelledby="h-counts">
+  <h2 id="h-counts">38 experiments, six verdicts</h2>
+  <div class="tiles">{{TILES}}</div>
+</section>
+
+<section aria-labelledby="h-board">
+  <h2 id="h-board">Every experiment by verdict</h2>
+  <p class="sub">Select an experiment to read why it was run, what it found and what it taught us.</p>
+  <div class="board">{{BOARD}}</div>
+</section>
+
+<section aria-labelledby="h-pipeline">
+  <h2 id="h-pipeline">The pipeline that works today</h2>
+  <p class="sub">Each box is a step that earned its place. The dashed arrows are checks that must agree before a scan is cut.</p>
+  <figure class="diagram">
+    <div class="frame"><div class="inner">
+      <img class="light-only" src="{{PIPE_LIGHT}}" width="{{PIPE_W}}" height="{{PIPE_H}}" alt="Data flow in five stages. Two pools of 3.15 million scans feed a vision-language model form (130,666 scans described) and Qwen 8B vectors. The form passes openings to a cut question and to the fold placer; the vectors and 15,288 hand marks feed a classifier. The cut question, the fold placer and the classifier must agree in the trusted-cut rule, which 77 percent of scans pass. 139,937 pages go to pretraining, then fine-tuning on 49,491 ground-truth pages, then the 200 test pages, where the best score so far is 6.73 percent.">
+      <img class="dark-only" src="{{PIPE_DARK}}" width="{{PIPE_W}}" height="{{PIPE_H}}" alt="">
+    </div></div>
+    <figcaption>Scans are described by a vision-language model and embedded as one vector each. A scan is cut only when the model's defined question says cut, the classifier trained on the hand marks says cut, and the placer finds a fold line. Experiments behind each box: form E14, E15, E19, E20, E24 · vectors E21 · marks E34 · classifier E36 · placer E18, E31, E33 · rule E37 · training E38.</figcaption>
+  </figure>
+</section>
+
+<section aria-labelledby="h-cut">
+  <h2 id="h-cut">How the cut was solved</h2>
+  <p class="sub">The cut took the most attempts. Read from the bottom left: what was tried and dropped, the hand marks that judged it, and what took its place.</p>
+  <figure class="diagram">
+    <div class="frame"><div class="inner">
+      <img class="light-only" src="{{CUT_LIGHT}}" width="{{CUT_W}}" height="{{CUT_H}}" alt="Three lanes. Bottom lane, tried and dropped: the line cut, which leaves page strips, was replaced by the gutter network, which is off on 36 percent of scans; and the first form, which misses 58 percent of the scans not to cut. Middle lane, marked by hand: 350 fold clicks judged the gutter network, and 14,985 bulk marks judged the first form. Top lane, works: the cut question with every option defined, the fold placer scored by the fold clicks and off on 3 percent of scans, the classifier trained on the bulk marks that finds 95 percent of the scans not to cut, and the trusted-cut rule that 77 percent of scans pass.">
+      <img class="dark-only" src="{{CUT_DARK}}" width="{{CUT_W}}" height="{{CUT_H}}" alt="">
+    </div></div>
+    <figcaption>Two things had to be solved: where the fold is, and whether a scan should be cut at all. In both, hand marks showed that the first method was worse than it looked. The marks then became the yardstick for the placer and the training data for the classifier.</figcaption>
+  </figure>
+</section>
+
+<section aria-labelledby="h-numbers">
+  <h2 id="h-numbers">Five results in numbers</h2>
+  {{CHARTS}}
+</section>
+
+<section aria-labelledby="h-lessons">
+  <h2 id="h-lessons">What we learned</h2>
+  <div class="lessons">{{LESSONS}}</div>
+  <h3>Also learned, outside the register</h3>
+  <ul class="also">{{ALSO}}</ul>
+</section>
+
+<section aria-labelledby="h-ledger">
+  <h2 id="h-ledger">Every experiment: why, what, and what it taught us</h2>
+  <div class="filters" role="group" aria-label="Show experiments by verdict">{{FILTERS}}</div>
+  <p id="filter-status" role="status">Showing all 38 experiments.</p>
+  <div>{{LEDGER}}</div>
+</section>
+
+<section aria-labelledby="h-open">
+  <h2 id="h-open">Still open</h2>
+  <dl class="open">{{OPEN}}</dl>
+</section>
+
+<footer>The numbers come from the experiment register in <code>docs/CURATION.md</code> (E1 to E38) and the reader runs in <code>docs/HTR_RUNS.md</code>. Reader training before 14 November (the line readers and their comparisons) is in the second file and is not repeated here.</footer>
+</div>
+<div id="tip" role="tooltip" hidden></div>
+
+<script>
+(function () {
+  var buttons = Array.prototype.slice.call(document.querySelectorAll('[data-filter]'));
+  var entries = Array.prototype.slice.call(document.querySelectorAll('.exp'));
+  var groups = Array.prototype.slice.call(document.querySelectorAll('[data-theme-group]'));
+  var status = document.getElementById('filter-status');
+  function apply(filter) {
+    var shown = 0;
+    entries.forEach(function (entry) {
+      var keep = filter === 'all' || entry.getAttribute('data-verdict') === filter;
+      entry.hidden = !keep;
+      if (keep) shown += 1;
+    });
+    groups.forEach(function (group) { group.hidden = !group.querySelector('.exp:not([hidden])'); });
+    buttons.forEach(function (button) { button.setAttribute('aria-pressed', String(button.getAttribute('data-filter') === filter)); });
+    status.textContent = filter === 'all' ? 'Showing all 38 experiments.' : 'Showing ' + shown + ' of 38 experiments.';
+  }
+  buttons.forEach(function (button) {
+    button.addEventListener('click', function () { apply(button.getAttribute('data-filter')); });
+  });
+  var still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  Array.prototype.forEach.call(document.querySelectorAll('[data-jump]'), function (link) {
+    link.addEventListener('click', function (event) {
+      var target = document.getElementById(link.getAttribute('data-jump'));
+      if (!target) return;
+      event.preventDefault();
+      apply('all');
+      target.scrollIntoView({ behavior: still ? 'auto' : 'smooth', block: 'start' });
+      target.classList.add('flash');
+      target.focus({ preventScroll: true });
+      setTimeout(function () { target.classList.remove('flash'); }, 1800);
+    });
+  });
+  var tip = document.getElementById('tip');
+  function line(tag, text, name) {
+    var node = document.createElement(tag);
+    node.textContent = text;
+    if (name) node.className = name;
+    tip.appendChild(node);
+  }
+  function place(x, y) {
+    var left = Math.min(Math.max(8, x + 14), window.innerWidth - tip.offsetWidth - 8);
+    var top = y + 18;
+    if (top + tip.offsetHeight > window.innerHeight - 8) top = y - tip.offsetHeight - 12;
+    tip.style.left = left + 'px';
+    tip.style.top = Math.max(8, top) + 'px';
+  }
+  function show(row, x, y) {
+    tip.textContent = '';
+    line('strong', row.getAttribute('data-value'));
+    line('span', row.getAttribute('data-name'));
+    line('span', row.getAttribute('data-detail'), 'd');
+    tip.hidden = false;
+    place(x, y);
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('.bar-row'), function (row) {
+    row.addEventListener('pointermove', function (event) { show(row, event.clientX, event.clientY); });
+    row.addEventListener('pointerleave', function () { tip.hidden = true; });
+    row.addEventListener('focus', function () { var box = row.getBoundingClientRect(); show(row, box.left + 20, box.bottom - 6); });
+    row.addEventListener('blur', function () { tip.hidden = true; });
+  });
+})();
+</script>
