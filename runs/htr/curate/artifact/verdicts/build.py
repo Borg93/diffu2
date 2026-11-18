@@ -228,15 +228,15 @@ E = [
         ("What we found", "SCALAR leaves 7 % of scans unclustered where EVoC alone left 54 %, with the same agreement with the kinds. HiRank does not find what is not handwriting (AUC 0.18): signs and reel targets are many of a kind, so they are not outliers. 1,465 scans tie at its lowest score."),
         ("What we learned", "SCALAR works, reaches 3.15 million scans, and its 50 clusters carried the bulk marking. HiRank as run finds one-offs at best and needs a longer rank list."),
     ]),
-    (45, "tables", "queued", "NVIDIA's table model", "NVIDIA's table-structure model on our tables", [
-        ("Why it is planned", "Our tables are the reader's weakest kind and the ground truth marks almost none as tables. Nemotron Table Structure v1 finds cells, rows and columns in an image of a table."),
-        ("Where it is", "Not started. Its card says it was trained on printed enterprise documents, may not generalise to unknown table formats, is not robust to turned tables and wants the table cut out of the page first."),
-        ("First test", "Its boxes drawn on the 26 table test pages and about 100 more table scans, judged by eye by kind: ruled registers, inventories with amounts, lists without a grid, tables across the fold. If it finds rows and columns, they can put the reader's lines in row order and turn line transcriptions into table targets."),
+    (45, "tables", "partly", "NVIDIA's table model", "NVIDIA's table-structure model on our tables", [
+        ("Why we did it", "Our tables are the reader's weakest kind and the ground truth marks almost none as tables. Nemotron Table Structure v1 finds cells, rows and columns in an image of a table. It was trained on printed enterprise documents, and its card warns that it may not generalise."),
+        ("What we found", "A first look by eye on the 26 table test pages, the model run on the whole page with no training on our data. On list-like pages it lays a row on nearly every written line (median 18 rows a page) and finds believable columns on many: item and amount, name and page numbers, two lists side by side. On dark microfilm and a densely ruled register it finds few rows. Cells are patchy."),
+        ("What we learned", "Rows and columns are usable as they come on many of our pages; cells are not. About 5 of the 26 pages are no tables at all. There is no figure yet: the next step is to score it on the 221 ground-truth pages that hold real table markup."),
     ]),
-    (46, "tables", "queued", "NVIDIA's page-elements model", "NVIDIA's page-elements model as the table finder", [
-        ("Why it is planned", "The table model wants the table cut out first. Nemotron Page Elements v3 finds tables, titles, headers and text on a page, and could mark the table on every scan."),
-        ("Where it is", "Not started. Trained on enterprise documents; its card gives 45 % average precision for tables on its own set."),
-        ("First test", "With the table model, on the same pages; then against the vision-language model's table answer."),
+    (46, "tables", "failed", "NVIDIA's page-elements model", "NVIDIA's page-elements model as the table finder", [
+        ("Why we did it", "The table model's card says to cut the table out first with Nemotron Page Elements v3, which finds tables, titles, headers and text on a page."),
+        ("What we found", "On the 26 table test pages it calls 7 a table, 10 an infographic and the rest text. The table model does as well on the whole page as on the table it cuts out."),
+        ("What we learned", "It is no table finder for our pages. Our own small classifier on the scan vectors finds 96 % of the tables the vision-language model names (E41), so that stays the table column."),
     ]),
     (47, "checks", "queued", "Nemotron OCR v2", "Nemotron OCR v2 as a line finder and reading-order model", [
         ("Why it is planned", "It finds text lines and their reading order at about 35 pages a second. That could find lines and check for writing without a label on every pool page."),
