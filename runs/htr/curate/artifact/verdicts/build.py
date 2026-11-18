@@ -1,5 +1,5 @@
 """Builds index.html, the verdicts page (claude.ai/artifact/98423D2V376HLajHfbhpS2): every curation experiment of
-docs/CURATION.md (E1 to E44) with its verdict, why it was run, what it found and what it taught us; five results as
+docs/CURATION.md (E1 to E47) with its verdict, why it was run, what it found and what it taught us; five results as
 bar charts; and the two archify diagrams as snapshots (snapshots.sh makes them and the interactive pages).
 
 Publish index.html with the Artifact tool under the same URL. The texts and numbers below are copied from the
@@ -31,6 +31,7 @@ THEMES = [
     ("describe", "Describing each scan with a vision-language model"),
     ("decide", "Deciding which scans to cut"),
     ("embed", "Embeddings, clusters and maps"),
+    ("tables", "Tables"),
     ("checks", "Checks on the page and its labels"),
     ("table", "The table underneath"),
 ]
@@ -67,7 +68,7 @@ E = [
         ("What we found", "Nemotron Parse: running text 5.73 % (174 pages), tables 14.08 % (26 pages). LightOnOCR-3: 5.24 % and 30.82 %. Ten pages carry 44 % of all errors. Two test pages have a ground truth that covers only part of the page; without them the scores are 5.45 % and 7.07 %."),
         ("What we learned", "Tables are the weak kind and the next thing to train for. Some ground truth is partial: when two readers agree with each other and both read far more than the truth holds, the truth is the problem."),
     ]),
-    (42, "reader", "measured", "Table pages looked at", "Table pages: the truth, the reader and the old labels", [
+    (42, "tables", "measured", "Table pages looked at", "Table pages: the truth, the reader and the old labels", [
         ("Why we did it", "Tables read at 14 % against 6 % for running text. Before training for them we needed to know what a table is in our data, and whether the pools' table pages are worth learning from."),
         ("What we found", "Only 201 of 49,491 ground-truth training pages carry a table with rows and cells. The 26 table test pages are all transcribed as plain lines, and they hold 25 % of all errors. Old labels against truth on Svea tables: 19 % error on matched lines, a wrong number in 46 % of lines, 35 % of labelled lines matching no true line. On andra arkiv tables: 7 % error."),
         ("What we learned", "The reader reads our tables as lines and has seen almost no table structure. Part of the table error is reading order, numbers and dot leaders, and one of four pages looked at was no table at all. The pools' table labels are a poor teacher, Svea's most of all, so pool tables get no extra weight."),
@@ -226,6 +227,21 @@ E = [
         ("Why we did it", "Every scan needs a cluster, for bulk marking and for balancing. And odd scans should be found."),
         ("What we found", "SCALAR leaves 7 % of scans unclustered where EVoC alone left 54 %, with the same agreement with the kinds. HiRank does not find what is not handwriting (AUC 0.18): signs and reel targets are many of a kind, so they are not outliers. 1,465 scans tie at its lowest score."),
         ("What we learned", "SCALAR works, reaches 3.15 million scans, and its 50 clusters carried the bulk marking. HiRank as run finds one-offs at best and needs a longer rank list."),
+    ]),
+    (45, "tables", "queued", "NVIDIA's table model", "NVIDIA's table-structure model on our tables", [
+        ("Why it is planned", "Our tables are the reader's weakest kind and the ground truth marks almost none as tables. Nemotron Table Structure v1 finds cells, rows and columns in an image of a table."),
+        ("Where it is", "Not started. Its card says it was trained on printed enterprise documents, may not generalise to unknown table formats, is not robust to turned tables and wants the table cut out of the page first."),
+        ("First test", "Its boxes drawn on the 26 table test pages and about 100 more table scans, judged by eye by kind: ruled registers, inventories with amounts, lists without a grid, tables across the fold. If it finds rows and columns, they can put the reader's lines in row order and turn line transcriptions into table targets."),
+    ]),
+    (46, "tables", "queued", "NVIDIA's page-elements model", "NVIDIA's page-elements model as the table finder", [
+        ("Why it is planned", "The table model wants the table cut out first. Nemotron Page Elements v3 finds tables, titles, headers and text on a page, and could mark the table on every scan."),
+        ("Where it is", "Not started. Trained on enterprise documents; its card gives 45 % average precision for tables on its own set."),
+        ("First test", "With the table model, on the same pages; then against the vision-language model's table answer."),
+    ]),
+    (47, "checks", "queued", "Nemotron OCR v2", "Nemotron OCR v2 as a line finder and reading-order model", [
+        ("Why it is planned", "It finds text lines and their reading order at about 35 pages a second. That could find lines and check for writing without a label on every pool page."),
+        ("Where it is", "Not started. Its languages are English, Chinese, Japanese, Korean and Russian, and no fine-tuning code is given, so its own reading of our hands is expected to be poor."),
+        ("First test", "Its line boxes against the ground truth's line outlines and the old pipeline's lines. NeMo Curator now has stages built on it, to read for our pipeline as code."),
     ]),
     (6, "checks", "worked", "Orientation network", "An orientation network", [
         ("Why we did it", "The old pipeline invents fluent labels for writing that is turned. Such pages must be found."),
