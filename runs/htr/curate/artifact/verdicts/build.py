@@ -1,5 +1,5 @@
 """Builds index.html, the verdicts page (claude.ai/artifact/98423D2V376HLajHfbhpS2): every curation experiment of
-docs/CURATION.md (E1 to E48) with its verdict, why it was run, what it found and what it taught us; five results as
+docs/CURATION.md (E1 to E49) with its verdict, why it was run, what it found and what it taught us; five results as
 bar charts; and the two archify diagrams as snapshots (snapshots.sh makes them and the interactive pages).
 
 Publish index.html with the Artifact tool under the same URL. The texts and numbers below are copied from the
@@ -237,6 +237,11 @@ E = [
         ("Why we did it", "Our tables are the reader's weakest kind and the ground truth marks almost none as tables. Nemotron Table Structure v1 finds cells, rows and columns in an image of a table. It was trained on printed enterprise documents, and its card warns that it may not generalise."),
         ("What we found", "A first look by eye on the 26 table test pages, the model run on the whole page with no training on our data. On list-like pages it lays a row on nearly every written line (median 18 rows a page) and finds believable columns on many: item and amount, name and page numbers, two lists side by side. On dark microfilm and a densely ruled register it finds few rows. Cells are patchy."),
         ("What we learned", "Scored on the 228 tables the ground truth marks with rows and cells: it finds 89 % of the columns (88 % of those it finds are right) and 67 % of the rows (77 % right). Name lists and registers go well (rows 92 %, columns 95 % in one collection); tables whose rows are paragraphs of several lines go badly (rows 44 %). Columns are usable as they come, rows on lists, cells not. It has not been trained on our pages, and those 228 tables are labels to do so."),
+    ]),
+    (49, "tables", "queued", "Tables as structured HTML", "Tables as structure: from image to rows and cells", [
+        ("Why it is planned", "The goal for a table is the image turned into structured HTML, rows and cells, and not only its text in order."),
+        ("Where it stands", "The reader wrote a table on 0 of the 200 test pages. The ground truth marks 232 tables on 139 scans, 0.4 % of the training pages. There is no table test set and no score for structure."),
+        ("What it takes", "First a score: held-out marked tables and a measure that compares tables as trees, beside the error of their text. Then more table targets: the table model, fine-tuned on the 232 marked tables, sets line transcriptions into rows and cells; our generator draws tables with exact structure; a sample is corrected by hand. Then the reader is trained to write tables."),
     ]),
     (46, "tables", "failed", "NVIDIA's page-elements model", "NVIDIA's page-elements model as the table finder", [
         ("Why we did it", "The table model's card says to cut the table out first with Nemotron Page Elements v3, which finds tables, titles, headers and text on a page."),
