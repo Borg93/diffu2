@@ -28,6 +28,7 @@ client = httpx.Client(timeout=1800, limits=httpx.Limits(max_connections=max(64, 
 def read(item):
     page, row, meta = item; started = time.perf_counter()
     body = {"model": MODEL, "temperature": 0, "max_tokens": 8744, "top_k": 1, "repetition_penalty": 1.1, "skip_special_tokens": False,
+            "repetition_detection": {"min_pattern_size": 4, "max_pattern_size": 120, "min_count": 6},  # vLLM stops a looping page (E51)
             "messages": [{"role": "user", "content": [{"type": "text", "text": PROMPT}, {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + images[page]}}]}]}
     answer = client.post(f"{URL}/chat/completions", json=body).raise_for_status().json(); choice = answer["choices"][0]; raw = choice["message"]["content"] or ""
     raw = raw.replace("</s>", "").replace("<s>", "").replace("<pad>", "")

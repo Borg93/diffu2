@@ -29,6 +29,7 @@ def read(n_i):
     n, i = n_i; row = json.loads(rows[i]); meta = metas[i]; started = time.perf_counter()
     image = base64.b64encode(open(row["images"][0], "rb").read()).decode()
     body = {"model": "nemotron-parse", "temperature": 0, "max_tokens": MAX_NEW, "top_k": 1, "repetition_penalty": 1.1, "skip_special_tokens": False,
+            "repetition_detection": {"min_pattern_size": 4, "max_pattern_size": 120, "min_count": 6},  # vLLM stops a looping page (E51)
             "messages": [{"role": "user", "content": [{"type": "text", "text": PROMPT}, {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + image}}]}]}
     try:
         answer = client.post(f"{urls[n % len(urls)]}/chat/completions", json=body).raise_for_status().json()
