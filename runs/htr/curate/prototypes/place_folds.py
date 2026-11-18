@@ -11,6 +11,7 @@ any moment are a random sample of the pools.
 
     PYTHONPATH=runs/htr/curate/prototypes uv run python runs/htr/curate/prototypes/place_folds.py [WORKERS] [pool]
 """
+import fcntl
 import random
 import sys
 from concurrent.futures import ProcessPoolExecutor
@@ -31,6 +32,11 @@ def place(image: str) -> tuple[float, float] | None: return cut_place.place(imag
 
 if __name__ == "__main__":
     workers = int(sys.argv[1]) if len(sys.argv) > 1 else 16
+    lock = open(HOME / "folds.lock", "w")  # one placer at a time: a second would place the same scans again
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print("another placer is running: nothing done", flush=True); sys.exit(0)
     described = "vl_layout IN ('opening_both_pages_written', 'opening_one_page_empty')"
     pool = "pool != 'gt' AND lines > 0 AND gutter_score >= 0.5"
     openings = lance.dataset(str(HOME / "scans.lance")).to_table(columns=["image"], filter=pool if "pool" in sys.argv[2:] else described).column("image").to_pylist()
