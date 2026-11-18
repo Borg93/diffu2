@@ -19,7 +19,7 @@ WANTED = {  # column of scans.lance: (what it says, what makes it)
     "vl_caption": ("the VL model's caption", "vl_describe.py (a sample: too slow for every scan)"),
     "vl_kind": ("the VL model's kind of scan", "vl_describe.py, then a head for every scan"),
     "vl_writing_layout": ("table or running text, by the VL model", "vl_ask2.py"),
-    "table": ("table or running text for every scan, by a head", "pool_columns.py (E40), with table_p"),
+    "is_table": ("table or running text for every scan, by a head", "pool_columns.py (E40), with table_p"),
     "kind": ("the kind of scan for every scan, by a head", "pool_columns.py (E40), with kind_p"),
     "layout": ("opening, single page ... for every scan, by a head", "pool_columns.py (E40), with layout_p"),
     "cut_class": ("the hand marks' class for every scan, by a head on the patch vectors", "pool_columns.py (E40), with cut_p"),
