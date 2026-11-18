@@ -73,10 +73,11 @@ E = [
         ("What we found", "Only 201 of 49,491 ground-truth training pages carry a table with rows and cells. The 26 table test pages are all transcribed as plain lines, and they hold 25 % of all errors. Old labels against truth on Svea tables: 19 % error on matched lines, a wrong number in 46 % of lines, 35 % of labelled lines matching no true line. On andra arkiv tables: 7 % error."),
         ("What we learned", "The reader reads our tables as lines and has seen almost no table structure. Part of the table error is reading order, numbers and dot leaders, and one of four pages looked at was no table at all. The pools' table labels are a poor teacher, Svea's most of all, so pool tables get no extra weight."),
     ]),
-    (43, "reader", "queued", "YOLO + TrOCR on the 200 pages", "The old pipeline as one reader on the same 200 test pages", [
-        ("Why it is planned", "The comparison that matters is on whole pages: YOLO and TrOCR run as one pipeline on the same 200 test pages, scored on character and word error as Nemotron Parse is."),
-        ("Where it is", "Not started. The earlier 10.7 % (E1) was measured on 207 other pages, 11 of them shared, and is no comparison."),
-        ("What it needs", "The old pipeline installed in an environment of its own and a GPU for a short run, after the training."),
+    (43, "reader", "measured", "YOLO + TrOCR on the 200 pages", "The old pipeline as one reader on the same 200 test pages", [
+        ("Why we did it", "The comparison that matters is on whole pages: YOLO and TrOCR run as one pipeline on the same 200 test pages, scored on character and word error as Nemotron Parse is."),
+        ("What we found", "The old pipeline reads the 200 pages at 14.5 % character error (27.3 % word error) with today's TrOCR, the Swedish Lion 2026, and at 16.6 % (33.3 %) with the TrOCR of 2024. Nemotron Parse after 4 epochs reads them at 6.73 % (18.8 %), better on 138 pages and worse on 57. On the 174 pages of running text the three stand at 8.8, 10.8 and 5.7 %; on the 26 table pages at 55.8, 58.7 and 14.1 %."),
+        ("What we learned", "Read as whole pages, Nemotron Parse makes about half the errors of the old pipeline, and a third fewer on running text. The pipeline loses most on tables, where reading line by line breaks the order of the cells, and it read nothing on 2 pages where it found no text region. Its own reading-order step made it worse (21 and 23 %), so the scores above leave that step out. The earlier 10.7 % (E1) was on other pages and is no comparison."),
+        ("How it was run", "htrflow 0.2.6 with the two YOLO models, at the revisions the pools' label files name, and lines read greedily. The label files do not name the recogniser of 2024; the public model of that time stands in for it. The Swedish Lion chose its checkpoint on these test pages, which favours it."),
     ]),
     (44, "reader", "measured", "Why the gain is small", "Why the pretraining helps so little", [
         ("Why we did it", "0.63 points from 139,937 extra pages is less than expected. Three checks on the stored readings and training curves."),
@@ -195,9 +196,9 @@ E = [
     ]),
     (40, "decide", "running", "Whole pools through the rule", "The whole pools through the cut rule", [
         ("Why we are doing it", "Only 3 % of the pools has been through the checks. With a small model's vectors and the fold placer, every scan can be."),
-        ("Where it is", "Running since 18 November 09:17 on both GPUs, with the second fine-tune paused for it: vectors for all 3,068,985 pool scans with labelled lines, about 131 scans a second, done about 16:20. Every fold is being placed on the CPU, done in the night to 19 November. The first 40,000 scans are checked: 541 of them had been embedded before, and the new vectors match the old ones."),
+        ("Where it is", "Running since 18 November 09:17 on both GPUs, with the second fine-tune paused for it: vectors for all 3,068,985 pool scans with labelled lines, about 125 scans a second, done about 16:30. Every fold is being placed on the CPU, done in the night to 19 November. The first 40,000 scans are checked: 541 of them had been embedded before, and the new vectors match the old ones."),
         ("What we found so far", "Small classifiers on the vectors give every scan its columns: the class of the hand marks, table or not, kind, layout, colour. On 742 scans that the VL model described and the classifiers never saw, table or not agrees on 98 %, layout on 94 %, kind on 87 %. Of scans that nobody had marked, 8 were drawn from each of the five classes and looked at: all 40 were what the column says. Shares there: cut 88 %, odd layout 6 %, single page 2.6 %, do not cut 2.4 %, not a page 1.2 %; tables 12 %."),
-        ("What it should give", "About 2.4 million scans to cut, 4.4 million pages. One epoch of pretraining covers about 280,000 pages a day, so the size of the next set is a choice of GPU days."),
+        ("What it should give", "Projected from the run's first 40,000 scans, a random sample: about 2.3 million openings with running text to cut, 4.3 million pages; about 320,000 table scans, kept apart as their own set; about 70,000 single pages. One epoch of pretraining covers about 280,000 pages a day, so the size of the next set is a choice of GPU days."),
     ]),
     (7, "embed", "worked", "DINOv3 + EVoC clusters", "DINOv3 page embeddings clustered with EVoC", [
         ("Why we did it", "To map what the pools hold without any labels, and to find what is not handwriting."),
@@ -308,7 +309,7 @@ ALSO = [
 ]
 
 OPEN = [
-    ("The second score of E38", "Pretraining followed by 4 epochs on ground truth, against 6.73 %. It comes in the evening of 18 November and says whether pool pages add anything to longer training on ground truth."),
+    ("The second score of E38", "Pretraining followed by 4 epochs on ground truth, against 6.73 %. It comes in the night to 19 November and says whether pool pages add anything to longer training on ground truth."),
     ("Filtering the labels", "Our reader has to read the 139,937 trusted pages. On the 1,881 that have a reading, about 6 % disagree with the old label by more than half."),
     ("Tables", "6 % of the trusted set and the reader's weakest kind. The pools' labels on tables are poor (E42), so better table reading has to come from ground truth, a fixed reading order, or the double pass on table regions, which is queued."),
     ("Openings without a fold line", "About one in ten. The trained placer (E26) is for these."),
@@ -324,8 +325,8 @@ CHARTS = [
         ("the same after unfiltered Svea pretraining", 7.18, "7.18 %", "53,490 pool pages first (E3)"),
         ("the same after trusted-cut pretraining", 6.92, "6.92 %", "139,937 pool pages first (E38); gain 0.63 points, 95 % interval +0.14 to +1.16"),
         ("Nemotron Parse, 4 epochs on ground truth", 6.73, "6.73 %", "the best reader so far (E4)"),
-        ("4 epochs after trusted-cut pretraining", None, "18 Nov, evening", "the second fine-tune of E38 is training"),
-    ], "Unlimited-OCR 2 read the same pages at 63.7 % and is off this scale. The old YOLO and TrOCR pipeline has no score on these pages yet (E43)."),
+        ("4 epochs after trusted-cut pretraining", None, "19 Nov, morning", "the second fine-tune of E38, paused for the vectors of every pool scan, resumes by itself"),
+    ], "Off this scale: the old YOLO and TrOCR pipeline reads the same pages at 14.5 % with today's TrOCR and 16.6 % with the 2024 one (E43), Unlimited-OCR 2 at 63.7 %."),
     ("What the trusted-cut rule keeps", "described pool scans left after each check", 100083.0, [
         ("Described pool scans", 100083, "100,083", "Svea and andra arkiv, described and embedded"),
         ("The form says opening, no table across the fold", 95485, "95,485", "96,105 openings; 620 of them hold a table across the fold"),
@@ -346,7 +347,7 @@ CHARTS = [
     ("Nemotron Parse by kind of page", "percent of characters wrong on the test pages; lower is better", 16.0, [
         ("Running text", 5.73, "5.73 %", "174 test pages"),
         ("Table or ledger", 14.08, "14.08 %", "26 test pages"),
-    ], "LightOnOCR-3 on the same pages: 5.24 % and 30.82 %."),
+    ], "LightOnOCR-3 on the same pages: 5.24 % and 30.82 %. The old pipeline with today's TrOCR: 8.81 % and 55.82 %."),
 ]
 
 

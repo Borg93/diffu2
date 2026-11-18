@@ -276,8 +276,14 @@ of 51 characters, the model reads 1,300 of the rest of the page).
 | Nemotron 3.5 Parse (`nemotron-parse-all`, ckpt 3094, its generation config, 4,000 tokens) | 1.155 * | 13.64 % (WER 39.3 %) | 3.3 % | 131 | 1.7 |
 | the same, `no_repeat_ngram_size` 10 | | **7.55 %** (WER 20.5 %) | | | |
 | the same, `no_repeat_ngram_size` 20 | | 7.88 % (WER 20.9 %) | | | |
+| YOLO + TrOCR as one pipeline (htrflow 0.2.6; Swedish Lion 2026, large, character vocabulary; greedy) | | 14.47 % (WER 27.3 %) | 4.4 % | 106 | 3.4 † |
+| the same with the 2024 TrOCR (`trocr-base-handwritten-hist-swe-2`) | | 16.55 % (WER 33.3 %) | 6.9 % | 76 | 4.0 † |
 
 \* its loss weighs layout tokens ten times: not comparable with the others'.
+
+† on a GPU shared with another job. The old pipeline on these pages is CURATION E43 (18 Nov): against Nemotron Parse
+after 4 epochs (6.73 %, median page 3.0 %, 135 pages under 5 %) it stands at 8.8 and 10.8 % on the 174 pages of running
+text (Nemotron 5.7 %) and at 56 and 59 % on the 26 table pages (14.1 %); how it was run and what favours it is in E43's row.
 
 - LightOnOCR-3 never looped; Nemotron looped on near-empty pages (empty tables to the token limit) and on dot leaders.
   Its 13.6 % came mostly from two pages that hit the limit; a 10-token no-repeat guard brings it to 7.55 %, under
