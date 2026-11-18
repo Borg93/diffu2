@@ -6,6 +6,14 @@ it the day a thing is learnt. The code is `packages/curate` (`diffu-curate`); th
 
 ## Start here: state and task list (updated 17 Nov 20:15: the first curated set is training, E38)
 
+**Handover, 18 Nov 15:00 (read this first if the session or the account changed).** Everything below runs in tmux `htr` and needs nobody connected.
+- Running: E40's vectors on GPUs 1 and 2 (`embedpool0`, `embedpool1`, done about 16:40); the folds on the CPU (`placepool`, about 02:00).
+- Starts by itself: the columns for every scan (`poolcolumns`), the heads' check (`headscheck`), the second fine-tune from checkpoint 250 and its test read (`trusted`, score about 01:30 on 19 Nov), the fold join (`foldjoin`), the exact yield (`poolcount`, `runs/htr/curate/pool_funnel.txt`), then the trusted pages read through vLLM with the DFlash2 draft and the repetition detector (`aftertrusted3`, `pool_read/trusted_v1_vllm.jsonl`).
+- In hand, not queued: **E52, our own DFlash2 draft.** vLLM's `extract_hidden_states` mode refuses Parse's config ("Multiple valid text configs ... ['decoder', 'text_config']"). Next: read speculators' offline hidden-state format and how it treats image positions, write an extractor with Transformers (layers 1, 4, 8 of the decoder over the reader's own answers), then a smoke of `speculators train --speculator-type dflash2`. Untried: whether speculators loads Parse's tied, scaled embeddings and head.
+- Owed: the results page (https://claude.ai/artifact/98423D2V376HLajHfbhpS2) lacks E43's old-pipeline scores, the block scores and E50 to E54; stopped pages of the vLLM read need a second read by the guarded reader; E50's speed on a quiet GPU; E54 (the repository's postprocessing in place of our regex).
+- Waiting on Gabriel: the size of the next pretraining set (1 million pages recommended) and whether the goal is the mixed test pages or the Svea and andra arkiv material.
+
+
 Read this section, then "Rules". Update it whenever a job starts or ends or a task changes state, and give every
 experiment a row in the "Experiment register" below the day it starts.
 
