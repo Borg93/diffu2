@@ -12,6 +12,11 @@ files (image, dinov3, tipsv2, saturation) in OUT, 20,000 scans a part; a scan in
 IMAGES=<file of scan paths, one a line> embeds those instead of the pools; DEVICE=cpu runs without a GPU (a check).
 """
 import os
+
+if os.environ.get("DEVICE", "cuda") == "cuda":  # before numpy and torch load: on a GPU the main process only stacks batches,
+    for threads in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):  # yet torch's idle threads took 8 cores
+        os.environ.setdefault(threads, "1")  # from the loaders (measured 18 Nov: 47 scans a second with them, 70 without)
+
 import random
 import sys
 import time
@@ -66,7 +71,8 @@ def write(out: Path, shard: int, images: list[str], d: list[np.ndarray], t: list
     def column(rows: list[np.ndarray]) -> pa.FixedSizeListArray:
         return pa.FixedSizeListArray.from_arrays(pa.array(np.concatenate(rows).ravel(), pa.float16()), 2048)
     table = pa.table({"image": images, "dinov3": column(d), "tipsv2": column(t), "saturation": pa.array(saturation, pa.float32())}, schema=ROWS)
-    pq.write_table(table, out / f"part-{shard}-{time.time_ns()}.parquet")
+    part = out / f"part-{shard}-{time.time_ns()}.parquet"; unfinished = part.with_suffix(".unfinished")
+    pq.write_table(table, unfinished); unfinished.replace(part)  # a run stopped while writing leaves no part a later run would trip on
 
 
 if __name__ == "__main__":

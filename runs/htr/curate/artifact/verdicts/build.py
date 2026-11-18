@@ -91,7 +91,7 @@ E = [
     (38, "reader", "running", "Trusted-cut pretraining", "Pretrain on pages with a trusted cut, then fine-tune", [
         ("Why we are doing it", "This is the test the curation leads to: does pretraining on pool pages with a trusted cut beat the same training without it (7.55 %), the unfiltered control (7.18 %) and the best reader (6.73 %)?"),
         ("What we found so far", "One epoch on 139,937 pool pages, then 2 epochs on ground truth: 6.92 % character error, 18.61 % word error. Against the same recipe without pool pages that is a gain of 0.63 points (95 % interval +0.14 to +1.16), better on 123 pages and worse on 58. Against the unfiltered control the gain is 0.26 points and not shown. Against 4 epochs on ground truth alone it is not ahead."),
-        ("What we learned so far", f"Pool pages help, most on the pools' own archives: 4.2 to 2.8 % on andra arkiv's volumes, 8.6 to 5.8 % on Svea's, 7.9 to 7.5 % elsewhere. Almost tripling the pages gave little, which points at the labels and not the amount. The second fine-tune, 2 more epochs, is at {PROGRESS} and ends in the evening of 18 November."),
+        ("What we learned so far", f"Pool pages help, most on the pools' own archives: 4.2 to 2.8 % on andra arkiv's volumes, 8.6 to 5.8 % on Svea's, 7.9 to 7.5 % elsewhere. Almost tripling the pages gave little, which points at the labels and not the amount. The second fine-tune, 2 more epochs, is under way ({PROGRESS})."),
     ]),
     (5, "cut", "failed", "Gutter network", "A small gutter network on thumbnails", [
         ("Why we did it", "Cutting by the old labels' line positions goes wrong on about 870,000 pages. A tiny network (0.2 M parameters) on a 384 × 256 thumbnail was cheap enough to run over all 3.15 million scans."),
@@ -193,9 +193,10 @@ E = [
         ("What we found", "On 15,110 marked scans, whole volumes held out. Qwen 8B: 95.5 % right, finds 95.3 % of the scans not to cut. DINOv3 alone: 94.0 % right, finds 96.0 %, and holds back 5.6 % of good openings where Qwen holds back 3.9 %. Of the scans either would cut, about 0.5 % are not to be cut."),
         ("What we learned", "The small vision models are enough for cut-or-not. They embedded 45,000 scans at 35 a second on one GPU, so all 3.15 million pool scans take about 13 hours on two GPUs, and the vision-language model is not needed at that scale."),
     ]),
-    (40, "decide", "queued", "Whole pools through the rule", "The whole pools through the cut rule", [
-        ("Why it is planned", "Only 3 % of the pools has been through the checks. With a small model's vectors and the fold placer, every scan can be."),
-        ("Where it is", "Queued to start by itself when the training ends: every pool scan with labelled lines is embedded on both GPUs, about 13 hours, and every fold is placed on the CPU. Checked on 40 scans: the new vectors match the ones the classifier was trained on."),
+    (40, "decide", "running", "Whole pools through the rule", "The whole pools through the cut rule", [
+        ("Why we are doing it", "Only 3 % of the pools has been through the checks. With a small model's vectors and the fold placer, every scan can be."),
+        ("Where it is", "Running since 18 November 09:17 on both GPUs, with the second fine-tune paused for it: vectors for all 3,068,985 pool scans with labelled lines, about 131 scans a second, done about 16:20. Every fold is being placed on the CPU, done in the night to 19 November. The first 40,000 scans are checked: 541 of them had been embedded before, and the new vectors match the old ones."),
+        ("What we found so far", "Small classifiers on the vectors give every scan its columns: the class of the hand marks, table or not, kind, layout, colour. On 742 scans that the VL model described and the classifiers never saw, table or not agrees on 98 %, layout on 94 %, kind on 87 %. Of scans that nobody had marked, 8 were drawn from each of the five classes and looked at: all 40 were what the column says. Shares there: cut 88 %, odd layout 6 %, single page 2.6 %, do not cut 2.4 %, not a page 1.2 %; tables 12 %."),
         ("What it should give", "About 2.4 million scans to cut, 4.4 million pages. One epoch of pretraining covers about 280,000 pages a day, so the size of the next set is a choice of GPU days."),
     ]),
     (7, "embed", "worked", "DINOv3 + EVoC clusters", "DINOv3 page embeddings clustered with EVoC", [
