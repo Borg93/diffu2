@@ -6,6 +6,13 @@ or folds: columns that exist are updated in place.
 
     PYTHONPATH=runs/htr/curate/prototypes uv run python runs/htr/curate/prototypes/marks_to_lance.py
 """
+import os
+
+# Before numpy and pyarrow load: with the machine's memory full of file cache, large arrays on huge pages stall in the
+# kernel (CURATION E40, 18 Nov).
+os.environ.setdefault("NUMPY_MADVISE_HUGEPAGE", "0")
+os.environ.setdefault("ARROW_DEFAULT_MEMORY_POOL", "system")
+
 from pathlib import Path
 
 import lance

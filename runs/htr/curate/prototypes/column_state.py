@@ -30,15 +30,15 @@ WANTED = {  # column of scans.lance: (what it says, what makes it)
     "head_cut": ("the hand marks' class by the head on Qwen's vectors (described scans only)", "cut_head.py"),
     "fold_x": ("where the fold is", "place_folds.py; for every scan after E40"),
     "fold_found": ("whether a fold line was found", "place_folds.py"),
-    "cluster": ("the cluster on the map", "scalar_hirank.py; to do for every scan"),
+    "cluster": ("the cluster on the map of 14,985 scans (50 clusters on Qwen's vectors)", "scalar_hirank.py; for every scan by a head once the clusters are named"),
     "cluster_name": ("the cluster's name", "to do: Toponymy"),
     "covered": ("writing layer: share of the writing under a label", "to do: writing_eval.py's layer over the pools"),
     "jev_page": ("Jev's score of the page's lines", "to do: first on the calibration scans"),
     "read_disagreement": ("our reader against the old label", "pages.lance holds it for 64,950 pages; to do on the trusted pages"),
-    "dinov3": ("DINOv3's vector of the scan", "embed_pool.py (E40); a table beside or a column: to decide"),
+    "dinov3": ("DINOv3's vector of the scan", "embed_pool.py (E40) makes it (Parquet parts); a column when the run has ended, 13 GB a model"),
     "tipsv2": ("TIPSv2's vector of the scan", "embed_pool.py (E40)"),
     "qwen8b": ("Qwen3-VL-Embedding 8B's vector", "scan_embeddings.lance holds 130,733"),
-    "pca": ("a PCA of the vectors", "to do"),
+    "pca": ("the first 64 principal components of the two models' vectors (82 % of the variance), 16-bit", "pool_columns.py (E40), heads/pca.npz"),
 }
 
 if __name__ == "__main__":

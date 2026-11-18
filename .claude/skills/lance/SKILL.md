@@ -19,6 +19,9 @@ Every check is a column of the scan table, keyed by the unique string `image`; a
 3. Give `features` one row a key: Lance leaves undefined which of two rows wins, so the helper refuses them.
 4. Done when `column_state.py` prints the column's new count and a filter on it returns the rows expected.
 
+Measured on `scans.lance` (3.18 million rows, 3 fragments): 894,000 feature rows, ten held columns and one new
+64-wide vector column, joined in 16 s.
+
 Rows appended after a join hold null in the joined column. `merge_insert` and `update` move changed rows to the end
 of the table: keep them for row tables, use the helper for feature columns.
 
@@ -37,6 +40,8 @@ A fixed-size-list column costs its full width for every row, null or not (measur
   sees only columns of its own table (`scanner(nearest=..., filter=..., prefilter=True)`).
 - Held for few scans: a table beside, keyed by `image`.
 - Read wide columns with `batch_size` near 1,024. Search is exact without an index; first index IVF_PQ, then IVF_RQ.
+- A `float16` list column answers `nearest` as it is: 0.27 s a search over 860,000 rows of 64 numbers, no index,
+  with a prefilter.
 
 ## Other column types
 

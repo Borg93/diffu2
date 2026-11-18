@@ -11,8 +11,14 @@ scans; ``OUT/cuts.json`` each scan's fold for ``--cuts``), with ``OUT/scans.parq
 
 The tables are the other filter (is_table true): ``count`` prints how many there are, by what the head says of the cut.
 """
-import json
 import os
+
+# Before numpy and pyarrow load: with the machine's memory full of file cache, large arrays on huge pages stall in the
+# kernel (CURATION E40, 18 Nov).
+os.environ.setdefault("NUMPY_MADVISE_HUGEPAGE", "0")
+os.environ.setdefault("ARROW_DEFAULT_MEMORY_POOL", "system")
+
+import json
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
