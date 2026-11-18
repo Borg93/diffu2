@@ -92,6 +92,10 @@ def test_full_fine_tune_at_world_size_2_logs_trains_and_checkpoints_exactly_as_a
     logs = _log(one), _log(two)
 
     assert logs[0] == logs[1]  # the samples, noise levels, losses, gradient norms and validation losses
+    for kind in ("transformer", "ema", "state"):  # FSDP2's wrapper class and the folder loaded from never written
+        config = json.loads((_checkpoint(two, STEPS) / kind / "config.json").read_text(encoding="utf-8"))
+        assert config["_class_name"] == "MossTransformer"
+        assert "_name_or_path" not in config
     for step in range(1, STEPS + 1):
         tensors = _tensors(_checkpoint(one, step)), _tensors(_checkpoint(two, step))
         assert sorted(tensors[0]) == sorted(tensors[1])

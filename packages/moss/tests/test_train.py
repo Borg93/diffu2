@@ -55,6 +55,7 @@ from diffu_moss.train.loop import (
     SampleOrder,
     SizeGroups,
     TrainSettings,
+    accumulate_gradients,
     entry_tokens,
     flow_matching_loss,
     lora_transformer,
@@ -886,6 +887,44 @@ def test_training_lowers_the_loss_of_the_sample_it_trains_on(
         with torch.no_grad():
             losses.append(flow_matching_loss(model, sample, 0.6, noise).item())
     assert losses[1] < 0.9 * losses[0]
+
+
+@pytest.mark.parametrize(("chance", "dropped"), [(0.0, "none"), (0.5, "some"), (0.99, "all")])
+def test_caption_dropout_trains_a_dropped_sample_on_the_negative_prompt_with_its_sample_page_kept(
+    tiny_moss_dit: Path, tiny_pair_cache: Path, chance: float, dropped: str
+) -> None:
+    model = MossTransformer.from_pretrained(str(tiny_moss_dit))
+    entries = read_entries(tiny_pair_cache)
+    negative = torch.zeros(1, 3, model.config.text_dim)  # 3 tokens: no cached prompt is that short
+    reached: list[tuple[int, bool]] = []
+    model.register_forward_pre_hook(
+        lambda _, args, kwargs: reached.append((args[2].shape[1], kwargs.get("references") is not None)),
+        with_kwargs=True,
+    )
+
+    _, _, flags = accumulate_gradients(
+        model,
+        tiny_pair_cache,
+        entries,
+        torch.Generator().manual_seed(3),
+        "cpu",
+        caption_dropout=chance,
+        negative=negative,
+    )
+
+    assert [tokens == 3 for tokens, _ in reached] == flags
+    assert {"none": not any(flags), "some": any(flags) and not all(flags), "all": all(flags)}[dropped]
+    with_sample = [load_sample(tiny_pair_cache, entry, "cpu").reference is not None for entry in entries]
+    assert [has_sample for _, has_sample in reached] == with_sample
+
+
+def test_training_refuses_caption_dropout_without_the_negative_prompt(
+    tiny_moss_dit: Path, tiny_pair_cache: Path, tmp_path: Path
+) -> None:
+    settings = TrainSettings(steps=1, caption_dropout=0.1, device="cpu")
+
+    with pytest.raises(ValueError, match="negative prompt"):
+        train(tiny_moss_dit, tiny_pair_cache, tmp_path / "run", settings)
 
 
 def test_training_with_a_wind_down_steps_its_last_steps_at_a_learning_rate_falling_linearly_to_decay_to(

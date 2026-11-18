@@ -34,13 +34,15 @@ the steps before it had.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Mapping
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Self
 
+import diffusers
 import torch
-from diffusers.utils import SAFETENSORS_WEIGHTS_NAME
+from diffusers.utils import CONFIG_NAME, SAFETENSORS_WEIGHTS_NAME
 from pydantic import BaseModel, ConfigDict, Field
 from safetensors.torch import load as load_bytes
 from safetensors.torch import load_file, save_file
@@ -195,6 +197,15 @@ class FullOptimizer:
         self.adamw.load_state_dict(_sharded_state(self.adamw, state["adamw"]))
         for schedule, saved in zip(self._schedules, state["schedules"], strict=True):
             schedule.load_state_dict(saved)
+
+
+def _write_config(transformer: MossTransformer, directory: Path) -> None:
+    """``transformer``'s config.json in ``directory``, as a ``MossTransformer``'s whatever wraps it (FSDP2 names its
+    class ``FSDPMossTransformer``) and naming no path it was loaded from (a cluster's paths stay off a published
+    model)."""
+    config = {key: value for key, value in transformer.config.items() if not key.startswith("_")}
+    whole = {"_class_name": MossTransformer.__name__, "_diffusers_version": diffusers.__version__, **config}
+    (directory / CONFIG_NAME).write_text(json.dumps(whole, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _whole_state(optimizer: torch.optim.Optimizer, ranks: Ranks) -> dict[str, Any]:
@@ -352,7 +363,7 @@ class FullTraining:
         bfloat16 = gathered(weights, COMPUTE_DTYPE, self._ranks)
         if self._ranks.main:
             directory.mkdir(parents=True, exist_ok=True)
-            self.transformer.save_config(str(directory))
+            _write_config(self.transformer, directory)
             save_file(bfloat16, str(directory / SAFETENSORS_WEIGHTS_NAME))
             record.write(directory / EXPORT_RECORD)
 
@@ -362,7 +373,7 @@ class FullTraining:
         if ranks.main:
             state.mkdir(parents=True, exist_ok=True)
             (state / PROGRESS_RECORD).unlink(missing_ok=True)  # a stopped run's, until this state is whole
-            self.transformer.save_config(str(state))
+            _write_config(self.transformer, state)
             torch.save(optimizer, state / OPTIMIZER_STATE)
         del optimizer  # sharded: the main rank's whole copy on the CPU, dropped before the weights are gathered
         files = {SAFETENSORS_WEIGHTS_NAME: weights}

@@ -63,7 +63,7 @@ import typer
 from peft import LoraConfig, get_peft_model_state_dict
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from rich.console import Console
-from safetensors.torch import save_file
+from safetensors.torch import load_file, save_file
 from torch import Tensor, nn
 from torch.nn import functional as F
 from torch.optim.lr_scheduler import LambdaLR
@@ -153,6 +153,7 @@ class TrainSettings(BaseModel):
     limit_pairs: int | None = Field(default=None, ge=1)
     encode_text: bool = False
     sigma_shift: float = Field(default=1.0, gt=0)
+    caption_dropout: float = Field(default=0.0, ge=0.0, lt=1.0)
     grad_clip: float = 1.0
     warmup: int = Field(default=50, ge=1)
     decay_steps: int = Field(default=0, ge=0)
@@ -190,6 +191,7 @@ class StepLog(BaseModel):
     pairs: list[str]
     variants: list[str]
     sigmas: list[float]
+    dropped: list[bool] | None = None
     seconds: float
     peak_memory_gb: float | None = None
 
@@ -448,26 +450,40 @@ def accumulate_gradients(
     encoder: PromptEncoder | None = None,
     sigma_shift: float = 1.0,
     ranks: Ranks | None = None,
-) -> tuple[list[float], list[float]]:
+    caption_dropout: float = 0.0,
+    negative: Tensor | None = None,
+) -> tuple[list[float], list[float], list[bool]]:
     """One step's gradients accumulated into the trained weights: the mean of ``samples``' flow-matching losses, each
     at a noise level (shifted by ``sigma_shift``) and noise drawn from ``generator``, its prompt encoded by ``encoder``
     when given. Over several ranks every rank draws every sample's level and noise in turn, as one process does, and
     computes the samples it owns (:meth:`Ranks.owns`), each loss divided by its own count: FSDP2 averages the ranks'
-    gradients into the mean over ``samples``.
+    gradients into the mean over ``samples``. With ``caption_dropout`` each sample's prompt is, at that chance (drawn
+    from ``generator`` first, every rank alike), replaced by ``negative``, the prompt guidance draws against, its
+    sample page kept: the unconditional branch of guidance is then trained, not only implied.
 
     Returns:
-        Each sample's loss (summed over the ranks) and noise level.
+        Each sample's loss (summed over the ranks), noise level and whether its prompt was dropped.
+
+    Raises:
+        ValueError: If ``caption_dropout`` is set without ``negative``.
     """
+    if caption_dropout and negative is None:
+        raise ValueError("caption dropout replaces a prompt by the negative prompt: give its embeddings")
     ranks = Ranks() if ranks is None else ranks
     owned = len(samples) // ranks.world
     # the losses kept on the device and read once, after the last backward: no wait for the GPU between samples
     losses, sigmas = torch.zeros(len(samples), dtype=torch.float64, device=device), []
+    dropped = []
     for index, entry in enumerate(samples):
+        # drawn only with dropout on, so a run without it draws its levels and noise as before
+        dropped.append(bool(caption_dropout) and torch.rand(1, generator=generator).item() < caption_dropout)
         if not ranks.owns(index):  # its level and noise drawn all the same, so every rank's generator goes on alike
             sigmas.append(draw_sigmas(1, generator, sigma_shift).item())
             torch.randn(target_shape(cache, entry), generator=generator)
             continue
         sample = load_sample(cache, entry, device, encoder)
+        if dropped[-1] and negative is not None:
+            sample = sample.model_copy(update={"prompt_embeds": negative})
         sigma = draw_sigmas(1, generator, sigma_shift).item()
         noise = torch.randn(sample.target.shape, generator=generator).to(device)
         loss = flow_matching_loss(transformer, sample, sigma, noise, compute_dtype=compute_dtype)
@@ -476,7 +492,7 @@ def accumulate_gradients(
         sigmas.append(sigma)
     if ranks.mesh is not None:
         dist.all_reduce(losses)
-    return losses.tolist(), sigmas
+    return losses.tolist(), sigmas, dropped
 
 
 def _validate(
@@ -589,6 +605,7 @@ def train(
     model: Path | None = None,
     ranks: Ranks | None = None,
     profile_dir: Path | None = None,
+    negative: Path | None = None,
 ) -> Path:
     """The DiT at ``base`` trained from the cache at ``cache`` (the module's docstring): a LoRA, or with
     ``settings.full`` every weight, from the start or from ``out``'s checkpoint ``resume``; with
@@ -633,6 +650,11 @@ def train(
         raise ValueError(f"{cache} holds {len(entries)} entries; the run resumed drew from {len(progress.order)}")
     sample_size = sample_size_of(cache, val_cache)
     encoder = prompt_encoder(cache, val_cache, settings, model)
+    if settings.caption_dropout and negative is None:
+        raise ValueError("--caption-dropout replaces a prompt by the negative prompt: give its embeddings (--negative)")
+    negative_embeds = (
+        None if not settings.caption_dropout or negative is None else load_file(str(negative))["prompt_embeds"]
+    )
     out.mkdir(parents=True, exist_ok=True)
     training: LoraTraining | FullTraining
     if settings.full is None:
@@ -671,7 +693,7 @@ def train(
         if device.type == "cuda":
             torch.cuda.reset_peak_memory_stats(device)
         samples = [entries[next(order)] for _ in range(settings.grad_accumulation)]
-        losses, sigmas = accumulate_gradients(
+        losses, sigmas, dropped = accumulate_gradients(
             training.transformer,
             cache,
             samples,
@@ -681,6 +703,8 @@ def train(
             encoder=encoder,
             sigma_shift=settings.sigma_shift,
             ranks=ranks,
+            caption_dropout=settings.caption_dropout,
+            negative=None if negative_embeds is None else negative_embeds.to(settings.device),
         )
         if ranks.mesh is None:
             grad_norm = torch.nn.utils.clip_grad_norm_(training.parameters, settings.grad_clip).item()
@@ -697,6 +721,7 @@ def train(
             pairs=[entry.pair for entry in samples],
             variants=[entry.variant.value for entry in samples],
             sigmas=sigmas,
+            dropped=dropped if settings.caption_dropout else None,
             seconds=seconds,
             peak_memory_gb=peak,
         )
@@ -863,6 +888,22 @@ def main(
             "one the cache was made with)"
         ),
     ] = None,
+    caption_dropout: Annotated[
+        float,
+        typer.Option(
+            min=0.0,
+            max=0.99,
+            help="at this chance a sample's prompt is replaced by the negative prompt (--negative), its sample page "
+            "kept, so the unconditional branch guidance draws against is trained (0: never, as before)",
+        ),
+    ] = 0.0,
+    negative: Annotated[
+        Path | None,
+        typer.Option(
+            help="with --caption-dropout: the negative prompt's embeddings, a safetensors file holding "
+            "prompt_embeds (as draw_adapters.py --encode-negative writes it)"
+        ),
+    ] = None,
     sigma_shift: Annotated[
         float,
         typer.Option(
@@ -952,6 +993,7 @@ def main(
             "limit_pairs": limit_pairs,
             "encode_text": encode_text,
             "sigma_shift": sigma_shift,
+            "caption_dropout": caption_dropout,
             "grad_accumulation": samples_per_step,
             "size_block": size_block,
             "reference_place": reference_place,
@@ -972,6 +1014,7 @@ def main(
             model=model,
             ranks=ranks,
             profile_dir=profile_dir,
+            negative=negative,
         )
     except ValueError as error:  # an unfinished cache, a used run directory, a checkpoint not to resume: the arguments'
         raise typer.BadParameter(str(error)) from error
