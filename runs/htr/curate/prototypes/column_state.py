@@ -15,6 +15,7 @@ WANTED = {  # column of scans.lance: (what it says, what makes it)
     "page_confidence": ("the old pipeline's confidence", "diffu-curate features"),
     "polygon_cover": ("statistics of the old labels (lines, digits, cover ...)", "diffu-curate features"),
     "gutter_score": ("the small gutter network's opening score", "diffu-curate gutter"),
+    "saturation": ("greyscale microfilm (near 0) or colour scan", "embed_pool.py (E40), with the vectors"),
     "vl_caption": ("the VL model's caption", "vl_describe.py (a sample: too slow for every scan)"),
     "vl_kind": ("the VL model's kind of scan", "vl_describe.py, then a head for every scan"),
     "vl_writing_layout": ("table or running text, by the VL model", "vl_ask2.py"),

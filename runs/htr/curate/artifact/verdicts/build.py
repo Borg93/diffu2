@@ -1,5 +1,5 @@
 """Builds index.html, the verdicts page (claude.ai/artifact/98423D2V376HLajHfbhpS2): every curation experiment of
-docs/CURATION.md (E1 to E43) with its verdict, why it was run, what it found and what it taught us; five results as
+docs/CURATION.md (E1 to E44) with its verdict, why it was run, what it found and what it taught us; five results as
 bar charts; and the two archify diagrams as snapshots (snapshots.sh makes them and the interactive pages).
 
 Publish index.html with the Artifact tool under the same URL. The texts and numbers below are copied from the
@@ -76,6 +76,11 @@ E = [
         ("Why it is planned", "The comparison that matters is on whole pages: YOLO and TrOCR run as one pipeline on the same 200 test pages, scored on character and word error as Nemotron Parse is."),
         ("Where it is", "Not started. The earlier 10.7 % (E1) was measured on 207 other pages, 11 of them shared, and is no comparison."),
         ("What it needs", "The old pipeline installed in an environment of its own and a GPU for a short run, after the training."),
+    ]),
+    (44, "reader", "measured", "Why the gain is small", "Why the pretraining helps so little", [
+        ("Why we did it", "0.63 points from 139,937 extra pages is less than expected. Three checks on the stored readings and training curves."),
+        ("What we found", "The pools are 72 to 88 % greyscale microfilm; the test pages are three-quarters colour. Greyscale test pages gained 17 % of their error (6.99 to 5.78 %), colour pages 5 % (7.76 to 7.35 %). The head start from pretraining shrinks during the fine-tune: the dev loss gap is 0.31 at step 250, 0.11 at step 1,000 and 0.02 at the end. 4,374 steps on pool pages bring the ground-truth dev loss to 1.78; 250 steps on ground truth alone reach 1.73."),
+        ("What we learned", "The pools do not look like what the test asks for, the ground truth teaches the same things given time, and the pool's labels are a weak teacher. About 580,000 pool scans are colour; a set chosen to look like the target is the next thing to test, and the scan's saturation is now measured for every scan with the vectors."),
     ]),
     (38, "reader", "running", "Trusted-cut pretraining", "Pretrain on pages with a trusted cut, then fine-tune", [
         ("Why we are doing it", "This is the test the curation leads to: does pretraining on pool pages with a trusted cut beat the same training without it (7.55 %), the unfiltered control (7.18 %) and the best reader (6.73 %)?"),

@@ -3,8 +3,9 @@
 Made as embed_pages.py made them for the 45,000 first described scans, so a head fitted on those reads these: the
 scan fitted to 448 px on its longer side (both sides a multiple of 112), and of each model the class token and the
 mean patch token, each normalised, 2,048 numbers a model. The scans are taken in an order shuffled once, so those
-embedded at any moment are a random sample of the pools; scans of one shape go through the models together. Parquet
-part files (image, dinov3, tipsv2) in OUT, 20,000 scans a part; a scan in a part is not embedded again.
+embedded at any moment are a random sample of the pools; scans of one shape go through the models together. With them the scan's mean saturation (0 to 1: a
+greyscale microfilm scan is near 0, a colour scan above about 0.05), read off the same fitted image. Parquet part
+files (image, dinov3, tipsv2, saturation) in OUT, 20,000 scans a part; a scan in a part is not embedded again.
 
     CUDA_VISIBLE_DEVICES=1 uv run python runs/htr/curate/prototypes/embed_pool.py OUT SHARD SHARDS [LIMIT]
 
@@ -29,22 +30,24 @@ from transformers import AutoModel
 Image.MAX_IMAGE_PIXELS = None
 LONG, BATCH, PART, WORKERS = 448, 32, 20000, int(os.environ.get("WORKERS", "20"))
 DEVICE = os.environ.get("DEVICE", "cuda"); HALF = DEVICE == "cuda"
-ROWS = pa.schema([("image", pa.utf8()), ("dinov3", pa.list_(pa.float16(), 2048)), ("tipsv2", pa.list_(pa.float16(), 2048))])
+ROWS = pa.schema([("image", pa.utf8()), ("dinov3", pa.list_(pa.float16(), 2048)), ("tipsv2", pa.list_(pa.float16(), 2048)), ("saturation", pa.float32())])
 
 
 class Scans(Dataset):
     def __init__(self, images: list[str]) -> None: self.images = images
     def __len__(self) -> int: return len(self.images)
 
-    def __getitem__(self, index: int) -> tuple[int, torch.Tensor | None]:
+    def __getitem__(self, index: int) -> tuple[int, torch.Tensor | None, float]:
         try:
             with Image.open(self.images[index]) as scan:
                 scan.draft("RGB", (2400, 2400)); scan = scan.convert("RGB")
             scale = LONG / max(scan.size)
             size = (max(28, round(scan.width * scale / 112) * 112), max(28, round(scan.height * scale / 112) * 112))
-            return index, torch.from_numpy(np.asarray(scan.resize(size, Image.Resampling.BICUBIC))).permute(2, 0, 1)
+            fitted = scan.resize(size, Image.Resampling.BICUBIC)
+            saturation = float(np.asarray(fitted.convert("HSV"))[..., 1].mean()) / 255
+            return index, torch.from_numpy(np.asarray(fitted)).permute(2, 0, 1), saturation
         except (OSError, ValueError):  # an unreadable or truncated scan; anything else is a bug and stops the run
-            return index, None
+            return index, None, 0.0
 
 
 def vectors(dino, tips, x: torch.Tensor) -> tuple[np.ndarray, np.ndarray]:
@@ -59,10 +62,11 @@ def vectors(dino, tips, x: torch.Tensor) -> tuple[np.ndarray, np.ndarray]:
     return d.cpu().numpy().astype(np.float16), t.cpu().numpy().astype(np.float16)
 
 
-def write(out: Path, shard: int, images: list[str], d: list[np.ndarray], t: list[np.ndarray]) -> None:
+def write(out: Path, shard: int, images: list[str], d: list[np.ndarray], t: list[np.ndarray], saturation: list[float]) -> None:
     def column(rows: list[np.ndarray]) -> pa.FixedSizeListArray:
         return pa.FixedSizeListArray.from_arrays(pa.array(np.concatenate(rows).ravel(), pa.float16()), 2048)
-    pq.write_table(pa.table({"image": images, "dinov3": column(d), "tipsv2": column(t)}, schema=ROWS), out / f"part-{shard}-{time.time_ns()}.parquet")
+    table = pa.table({"image": images, "dinov3": column(d), "tipsv2": column(t), "saturation": pa.array(saturation, pa.float32())}, schema=ROWS)
+    pq.write_table(table, out / f"part-{shard}-{time.time_ns()}.parquet")
 
 
 if __name__ == "__main__":
@@ -79,28 +83,28 @@ if __name__ == "__main__":
     dino = AutoModel.from_pretrained("facebook/dinov3-vitl16-pretrain-lvd1689m", dtype=torch.bfloat16 if HALF else torch.float32).to(DEVICE).eval()
     tips = AutoModel.from_pretrained("google/tipsv2-l14", trust_remote_code=True).vision_encoder.to(DEVICE).eval()
     loader = DataLoader(Scans(todo), batch_size=1, num_workers=WORKERS, collate_fn=lambda batch: batch[0], prefetch_factor=8)
-    waiting: dict[tuple[int, int], list[tuple[int, torch.Tensor]]] = {}
-    names: list[str] = []; d_rows: list[np.ndarray] = []; t_rows: list[np.ndarray] = []; lost = 0; start = time.time()
+    waiting: dict[tuple[int, int], list[tuple[int, torch.Tensor, float]]] = {}
+    names: list[str] = []; d_rows: list[np.ndarray] = []; t_rows: list[np.ndarray] = []; s_rows: list[float] = []; lost = 0; start = time.time()
 
-    def run(batch: list[tuple[int, torch.Tensor]]) -> None:
-        d, t = vectors(dino, tips, torch.stack([x for _, x in batch]))
-        names.extend(todo[i] for i, _ in batch); d_rows.append(d); t_rows.append(t)
+    def run(batch: list[tuple[int, torch.Tensor, float]]) -> None:
+        d, t = vectors(dino, tips, torch.stack([x for _, x, _ in batch]))
+        names.extend(todo[i] for i, _, _ in batch); d_rows.append(d); t_rows.append(t); s_rows.extend(s for _, _, s in batch)
 
     with torch.inference_mode():
-        for n, (i, x) in enumerate(loader):
+        for n, (i, x, saturation) in enumerate(loader):
             if x is None:
                 lost += 1
             else:
-                held = waiting.setdefault((x.shape[1], x.shape[2]), []); held.append((i, x))
+                held = waiting.setdefault((x.shape[1], x.shape[2]), []); held.append((i, x, saturation))
                 if len(held) == BATCH:
                     run(held); held.clear()
             if len(names) >= PART:
-                write(out, shard, names, d_rows, t_rows); names, d_rows, t_rows = [], [], []
+                write(out, shard, names, d_rows, t_rows, s_rows); names.clear(); d_rows.clear(); t_rows.clear(); s_rows.clear()
             if n % 2000 == 1999:
                 print(f"{n + 1} scans, {(n + 1) / (time.time() - start):.1f} a second, {lost} unreadable", flush=True)
         for held in waiting.values():
             if held:
                 run(held)
     if names:
-        write(out, shard, names, d_rows, t_rows)
+        write(out, shard, names, d_rows, t_rows, s_rows)
     print(f"done {len(todo) - lost} of {len(todo)} in {time.time() - start:.0f} s, {lost} unreadable", flush=True)
