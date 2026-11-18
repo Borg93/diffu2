@@ -311,7 +311,7 @@ is in the section named; scripts are under `runs/htr/curate/prototypes/` unless 
 | E35 | Marking by region of the embedding map (after marimo's bulk-labelling example): the 14,985 scans with a Qwen 8B vector on their UMAP map, a box dragged over a region, twenty of its scans shown, one button marking the box | done 16 Nov: 962 scans marked by region; the gallery by cluster proved the quicker page | the clusters do separate the question: 4 of the 50 clusters hold 68 % of the scans the first form calls single or a table across the fold; 36 clusters (11,749 scans) hold under 2 % of them | `mark_map.py`, `scan_map.lance` -> `region_marks.lance` |
 | E36 | A head on Qwen 8B's embeddings trained on the bulk marks, to answer cut-or-not for every scan | done 16 Nov; every described scan embedded 17 Nov (130,733 vectors in `scan_embeddings.lance`) | volumes held out: 94.1 % right (first form 85.5 %), 95.4 % of the scans not to be cut found, 4.8 % of the others held back. On 350 scans marked one at a time, outside the training: 39 of 41 found, 21 of 309 held back | "Marks in bulk"; `embed_images.py`, `embeddings_to_lance.py` -> `scan_embeddings.lance` |
 | E37 | The rule for a trusted cut applied: first form says opening and no table across the fold, defined question says cut (`vl_cut`), head on all 15,288 marks says cut (`head_cut`, `head_p_cut`), placer finds a fold line | done 17 Nov on all 100,083 described pool scans | head on all marks, volumes held out: 95.4 % right, 95.2 % of not-to-cut found, 3.7 % of cut held back. Rule keeps 37,222 of 48,142 scans (77 %): Svea 18,379, andra arkiv 18,843; running text 34,803, tables 2,330. 48 drawn at random and looked at with the fold drawn: 47 cut on the fold, 1 a little to the side. **All described pool scans, check by check:** 100,083 -> opening with no table across the fold 95,485 -> defined question says cut 87,366 -> head says cut 80,767 -> fold line found 77,495 -> labelled lines 77,258 -> outside ground-truth volumes 75,776 | `cut_head.py`; `cut_or_not.lance` -> `vl_cut`; `folds.lance` (123,838 openings) |
-| E38 | Nemotron 3.5 Parse pretrained on the trusted cuts of both pools (old labels, 1 epoch, the control's recipe), then fine-tuned on the GT as `nemotron-parse-all` (2 epochs; compare 7.55 % and the control's 7.18 %) and 2 more as `nemotron-parse-more` (compare 6.73 %) | **pretraining started 17 Nov 09:42** on 139,937 pages of 75,776 scans (Svea 37,071, andra arkiv 38,705; running text 71,006, tables 4,688; 24 pages looked at, all single pages); the andra arkiv pool read is stopped, to restart after (tmux `trusted`, `runs/htr/trusted_pretrain.sh`, log `runs/htr/trusted_pretrain.log`): waits for the embedding, refits the head, stages, builds the set, stops the andra arkiv pool read (resumable; PIDs in `pool_read.pids`), trains | trial set of 200 staged scans: 381 pages, 16 looked at, all single pages | `stage_trusted.py`; `diffu-reader-set --cuts` (a scan the file names is cut at its fold); configs `nemotron_parse_trusted_{pretrain,finetune,more}.yaml` |
+| E38 | Nemotron 3.5 Parse pretrained on the trusted cuts of both pools (old labels, 1 epoch, the control's recipe), then fine-tuned on the GT as `nemotron-parse-all` (2 epochs; compare 7.55 % and the control's 7.18 %) and 2 more as `nemotron-parse-more` (compare 6.73 %) | **first answer 18 Nov 08:14**; the 2 more GT epochs (`nemotron-parse-trusted-more`) running since 08:14, end about 18:00 | pretraining on 139,937 trusted pages, then 2 GT epochs: **6.92 % CER, 18.61 % WER** against 7.55 %, 20.50 % without pool pages (gain 0.63 points, 95 % interval +0.14 to +1.16, better on 123 pages, worse on 58), 7.18 % after the unfiltered Svea pretraining (0.26 points, not shown) and 6.73 % for 4 GT epochs alone (not ahead). The gain is largest on pages of the pools' own archives. Section "The trusted-cut pretraining's first answer" | `stage_trusted.py`; `diffu-reader-set --cuts` (a scan the file names is cut at its fold); configs `nemotron_parse_trusted_{pretrain,finetune,more}.yaml` |
 | E39 | Does a head on the patch models' whole-scan vectors (TIPSv2, DINOv3 at 448 px, already held for the 45,000 first described scans) answer cut-or-not as well as the head on Qwen 8B's, so that every pool scan can be embedded by a small model and the VL model left out at scale | done 17 Nov | on 15,110 marked scans with both kinds of vector, volumes held out: Qwen 8B 95.5 % right, 95.3 % of the scans not to be cut found, 3.9 % of the others held back; TIPSv2 + DINOv3 94.6 %, 96.2 %, 5.0 %; DINOv3 alone 94.0 %, 96.0 %, 5.6 %; TIPSv2 alone 93.1 %, 96.9 %, 6.8 %. Of the scans each head would cut, 0.4 to 0.6 % are not to be cut. **The patch models are enough for cut-or-not.** Both together embedded the 45,000 scans at 34.6 a second on one GPU (Qwen 8B: 10.5), so the 3.15 million pool scans take about 13 hours on two GPUs. The described pool scans are 3 % of the pools and the rule keeps 77 % of them: by it the pools hold about 2.4 million scans to cut, 4.4 million pages; one epoch of pretraining covers about 280,000 pages a day, which sets the size | `cut_head_embedders.py` |
 | E40 | The whole pools through the cut rule without the VL model: every pool scan with labelled lines embedded by DINOv3 and TIPSv2 (`embed_pool.py`: as the 45,000 were, in shuffled order, scans of one shape batched), every candidate opening's fold placed, then the head on the hand marks and the placer's fold line decide | **queued 17 Nov** behind the training (tmux `aftertrusted`, `runs/htr/after_trusted.sh`, log `runs/htr/after_trusted.log`); starts by itself when the window `trusted` closes | checked on the CPU on 40 scans of the 45,000: the new vectors match the stored ones (cosine at least 0.9995 for DINOv3, 0.9999 for TIPSv2). Expected: about 13 hours on two GPUs, about 2.4 to 2.5 million scans to cut. To do when it has run: vectors into Lance, the head fitted on the marks, a sample of its cuts looked at by eye, then a set of the size chosen | `embed_pool.py`, `place_folds.py ... pool` |
 | E41 | Is the VL model needed on every scan? On the 15,110 marked scans with patch vectors: its answers against the head for cut-or-not; and a head on the patch vectors fitted on its defined table-or-running-text answer | done 17 Nov | **cut-or-not: the head on the marks is far ahead of the VL model's answers.** Scans not to be cut found, openings held back, share of the kept that are not to be cut: VL first form 45.6 %, 0.4 %, 5.9 %; first form and defined question 64.8 %, 6.5 %, 4.1 %; head on patch vectors (volumes held out) 96.1 %, 5.0 %, 0.47 %; head and the VL model's two answers 97.8 %, 10.3 %, 0.29 %. Of the 61 scans not to be cut that the head would cut the VL model's answers stop 26, and they hold back 721 of the 12,873 openings the head keeps. **Table or running text: a head repeats the VL model's defined answer** on 44,269 scans, volumes held out: 97.3 % agree, 96.2 % of its tables found, 82.9 % of what the head calls a table the VL model does too. So the VL model describes a sample and the heads carry its answers and the marks to every scan | `vl_or_head.py` |
@@ -468,6 +468,51 @@ Nemotron 3.5 Parse pretrained one epoch on 53,490 random Svea pool pages with th
   The pool's pages teach the reader its own archives and nothing else.
 - So unfiltered old labels are worth little, and the gain sits where the pool's archives are. Not yet tried: filtered
   and image-cut pages from both pools, and pretraining followed by the longer fine-tune.
+
+## The trusted-cut pretraining's first answer (E38, 18 Nov 08:14)
+
+Nemotron 3.5 Parse pretrained one epoch on 139,937 pool pages whose cut is trusted (both pools, old labels unfiltered;
+dev loss on the GT 1.77 at its end), then fine-tuned on the GT as `nemotron-parse-all` (2 epochs, dev loss 1.134 at
+its end against 1.155 without pretraining and 1.139 after the unfiltered pretraining), read the 200 test pages with
+the guard. `prototypes/compare_reads.py` scores every run's stored reading page by page (it reproduces `htr-eval`'s
+figures to the digit) and resamples the pages 10,000 times:
+
+| Run | Pool pages before the GT | GT epochs | CER | WER | without the two pages of partial truth |
+|---|---|---|---|---|---|
+| `nemotron-parse-all` | none | 2 | 7.55 % | 20.50 % | 6.27 % |
+| `nemotron-parse-svea-finetune` | 53,490, Svea, cut by the old labels' lines | 2 | 7.18 % | 19.43 % | 5.87 % |
+| `nemotron-parse-trusted-finetune` | 139,937, both pools, trusted cut | 2 | **6.92 %** | **18.61 %** | 5.63 % |
+| `nemotron-parse-more` | none | 4 | 6.73 % | 18.83 % | 5.45 % |
+
+- **Against the same recipe without pool pages it helps, and this time beyond doubt on 200 pages:** 0.63 points
+  (95 % interval +0.14 to +1.16; a gain in 99.5 % of the draws), better on 123 pages and worse on 58.
+- **Against the unfiltered Svea pretraining it is not shown to be better:** 0.26 points (interval -0.39 to +1.05; a
+  gain in 74 % of the draws), better on 93 pages and worse on 79. The two differ in three things at once (2.6 times
+  the pages, both pools, the trusted cut), so the cut's own worth is not measured.
+- **Against two more epochs on the GT alone it is not ahead:** 6.92 % against 6.73 % (interval -0.65 to +0.22 for
+  the difference), for about the same GPU time (22 hours against 19). Words are a little better (18.61 % against
+  18.83 %). The comparison that counts, the pretraining followed by 4 GT epochs, is `nemotron-parse-trusted-more`,
+  started 08:14, ends about 18:00.
+- **Where the gain is** (by the pool a test page's volume lies in; those volumes were left out of the pretraining):
+
+  | Test pages | Pages | Characters | none | unfiltered | trusted | 4 GT epochs |
+  |---|---|---|---|---|---|---|
+  | volume in the andra arkiv pool | 23 | 20,073 | 4.17 | 2.89 | 2.77 | 2.90 |
+  | volume in the Svea pool | 8 | 6,863 | 8.63 | 6.25 | 5.84 | 8.47 |
+  | volume in no pool | 169 | 166,213 | 7.91 | 7.73 | 7.46 | 7.12 |
+
+  The pool pages teach the pools' own archives most (1.4 and 2.8 points), and a little outside them (0.45 points,
+  where the longer GT training gives 0.79).
+- **By kind:** running text 6.24 to 5.83 % (unfiltered 5.67, 4 GT epochs 5.73); tables 17.06 to 14.85 % (unfiltered
+  18.14, 4 GT epochs 14.08). The table figures hang on single pages: one inventory page alone is 583 edits between
+  the two pretrained runs.
+- **Looked at:** the page that got worst (`fbf7d0759ad2_right`, +213 edits) is an early stop: the reader read the
+  first block, 383 of 635 characters, and ended. The readings' total length is the same in every run (194,458
+  characters against 193,830 and 194,936), so stopping early is not general.
+- **What it says about more pool pages.** From 53,490 to 139,937 pages, with a better cut, the gain was 0.26 points
+  and not shown. The labels are the old pipeline's, about as wrong as the reader itself is on these pages (5 to 7 %
+  on matched lines), so more of the same labels is unlikely to teach much more; better labels are the lever to try
+  beside scale: the pages where our reader and the old label agree, or our own reader's readings.
 
 ## Open
 

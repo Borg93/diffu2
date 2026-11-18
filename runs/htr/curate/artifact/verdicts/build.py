@@ -1,5 +1,5 @@
 """Builds index.html, the verdicts page (claude.ai/artifact/98423D2V376HLajHfbhpS2): every curation experiment of
-docs/CURATION.md (E1 to E42) with its verdict, why it was run, what it found and what it taught us; five results as
+docs/CURATION.md (E1 to E43) with its verdict, why it was run, what it found and what it taught us; five results as
 bar charts; and the two archify diagrams as snapshots (snapshots.sh makes them and the interactive pages).
 
 Publish index.html with the Artifact tool under the same URL. The texts and numbers below are copied from the
@@ -39,7 +39,7 @@ THEMES = [
 E = [
     (1, "labels", "measured", "Old labels as a reader", "The old labels scored as a page reader", [
         ("Why we did it", "Before training on the old YOLO and TrOCR labels we needed to know how good they are, on the same test pages every reader is scored on."),
-        ("What we found", "10.7 % character error on 207 test pages. On 11 pages that all three read: old labels 11.2 %, Nemotron Parse 7.6 %, LightOnOCR-3 3.4 %."),
+        ("What we found", "10.7 % character error on 207 test pages that also lie in the pools. These are not the 200 pages the readers are scored on: only 11 are shared, and on those the old labels read at 11.2 %, Nemotron Parse at 7.6 %, LightOnOCR-3 at 3.4 %."),
         ("What we learned", "Our readers already read better than the labels they would learn from. The labels can only help as pretraining, with ground truth after."),
     ]),
     (2, "labels", "measured", "Calibration against truth", "Calibration: the old label against ground truth, line by line", [
@@ -72,10 +72,15 @@ E = [
         ("What we found", "Only 201 of 49,491 ground-truth training pages carry a table with rows and cells. The 26 table test pages are all transcribed as plain lines, and they hold 25 % of all errors. Old labels against truth on Svea tables: 19 % error on matched lines, a wrong number in 46 % of lines, 35 % of labelled lines matching no true line. On andra arkiv tables: 7 % error."),
         ("What we learned", "The reader reads our tables as lines and has seen almost no table structure. Part of the table error is reading order, numbers and dot leaders, and one of four pages looked at was no table at all. The pools' table labels are a poor teacher, Svea's most of all, so pool tables get no extra weight."),
     ]),
+    (43, "reader", "queued", "YOLO + TrOCR on the 200 pages", "The old pipeline as one reader on the same 200 test pages", [
+        ("Why it is planned", "The comparison that matters is on whole pages: YOLO and TrOCR run as one pipeline on the same 200 test pages, scored on character and word error as Nemotron Parse is."),
+        ("Where it is", "Not started. The earlier 10.7 % (E1) was measured on 207 other pages, 11 of them shared, and is no comparison."),
+        ("What it needs", "The old pipeline installed in an environment of its own and a GPU for a short run, after the training."),
+    ]),
     (38, "reader", "running", "Trusted-cut pretraining", "Pretrain on pages with a trusted cut, then fine-tune", [
-        ("Why we are doing it", "This is the test the curation leads to: does pretraining on pool pages with a trusted cut beat the unfiltered control (7.18 %) and the best reader (6.73 %)?"),
-        ("Where it is", f"139,937 single pages from 75,776 scans of both pools. Pretraining started on 17 November at 09:42 and is at {PROGRESS}. Dev loss on ground truth over the last evaluations: {DEV_LOSS} (the control ended at 1.81)."),
-        ("What comes next", "Two fine-tunes on ground truth, 2 epochs and then 2 more, with the 200 test pages read after each. The first score comes on 18 November. The labels are still unfiltered, so this run tests the cut alone."),
+        ("Why we are doing it", "This is the test the curation leads to: does pretraining on pool pages with a trusted cut beat the same training without it (7.55 %), the unfiltered control (7.18 %) and the best reader (6.73 %)?"),
+        ("What we found so far", "One epoch on 139,937 pool pages, then 2 epochs on ground truth: 6.92 % character error, 18.61 % word error. Against the same recipe without pool pages that is a gain of 0.63 points (95 % interval +0.14 to +1.16), better on 123 pages and worse on 58. Against the unfiltered control the gain is 0.26 points and not shown. Against 4 epochs on ground truth alone it is not ahead."),
+        ("What we learned so far", f"Pool pages help, most on the pools' own archives: 4.2 to 2.8 % on andra arkiv's volumes, 8.6 to 5.8 % on Svea's, 7.9 to 7.5 % elsewhere. Almost tripling the pages gave little, which points at the labels and not the amount. The second fine-tune, 2 more epochs, is at {PROGRESS} and ends in the evening of 18 November."),
     ]),
     (5, "cut", "failed", "Gutter network", "A small gutter network on thumbnails", [
         ("Why we did it", "Cutting by the old labels' line positions goes wrong on about 870,000 pages. A tiny network (0.2 M parameters) on a 384 × 256 thumbnail was cheap enough to run over all 3.15 million scans."),
@@ -271,7 +276,7 @@ ALSO = [
 ]
 
 OPEN = [
-    ("The score of E38", "On 18 November, against 7.18 % (unfiltered control) and 6.73 % (best reader)."),
+    ("The second score of E38", "Pretraining followed by 4 epochs on ground truth, against 6.73 %. It comes in the evening of 18 November and says whether pool pages add anything to longer training on ground truth."),
     ("Filtering the labels", "Our reader has to read the 139,937 trusted pages. On the 1,881 that have a reading, about 6 % disagree with the old label by more than half."),
     ("Tables", "6 % of the trusted set and the reader's weakest kind. The pools' labels on tables are poor (E42), so better table reading has to come from ground truth, a fixed reading order, or the double pass on table regions, which is queued."),
     ("Openings without a fold line", "About one in ten. The trained placer (E26) is for these."),
@@ -281,14 +286,14 @@ OPEN = [
 ]
 
 CHARTS = [
-    ("Character error on the 200 test pages", "percent of characters wrong; lower is better", 12.0, [
-        ("Old labels, scored as a reader", 10.7, "10.7 %", "on 207 test pages (E1)"),
+    ("Character error on the 200 test pages", "percent of characters wrong; lower is better", 9.0, [
         ("LightOnOCR-3", 8.32, "8.32 %", "2 epochs on ground truth"),
         ("Nemotron Parse, 2 epochs on ground truth", 7.55, "7.55 %", "with the 10-token no-repeat guard"),
         ("the same after unfiltered Svea pretraining", 7.18, "7.18 %", "53,490 pool pages first (E3)"),
+        ("the same after trusted-cut pretraining", 6.92, "6.92 %", "139,937 pool pages first (E38); gain 0.63 points, 95 % interval +0.14 to +1.16"),
         ("Nemotron Parse, 4 epochs on ground truth", 6.73, "6.73 %", "the best reader so far (E4)"),
-        ("the same after trusted-cut pretraining", None, "18 Nov", "E38 is training; no score yet"),
-    ], "Unlimited-OCR 2 read the same pages at 63.7 % and is off this scale."),
+        ("4 epochs after trusted-cut pretraining", None, "18 Nov, evening", "the second fine-tune of E38 is training"),
+    ], "Unlimited-OCR 2 read the same pages at 63.7 % and is off this scale. The old YOLO and TrOCR pipeline has no score on these pages yet (E43)."),
     ("What the trusted-cut rule keeps", "described pool scans left after each check", 100083.0, [
         ("Described pool scans", 100083, "100,083", "Svea and andra arkiv, described and embedded"),
         ("The form says opening, no table across the fold", 95485, "95,485", "96,105 openings; 620 of them hold a table across the fold"),
