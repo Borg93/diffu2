@@ -23,6 +23,7 @@ WANTED = {  # column of scans.lance: (what it says, what makes it)
     "kind": ("the kind of scan for every scan, by a head", "pool_columns.py (E40), with kind_p"),
     "layout": ("opening, single page ... for every scan, by a head", "pool_columns.py (E40), with layout_p"),
     "cut_class": ("the hand marks' class for every scan, by a head on the patch vectors", "pool_columns.py (E40), with cut_p"),
+    "language": ("the language of the scan's text (the old label's, by lingua), with language_p", "language_column.py (E64)"),
     "colour": ("a colour scan or greyscale microfilm", "pool_columns.py (E40), from saturation"),
     "vl_turned": ("turned writing, by the VL model", "vl_ask2.py"),
     "orientation": ("which way up the writing is, by the small network", "to do: orientation.py over the pools"),
