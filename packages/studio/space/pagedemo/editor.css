@@ -31,6 +31,9 @@
 .has-result .pe-slot { color: transparent; border-bottom-color: transparent; }
 .has-result .pe-box { background: transparent; }
 .has-result .pe-box.is-selected { background: color-mix(in srgb, var(--c) 10%, transparent); }
+/* over a drawn page the boxes step back: fainter outlines, a box's name only when it is selected or pointed at */
+.has-result .pe-box:not(.is-selected) { border-color: color-mix(in srgb, var(--c) 45%, transparent); border-width: 1px; }
+.has-result .pe-box:not(.is-selected):not(:hover) .pe-tag { display: none; }
 .pe-rule { position: absolute; background: var(--c); pointer-events: none; }
 .pe-handle { position: absolute; width: 11px; height: 11px; box-sizing: border-box; background: #fff; border: 1.5px solid var(--c); border-radius: 2px; display: none; }
 .pe-box.is-selected .pe-handle { display: block; }
