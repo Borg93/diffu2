@@ -41,8 +41,9 @@ from diffu_page.page.crops.geometry import LayoutBox  # noqa: E402
 from diffu_page.page.labels import LabelFormat, export  # noqa: E402
 from diffu_page.quality.judge import MAX_LINE_CER, LineVerdict  # noqa: E402
 from pagedemo.document import Document  # noqa: E402
-from pagedemo.drawing import DIT_REPO, Drawn, Models, draw, load_models  # noqa: E402
+from pagedemo.drawing import DIT_REPO, DIT_REVISION, Drawn, Models, draw, load_models  # noqa: E402
 from pagedemo.planning import layout_prompt_of, page_plan, planned  # noqa: E402
+from pagedemo.record import DrawRecord  # noqa: E402
 from pagedemo.templates import TEMPLATES  # noqa: E402
 
 HERE = Path(__file__).parent
@@ -77,17 +78,16 @@ def gpu_seconds(width: int, height: int, dit_passes: int) -> int:
 
 def _duration(
     plan: CropPlan,
-    sample: object,
-    lines: object,
+    sample: Image.Image,
+    sample_lines: list[LayoutBox],
     steps: int,
     guidance: float,
     seed: int,
     mode: str,
-    *_: object,
-    **__: object,
+    progress: gr.Progress = gr.Progress(track_tqdm=True),  # noqa: B008  # as draw_on_gpu's own
 ) -> int:
-    """The GPU seconds ZeroGPU is asked for, from the arguments :func:`draw_on_gpu` is called with (its progress
-    tracker among them, by keyword)."""
+    """The GPU seconds ZeroGPU is asked for a page: it calls this with the arguments :func:`draw_on_gpu` is called
+    with, so the two share one signature."""
     return gpu_seconds(plan.width, plan.height, passes(mode, steps, guidance))
 
 
@@ -159,6 +159,14 @@ def pick_sample(chosen: gr.SelectData) -> str:
     return SAMPLES[chosen.index]
 
 
+def thumbnail(path: str, width: int = 200) -> Image.Image:
+    """A sample page small, for the examples: a few kilobytes in place of the scan."""
+    with Image.open(path) as image:
+        small = image.convert("RGB")
+    small.thumbnail((width, 4 * width), Image.Resampling.LANCZOS)
+    return small
+
+
 def readback_rows(plan: CropPlan, verdicts: list[LineVerdict] | None) -> list[list[str]]:
     """A row per line of the page: its text, what the judge read, the read's error rate and its label's tag."""
     if verdicts is None:
@@ -198,8 +206,9 @@ def draw_page(
         sample_zoom: Show the model the sample's writing this many times larger than the page's own.
 
     Returns:
-        The editor's value with the drawn page, the page, its image, ALTO and PAGE files and its prompt's, a status
-        line, the seed, the prompt the model read, the sample as the model saw it, and each line's read-back.
+        The editor's value with the drawn page, the page, its image, ALTO and PAGE files and its record (the prompt
+        and the settings it was drawn with), a status line, the seed, the prompt the model read, the sample as the
+        model saw it, and each line's read-back.
     """
     if not sample:
         raise gr.Error("Add a sample page first: a scan of handwriting whose paper, ink and hand the page will take.")
@@ -233,8 +242,21 @@ def draw_page(
     for label_format in LabelFormat:
         files[label_format] = folder / f"{name}.{label_format.value}.xml"
         files[label_format].write_text(export(labels, label_format), encoding="utf-8")
-    prompt_file = folder / f"{name}.prompt.json"
-    prompt_file.write_text(ready.prompt, encoding="utf-8")
+    record = DrawRecord(
+        model=f"{DIT_REPO}@{DIT_REVISION}",
+        mode=mode,
+        steps=STUDENT_STEPS if mode == FAST else steps,
+        guidance=1.0 if mode == FAST else float(guidance),
+        seed=seed,
+        megapixels=megapixels,
+        width=plan.width,
+        height=plan.height,
+        sample_zoom=sample_zoom,
+        prompt=ready.prompt,
+        page=document,
+    )
+    record_file = folder / f"{name}.json"
+    record_file.write_text(record.model_dump_json(indent=1), encoding="utf-8")
 
     if verdicts is None:
         read = f"lines not read back ({drawn.read_error}): the labels carry no unclear tags"
@@ -257,7 +279,7 @@ def draw_page(
         gr.DownloadButton(value=str(picture), visible=True),
         gr.DownloadButton(value=str(files[LabelFormat.ALTO]), visible=True),
         gr.DownloadButton(value=str(files[LabelFormat.PAGE]), visible=True),
-        gr.DownloadButton(value=str(prompt_file), visible=True),
+        gr.DownloadButton(value=str(record_file), visible=True),
         line,
         seed,
         ready.prompt,
@@ -266,9 +288,12 @@ def draw_page(
     )
 
 
+# Gradio writes each rule here twice, as it stands and under the app's own container, but a rule inside @media only
+# under the container: the page's side padding, which sits above that container, is set fluid instead
 CSS = """
-#pd-app { max-width: 1360px; margin: 0 auto; padding: 4px 4px 48px; }
-.pd-header { display: flex; align-items: baseline; justify-content: space-between; gap: 6px 18px; flex-wrap: wrap; margin: 2px 0 8px; }
+.gradio-container .main.fillable { padding: 14px clamp(10px, 2.6vw, 32px) 24px !important; }
+#pd-header .html-container, #pd-editor .html-container, .pd-note .html-container { padding: 0 !important; }
+.pd-header { display: flex; align-items: baseline; justify-content: space-between; gap: 6px 18px; flex-wrap: wrap; margin: 0 0 4px; }
 .pd-header h1 { font-size: 1.45rem; font-weight: 600; letter-spacing: -0.01em; margin: 0; white-space: nowrap; }
 .pd-header p { flex: 1 1 420px; margin: 0; color: var(--body-text-color-subdued); font-size: 0.9rem; line-height: 1.4; }
 .pd-links { display: flex; gap: 6px; }
@@ -278,14 +303,24 @@ CSS = """
 .pd-chips span { font-size: 0.78rem; padding: 2px 9px; border-radius: 6px; background: var(--block-background-fill); border: 1px solid var(--border-color-primary); color: var(--body-text-color-subdued); }
 .pd-warn span:last-child { border-color: #b3261e; color: #b3261e; }
 #pd-run { font-size: 1rem; min-height: 44px; }
-#pd-result img, #pd-seen img { object-fit: contain; }
+#pd-result:has(.empty), #pd-seen:has(.empty) { height: 120px !important; }
+#pd-result img, #pd-seen img { object-fit: contain; max-height: 78vh; }
+#pd-examples .grid-wrap { min-height: 0 !important; height: auto; max-height: none; overflow: visible; }
+#pd-examples .grid-container { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; grid-template-rows: none !important; grid-auto-rows: auto !important; gap: 6px; height: auto; align-content: start; }
+#pd-examples .gallery-item, #pd-examples .thumbnail-item { width: 100% !important; height: auto !important; }
 #pd-examples .thumbnail-item { border-radius: 6px; }
 #pd-examples .caption-label { font-size: 0.68rem; padding: 1px 5px; }
+#pd-random { display: flex; align-items: center; }
+#pd-zoom .head label span { white-space: nowrap; }
 #pd-mode .wrap { gap: 6px; }
 #pd-mode .wrap label { padding: 5px 10px; }
 .pd-downloads { gap: 6px; }
 .pd-downloads button, .pd-downloads a { min-width: 0 !important; }
 .dark .gradio-container { color: var(--body-text-color); }
+@media (max-width: 640px) {
+  .pd-header h1 { font-size: 1.25rem; }
+  .pd-header p { font-size: 0.82rem; }
+}
 """
 
 THEME = gr.themes.Soft(
@@ -298,14 +333,39 @@ THEME = gr.themes.Soft(
     button_primary_background_fill_hover="#66532f",
     button_primary_text_color="#fbf6e9",
     button_primary_border_color="#4a3b22",
+    button_primary_background_fill_dark="#7a6337",
+    button_primary_background_fill_hover_dark="#8d7443",
+    button_primary_text_color_dark="#fbf6e9",
+    button_primary_border_color_dark="#7a6337",
     slider_color="#4a3b22",
+    slider_color_dark="#a08b62",
+    block_title_background_fill="transparent",
+    block_title_background_fill_dark="transparent",
+    block_title_text_color="*neutral_600",
+    block_title_text_color_dark="*neutral_300",
+    block_title_padding="0",
+    block_title_text_weight="600",
+    block_label_background_fill="*neutral_100",
+    block_label_background_fill_dark="*neutral_800",
+    block_label_text_color="*neutral_600",
+    block_label_text_color_dark="*neutral_300",
+    checkbox_label_background_fill_selected="#efe6d0",
+    checkbox_label_background_fill_selected_dark="#4a3b22",
+    checkbox_label_text_color_selected="#2b2317",
+    checkbox_label_text_color_selected_dark="#fbf6e9",
+    checkbox_label_border_color_selected="#4a3b22",
+    checkbox_label_border_color_selected_dark="#a08b62",
+    checkbox_background_color_selected="#4a3b22",
+    checkbox_background_color_selected_dark="#a08b62",
+    checkbox_border_color_selected="#4a3b22",
+    checkbox_border_color_selected_dark="#a08b62",
 )
 
 HEADER = f"""
 <div class="pd-header">
   <h1>diffu · archive pages</h1>
-  <p>Lay out a page as boxes or pick a template, write its text, choose a sample page: the model draws the page in the
-  sample's paper and scan, and returns it with its labels (ALTO and PAGE XML), every line read back.</p>
+  <p>Lay out a page as boxes or pick a template, write its text, choose a sample page: the model draws the page in
+  the sample's paper and scan, with its labels (ALTO and PAGE XML), every line read back.</p>
   <div class="pd-links">
     <a href="https://huggingface.co/{DIT_REPO}" target="_blank">Model ↗</a>
     <a href="https://github.com/Borg93/diffu2" target="_blank">Code ↗</a>
@@ -330,14 +390,93 @@ TEMPLATES_JSON = json.dumps(
 
 
 def build() -> gr.Blocks:
-    """The demo's page: the editor on the left; the sample, the settings, the button and what it returns on the
-    right."""
+    """The demo's page: the sample and the settings in a band on top; under it the editor on the left and, at the
+    same size on the right, the button and what it returns."""
     start_mode = FAST if HAS_STUDENT else GUIDED
     start_note, start_prompt = status(editor_value(TEMPLATES[FIRST], None), MEGAPIXELS, STEPS, GUIDANCE, start_mode)
-    with gr.Blocks(title="diffu · archive pages", elem_id="pd-app") as demo:
-        gr.HTML(HEADER)
+    with gr.Blocks(title="diffu · archive pages") as demo:
+        gr.HTML(HEADER, elem_id="pd-header")
         with gr.Row(equal_height=False):
-            with gr.Column(scale=11, min_width=420):
+            sample = gr.Image(
+                label="Sample",
+                type="filepath",
+                sources=["upload", "clipboard"],
+                height=178,
+                value=next((path for path in SAMPLES if "1687" in Path(path).name), None),
+                scale=0,
+                min_width=170,
+            )
+            examples = gr.Gallery(
+                value=[(thumbnail(path), SAMPLE_TITLES.get(Path(path).stem, Path(path).stem)) for path in SAMPLES],
+                label="Example samples",
+                show_label=False,
+                columns=2,
+                allow_preview=False,
+                object_fit="cover",
+                interactive=False,
+                buttons=[],
+                scale=0,
+                min_width=178,
+                elem_id="pd-examples",
+                visible=bool(SAMPLES),
+            )
+            with gr.Column(scale=1, min_width=300):
+                mode = gr.Radio(
+                    label="How it is drawn",
+                    choices=[
+                        (f"Fast · {STUDENT_STEPS} steps, distilled", FAST),
+                        ("Guided · the model itself, 4x the GPU time", GUIDED),
+                    ],
+                    value=start_mode,
+                    visible=HAS_STUDENT,
+                    elem_id="pd-mode",
+                )
+                with gr.Row():
+                    megapixels = gr.Dropdown(
+                        label="Page size",
+                        choices=[("1 MP", 1.0), ("1.5 MP", 1.5), ("2 MP, trained", 2.0)],
+                        value=MEGAPIXELS,
+                        filterable=False,
+                        min_width=170,
+                    )
+                    steps = gr.Slider(
+                        label="Steps",
+                        minimum=8,
+                        maximum=50,
+                        step=1,
+                        value=STEPS,
+                        buttons=[],
+                        min_width=120,
+                        elem_id="pd-steps",
+                        visible=start_mode == GUIDED,
+                    )
+                    guidance = gr.Slider(
+                        label="Guidance",
+                        minimum=1.0,
+                        maximum=4.0,
+                        step=0.25,
+                        value=GUIDANCE,
+                        buttons=[],
+                        min_width=120,
+                        elem_id="pd-guidance",
+                        visible=start_mode == GUIDED,
+                    )
+                    sample_zoom = gr.Slider(
+                        label="Sample zoom",
+                        minimum=0.5,
+                        maximum=3.0,
+                        step=0.25,
+                        value=1.0,
+                        buttons=[],
+                        min_width=120,
+                        elem_id="pd-zoom",
+                    )
+                    seed = gr.Number(label="Seed", value=0, precision=0, minimum=0, maximum=MAX_SEED, min_width=110)
+                    randomize_seed = gr.Checkbox(
+                        label="Random seed", value=True, scale=0, min_width=130, elem_id="pd-random"
+                    )
+        with gr.Row(equal_height=False):
+            with gr.Column(scale=1, min_width=340):
                 editor = gr.HTML(
                     value=editor_value(TEMPLATES[FIRST], None),
                     templates=TEMPLATES_JSON,
@@ -346,78 +485,17 @@ def build() -> gr.Blocks:
                     js_on_load=EDITOR_JS,
                     elem_id="pd-editor",
                 )
-            with gr.Column(scale=9, min_width=360):
-                with gr.Row(equal_height=True):
-                    sample = gr.Image(
-                        label="Sample page",
-                        type="filepath",
-                        sources=["upload", "clipboard"],
-                        height=178,
-                        value=next((path for path in SAMPLES if "1687" in Path(path).name), None),
-                        scale=3,
-                        min_width=170,
-                    )
-                    examples = gr.Gallery(
-                        value=[(path, SAMPLE_TITLES.get(Path(path).stem, Path(path).stem)) for path in SAMPLES],
-                        label="Example samples",
-                        show_label=False,
-                        columns=2,
-                        rows=2,
-                        height=178,
-                        allow_preview=False,
-                        object_fit="cover",
-                        interactive=False,
-                        scale=2,
-                        min_width=150,
-                        elem_id="pd-examples",
-                        visible=bool(SAMPLES),
-                    )
-                mode = gr.Radio(
-                    label="How it is drawn",
-                    choices=[
-                        (f"Fast · {STUDENT_STEPS} steps, distilled", FAST),
-                        ("Guided · the model itself, about 4x the GPU time", GUIDED),
-                    ],
-                    value=start_mode,
-                    visible=HAS_STUDENT,
-                    elem_id="pd-mode",
-                )
-                with gr.Row(visible=start_mode == GUIDED) as guided_settings:
-                    steps = gr.Slider(label="Steps", minimum=8, maximum=50, step=1, value=STEPS, min_width=120)
-                    guidance = gr.Slider(
-                        label="Guidance",
-                        info="Higher darkens the ink; 1 halves the time.",
-                        minimum=1.0,
-                        maximum=4.0,
-                        step=0.25,
-                        value=GUIDANCE,
-                        min_width=120,
-                    )
-                with gr.Row():
-                    megapixels = gr.Dropdown(
-                        label="Page size",
-                        info="trained at 2 MP",
-                        choices=[("1 MP", 1.0), ("1.5 MP", 1.5), ("2 MP", 2.0)],
-                        value=MEGAPIXELS,
-                        scale=2,
-                        min_width=100,
-                    )
-                    sample_zoom = gr.Slider(
-                        label="Sample zoom",
-                        minimum=0.5,
-                        maximum=3.0,
-                        step=0.25,
-                        value=1.0,
-                        scale=3,
-                        min_width=120,
-                    )
-                    with gr.Column(scale=2, min_width=110):
-                        seed = gr.Number(label="Seed", value=0, precision=0, minimum=0, maximum=MAX_SEED)
-                        randomize_seed = gr.Checkbox(label="Random seed", value=True)
+            with gr.Column(scale=1, min_width=340):
                 run = gr.Button("Draw the page", variant="primary", size="lg", elem_id="pd-run")
-                note = gr.HTML(start_note)
+                note = gr.HTML(start_note, elem_classes="pd-note")
                 with gr.Tabs():
                     with gr.Tab("Page"):
+                        outcome = gr.HTML(chips(), elem_classes="pd-note")
+                        with gr.Row(elem_classes="pd-downloads"):
+                            download_image = gr.DownloadButton("Image", size="sm", visible=False)
+                            download_alto = gr.DownloadButton("ALTO XML", size="sm", visible=False)
+                            download_page = gr.DownloadButton("PAGE XML", size="sm", visible=False)
+                            download_record = gr.DownloadButton("Prompt + settings", size="sm", visible=False)
                         result = gr.Image(
                             label="The drawn page",
                             show_label=False,
@@ -426,20 +504,13 @@ def build() -> gr.Blocks:
                             interactive=False,
                             elem_id="pd-result",
                             buttons=["fullscreen"],
-                            height=360,
                         )
-                        outcome = gr.HTML(chips())
-                        with gr.Row(elem_classes="pd-downloads"):
-                            download_image = gr.DownloadButton("Image", size="sm", visible=False)
-                            download_alto = gr.DownloadButton("ALTO XML", size="sm", visible=False)
-                            download_page = gr.DownloadButton("PAGE XML", size="sm", visible=False)
-                            download_prompt = gr.DownloadButton("Prompt", size="sm", visible=False)
                     with gr.Tab("Prompt"):
                         prompt = gr.Textbox(
                             label="The prompt the model reads for this page (it follows the editor)",
                             value=start_prompt,
-                            lines=12,
-                            max_lines=18,
+                            lines=14,
+                            max_lines=30,
                             interactive=False,
                             buttons=["copy"],
                         )
@@ -456,15 +527,14 @@ def build() -> gr.Blocks:
                             show_label=False,
                             type="pil",
                             interactive=False,
-                            height=360,
                             elem_id="pd-seen",
                         )
 
         examples.select(fn=pick_sample, outputs=sample, api_visibility="private", show_progress="hidden")
         mode.change(
-            fn=lambda chosen: gr.Row(visible=chosen == GUIDED),
+            fn=lambda chosen: (gr.Slider(visible=chosen == GUIDED), gr.Slider(visible=chosen == GUIDED)),
             inputs=mode,
-            outputs=guided_settings,
+            outputs=[steps, guidance],
             api_visibility="private",
             show_progress="hidden",
         )
@@ -485,7 +555,7 @@ def build() -> gr.Blocks:
                 download_image,
                 download_alto,
                 download_page,
-                download_prompt,
+                download_record,
                 outcome,
                 seed,
                 prompt,

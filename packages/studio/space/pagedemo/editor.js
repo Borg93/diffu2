@@ -19,6 +19,7 @@ const KINDS = {
   rule: ["Ruled line", "#555b66"],
 };
 const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
+const FINGERS = window.matchMedia("(pointer: coarse)").matches; // a touch screen: boxes come from + Box, not a drag
 const REMEMBERED = 60; // the edits Undo goes back over
 
 const q = (selector) => element.querySelector(selector);
@@ -285,17 +286,19 @@ function renderInspector() {
   }
   inspector.style.setProperty("--c", KINDS[box.kind][1]);
   kindSelect.value = box.kind;
-  textArea.hidden = box.kind === "rule";
+  textArea.classList.toggle("is-unused", box.kind === "rule");
   if (textArea.value !== box.text) textArea.value = box.text;
   if (box.kind === "rule") {
     room.textContent = "a straight line along the box's longer side";
+    room.title = room.textContent;
     room.classList.remove("is-over");
     return;
   }
   const written = wrap(box);
   const parts = [`${written.count} line${written.count === 1 ? "" : "s"}`, `about ${written.limit} characters a line`];
   if (written.over) parts.push(`${written.over} word${written.over === 1 ? "" : "s"} do not fit`);
-  room.textContent = parts.join(" · ");
+  room.textContent = (written.over ? [parts[2], parts[0], parts[1]] : parts).join(" · ");
+  room.title = room.textContent;
   room.classList.toggle("is-over", written.over > 0);
 }
 
@@ -311,8 +314,8 @@ function render() {
   renderBoxes();
   renderInspector();
   if (!showBoxes) hint.textContent = "The boxes are hidden. Show them to change the page.";
-  else if (!page.boxes.length) hint.textContent = "Drag on the page to draw a box, or pick a template. A box is a block of lines.";
-  else hint.textContent = "Drag a box to move it, a handle to resize it; Delete removes it. Every line is drawn at one height: the Lines slider sets it.";
+  else if (!page.boxes.length) hint.textContent = `${FINGERS ? "Tap + Box to add a box" : "Drag on the page to draw a box"}, or pick a template. A box is a block of lines.`;
+  else hint.textContent = `Drag a box to move it, a ${FINGERS ? "corner" : "handle"} to resize it${FINGERS ? "" : "; Delete removes it"}. Every line is drawn at one height: the Lines slider sets it.`;
 }
 
 function select(id) {
@@ -380,6 +383,9 @@ stage.addEventListener("pointerdown", (event) => {
     const box = boxOf(node.dataset.id);
     drag = { mode: handle ? handle.dataset.dir : "move", id: box.id, at, rect: [...box.rect], moved: false };
     select(box.id);
+  } else if (event.pointerType === "touch") {
+    select(null); // a finger on the bare page scrolls it
+    return;
   } else {
     drag = { mode: "new", at, rect: null, moved: false };
     select(null);
@@ -574,6 +580,8 @@ q(".pe-add").addEventListener("click", () => {
   textArea.focus({ preventScroll: true });
 });
 
+if (FINGERS) q(".pe-idle").textContent = "Tap a box to write its text, or + Box to add one.";
+
 let templates = {};
 try {
   templates = JSON.parse(props.templates || "{}");
@@ -601,7 +609,8 @@ fileInput.addEventListener("change", async () => {
   fileInput.value = "";
   if (!file) return;
   try {
-    const value = JSON.parse(await file.text());
+    const read = JSON.parse(await file.text());
+    const value = read && read.page && Array.isArray(read.page.boxes) ? read.page : read; // a drawn page's record too
     if (!value || !Array.isArray(value.boxes)) throw new Error("no boxes");
     replacePage(value);
   } catch (error) {

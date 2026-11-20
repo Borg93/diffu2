@@ -3,8 +3,8 @@
     <select class="pe-template" aria-label="start from a template">
       <option value="">Template…</option>
     </select>
-    <label class="pe-field">Page
-      <select class="pe-shape" aria-label="page shape">
+    <label class="pe-field">
+      <select class="pe-shape" aria-label="page shape" title="The page's shape">
         <option value="0.667">Folio 2:3</option>
         <option value="0.707">Sheet A</option>
         <option value="0.8">Quarto 4:5</option>
@@ -14,7 +14,7 @@
       </select>
     </label>
     <label class="pe-field">Lines
-      <input class="pe-lines" type="range" min="12" max="50" step="1" aria-label="lines down the page" />
+      <input class="pe-lines" type="range" min="12" max="50" step="1" aria-label="lines down the page" title="How many lines fit down the page: it sets every line's height" />
       <span class="pe-lines-value"></span>
     </label>
     <span class="pe-gap"></span>
@@ -50,7 +50,7 @@
     <button class="pe-btn pe-toggle-result" type="button" hidden>Hide page</button>
     <button class="pe-btn pe-toggle-boxes" type="button">Hide boxes</button>
     <button class="pe-btn pe-save" type="button" title="Download this page's boxes and text as a JSON file">Save</button>
-    <button class="pe-btn pe-load" type="button" title="Open a page saved here">Open</button>
+    <button class="pe-btn pe-load" type="button" title="Open a page saved here, or the prompt and settings file of a drawn page">Open</button>
     <input class="pe-file" type="file" accept="application/json,.json" hidden />
   </div>
 </div>

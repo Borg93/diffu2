@@ -22,18 +22,22 @@ Draws a synthetic archive page from a layout and a sample page, with
 [Gabriel/diffu-moss-above](https://huggingface.co/Gabriel/diffu-moss-above), diffu's fine-tune of MOSS-Image for Swedish
 archival handwriting. The page comes back with its labels: ALTO and PAGE XML of every line, its text and its place.
 
-1. **Lay out the page.** Pick a template (a letter, court minutes, a register, a certificate) or drag boxes onto a
-   blank page; `+ Box` adds one too. A box is a block of lines: text, a heading, a margin note or a page number; a
-   ruled line is a box too. Every line of a page is drawn at one height, which the Lines slider sets. Undo steps back
-   (Ctrl+Z on the page), and Save and Open keep a page's boxes and text as a JSON file.
-2. **Write its text.** Select a box and write. The page shows how the text falls into the box's lines, and how much
-   has no room. A line break of yours starts a new line.
-3. **Choose a sample page.** A scan of handwriting whose paper and scan the page takes: one of the examples, or your
+1. **Choose a sample page.** A scan of handwriting whose paper and scan the page takes: one of the examples, or your
    own. Sample zoom 1 shows the model the sample at the page's own line height; higher shows its pen larger.
-4. **Draw.** The model writes the text you gave it, line for line. Every drawn line is then read back by an HTR
-   model, and a line that does not read back as written is tagged `unclear` in the labels. The page comes back as an
-   image with its ALTO and PAGE XML. The Prompt tab always shows the prompt the model reads for the page in the
-   editor, to copy; a drawn page's prompt downloads beside its labels.
+2. **Lay out the page.** Pick a template (a letter, court minutes, a register, a certificate) or drag boxes onto a
+   blank page; `+ Box` adds one too (on a touch screen it is the way to add one: a finger on the bare page scrolls
+   it). A box is a block of lines: text, a heading, a margin note or a page number; a ruled line is a box too. Every
+   line of a page is drawn at one height, which the Lines slider sets. Undo steps back (Ctrl+Z on the page), and Save
+   and Open keep a page's boxes and text as a JSON file.
+3. **Write its text.** Select a box and write. The page shows how the text falls into the box's lines, and how much
+   has no room. A line break of yours starts a new line.
+4. **Draw.** Fast draws with a distilled student in 8 steps; Guided draws with the model itself, at the steps and the
+   guidance you set. The model writes the text you gave it, line for line. Every drawn line is then read back by an
+   HTR model, and a line that does not read back as written is tagged `unclear` in the labels. The page comes back
+   beside the editor, as an image with its ALTO and PAGE XML.
+5. **Take the prompt with you.** The Prompt tab always shows the prompt the model reads for the page in the editor,
+   to copy. A drawn page's `Prompt + settings` file holds that prompt with the model's revision, the mode, steps,
+   guidance, seed and size it was drawn with, and the page itself: Open reads it back into the editor.
 
 ## What to expect
 
