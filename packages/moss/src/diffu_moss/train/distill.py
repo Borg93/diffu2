@@ -221,7 +221,8 @@ def distillation_loss(
 class DistillRun(BaseModel):
     """A distillation run: its length, the student LoRA's shape (``targets``: the modules it adapts, a regex matched
     in full against the DiT's module names) and learning rate (warmed up over ``warmup`` steps),
-    the samples whose losses one optimizer step averages, how the student is taught (``distill``), and when it is
+    the samples whose losses one optimizer step averages, the share of them drawn from another page's sample page
+    (``swap``: a page's layout and text with a look that is not its own, as a new page is drawn), how the student is taught (``distill``), and when it is
     saved; ``stop_at`` ends this run at that step with a checkpoint (a chain of short jobs, each resumed from the
     last)."""
 
@@ -234,6 +235,7 @@ class DistillRun(BaseModel):
     learning_rate: float = 2e-5
     warmup: int = Field(default=50, ge=1)
     samples_per_step: int = Field(default=1, ge=1)
+    swap: float = Field(default=0.0, ge=0.0, le=1.0)
     grad_clip: float = 1.0
     distill: DistillSettings = DistillSettings()
     save_every: int = Field(default=250, ge=1)
@@ -332,6 +334,9 @@ def distill(
         out.mkdir(parents=True, exist_ok=True)
     checkpoint = out if resume is None else resume
     last = run.steps if run.stop_at is None else min(run.stop_at, run.steps)
+    sampled = [
+        entry for entry in entries if entry.reference_size is not None
+    ]  # the pages a sample can be borrowed from
     for step in range(done + 1, last + 1):
         started = time.monotonic()
         losses = torch.zeros(run.samples_per_step, dtype=torch.float64, device=device)
@@ -340,12 +345,20 @@ def distill(
             entry = entries[int(torch.randint(len(entries), (1,), generator=generator))]
             index = int(torch.randint(run.distill.student_steps, (1,), generator=generator))
             noise = torch.randn(target_shape(cache, entry), generator=generator)
-            pairs.append(entry.pair)
+            donor = None
+            if (
+                run.swap > 0 and entry.reference_size is not None
+            ):  # drawn only by a run that swaps: others go on as before
+                swapped = float(torch.rand((), generator=generator)) < run.swap
+                other = sampled[int(torch.randint(len(sampled), (1,), generator=generator))]
+                donor = other if swapped and other.pair != entry.pair else None
+            pairs.append(entry.pair if donor is None else f"{entry.pair}<-{donor.pair}")
             indices.append(index)
             if not ranks.owns(place):  # drawn all the same, so every rank's generator goes on alike
                 continue
             sample = load_sample(cache, entry, device)
-            references = None if sample.reference is None else [sample.reference]
+            reference = sample.reference if donor is None else load_sample(cache, donor, device).reference
+            references = None if reference is None else [reference]
             loss = distillation_loss(
                 training.transformer,
                 frozen,
@@ -458,6 +471,10 @@ def main(
         float,
         typer.Option(min=0.0, max=0.99, help="how strongly the student is pushed from the teacher's unguided step"),
     ] = 0.0,
+    swap: Annotated[
+        float,
+        typer.Option(min=0.0, max=1.0, help="the share of samples drawn from another page's sample page"),
+    ] = 0.0,
     student_steps: Annotated[int, typer.Option(min=1, help="the steps the student draws in")] = 8,
     teacher_steps: Annotated[
         int, typer.Option(min=1, help="the steps of the teacher's drawing the student is taught from")
@@ -483,6 +500,7 @@ def main(
         alpha=rank,
         learning_rate=learning_rate,
         samples_per_step=samples_per_step,
+        swap=swap,
         distill=DistillSettings(
             student_steps=student_steps,
             teacher_steps=teacher_steps,

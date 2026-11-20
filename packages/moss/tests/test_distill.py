@@ -239,6 +239,22 @@ def test_a_distillation_run_saves_a_lora_over_the_noise_levels_layers_too_whose_
         distill(tiny_moss_dit, tiny_pair_cache, tmp_path / "negative.safetensors", tmp_path / "run", run)
 
 
+def test_a_run_that_swaps_teaches_pages_from_other_pages_samples(
+    tiny_moss_dit: Path, tiny_pair_cache: Path, negative: Tensor, tmp_path: Path
+) -> None:
+    save_file({"prompt_embeds": negative}, str(tmp_path / "negative.safetensors"))
+    sampled = {entry.pair for entry in read_entries(tiny_pair_cache) if entry.reference_size is not None}
+    assert len(sampled) > 1  # the fixture has pages to borrow a sample from
+    run = DistillRun(steps=3, rank=4, alpha=4, warmup=1, distill=SETTINGS, samples_per_step=4, swap=1.0, device="cpu")
+
+    distill(tiny_moss_dit, tiny_pair_cache, tmp_path / "negative.safetensors", tmp_path / "run", run)
+
+    lines = (tmp_path / "run" / LOG).read_text(encoding="utf-8").splitlines()
+    taught = [str(pair) for line in lines for pair in json.loads(line)["pairs"]]
+    swaps = [pair.split("<-") for pair in taught if "<-" in pair]
+    assert swaps and all(page != donor and page in sampled and donor in sampled for page, donor in swaps)
+
+
 def _rows(run: Path) -> list[dict[str, object]]:
     lines = (run / LOG).read_text(encoding="utf-8").splitlines()
     return [{key: value for key, value in json.loads(line).items() if key != "seconds"} for line in lines]
