@@ -53,7 +53,7 @@ STUB = os.environ.get("PAGEDEMO_STUB") == "1"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 MAX_SEED = 2**31 - 1
 STEPS, GUIDANCE, MEGAPIXELS = 28, 2.0, 2.0  # a page's defaults: the guidance the model card suggests, at its size
-LONGEST_SAMPLE_SIDE = 4096  # px: a larger upload is shrunk to it once (the model reads a sample at 2 MP at most)
+LONGEST_SAMPLE_SIDE = 3072  # px: a larger upload is shrunk to it once (the model reads a sample at 2 MP at most)
 FAST, GUIDED = "fast", "guided"  # a page's mode: the distilled student's few unguided steps, or the DiT's guided ones
 # The GPU seconds a page is asked for: the model's start on a GPU, its text encoder, VAE and judge, then each pass of
 # the DiT by the tokens it reads (the page's and the sample's latent cells and the prompt's tokens; two passes a step
@@ -75,13 +75,11 @@ def passes(mode: str, steps: int, guidance: float) -> int:
     return steps * (1 if math.isclose(guidance, 1.0) else 2)
 
 
-def dit_tokens(plan: CropPlan, sample: Image.Image, sample_lines: list[LayoutBox], prompt: str) -> int:
+def dit_tokens(plan: CropPlan, sample: Image.Image, sample_lines: list[LayoutBox], prompt_tokens: int) -> int:
     """The tokens the DiT reads a pass for ``plan`` drawn from ``sample``: the page's and the sized sample's latent
-    cells, and the prompt's tokens (an estimate from its length in the stub, which has no tokenizer)."""
+    cells, and its prompt's ``prompt_tokens``."""
     seen = sized_sample(sample, SampleSize.LEGIBLE, plan=plan, lines=sample_lines)
-    cells = (plan.width * plan.height + seen.width * seen.height) // LATENT_GRID**2
-    words = token_count(prompt)
-    return cells + (len(prompt) // 3 if words is None else words)
+    return (plan.width * plan.height + seen.width * seen.height) // LATENT_GRID**2 + prompt_tokens
 
 
 def gpu_seconds(tokens: int, mode: str, steps: int, guidance: float) -> int:
@@ -102,7 +100,8 @@ def _duration(
 ) -> int:
     """The GPU seconds ZeroGPU is asked for a page: it calls this with the arguments :func:`draw_on_gpu` is called
     with, so the two share one signature."""
-    return gpu_seconds(dit_tokens(plan, sample, sample_lines, layout_prompt_of(plan)), mode, steps, guidance)
+    tokens = dit_tokens(plan, sample, sample_lines, token_count(layout_prompt_of(plan)))
+    return gpu_seconds(tokens, mode, steps, guidance)
 
 
 @spaces.GPU(duration=_duration)
@@ -151,9 +150,10 @@ ASKED_TITLE = (
 )
 
 
-def token_count(prompt: str) -> int | None:
-    """The tokens the text encoder reads for ``prompt``; None in the stub, which has no tokenizer."""
-    return None if MODELS is None else prompt_tokens(MODELS.pipe.tokenizer, prompt)
+def token_count(prompt: str) -> int:
+    """The tokens the text encoder reads for ``prompt`` (in the stub, which has no tokenizer, a third of its
+    characters: about what they come to)."""
+    return len(prompt) // 3 if MODELS is None else prompt_tokens(MODELS.pipe.tokenizer, prompt)
 
 
 @functools.lru_cache(maxsize=8)
@@ -165,7 +165,7 @@ def sample_image(path: str) -> Image.Image:
     return image
 
 
-def status(
+def page_status(
     value: str, sample: str | None, megapixels: float, steps: int, guidance: float, mode: str, sample_zoom: float
 ) -> tuple[str, str]:
     """What the page in the editor comes to before it is drawn: its lines, its prompt's length and the GPU time it
@@ -182,20 +182,29 @@ def status(
         return chips(str(error)), ""
     plan = ready.plan
     tokens = token_count(ready.prompt)
-    over = tokens is not None and tokens > MAX_PROMPT_TOKENS
     if image is None:
         asked = "add a sample page to draw"
     else:
-        read = dit_tokens(plan, image, ready.sample_lines, ready.prompt)
+        read = dit_tokens(plan, image, ready.sample_lines, tokens)
         asked = f"asks for {gpu_seconds(read, mode, int(steps), guidance)} s of GPU time"
     parts = [
         f"{len(plan.lines)} line{'s' if len(plan.lines) != 1 else ''}",
         f"{plan.width} x {plan.height} px",
-        "" if tokens is None else f"{tokens:,} of {MAX_PROMPT_TOKENS:,} prompt tokens",
+        f"{tokens:,} of {MAX_PROMPT_TOKENS:,} prompt tokens",
         asked,
         *ready.notes,
     ]
-    return chips(*parts, warn=over or bool(ready.notes) or image is None, title=ASKED_TITLE), ready.prompt
+    warn = tokens > MAX_PROMPT_TOKENS or bool(ready.notes) or image is None
+    return chips(*parts, warn=warn, title=ASKED_TITLE), ready.prompt
+
+
+def status(
+    value: str, sample: str | None, megapixels: float, steps: int, guidance: float, mode: str, sample_zoom: float
+) -> tuple[str, str, gr.Slider, gr.Slider]:
+    """The page's status line and prompt (:func:`page_status`), and the guided mode's two sliders shown or hidden:
+    one round trip for whatever changed."""
+    line, prompt = page_status(value, sample, megapixels, steps, guidance, mode, sample_zoom)
+    return line, prompt, gr.Slider(visible=mode == GUIDED), gr.Slider(visible=mode == GUIDED)
 
 
 def pick_sample(chosen: gr.SelectData) -> str:
@@ -263,7 +272,7 @@ def draw_page(
     except (ValueError, OSError) as error:
         raise gr.Error(str(error)) from error
     tokens = token_count(ready.prompt)
-    if tokens is not None and tokens > MAX_PROMPT_TOKENS:
+    if not STUB and tokens > MAX_PROMPT_TOKENS:
         raise gr.Error(
             f"The page's prompt is {tokens:,} tokens and the text encoder reads {MAX_PROMPT_TOKENS:,}: "
             "take out some lines or boxes."
@@ -438,7 +447,7 @@ def build() -> gr.Blocks:
     same size on the right, the button and what it returns."""
     start_mode = FAST if HAS_STUDENT else GUIDED
     start_sample = next((path for path in SAMPLES if "1687" in Path(path).name), None)
-    start_note, start_prompt = status(
+    start_note, start_prompt = page_status(
         editor_value(TEMPLATES[FIRST], None), start_sample, MEGAPIXELS, STEPS, GUIDANCE, start_mode, 1.0
     )
     with gr.Blocks(title="diffu · archive pages") as demo:
@@ -563,10 +572,12 @@ def build() -> gr.Blocks:
                         )
                     with gr.Tab("Read-back"):
                         readback = gr.Dataframe(
-                            headers=["Line", "Read back", "CER", "Label"],
+                            headers=["Line", "Read back", "CER", "Tag"],
                             datatype=["str", "str", "str", "str"],
+                            column_widths=["41%", "41%", "8%", "10%"],
                             interactive=False,
                             wrap=True,
+                            max_height=640,
                         )
                     with gr.Tab("Sample as seen"):
                         seen_sample = gr.Image(
@@ -578,13 +589,6 @@ def build() -> gr.Blocks:
                         )
 
         examples.select(fn=pick_sample, outputs=sample, api_visibility="private", show_progress="hidden")
-        mode.change(
-            fn=lambda chosen: (gr.Slider(visible=chosen == GUIDED), gr.Slider(visible=chosen == GUIDED)),
-            inputs=mode,
-            outputs=[steps, guidance],
-            api_visibility="private",
-            show_progress="hidden",
-        )
         gr.on(
             triggers=[
                 editor.change,
@@ -597,7 +601,7 @@ def build() -> gr.Blocks:
             ],
             fn=status,
             inputs=[editor, sample, megapixels, steps, guidance, mode, sample_zoom],
-            outputs=[note, prompt],
+            outputs=[note, prompt, steps, guidance],
             api_visibility="private",
             show_progress="hidden",
         )
