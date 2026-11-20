@@ -9,7 +9,7 @@ scan large. Marks go to cut_marks.lance (image, mark, guess, marked_at); the las
 
     uv run python runs/htr/curate/prototypes/mark_gallery.py     # then open http://localhost:7862
 
-GROUPS=<parquet of image, pool, cluster, guess> shows those scans in those groups instead (unsure_groups.py makes one
+UNSURE=<parquet of image, pool, cluster, guess> (not GROUPS: bash keeps that name for itself) shows those scans in those groups instead (unsure_groups.py makes one
 of the scans the classifiers are least sure of); NAMES=<json of cluster: name> names the groups in the list.
 """
 import os
@@ -50,7 +50,7 @@ def load_scans() -> pd.DataFrame:
     return scans.sort_values(["cluster", "guess", "image"]).reset_index(drop=True)[["image", "pool", "cluster", "guess"]]
 
 
-sample = pd.read_parquet(os.environ["GROUPS"]).sort_values(["cluster", "guess", "image"]).reset_index(drop=True) if os.environ.get("GROUPS") else load_scans()
+sample = pd.read_parquet(os.environ["UNSURE"]).sort_values(["cluster", "guess", "image"]).reset_index(drop=True) if os.environ.get("UNSURE") else load_scans()
 NAMES = {int(k): v for k, v in json.load(open(os.environ["NAMES"])).items()} if os.environ.get("NAMES") else {}
 for folder in (THUMBS, LARGE): folder.mkdir(parents=True, exist_ok=True)
 rows_of = {int(cluster): rows.index.to_list() for cluster, rows in sample.groupby("cluster")}
