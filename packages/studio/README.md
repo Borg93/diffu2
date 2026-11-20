@@ -18,9 +18,10 @@ start it through `jobs/spark_guard.sh`.
 
 `space/` is a Hugging Face Space (Gradio, ZeroGPU) on the same pipeline, for the fine-tuned model
 `Gabriel/diffu-moss-above`, published as
-[Gabriel/diffu-archive-pages](https://huggingface.co/spaces/Gabriel/diffu-archive-pages): a page editor of our own (boxes drawn on the page or loaded from a template, each a block
-of line slots with its text), a sample page, and the drawn page back with its ALTO and PAGE labels, every line read
-back.
+[Gabriel/diffu-archive-pages](https://huggingface.co/spaces/Gabriel/diffu-archive-pages) (private while it is tested):
+a sample page and the settings in a band on top; under it a page editor of our own (boxes drawn on the page or loaded
+from a template, each a block of line slots with its text) and, beside it at the same size, the drawn page with its
+ALTO and PAGE labels, every line read back, and its record (the prompt and the settings it was drawn with).
 
 - `space/pagedemo/document.py`: the editor's page as the pipeline's `Layout` (each box's slots exactly the boxes the
   model is given, its text written into them as `refill` writes it).
@@ -29,7 +30,9 @@ back.
 - `space/pagedemo/planning.py`, `drawing.py`: the page planned whole in the `sample` caption form, and drawn by the
   crop pipeline, by the model's own guided steps or by a distilled student's (`diffu-moss-distill`'s checkpoint,
   loaded unmerged).
-- `space/pagedemo/editor.js`, `editor.html`, `editor.css`: the editor, a Gradio custom HTML component.
+- `space/pagedemo/editor.js`, `editor.html`, `editor.css`: the editor, a Gradio custom HTML component (mouse and
+  touch; undo; a page saved to and opened from a JSON file).
+- `space/pagedemo/record.py`: a drawn page's record, which the editor opens as that page again.
 - `space/tests`: the Space's own code on CPU.
 
 `publish_space.sh` stages and uploads it: the Space's files, the sample pages and the student's checkpoint (both kept
