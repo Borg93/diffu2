@@ -1,0 +1,24 @@
+17,686 marks; 17,683 with vectors in classes of 20 or more: {'cut': 15384, 'odd': 888, 'no_cut': 470, 'single': 429, 'not_a_page': 286, 'print': 226}
+              precision    recall  f1-score   support
+
+         cut      0.996     0.912     0.952     15384
+      no_cut      0.724     0.921     0.811       470
+  not_a_page      0.734     0.878     0.799       286
+         odd      0.438     0.923     0.594       888
+       print      0.796     0.982     0.879       226
+      single      0.828     0.967     0.892       429
+
+    accuracy                          0.915     17683
+   macro avg      0.753     0.931     0.821     17683
+weighted avg      0.950     0.915     0.926     17683
+
+on the 2397 scans marked on 20 Nov (the unsure ones), volumes held out: 0.814 right; on the others 0.931
+head         cut  no_cut  not_a_page  odd  print  single
+mark                                                    
+cut         1242      93          31  223     31      47
+no_cut         0       1           0    0      0       0
+not_a_page     0       0           1    1      0       0
+odd            9       1           0  456      3       2
+print          2       0           0    2    222       0
+single         1       0           0    0      0      29
+kept in runs/htr/curate/heads/cut_class.npz (6, 4096)

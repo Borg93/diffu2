@@ -2,6 +2,7 @@
 kind, layout, and colour, each by a small head on the TIPSv2 and DINOv3 vectors.
 
     uv run python runs/htr/curate/prototypes/pool_columns.py fit      # the heads, from the 45,000 first described scans
+    uv run python runs/htr/curate/prototypes/pool_columns.py fit_marks  # the cut class alone, from every hand mark (vectors from scans.lance)
     uv run python runs/htr/curate/prototypes/pool_columns.py fit_pca  # the PCA, from the first 200,000 scans of the pools' run
     uv run python runs/htr/curate/prototypes/pool_columns.py check    # each head with whole volumes held out
     uv run python runs/htr/curate/prototypes/pool_columns.py apply [FOLDER]  # the heads over every embedded scan (or one folder of parts), joined to scans.lance
@@ -143,6 +144,26 @@ if __name__ == "__main__":
                 fitted = head().fit(X[rows], y)
                 np.savez(HEADS / f"{name}.npz", classes=fitted.classes_.astype(str), coef=fitted.coef_.astype(np.float32), intercept=fitted.intercept_.astype(np.float32))
                 print("kept in", HEADS / f"{name}.npz", fitted.coef_.shape, flush=True)
+    elif what == "fit_marks":
+        # Every marked scan's vectors from scans.lance (the gallery's marks reach beyond the 45,000 of embed_scans/):
+        # each class with whole volumes held out, the new marks apart, then the head fitted on all and kept.
+        mark = marks(); held = lance.dataset(str(HOME / "scans.lance"))
+        got = pa.concat_tables([held.to_table(columns=["image", "tipsv2", "dinov3"], filter="image IN (" + ",".join("'" + i.replace("'", "''") + "'" for i in chunk) + ") AND tipsv2 IS NOT NULL")
+                                for chunk in (list(mark.index[at:at + 2000]) for at in range(0, len(mark), 2000))])
+        X = part_vectors(got, np.empty((len(got), 4096), np.float32)); images = np.array(got.column("image").to_pylist())
+        first, first_X = sample(); more = (first.image.isin(mark.index) & ~first.image.isin(images)).to_numpy()  # marked scans the table holds no vectors of (no labelled lines)
+        X = np.vstack([X, first_X[more]]); images = np.concatenate([images, first.image[more].to_numpy()]); y = mark.loc[images].to_numpy()
+        counts = pd.Series(y).value_counts(); keep = np.isin(y, counts[counts >= 20].index); X, images, y = X[keep], images[keep], y[keep]
+        print(f"{len(mark):,} marks; {len(y):,} with vectors in classes of 20 or more: {pd.Series(y).value_counts().to_dict()}", flush=True)
+        volume = np.array([str(Path(image).parent) for image in images])
+        guess = cross_val_predict(head(), X, y, groups=volume, cv=GroupKFold(5), n_jobs=5)
+        print(classification_report(y, guess, digits=3, zero_division=0), flush=True)
+        new = pd.read_parquet(HOME / "unsure/groups.parquet").image; fresh = np.isin(images, new)
+        print(f"on the {int(fresh.sum())} scans marked on 20 Nov (the unsure ones), volumes held out: {np.mean(guess[fresh] == y[fresh]):.3f} right; on the others {np.mean(guess[~fresh] == y[~fresh]):.3f}", flush=True)
+        print(pd.crosstab(pd.Series(y[fresh], name="mark"), pd.Series(guess[fresh], name="head")).to_string(), flush=True)
+        fitted = head().fit(X, y)
+        np.savez(HEADS / "cut_class.npz", classes=fitted.classes_.astype(str), coef=fitted.coef_.astype(np.float32), intercept=fitted.intercept_.astype(np.float32))
+        print("kept in", HEADS / "cut_class.npz", fitted.coef_.shape, flush=True)
     elif what == "fit_pca":
         from sklearn.decomposition import PCA
         parts = sorted(PARTS[0].glob("part-*.parquet"))[:PCA_PARTS]; X = np.empty((20000 * len(parts), 4096), np.float32); n = 0
