@@ -1,13 +1,16 @@
 <div class="pe">
   <div class="pe-bar">
+    <select class="pe-template" aria-label="start from a template">
+      <option value="">Template…</option>
+    </select>
     <label class="pe-field">Page
       <select class="pe-shape" aria-label="page shape">
-        <option value="0.667">Folio, upright (2:3)</option>
-        <option value="0.707">Sheet, upright (A-size)</option>
-        <option value="0.8">Quarto, upright (4:5)</option>
+        <option value="0.667">Folio 2:3</option>
+        <option value="0.707">Sheet A</option>
+        <option value="0.8">Quarto 4:5</option>
         <option value="1">Square</option>
-        <option value="1.333">Oblong (4:3)</option>
-        <option value="1.5">Wide (3:2)</option>
+        <option value="1.333">Oblong 4:3</option>
+        <option value="1.5">Wide 3:2</option>
       </select>
     </label>
     <label class="pe-field">Lines
@@ -15,8 +18,8 @@
       <span class="pe-lines-value"></span>
     </label>
     <span class="pe-gap"></span>
-    <button class="pe-btn pe-toggle-result" type="button" hidden>Hide page</button>
-    <button class="pe-btn pe-toggle-boxes" type="button">Hide boxes</button>
+    <button class="pe-btn pe-add" type="button" title="Add a box of three lines">+ Box</button>
+    <button class="pe-btn pe-undo" type="button" title="Undo (Ctrl+Z on the page)" disabled>Undo</button>
     <button class="pe-btn pe-clear" type="button">Clear</button>
   </div>
   <div class="pe-inspector is-idle">
@@ -30,16 +33,24 @@
         <option value="number">Page number</option>
         <option value="rule">Ruled line</option>
       </select>
-      <span class="pe-gap"></span>
       <span class="pe-room"></span>
+      <span class="pe-gap"></span>
       <button class="pe-btn pe-copy" type="button">Duplicate</button>
       <button class="pe-btn pe-delete" type="button">Delete</button>
     </div>
-    <textarea class="pe-text" rows="4" spellcheck="false" placeholder="The text of this box. A line break starts a new line on the page."></textarea>
+    <textarea class="pe-text" rows="3" spellcheck="false" placeholder="The text of this box. A line break starts a new line on the page."></textarea>
   </div>
   <div class="pe-stage" tabindex="0" aria-label="the page: drag to draw a box">
     <img class="pe-result" alt="" hidden />
     <div class="pe-layer"></div>
   </div>
-  <p class="pe-hint"></p>
+  <div class="pe-bar pe-foot">
+    <span class="pe-hint"></span>
+    <span class="pe-gap"></span>
+    <button class="pe-btn pe-toggle-result" type="button" hidden>Hide page</button>
+    <button class="pe-btn pe-toggle-boxes" type="button">Hide boxes</button>
+    <button class="pe-btn pe-save" type="button" title="Download this page's boxes and text as a JSON file">Save</button>
+    <button class="pe-btn pe-load" type="button" title="Open a page saved here">Open</button>
+    <input class="pe-file" type="file" accept="application/json,.json" hidden />
+  </div>
 </div>

@@ -1,7 +1,8 @@
 // The demo's page editor. Gradio runs this once as the gr.HTML component's js_on_load, with `element` (the component's
-// root), `props` (its value), `trigger` and `watch` in scope. The value is the page as JSON (pagedemo/document.py:
-// aspect, lines, boxes with id, kind, rect [x0, y0, x1, y1] on 0-1000, text, printed) and, from Python only,
-// "result": the drawn page as a data URI, which the browser keeps and never sends back.
+// root), `props` (its value and the templates), `trigger` and `watch` in scope. The value is the page as JSON
+// (pagedemo/document.py: aspect, lines, boxes with id, kind, rect [x0, y0, x1, y1] on 0-1000, text, printed) and,
+// from Python only, "result": the drawn page as a data URI, which the browser keeps and never sends back.
+// `props.templates` holds the templates as JSON, by name: a page each, loaded here without a trip to the server.
 
 const GRID = 1000;
 const CHARS_PER_ASPECT = 3.7; // the pipeline's rule: characters a line takes per unit of its width over its height
@@ -18,12 +19,16 @@ const KINDS = {
   rule: ["Ruled line", "#555b66"],
 };
 const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
+const REMEMBERED = 60; // the edits Undo goes back over
 
 const q = (selector) => element.querySelector(selector);
 const stage = q(".pe-stage");
 const layer = q(".pe-layer");
 const picture = q(".pe-result");
 const hint = q(".pe-hint");
+const templateSelect = q(".pe-template");
+const undoButton = q(".pe-undo");
+const fileInput = q(".pe-file");
 const shape = q(".pe-shape");
 const linesInput = q(".pe-lines");
 const linesValue = q(".pe-lines-value");
@@ -43,6 +48,9 @@ let drag = null;
 let ghost = null;
 let committed = null;
 let pending = null;
+let typing = false;
+let sliding = false;
+const past = [];
 
 const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 const pitch = () => GRID / page.lines;
@@ -118,19 +126,10 @@ function nextId(kind) {
   }
 }
 
-function load() {
-  let value = {};
-  try {
-    value = JSON.parse(props.value || "{}");
-  } catch (error) {
-    value = {};
-  }
-  if ("result" in value) {
-    result = value.result || null;
-    showResult = true;
-  }
+// A page as the editor holds it, from anything read as JSON: its numbers kept in range, its boxes those well formed.
+function cleaned(value) {
   const boxes = Array.isArray(value.boxes) ? value.boxes : [];
-  page = {
+  return {
     aspect: clamp(Number(value.aspect) || 0.7, 0.4, 2.5),
     lines: clamp(Math.round(Number(value.lines)) || 30, 8, 60),
     boxes: boxes
@@ -143,7 +142,52 @@ function load() {
         printed: Boolean(box.printed),
       })),
   };
+}
+
+function load() {
+  let value = {};
+  try {
+    value = JSON.parse(props.value || "{}");
+  } catch (error) {
+    value = {};
+  }
+  if ("result" in value) {
+    result = value.result || null;
+    showResult = true;
+  }
+  page = cleaned(value);
   if (!boxOf(selected)) selected = null;
+}
+
+// The page as it is now kept for Undo, before an edit changes it.
+function remember() {
+  const now = JSON.stringify(page);
+  if (past[past.length - 1] !== now) past.push(now);
+  if (past.length > REMEMBERED) past.shift();
+  undoButton.disabled = false;
+}
+
+function undo() {
+  const last = past.pop();
+  undoButton.disabled = !past.length;
+  if (last === undefined) return;
+  page = cleaned(JSON.parse(last));
+  if (!boxOf(selected)) selected = null;
+  layout();
+  commit(true);
+  render();
+}
+
+// Another page in place of this one (a template, a file opened): the drawn page under the old one goes with it.
+function replacePage(value) {
+  remember();
+  page = cleaned(value);
+  result = null;
+  selected = null;
+  showBoxes = true;
+  layout();
+  commit(true);
+  render();
 }
 
 function commit(now) {
@@ -267,8 +311,8 @@ function render() {
   renderBoxes();
   renderInspector();
   if (!showBoxes) hint.textContent = "The boxes are hidden. Show them to change the page.";
-  else if (!page.boxes.length) hint.textContent = "Drag on the page to draw a box, or load a template. A box is a block of lines.";
-  else hint.textContent = "Drag a box to move it, a handle to resize it; Delete removes it. Every line of the page is drawn at one height, which the Lines slider sets.";
+  else if (!page.boxes.length) hint.textContent = "Drag on the page to draw a box, or pick a template. A box is a block of lines.";
+  else hint.textContent = "Drag a box to move it, a handle to resize it; Delete removes it. Every line is drawn at one height: the Lines slider sets it.";
 }
 
 function select(id) {
@@ -350,6 +394,7 @@ stage.addEventListener("pointermove", (event) => {
   const [x, y] = gridPoint(event);
   const [startX, startY] = drag.at;
   if (!drag.moved && Math.hypot(x - startX, y - startY) < 4) return;
+  if (!drag.moved) remember();
   drag.moved = true;
   if (drag.mode === "new") {
     const held = `${y < startY ? "n" : "s"}${x < startX ? "w" : "e"}`;
@@ -396,6 +441,7 @@ stage.addEventListener("pointerup", endDrag);
 stage.addEventListener("pointercancel", endDrag);
 
 function remove(id) {
+  remember();
   page.boxes = page.boxes.filter((box) => box.id !== id);
   if (selected === id) selected = null;
   commit(true);
@@ -405,6 +451,11 @@ function remove(id) {
 const ARROWS = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] };
 stage.addEventListener("keydown", (event) => {
   const box = boxOf(selected);
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+    undo();
+    event.preventDefault();
+    return;
+  }
   if (!box || !showBoxes) return;
   if (event.key === "Delete" || event.key === "Backspace") {
     remove(box.id);
@@ -412,6 +463,7 @@ stage.addEventListener("keydown", (event) => {
     select(null);
   } else if (event.key in ARROWS) {
     const reach = event.shiftKey ? 10 : 2;
+    remember();
     box.rect = moved(box.rect, ARROWS[event.key][0] * reach, ARROWS[event.key][1] * reach);
     commit(false);
     render();
@@ -424,18 +476,22 @@ stage.addEventListener("keydown", (event) => {
 textArea.addEventListener("input", () => {
   const box = boxOf(selected);
   if (!box) return;
+  if (!typing) remember();
+  typing = true;
   box.text = textArea.value;
   commit(false);
   renderBoxes();
   renderInspector();
 });
 textArea.addEventListener("blur", () => {
+  typing = false;
   if (pending !== null) commit(true); // nothing typed is left waiting when a button is pressed next
 });
 
 kindSelect.addEventListener("change", () => {
   const box = boxOf(selected);
   if (!box || !(kindSelect.value in KINDS)) return;
+  remember();
   box.kind = kindSelect.value;
   box.id = nextId(box.kind);
   selected = box.id;
@@ -452,6 +508,7 @@ q(".pe-delete").addEventListener("click", () => {
 q(".pe-copy").addEventListener("click", () => {
   const box = boxOf(selected);
   if (!box) return;
+  remember();
   const tall = box.rect[3] - box.rect[1];
   const down = box.rect[3] + pitch() + tall <= GRID ? tall + pitch() : 0;
   const copy = { ...box, id: nextId(box.kind), rect: moved(box.rect, down ? 0 : 20, down) };
@@ -462,6 +519,7 @@ q(".pe-copy").addEventListener("click", () => {
 });
 
 q(".pe-clear").addEventListener("click", () => {
+  remember();
   page.boxes = [];
   selected = null;
   result = null;
@@ -481,6 +539,7 @@ boxesButton.addEventListener("click", () => {
 });
 
 shape.addEventListener("change", () => {
+  remember();
   page.aspect = Number(shape.value);
   layout();
   commit(true);
@@ -488,10 +547,66 @@ shape.addEventListener("change", () => {
 });
 
 linesInput.addEventListener("input", () => {
+  if (!sliding) remember();
+  sliding = true;
   page.lines = Number(linesInput.value);
   linesValue.textContent = String(page.lines);
   commit(false);
   render();
+});
+linesInput.addEventListener("change", () => {
+  sliding = false;
+});
+
+undoButton.addEventListener("click", undo);
+
+q(".pe-add").addEventListener("click", () => {
+  remember();
+  const step = pitch();
+  const lowest = page.boxes.reduce((bottom, box) => Math.max(bottom, box.rect[3]), 60 - step);
+  const top = lowest + 4 * step <= GRID - 40 ? lowest + step : 60;
+  const box = { id: nextId("text"), kind: "text", rect: tidy([120, top, 870, top + 3 * step]), text: "", printed: false };
+  page.boxes.push(box);
+  selected = box.id;
+  showBoxes = true;
+  commit(true);
+  render();
+  textArea.focus({ preventScroll: true });
+});
+
+let templates = {};
+try {
+  templates = JSON.parse(props.templates || "{}");
+} catch (error) {
+  templates = {};
+}
+for (const name of Object.keys(templates)) templateSelect.add(new Option(name, name));
+templateSelect.addEventListener("change", () => {
+  const chosen = templates[templateSelect.value];
+  templateSelect.value = "";
+  if (chosen) replacePage(chosen);
+});
+
+q(".pe-save").addEventListener("click", () => {
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(new Blob([JSON.stringify(page, null, 1)], { type: "application/json" }));
+  link.download = "page.json";
+  link.click();
+  URL.revokeObjectURL(link.href);
+});
+
+q(".pe-load").addEventListener("click", () => fileInput.click());
+fileInput.addEventListener("change", async () => {
+  const file = fileInput.files[0];
+  fileInput.value = "";
+  if (!file) return;
+  try {
+    const value = JSON.parse(await file.text());
+    if (!value || !Array.isArray(value.boxes)) throw new Error("no boxes");
+    replacePage(value);
+  } catch (error) {
+    hint.textContent = "That file is not a page saved here.";
+  }
 });
 
 watch("value", () => {

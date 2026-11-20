@@ -1,12 +1,15 @@
-.pe { display: flex; flex-direction: column; gap: 10px; }
-.pe-bar, .pe-inspector-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pe { display: flex; flex-direction: column; gap: 8px; }
+.pe-bar, .pe-inspector-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pe-foot { align-items: flex-start; }
 .pe-gap { flex: 1; }
 .pe-field { display: inline-flex; align-items: center; gap: 6px; font-size: 0.82rem; color: var(--body-text-color-subdued); }
-.pe-field select, .pe-kind { font: inherit; font-size: 0.85rem; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--border-color-primary); background: var(--input-background-fill); color: var(--body-text-color); }
-.pe-lines { width: 120px; accent-color: #5b4a2f; }
+.pe-field select, .pe-kind, .pe-template { font: inherit; font-size: 0.85rem; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--border-color-primary); background: var(--input-background-fill); color: var(--body-text-color); }
+.pe-lines { width: 96px; accent-color: #5b4a2f; }
 .pe-lines-value { min-width: 1.6em; font-variant-numeric: tabular-nums; color: var(--body-text-color); }
 .pe-btn { display: inline-flex; align-items: center; height: 28px; padding: 0 10px; font: inherit; font-size: 0.8rem; font-weight: 500; border-radius: 6px; border: 1px solid var(--border-color-primary); background: var(--block-background-fill); color: var(--body-text-color); cursor: pointer; white-space: nowrap; }
 .pe-btn:hover { border-color: var(--body-text-color-subdued); }
+.pe-btn:disabled { opacity: 0.45; cursor: default; }
+.pe-file { display: none; }
 .pe-btn[hidden], .pe-result[hidden] { display: none; }
 .pe-stage { position: relative; margin: 0 auto; width: 100%; max-width: 100%; background: #f1ead8; background-image: radial-gradient(circle at 20% 15%, rgba(255, 255, 255, 0.5), transparent 55%); border: 1px solid #cdbf9f; border-radius: 4px; box-shadow: 0 1px 6px rgba(60, 40, 10, 0.18); overflow: hidden; touch-action: none; user-select: none; outline: none; cursor: crosshair; }
 .pe-stage:focus-visible { box-shadow: 0 0 0 2px #7a6a4a; }
@@ -39,12 +42,12 @@
 .pe-handle[data-dir="w"] { left: -6px; top: calc(50% - 5px); cursor: ew-resize; }
 .pe-handle[data-dir="e"] { right: -6px; top: calc(50% - 5px); cursor: ew-resize; }
 .pe-ghost { position: absolute; box-sizing: border-box; border: 1.5px dashed #5b4a2f; background: rgba(91, 74, 47, 0.08); pointer-events: none; }
-.pe-hint { margin: 0; font-size: 0.8rem; line-height: 1.4; color: var(--body-text-color-subdued); }
-.pe-inspector { display: flex; flex-direction: column; gap: 8px; min-height: 132px; box-sizing: border-box; padding: 10px; border: 1px solid var(--border-color-primary); border-left: 4px solid var(--c, #5b4a2f); border-radius: 8px; background: var(--block-background-fill); }
+.pe-hint { flex: 1 1 240px; font-size: 0.78rem; line-height: 1.4; color: var(--body-text-color-subdued); }
+.pe-inspector { display: flex; flex-direction: column; gap: 8px; min-height: 118px; box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--border-color-primary); border-left: 4px solid var(--c, #5b4a2f); border-radius: 8px; background: var(--block-background-fill); }
 .pe-swatch { width: 10px; height: 10px; border-radius: 3px; background: var(--c, #5b4a2f); flex: none; }
 .pe-room { font-size: 0.78rem; color: var(--body-text-color-subdued); }
 .pe-room.is-over { color: #b3261e; font-weight: 600; }
-.pe-text { width: 100%; box-sizing: border-box; resize: vertical; font: inherit; font-size: 0.95rem; line-height: 1.45; padding: 8px 10px; border: 1px solid var(--border-color-primary); border-radius: 6px; background: var(--input-background-fill); color: var(--body-text-color); }
+.pe-text { width: 100%; box-sizing: border-box; resize: vertical; font: inherit; font-size: 0.92rem; line-height: 1.4; padding: 6px 9px; border: 1px solid var(--border-color-primary); border-radius: 6px; background: var(--input-background-fill); color: var(--body-text-color); }
 .pe-text[hidden] { display: none; }
 .pe-idle { margin: auto 0; font-size: 0.88rem; color: var(--body-text-color-subdued); }
 .pe-inspector:not(.is-idle) .pe-idle, .pe-inspector.is-idle .pe-inspector-head, .pe-inspector.is-idle .pe-text { display: none; }
