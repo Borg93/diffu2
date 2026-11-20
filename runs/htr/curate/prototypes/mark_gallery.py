@@ -26,7 +26,7 @@ from PIL import Image
 
 Image.MAX_IMAGE_PIXELS = None
 HOME = Path("runs/htr/curate"); SAMPLE = HOME / "cut_marks_sample.lance"; MARKS = HOME / "cut_marks.lance"
-THUMBS = Path("/mnt/scratch/gabriel/htr/cut_mark_thumbs_small"); LARGE = Path("/mnt/scratch/gabriel/htr/cut_mark_thumbs"); SCREEN = 120
+THUMBS = Path("/mnt/scratch/gabriel/htr/cut_mark_thumbs_small"); LARGE = Path("/mnt/scratch/gabriel/htr/cut_mark_thumbs"); SCREEN = 60
 ROW = pa.schema([("image", pa.utf8()), ("mark", pa.utf8()), ("guess", pa.utf8()), ("marked_at", pa.timestamp("s", "UTC"))])
 
 
@@ -93,25 +93,29 @@ header{position:sticky;top:0;background:#16181c;padding:8px 16px;border-bottom:1
 button,select{font:inherit;padding:6px 12px;border-radius:6px;border:2px solid #555;background:#23262b;color:#e8e8e8;cursor:pointer}
 button.on{background:#e8e8e8;color:#16181c}
 .cut{border-color:#1baf7a}.no_cut{border-color:#eb6834}.single{border-color:#2a78d6}.not_a_page{border-color:#8c8c8c}.odd{border-color:#e87ba4}.print{border-color:#8a5cd0}.illustration{border-color:#c9a227}
-#grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px;padding:10px 16px}
+#grid div.cut{border-color:#1baf7a}#grid div.no_cut{border-color:#eb6834}#grid div.single{border-color:#2a78d6}#grid div.not_a_page{border-color:#8c8c8c}#grid div.odd{border-color:#e87ba4}#grid div.print{border-color:#8a5cd0}#grid div.illustration{border-color:#c9a227}
+#grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:8px;padding:10px 16px}
 #grid div{border:5px solid;border-radius:4px;cursor:pointer;background:#000;position:relative;line-height:0}
-#grid span{position:absolute;left:0;bottom:0;right:0;font-size:12px;font-weight:600;padding:2px 6px;line-height:1.5;color:#fff;text-align:center}
+#grid span{position:absolute;left:0;bottom:0;font-size:11px;font-weight:600;padding:1px 6px;line-height:1.4;color:#fff;border-radius:0 4px 0 0}
 #grid .cut span{background:#1baf7a}#grid .no_cut span{background:#eb6834}#grid .single span{background:#2a78d6}#grid .not_a_page span{background:#8c8c8c}#grid .odd span{background:#e87ba4}#grid .print span{background:#8a5cd0}#grid .illustration span{background:#c9a227}
 #grid div.sel{outline:5px solid #eda100;outline-offset:1px}#grid div.sel img{opacity:.75}
-#grid img{width:100%;height:135px;object-fit:contain}
+#grid img{width:100%;height:230px;object-fit:contain}
+#grid i{position:absolute;right:0;top:0;font-style:normal;font-size:15px;line-height:1;padding:5px 7px;background:#000a;color:#fff;border-radius:0 0 0 6px}#grid i:hover{background:#eda100;color:#000}
+#big b{position:fixed;left:0;right:0;bottom:0;text-align:center;padding:8px;background:#000c;font-size:14px;font-weight:500}#big span{position:fixed;top:10px;left:0;right:0;text-align:center;font-size:20px;font-weight:700}
 #big{position:fixed;inset:0;background:#000d;display:none;align-items:center;justify-content:center;z-index:9}#big img{max-width:96%;max-height:96%}
-#help{padding:6px 16px;color:#bbb;font-size:13.5px;line-height:1.5;border-bottom:1px solid #333}#help b{color:#e8e8e8}
+#help{padding:4px 16px;color:#bbb;font-size:13.5px;line-height:1.5;border-bottom:1px solid #333}#help b{color:#e8e8e8}#help summary{cursor:pointer}
+header button,header select{padding:4px 9px}#clusters{max-width:330px}
 </style>
-<div id="help"><b>1. Click scans to select them</b> (yellow outline), or press <b>Select all</b>. &nbsp; <b>2. Press an answer</b> (or key 1-7): the selected scans get it. &nbsp; <b>3. Save this screen.</b><br>
-Every scan shows its current answer under it; at first that is the system's guess. Scans you don't touch keep it. Saving stores every scan on the screen with the answer shown.<br>
-<b>Not a page</b>: nothing to read (cover, blank, card). <b>Single page</b>: one page only. <b>Do not cut</b>: two pages with one table or ledger whose rows run across the middle. <b>Cut</b>: two pages, each with its own text. <b>Odd layout</b>: handwriting, but none of the four fits (several loose sheets, a folded-out sheet, pages at angles, writing turned sideways, a small slip on a page). &nbsp; Shift-click: see a scan large.</div>
+<details id="help"><summary>How to mark (click to open)</summary><b>Click</b> scans to select them (yellow), or <b>Select all</b> (key a). <b>Press an answer</b> (keys 1-7): the selected scans get it. <b>Enter</b> saves the screen and goes on; every scan is stored with the answer shown under it (at first the system's guess).<br>
+<b>Preview</b>: the magnifier on a scan, or right-click it. The selection stays. In the preview: arrow keys step through the scans, keys 1-7 give the shown scan an answer, Esc or a click closes.<br>
+<b>Cut</b>: two pages, each with its own text. <b>No cut</b>: two pages with a table or ledger across the middle. <b>Single</b>: one page. <b>No page</b>: nothing to read (cover, blank, card). <b>Odd</b>: handwriting that fits none of these (loose sheets, a slip on a page, writing sideways). <b>Print</b>: printed or typed, also with handwriting on it. <b>Picture</b>: a drawing, map, seal or picture.</details>
 <header><b style="color:#eda100">Cluster gallery</b><select id="clusters"></select><b id="where"></b>
 <button id="all">Select all</button><button id="none">Select none</button><span id="count" style="color:#eda100"></span>
 <span id="answers"></span>
 <button id="back">&larr; Save, back</button><button id="next" style="border-color:#e8e8e8">Save this screen and next &rarr;</button></header>
-<div id="grid"></div><div id="big"><img></div>
+<div id="grid"></div><div id="big"><img><span></span><b>arrow keys: next / previous &nbsp;·&nbsp; 1-7: answer this scan &nbsp;·&nbsp; Esc or click: close</b></div>
 <script>
-const SAYS={cut:"1 Cut",no_cut:"2 Do not cut",single:"3 Single page",not_a_page:"4 Not a page",odd:"5 Odd layout",print:"6 Print or type (also with handwriting on it)",illustration:"7 Illustration"}, KEYS=Object.keys(SAYS);
+const SAYS={cut:"1 Cut",no_cut:"2 No cut",single:"3 Single",not_a_page:"4 No page",odd:"5 Odd",print:"6 Print",illustration:"7 Picture"}, KEYS=Object.keys(SAYS);
 let now=null, list=[];
 const el=id=>document.getElementById(id);
 function count(){const n=now?now.items.filter(it=>it.sel).length:0;el("count").textContent=n?`${n} selected → give them:`:"select scans, then:";}
@@ -120,18 +124,27 @@ function give(k){const picked=now.items.filter(it=>it.sel);if(!picked.length){el
   picked.forEach(it=>{it.mark=k;it.sel=false;it.set()});count()}
 function draw(){el("where").textContent=`screen ${now.screen+1} of ${now.screens} · ${now.saved} of ${now.scans} saved`;
   el("grid").innerHTML="";now.items.forEach(it=>{const d=document.createElement("div");d.innerHTML=`<img loading="lazy" src="thumb/${it.at}"><span></span>`;it.sel=false;
-    it.set=()=>{d.className=it.mark+(it.sel?" sel":"");d.lastChild.textContent=SAYS[it.mark].slice(2).toUpperCase()+(it.mark!==it.guess?" ✎":"")};it.set();
-    d.onclick=e=>{if(e.shiftKey){el("big").firstChild.src="large/"+it.at;el("big").style.display="flex";return}it.sel=!it.sel;it.set();count()};el("grid").append(d)});count();window.scrollTo(0,0)}
+    d.innerHTML+=`<i title="preview">&#128269;</i>`;const tag=d.querySelector("span");
+    it.set=()=>{d.className=it.mark+(it.sel?" sel":"");tag.textContent=SAYS[it.mark].slice(2)+(it.mark!==it.guess?" ✎":"");if(shown===it)label()};it.set();
+    d.querySelector("i").onclick=e=>{e.stopPropagation();show(it)};d.oncontextmenu=e=>{e.preventDefault();show(it)};
+    d.onclick=e=>{if(e.shiftKey){show(it);return}it.sel=!it.sel;it.set();count()};el("grid").append(d)});count();window.scrollTo(0,0)}
+let shown=null;
+function label(){const s=el("big").querySelector("span");s.textContent=SAYS[shown.mark].slice(2)+(shown.mark!==shown.guess?" ✎":"");s.className=shown.mark;s.style.color=getComputedStyle(s).borderColor}
+function show(it){shown=it;el("big").firstChild.src="large/"+it.at;el("big").style.display="flex";label()}
+function hide(){shown=null;el("big").style.display="none"}
+function step(by){const i=now.items.indexOf(shown)+by;if(i>=0&&i<now.items.length)show(now.items[i])}
 async function menu(keep){list=await (await fetch("clusters")).json();el("clusters").innerHTML="";list.forEach(c=>{const o=document.createElement("option");o.value=c.cluster;
   o.textContent=`${c.saved>=c.scans?"✓ ":c.saved?"◐ ":""}${c.name||("Cluster "+c.cluster)} · ${c.scans} scans · ${c.mix}`;el("clusters").append(o)});if(keep!==undefined)el("clusters").value=keep}
 async function load(cluster,n){now=await (await fetch(`screen/${cluster}/${n}`)).json();el("clusters").value=cluster;draw()}
 async function go(by){const marks={};now.items.forEach(it=>marks[it.at]=it.mark);await fetch("save",{method:"POST",body:JSON.stringify(marks)});
   const next=now.screen+by; if(next>=now.screens){await menu();const i=list.findIndex(c=>c.cluster==now.cluster);const after=list.slice(i+1).concat(list.slice(0,i)).find(c=>c.saved<c.scans)||list[i];load(after.cluster,0)}
   else{menu(now.cluster);load(now.cluster,Math.max(0,next))}}
-el("next").onclick=()=>go(1);el("back").onclick=()=>go(-1);el("big").onclick=()=>el("big").style.display="none";
+el("next").onclick=()=>go(1);el("back").onclick=()=>go(-1);el("big").onclick=hide;
 el("all").onclick=()=>{now.items.forEach(it=>{it.sel=true;it.set()});count()};el("none").onclick=()=>{now.items.forEach(it=>{it.sel=false;it.set()});count()};
 el("clusters").onchange=e=>load(+e.target.value,0);
-document.onkeydown=e=>{if(e.target.tagName==="SELECT")return;if(e.key>="1"&&e.key<="7"){give(KEYS[e.key-1])}else if(e.key==="a"){el("all").click()}else if(e.key==="Enter"){go(1)}else if(e.key==="Escape"){el("big").style.display="none";el("none").click()}};
+document.onkeydown=e=>{if(e.target.tagName==="SELECT")return;
+  if(shown){if(e.key>="1"&&e.key<="7"){shown.mark=KEYS[e.key-1];shown.set()}else if(e.key==="ArrowRight"||e.key===" "){e.preventDefault();step(1)}else if(e.key==="ArrowLeft"){step(-1)}else if(e.key==="Escape"||e.key==="Enter"){hide()}return}
+  if(e.key>="1"&&e.key<="7"){give(KEYS[e.key-1])}else if(e.key==="a"){el("all").click()}else if(e.key==="Enter"){go(1)}else if(e.key==="Escape"){el("none").click()}};
 answers();menu().then(()=>{const first=list.find(c=>c.saved<c.scans)||list[0];load(first.cluster,0)});
 </script>"""
 
