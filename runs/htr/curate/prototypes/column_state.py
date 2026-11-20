@@ -35,8 +35,8 @@ WANTED = {  # column of scans.lance: (what it says, what makes it)
     "covered": ("writing layer: share of the writing under a label", "to do: writing_eval.py's layer over the pools"),
     "jev_page": ("Jev's score of the page's lines", "to do: first on the calibration scans"),
     "read_disagreement": ("our reader against the old label", "pages.lance holds it for 64,950 pages; to do on the trusted pages"),
-    "dinov3": ("DINOv3's vector of the scan", "embed_pool.py (E40) makes it (Parquet parts); a column when the run has ended, 13 GB a model"),
-    "tipsv2": ("TIPSv2's vector of the scan", "embed_pool.py (E40)"),
+    "dinov3": ("DINOv3's vector of the scan (2,048 numbers, 16-bit)", "embed_pool.py, joined by vectors_to_lance.py (E40)"),
+    "tipsv2": ("TIPSv2's vector of the scan (2,048 numbers, 16-bit)", "embed_pool.py, joined by vectors_to_lance.py (E40)"),
     "qwen8b": ("Qwen3-VL-Embedding 8B's vector", "scan_embeddings.lance holds 130,733"),
     "pca": ("the first 64 principal components of the two models' vectors (82 % of the variance), 16-bit", "pool_columns.py (E40), heads/pca.npz"),
 }

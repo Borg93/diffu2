@@ -8,6 +8,7 @@ scans; ``OUT/cuts.json`` each scan's fold for ``--cuts``), with ``OUT/scans.parq
 
     uv run python runs/htr/curate/prototypes/stage_pool.py count               # the funnel over the pools, nothing staged
     uv run python runs/htr/curate/prototypes/stage_pool.py OUT [SCANS [SEED]]  # SCANS: so many at random (default all)
+    EXCLUDE=a/scans.parquet,b/scans.parquet ... OUT ...                        # without the scans of sets staged before
 
 The tables are the other filter (is_table true): ``count`` prints how many there are, by what the head says of the cut.
 """
@@ -85,6 +86,9 @@ if __name__ == "__main__":
     scans, total = pools(); taken = funnel(scans, total)
     if sys.argv[1] != "count":
         out = Path(sys.argv[1]); settings = CurateSettings()
+        if os.environ.get("EXCLUDE"):  # scans other staged sets hold already (their scans.parquet, comma-separated)
+            held = set().union(*(pd.read_parquet(path, columns=["scan"]).scan for path in os.environ["EXCLUDE"].split(",")))
+            taken = taken[~taken.scan.isin(held)]; print(len(held), "scans in other sets left out;", len(taken), "left")
         if len(sys.argv) > 2:
             taken = taken.sample(min(int(sys.argv[2]), len(taken)), random_state=int(sys.argv[3]) if len(sys.argv) > 3 else 0)
         assert taken.scan.is_unique  # cuts.json names a scan by its file name
