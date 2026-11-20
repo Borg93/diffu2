@@ -57,7 +57,7 @@ Measured on the templates, drawn fast at 2 megapixels from the four sample pages
 - A page's prompt holds every line's text and box, and the text encoder reads 4,096 tokens: about sixty lines.
 - **Fast** draws with a distilled student of the model, in 8 steps without guidance; it is experimental. **Guided**
   draws with the model itself, by default in 28 steps of two passes each. On ZeroGPU a fast 2 megapixel page is
-  drawn in about 22 seconds and asks for about 45 of a visitor's daily GPU seconds; a guided one asks for about 160.
+  drawn in about 20 seconds and asks for about 45 of a visitor's daily GPU seconds; a guided one asks for about 160.
   A pass takes as long as the tokens it reads: the page's, the sample's and the prompt's, so a smaller page (1 or
   1.5 megapixels) or a sample that fills less of the page draws faster. The status line under the button says how
   much GPU time the page in the editor will ask for.

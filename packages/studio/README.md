@@ -40,8 +40,11 @@ outside the repo), and `requirements.txt` with the diffu packages pinned to the 
 `PAGEDEMO_STUB=1 python space/app.py` serves the page without the model, for work on the editor.
 
 On ZeroGPU (20 Nov 2026, half an RTX PRO 6000): the models load and pack in about three minutes (28.3 GB). The DiT
-takes about 2.2 s a pass on a 2 MP letter of 13,900 tokens (0.16 s a thousand tokens), and 2.6 s with the student's
-LoRA beside its weights in bfloat16 (2.9 s when it was left in float32): a fast page is drawn in 22 s, read back in
-the same call and answered in 33 s. The Space asks for a page's GPU seconds by the tokens its DiT reads, with a
+took about 2.2 s a pass on a 2 MP letter of 13,900 tokens (0.16 s a thousand tokens), and 2.6 s with the student's
+LoRA beside its weights in bfloat16 (2.9 s when it was left in float32). A fast letter was drawn in 24 to 26 s with
+the float32 LoRA, 22 s with the bfloat16 one and 20 s once the RMSNorm lost its float32 round trip; it is read back in
+the same call and answered in about 33 s. The Space asks for a page's GPU seconds by the tokens its DiT reads, with a
 margin: about 45 s for a fast page, about 160 s for a guided one of 28 steps. A free account hosts two ZeroGPU
-Spaces and gives a visitor five GPU minutes a day.
+Spaces and gives a visitor five GPU minutes a day. `torch.compile` is refused in ZeroGPU's workers: compiled blocks
+(1.74 times faster a step on a DGX Spark, `docs/MOSS_RUNS.md`) would need a package built ahead of time in a ZeroGPU
+call.
