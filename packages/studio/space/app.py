@@ -355,7 +355,7 @@ CSS = """
 .pd-chips { display: flex; gap: 5px; flex-wrap: wrap; min-height: 24px; }
 .pd-chips span { font-size: 0.78rem; padding: 2px 9px; border-radius: 6px; background: var(--block-background-fill); border: 1px solid var(--border-color-primary); color: var(--body-text-color-subdued); }
 .pd-warn span:last-child { border-color: #b3261e; color: #b3261e; }
-#pd-run { font-size: 1rem; min-height: 44px; }
+#pd-run { font-size: 0.92rem; min-height: 34px; max-width: 220px; }
 #pd-result:has(.empty), #pd-seen:has(.empty) { height: 120px !important; }
 #pd-result img, #pd-seen img { object-fit: contain; max-height: 78vh; }
 #pd-examples .grid-wrap { min-height: 0 !important; height: auto; max-height: none; overflow: visible; }
@@ -542,7 +542,7 @@ def build() -> gr.Blocks:
                     elem_id="pd-editor",
                 )
             with gr.Column(scale=1, min_width=340):
-                run = gr.Button("Draw the page", variant="primary", size="lg", elem_id="pd-run")
+                run = gr.Button("Draw the page", variant="primary", size="md", elem_id="pd-run")
                 note = gr.HTML(start_note, elem_classes="pd-note")
                 with gr.Tabs():
                     with gr.Tab("Page"):
