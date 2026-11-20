@@ -169,6 +169,16 @@ def test_a_zoomed_sample_shows_its_writing_larger_and_an_unmeasured_one_is_sized
         sample_lines(sample, 70, zoom=0)
 
 
+def test_a_sample_of_larger_writing_than_the_page_is_shown_at_its_own_size_not_shrunk_to_a_piece() -> None:
+    large = _striped((1000, 1400), 140)  # ten lines down the sample: twice the letter's line pitch
+
+    ready = planned(LETTER, large, megapixels=2.0, zoom=1.0)
+
+    sized = sized_sample(large, SampleSize.LEGIBLE, plan=ready.plan, lines=ready.sample_lines)
+    assert sized.width >= 0.95 * min(large.width, ready.plan.width)  # shrunk to the page's pitch it would be half
+    assert line_pitch(sized) == pytest.approx(140, rel=0.08)
+
+
 def test_every_template_fits_its_boxes_and_fills_them() -> None:
     assert list(TEMPLATES)[-1] == "Blank page" and TEMPLATES["Blank page"].boxes == []
     for name, document in TEMPLATES.items():
