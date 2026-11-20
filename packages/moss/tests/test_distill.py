@@ -1,25 +1,33 @@
 """On-policy distillation on CPU (conftest's tiny MOSS and tiny style pairs): the student's own rollout, the
 teacher's guided target across one student step, a loss that is zero for a student that already steps as its teacher,
-and a LoRA student whose few-step drawing moves toward its teacher's many-step guided drawing when trained on it."""
+a LoRA student whose few-step drawing moves toward its teacher's many-step guided drawing when trained on it, and
+a distillation run whose checkpoint merges into the teacher's DiT as a student that steps closer to the teacher's
+guided steps (a used run directory refused)."""
 
 from __future__ import annotations
 
+import json
 from itertools import pairwise
 from pathlib import Path
 
 import pytest
 import torch
+from safetensors.torch import save_file
 from torch import Tensor
 
 from diffu_moss.train.cache import CachedSample, load_sample, read_entries
 from diffu_moss.train.distill import (
+    DISTILL_RECORD,
+    DistillRun,
     DistillSettings,
+    distill,
     distillation_loss,
     rolled_out,
     student_levels,
     teacher_velocity,
 )
-from diffu_moss.train.loop import TrainSettings, lora_transformer
+from diffu_moss.train.export import export_merged
+from diffu_moss.train.loop import LOG, TrainSettings, lora_transformer
 from diffu_moss.transformer import MossTransformer
 
 SETTINGS = DistillSettings(student_steps=2, teacher_substeps=3, guidance_scale=3.0, uncond_skip_layers=(1,))
@@ -140,3 +148,40 @@ def test_a_lora_student_trained_on_the_loss_draws_closer_to_its_teachers_guided_
         optimizer.step()
 
     assert gap() < 0.5 * before
+
+
+def test_a_distillation_run_saves_a_lora_that_merges_into_a_student_stepping_closer_to_its_teacher(
+    tiny_moss_dit: Path, tiny_pair_cache: Path, teacher: MossTransformer, negative: Tensor, tmp_path: Path
+) -> None:
+    save_file({"prompt_embeds": negative}, str(tmp_path / "negative.safetensors"))
+    run = DistillRun(
+        steps=40, rank=8, alpha=8, learning_rate=3e-3, warmup=2, distill=SETTINGS, save_every=40, device="cpu"
+    )
+
+    checkpoint = distill(tiny_moss_dit, tiny_pair_cache, tmp_path / "negative.safetensors", tmp_path / "run", run)
+
+    logged = [json.loads(line) for line in (tmp_path / "run" / LOG).read_text(encoding="utf-8").splitlines()]
+    assert [row["step"] for row in logged] == list(range(1, 41))
+    assert {index for row in logged for index in row["indices"]} == {0, 1}  # both of the student's steps taught
+    record = json.loads((checkpoint / DISTILL_RECORD).read_text(encoding="utf-8"))
+    assert (record["student_steps"], record["guidance_scale"]) == (2, 1.0)
+    export_merged(tiny_moss_dit, checkpoint, tmp_path / "student")
+    student = MossTransformer.from_pretrained(str(tmp_path / "student")).eval()
+    entries = read_entries(tiny_pair_cache)
+
+    def loss_of(model: MossTransformer) -> float:  # on noise the run never drew, at both steps of every entry
+        total = 0.0
+        for place, entry in enumerate(entries):
+            held = load_sample(tiny_pair_cache, entry, "cpu")
+            references = None if held.reference is None else [held.reference]
+            for index in (0, 1):
+                noise = _noise(held, 1000 + place)
+                with torch.no_grad():
+                    total += distillation_loss(
+                        model, teacher, noise, index, held.prompt_embeds, negative, SETTINGS, references
+                    ).item()
+        return total
+
+    assert loss_of(student) < 0.7 * loss_of(teacher)
+    with pytest.raises(ValueError, match="holds a training already"):
+        distill(tiny_moss_dit, tiny_pair_cache, tmp_path / "negative.safetensors", tmp_path / "run", run)
