@@ -33,7 +33,7 @@ WANTED = {  # column of scans.lance: (what it says, what makes it)
     "fold_found": ("whether a fold line was found", "place_folds.py"),
     "cluster": ("the cluster on the map of 14,985 scans (50 clusters on Qwen's vectors)", "scalar_hirank.py; for every scan by a head once the clusters are named"),
     "cluster_name": ("the cluster's name", "to do: Toponymy"),
-    "covered": ("writing layer: share of the writing under a label", "to do: writing_eval.py's layer over the pools"),
+    "covered": ("writing layer: the share of the writing that lies under a label (with written, labelled, filled)", "diffu-curate writing (E61)"),
     "jev_page": ("Jev's score of the page's lines", "to do: first on the calibration scans"),
     "read_disagreement": ("our reader against the old label", "pages.lance holds it for 64,950 pages; to do on the trusted pages"),
     "dinov3": ("DINOv3's vector of the scan (2,048 numbers, 16-bit)", "embed_pool.py, joined by vectors_to_lance.py (E40)"),
