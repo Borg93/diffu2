@@ -1,0 +1,13 @@
+OK      dflash2/config.json: sha256 as its manifest records
+OK      dflash2/model.safetensors: sha256 as its manifest records
+OK      100 safetensors files under models/: header parses and the file is as long as its header says
+OK      /mnt/scratch/gabriel/htr/pool_v2_nemotron/pages: 999808 rows (expected 999808), meta 999808, images present 999808, 4000 of 4000 sampled images decode
+OK      /mnt/scratch/gabriel/htr/trusted_v1_nemotron/pages: 139937 rows (expected 139937), meta 139937, images present 139937, 4000 of 4000 sampled images decode
+PROBLEM /mnt/work/gabriel/htr/nemotron_parse_pages: 50465 rows (expected 49491), meta 50465, images present 50465, 4000 of 4000 sampled images decode
+OK      /mnt/work/gabriel/htr/nemotron_parse_pages.dev: 974 rows (expected 974), meta 974, images present 974, 974 of 974 sampled images decode
+OK      /mnt/work/gabriel/htr/nemotron_parse_pages.test: 2971 rows (expected 2971), meta 2971, images present 2971, 2971 of 2971 sampled images decode
+OK      embed_pool: 3068911 rows in 154 parts, 3068911 different scans (expected 3,068,911); 40 scans a part recomputed against the pca column stored before the failure: largest difference 0.0002
+PROBLEM pools: 6,000 scans at random with their label files: {'image': 1, 'lines': 1, 'same': 5998} ('same': the scan decodes and its label holds the number of lines the table recorded)
+OK      pool svea: 2018 of 2018 label folders present
+OK      pool andraarkiv: 4360 of 4360 label folders present
+done
