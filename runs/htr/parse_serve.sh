@@ -2,7 +2,7 @@
 # CURATION E50: our Nemotron Parse checkpoint served by vLLM as the model's repository documents (native Parse, DFlash2
 # draft, its repetition-stop processor). GPU=1|2 PORT=8011 FRACTION=0.45 SEQS=64 DRAFT=16 (0: no draft) bash runs/htr/parse_serve.sh [MODEL_DIR]
 cd /home/gabriel/Desktop/diffu2 || exit 1
-GPU=${GPU:-1}; case "$GPU" in 1|2) ;; *) echo "GPU must be 1 or 2"; exit 1;; esac
+GPU=${GPU:-2}; case "$GPU" in 2) ;; *) echo "GPU must be 2 (from 20 Nov GPU 1 is another person's)"; exit 1;; esac
 D=${1:-/mnt/scratch/gabriel/htr/serve/parse-more}; DRAFT=${DRAFT:-16}
 SPEC=(); [ "$DRAFT" != 0 ] && SPEC=(--speculative-config "{\"method\": \"dflash\", \"model\": \"$D/dflash2\", \"num_speculative_tokens\": $DRAFT}")
 export CUDA_VISIBLE_DEVICES=$GPU OMP_NUM_THREADS=4 PYTHONPATH=/mnt/scratch/gabriel/models/nemotron-3.5-parse-repo/logitsprocs
