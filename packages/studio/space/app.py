@@ -19,6 +19,7 @@ os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 import spaces  # noqa: E402, I001  # before torch: on ZeroGPU it patches torch's CUDA calls
 
 import base64  # noqa: E402
+import functools  # noqa: E402
 import html  # noqa: E402
 import io  # noqa: E402
 import json  # noqa: E402
@@ -38,11 +39,12 @@ from diffu_page.draw.plan import CropPlan  # noqa: E402
 from diffu_page.draw.sample import sized_sample  # noqa: E402
 from diffu_page.output import load_rgb  # noqa: E402
 from diffu_page.page.crops.geometry import LayoutBox  # noqa: E402
+from diffu_page.page.crops.grid import LATENT_GRID  # noqa: E402
 from diffu_page.page.labels import LabelFormat, export  # noqa: E402
 from diffu_page.quality.judge import MAX_LINE_CER, LineVerdict  # noqa: E402
 from pagedemo.document import Document  # noqa: E402
 from pagedemo.drawing import DIT_REPO, DIT_REVISION, Drawn, Models, draw, load_models  # noqa: E402
-from pagedemo.planning import layout_prompt_of, page_plan, planned  # noqa: E402
+from pagedemo.planning import PagePlan, layout_prompt_of, page_plan, planned  # noqa: E402
 from pagedemo.record import DrawRecord  # noqa: E402
 from pagedemo.templates import TEMPLATES  # noqa: E402
 
@@ -51,11 +53,13 @@ STUB = os.environ.get("PAGEDEMO_STUB") == "1"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 MAX_SEED = 2**31 - 1
 STEPS, GUIDANCE, MEGAPIXELS = 28, 2.0, 2.0  # a page's defaults: the guidance the model card suggests, at its size
-# The GPU seconds a page is asked for: the model's start on a GPU and its text encoder, VAE and judge, then each
-# pass of the DiT by the megapixels it draws (two passes a step under guidance). A pass of a 2 MP page took 5.6 s on
-# a DGX Spark; the rate here is a first estimate for ZeroGPU's half of an RTX PRO 6000, to be set from its own runs
-# (a page's status line shows the seconds it took).
-SETUP_SECONDS, SECONDS_PER_PASS_MEGAPIXEL, LONGEST_SECONDS = 30, 1.6, 300
+LONGEST_SAMPLE_SIDE = 4096  # px: a larger upload is shrunk to it once (the model reads a sample at 2 MP at most)
+# The GPU seconds a page is asked for: the model's start on a GPU, its text encoder, VAE and judge, then each pass of
+# the DiT by the tokens it reads (the page's and the sample's latent cells and the prompt's tokens; two passes a step
+# under guidance). On a DGX Spark a pass took 0.59 to 0.66 s a thousand tokens from 7,500 to 16,700 of them
+# (docs/MOSS_RUNS.md); the rate here is ZeroGPU's half of an RTX PRO 6000, from its own runs (a page's status line
+# shows the seconds it took), with a margin.
+SETUP_SECONDS, SECONDS_PER_PASS_KILOTOKEN, LONGEST_SECONDS = 30, 0.23, 300
 
 MODELS: Models | None = None if STUB else load_models(DEVICE, student=HERE / "student")
 FAST, GUIDED = "fast", "guided"  # a page's mode: the distilled student's few unguided steps, or the DiT's guided ones
@@ -70,9 +74,18 @@ def passes(mode: str, steps: int, guidance: float) -> int:
     return steps * (1 if math.isclose(guidance, 1.0) else 2)
 
 
-def gpu_seconds(width: int, height: int, dit_passes: int) -> int:
-    """The GPU seconds asked for a page of ``width`` x ``height`` px drawn in ``dit_passes`` passes of the DiT."""
-    seconds = SETUP_SECONDS + dit_passes * width * height / 1_000_000 * SECONDS_PER_PASS_MEGAPIXEL
+def dit_tokens(plan: CropPlan, sample: Image.Image, sample_lines: list[LayoutBox], prompt: str) -> int:
+    """The tokens the DiT reads a pass for ``plan`` drawn from ``sample``: the page's and the sized sample's latent
+    cells, and the prompt's tokens (an estimate from its length in the stub, which has no tokenizer)."""
+    seen = sized_sample(sample, SampleSize.LEGIBLE, plan=plan, lines=sample_lines)
+    cells = (plan.width * plan.height + seen.width * seen.height) // LATENT_GRID**2
+    words = token_count(prompt)
+    return cells + (len(prompt) // 3 if words is None else words)
+
+
+def gpu_seconds(tokens: int, dit_passes: int) -> int:
+    """The GPU seconds asked for a page whose DiT reads ``tokens`` tokens a pass, in ``dit_passes`` passes."""
+    seconds = SETUP_SECONDS + dit_passes * tokens / 1000 * SECONDS_PER_PASS_KILOTOKEN
     return min(LONGEST_SECONDS, math.ceil(seconds))
 
 
@@ -88,7 +101,8 @@ def _duration(
 ) -> int:
     """The GPU seconds ZeroGPU is asked for a page: it calls this with the arguments :func:`draw_on_gpu` is called
     with, so the two share one signature."""
-    return gpu_seconds(plan.width, plan.height, passes(mode, steps, guidance))
+    tokens = dit_tokens(plan, sample, sample_lines, layout_prompt_of(plan))
+    return gpu_seconds(tokens, passes(mode, steps, guidance))
 
 
 @spaces.GPU(duration=_duration)
@@ -134,24 +148,46 @@ def token_count(prompt: str) -> int | None:
     return None if MODELS is None else prompt_tokens(MODELS.pipe.tokenizer, prompt)
 
 
-def status(value: str, megapixels: float, steps: int, guidance: float, mode: str) -> tuple[str, str]:
-    """What the page in the editor comes to before it is drawn: its lines, its prompt's length and its GPU time as a
-    status line, and the prompt itself."""
+@functools.lru_cache(maxsize=8)
+def sample_image(path: str) -> Image.Image:
+    """The sample page at ``path`` (an upload's own file, or an example's), shrunk if it is larger than the model can
+    use. Read only: the cache hands one image to every request that draws from it."""
+    image = load_rgb(Path(path))
+    image.thumbnail((LONGEST_SAMPLE_SIDE, LONGEST_SAMPLE_SIDE), Image.Resampling.LANCZOS)
+    return image
+
+
+def status(
+    value: str, sample: str | None, megapixels: float, steps: int, guidance: float, mode: str, sample_zoom: float
+) -> tuple[str, str]:
+    """What the page in the editor comes to before it is drawn: its lines, its prompt's length and the GPU time it
+    will ask for as a status line, and the prompt itself."""
     try:
-        plan, notes = page_plan(Document.parse(value), megapixels=megapixels)
-    except ValueError as error:
+        document = Document.parse(value)
+        image = sample_image(sample) if sample else None
+        if image is None:
+            plan, notes = page_plan(document, megapixels=megapixels)
+            ready = PagePlan(plan=plan, prompt=layout_prompt_of(plan), sample_lines=[], notes=notes)
+        else:
+            ready = planned(document, image, megapixels=megapixels, zoom=sample_zoom)
+    except (ValueError, OSError) as error:
         return chips(str(error)), ""
-    prompt = layout_prompt_of(plan)
-    tokens = token_count(prompt)
+    plan = ready.plan
+    tokens = token_count(ready.prompt)
     over = tokens is not None and tokens > MAX_PROMPT_TOKENS
+    if image is None:
+        asked = "add a sample page to draw"
+    else:
+        read = dit_tokens(plan, image, ready.sample_lines, ready.prompt)
+        asked = f"asks for {gpu_seconds(read, passes(mode, int(steps), guidance))} s of GPU time"
     parts = [
         f"{len(plan.lines)} line{'s' if len(plan.lines) != 1 else ''}",
         f"{plan.width} x {plan.height} px",
         "" if tokens is None else f"{tokens:,} of {MAX_PROMPT_TOKENS:,} prompt tokens",
-        f"about {gpu_seconds(plan.width, plan.height, passes(mode, int(steps), guidance))} s of GPU time",
-        *notes,
+        asked,
+        *ready.notes,
     ]
-    return chips(*parts, warn=over or bool(notes)), prompt
+    return chips(*parts, warn=over or bool(ready.notes) or image is None), ready.prompt
 
 
 def pick_sample(chosen: gr.SelectData) -> str:
@@ -214,7 +250,7 @@ def draw_page(
         raise gr.Error("Add a sample page first: a scan of handwriting whose paper, ink and hand the page will take.")
     try:
         document = Document.parse(page)
-        image = load_rgb(Path(sample))
+        image = sample_image(sample)
         ready = planned(document, image, megapixels=megapixels, zoom=sample_zoom)
     except (ValueError, OSError) as error:
         raise gr.Error(str(error)) from error
@@ -393,7 +429,10 @@ def build() -> gr.Blocks:
     """The demo's page: the sample and the settings in a band on top; under it the editor on the left and, at the
     same size on the right, the button and what it returns."""
     start_mode = FAST if HAS_STUDENT else GUIDED
-    start_note, start_prompt = status(editor_value(TEMPLATES[FIRST], None), MEGAPIXELS, STEPS, GUIDANCE, start_mode)
+    start_sample = next((path for path in SAMPLES if "1687" in Path(path).name), None)
+    start_note, start_prompt = status(
+        editor_value(TEMPLATES[FIRST], None), start_sample, MEGAPIXELS, STEPS, GUIDANCE, start_mode, 1.0
+    )
     with gr.Blocks(title="diffu · archive pages") as demo:
         gr.HTML(HEADER, elem_id="pd-header")
         with gr.Row(equal_height=False):
@@ -402,7 +441,7 @@ def build() -> gr.Blocks:
                 type="filepath",
                 sources=["upload", "clipboard"],
                 height=178,
-                value=next((path for path in SAMPLES if "1687" in Path(path).name), None),
+                value=start_sample,
                 scale=0,
                 min_width=170,
             )
@@ -539,9 +578,17 @@ def build() -> gr.Blocks:
             show_progress="hidden",
         )
         gr.on(
-            triggers=[editor.change, megapixels.change, steps.release, guidance.release, mode.change],
+            triggers=[
+                editor.change,
+                sample.change,
+                megapixels.change,
+                steps.release,
+                guidance.release,
+                mode.change,
+                sample_zoom.release,
+            ],
             fn=status,
-            inputs=[editor, megapixels, steps, guidance, mode],
+            inputs=[editor, sample, megapixels, steps, guidance, mode, sample_zoom],
             outputs=[note, prompt],
             api_visibility="private",
             show_progress="hidden",
@@ -563,6 +610,7 @@ def build() -> gr.Blocks:
                 readback,
             ],
             api_name="draw_page",
+            show_progress_on=result,  # the steps' progress over the page to come, the editor left free
         )
     return demo
 

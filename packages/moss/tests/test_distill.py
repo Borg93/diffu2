@@ -215,7 +215,10 @@ def test_a_distillation_run_saves_a_lora_over_the_noise_levels_layers_too_whose_
     adapted = {key.split(".lora_")[0] for key in load_file(str(checkpoint / "adapter.safetensors"))}
     assert {"time_embedding.0", "time_embedding.2", "shared_block_modulation", "video_head_modulation"} <= adapted
     assert {"video_embedder", "final_linear_video", "layers.0.proj.q"} <= adapted
-    student = student_of(tiny_moss_dit, checkpoint, device="cpu").float()
+    student = student_of(tiny_moss_dit, checkpoint, device="cpu")
+    lora = {name: parameter.dtype for name, parameter in student.named_parameters() if ".lora_" in name}
+    assert lora and set(lora.values()) == {torch.bfloat16}  # beside the DiT's weights, in their dtype: not merged
+    student = student.float()
     entries = read_entries(tiny_pair_cache)
 
     def loss_of(model: MossTransformer) -> float:  # on noise the run never drew, at both steps of every entry

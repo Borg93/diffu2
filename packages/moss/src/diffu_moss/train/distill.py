@@ -56,6 +56,7 @@ from diffu_moss.train.loop import (
     LoraTraining,
     TrainSettings,
     add_lora,
+    cast_lora,
     console,
     sample_size_of,
 )
@@ -418,9 +419,10 @@ def _resumed(training: LoraTraining, generator: torch.Generator, checkpoint: Pat
 
 
 def student_of(teacher: Path, checkpoint: Path, *, device: str = "cuda") -> MossTransformer:
-    """The student saved in ``checkpoint``: the DiT at ``teacher`` in bfloat16 on ``device`` with the checkpoint's
-    LoRA beside its weights in float32, as it was trained (each adapted layer adds its LoRA's output to its own), in
-    eval mode. Drawn in its record's (``DISTILL_RECORD``) steps at guidance 1.
+    """The student saved in ``checkpoint``, for drawing: the DiT at ``teacher`` in bfloat16 on ``device`` with the
+    checkpoint's LoRA beside its weights as it was trained (each adapted layer adds its LoRA's output to its own),
+    the LoRA's weights cast to bfloat16 (:func:`~diffu_moss.train.loop.cast_lora`), in eval mode. Drawn in its
+    record's (``DISTILL_RECORD``) steps at guidance 1.
 
     Raises:
         ValueError: If the checkpoint's weights are not its LoRA's.
@@ -430,6 +432,7 @@ def student_of(teacher: Path, checkpoint: Path, *, device: str = "cuda") -> Moss
     loaded = set_peft_model_state_dict(student, load_file(str(checkpoint / ADAPTER_WEIGHTS)))
     if loaded.unexpected_keys:
         raise ValueError(f"{checkpoint}: weights that are not its LoRA's")
+    cast_lora(student)
     return student.requires_grad_(False).to(device).eval()
 
 

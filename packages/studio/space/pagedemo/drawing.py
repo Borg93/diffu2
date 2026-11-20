@@ -26,7 +26,7 @@ from safetensors.torch import load_file
 
 from diffu_moss.init import write_moss_repo
 from diffu_moss.train.distill import DISTILL_RECORD, DistillRecord
-from diffu_moss.train.loop import add_lora
+from diffu_moss.train.loop import add_lora, cast_lora
 from diffu_moss.train.records import ADAPTER_RECORD, ADAPTER_WEIGHTS, AdapterRecord
 from diffu_moss.transformer import MossTransformer
 from diffu_page.draw.guidance import ReferenceGuidance
@@ -88,8 +88,9 @@ def student_folder(own: Path) -> Path | None:
 
 
 def add_student(transformer: MossTransformer, checkpoint: Path) -> DistillRecord:
-    """The student saved in ``checkpoint`` added to ``transformer`` as it was trained: its LoRA in float32 beside the
-    DiT's weights, not merged into them (a merge into bfloat16 rounds most of a short distillation's update away).
+    """The student saved in ``checkpoint`` added to ``transformer`` as it was trained: its LoRA beside the DiT's
+    weights, not merged into them (a merge into bfloat16 rounds most of a short distillation's update away), and its
+    own weights cast to the DiT's bfloat16 (in float32 every adapted layer casts its input and its sum).
 
     Returns:
         How the student is drawn: its steps and noise levels' shift, without guidance.
@@ -101,6 +102,7 @@ def add_student(transformer: MossTransformer, checkpoint: Path) -> DistillRecord
     loaded = set_peft_model_state_dict(transformer, load_file(str(checkpoint / ADAPTER_WEIGHTS)))
     if loaded.unexpected_keys:
         raise ValueError(f"{checkpoint}: weights that are not its LoRA's")
+    cast_lora(transformer)
     return DistillRecord.read(checkpoint / DISTILL_RECORD)
 
 

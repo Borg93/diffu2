@@ -218,6 +218,15 @@ def add_lora(transformer: MossTransformer, lora: LoraSettings) -> None:
             parameter.data = parameter.data.float()
 
 
+def cast_lora(transformer: MossTransformer) -> None:
+    """The LoRA's weights of ``transformer`` cast to the DiT's own dtype, for drawing. Left in the float32 they are
+    trained in (:func:`add_lora`) beside a bfloat16 DiT, every adapted layer casts its input to float32 and its sum
+    back to bfloat16 (PEFT's forward): the same page, a pass of it far longer (``docs/MOSS_RUNS.md``)."""
+    for name, parameter in transformer.named_parameters():
+        if ".lora_" in name:
+            parameter.data = parameter.data.to(transformer.dtype)
+
+
 def lora_transformer(base: Path, lora: LoraSettings, *, device: str, seed: int) -> MossTransformer:
     """The DiT at ``base`` (a diffusers-format folder) frozen in bfloat16 on ``device``, with a fresh LoRA of shape
     ``lora`` (float32, its A drawn after seeding torch with ``seed``), its joint blocks checkpointed."""
