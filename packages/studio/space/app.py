@@ -43,7 +43,7 @@ from diffu_page.page.crops.grid import LATENT_GRID  # noqa: E402
 from diffu_page.page.labels import LabelFormat, export  # noqa: E402
 from diffu_page.quality.judge import MAX_LINE_CER, LineVerdict  # noqa: E402
 from pagedemo.document import Document  # noqa: E402
-from pagedemo.drawing import DIT_REPO, DIT_REVISION, Drawn, Models, draw, load_models  # noqa: E402
+from pagedemo.drawing import DIT_REPO, DIT_REVISION, GUIDED_SHARE, Drawn, Models, draw, load_models  # noqa: E402
 from pagedemo.planning import PagePlan, layout_prompt_of, page_plan, planned  # noqa: E402
 from pagedemo.record import DrawRecord  # noqa: E402
 from pagedemo.templates import TEMPLATES  # noqa: E402
@@ -69,10 +69,10 @@ HAS_STUDENT = STUB or (MODELS is not None and MODELS.student is not None)
 
 
 def passes(mode: str, steps: int, guidance: float) -> int:
-    """The DiT passes a page takes: the student's steps, or the steps asked, twice under guidance."""
+    """The DiT passes a page takes: the student's steps, or the steps asked, the guided share of them twice."""
     if mode == FAST:
         return STUDENT_STEPS
-    return steps * (1 if math.isclose(guidance, 1.0) else 2)
+    return steps + (0 if math.isclose(guidance, 1.0) else math.ceil(GUIDED_SHARE * steps))
 
 
 def dit_tokens(plan: CropPlan, sample: Image.Image, sample_lines: list[LayoutBox], prompt_tokens: int) -> int:

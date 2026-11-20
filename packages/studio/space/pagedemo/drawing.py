@@ -117,6 +117,12 @@ def load_models(device: str, *, student: Path) -> Models:
     return Models(pipe=pipe, judge=TrOCRJudge(device=device), student=record)
 
 
+# The share of a guided page's steps that are guided: the ink and the words are settled in the first half, and the
+# second half without guidance drew the same page in a quarter less time (docs/MOSS_RUNS.md, 20 Nov 2026); a third
+# was too little (4 of 15 lines lost)
+GUIDED_SHARE = 0.5
+
+
 def draw(
     models: Models,
     plan: CropPlan,
@@ -144,7 +150,7 @@ def draw(
             steps, guidance = models.student.student_steps, models.student.guidance_scale
         else:
             pipe.transformer.disable_adapters()
-    pipe.update_components(guider=ReferenceGuidance(guidance_scale=guidance))
+    pipe.update_components(guider=ReferenceGuidance(guidance_scale=guidance, stop=GUIDED_SHARE))
     # the text encoder encodes the negative prompt only if the guider guides at its current step: the first, here
     pipe.guider.set_state(step=0, num_inference_steps=steps, timestep=None)
     reference: dict[str, object] = {"image": sample}
