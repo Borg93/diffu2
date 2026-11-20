@@ -17,7 +17,8 @@ start it through `jobs/spark_guard.sh`.
 ## The demo Space
 
 `space/` is a Hugging Face Space (Gradio, ZeroGPU) on the same pipeline, for the fine-tuned model
-`Gabriel/diffu-moss-above`: a page editor of our own (boxes drawn on the page or loaded from a template, each a block
+`Gabriel/diffu-moss-above`, published as
+[Gabriel/diffu-archive-pages](https://huggingface.co/spaces/Gabriel/diffu-archive-pages): a page editor of our own (boxes drawn on the page or loaded from a template, each a block
 of line slots with its text), a sample page, and the drawn page back with its ALTO and PAGE labels, every line read
 back.
 
@@ -34,3 +35,7 @@ back.
 `publish_space.sh` stages and uploads it: the Space's files, the sample pages and the student's checkpoint (both kept
 outside the repo), and `requirements.txt` with the diffu packages pinned to the checkout's commit on `origin/main`.
 `PAGEDEMO_STUB=1 python space/app.py` serves the page without the model, for work on the editor.
+
+On ZeroGPU (20 Nov 2026, half an RTX PRO 6000): the models load and pack in about three minutes (28.6 GB), a fast
+2 MP page is drawn in 24 to 26 s and its lines read back in the same call. A free account hosts two ZeroGPU Spaces
+and gives a visitor five GPU minutes a day: a fast page asks for 56 s of them, a guided one for about 200.
