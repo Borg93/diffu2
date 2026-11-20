@@ -89,10 +89,55 @@ E = [
         ("What it will vary", "One thing at a time against the first round: pool pages chosen from the whole pools to look like the target; pages drawn by our generator in the hands the ground truth is thin in, with exact labels; a share of the pretraining pages kept in the fine-tune so their effect does not fade; later, labels from our own reader where it agrees with the old label."),
         ("Why it waits", "For the first round's second score, which says whether pool pages add anything to 4 epochs on ground truth, and for the columns over every scan. No synthetic page has been used for a page reader yet."),
     ]),
-    (38, "reader", "running", "Trusted-cut pretraining", "Pretrain on pages with a trusted cut, then fine-tune", [
-        ("Why we are doing it", "This is the test the curation leads to: does pretraining on pool pages with a trusted cut beat the same training without it (7.55 %), the unfiltered control (7.18 %) and the best reader (6.73 %)?"),
-        ("What we found so far", "One epoch on 139,937 pool pages, then 2 epochs on ground truth: 6.92 % character error, 18.61 % word error. Against the same recipe without pool pages that is a gain of 0.63 points (95 % interval +0.14 to +1.16), better on 123 pages and worse on 58. Against the unfiltered control the gain is 0.26 points and not shown. Against 4 epochs on ground truth alone it is not ahead."),
-        ("What we learned so far", f"Pool pages help, most on the pools' own archives: 4.2 to 2.8 % on andra arkiv's volumes, 8.6 to 5.8 % on Svea's, 7.9 to 7.5 % elsewhere. Almost tripling the pages gave little, which points at the labels and not the amount. The second fine-tune, 2 more epochs, is under way ({PROGRESS})."),
+    (38, "reader", "partly", "Trusted-cut pretraining", "Pretrain on pages with a trusted cut, then fine-tune", [
+        ("Why we did it", "This is the test the curation leads to: does pretraining on pool pages with a trusted cut beat the same training without it?"),
+        ("What we found", "One epoch on 139,937 pool pages, then ground truth. After 2 epochs: 6.92 % character error against 7.55 % without pool pages, a gain of 0.63 points (95 % interval +0.15 to +1.17), better on 123 pages and worse on 58. After 4 epochs: 6.59 % (word error 17.80 %) against 6.73 % (18.83 %), a gain of 0.15 points (interval −0.20 to +0.49), better on 107 pages and worse on 72. That is the best reader so far, but the gain over 4 epochs alone is not shown."),
+        ("What we learned", "Pool pages help a short fine-tune clearly and a long one little: more epochs on ground truth catch up. The gain was largest on the pools' own archives. Tables improved most (14.1 to 13.0 %), running text hardly (5.73 to 5.71 %). The next round changes the labels and not only the amount: pages where our reader and the old label disagree most are left out (E59)."),
+    ]),
+    (50, "reader", "worked", "vLLM and a draft model", "The reader served by vLLM with a draft model", [
+        ("Why we did it", "We read one page at a time through Transformers, 0.5 pages a second. The model's own repository documents serving in vLLM with a small draft model (DFlash2) that guesses several tokens at once, and we had not read it."),
+        ("What we found", "Our fine-tuned reader serves in vLLM as it is. The text is the same: 6.17 % without the draft and 6.20 % with it, against 6.15 % through Transformers, on the 197 test pages that do not loop. The 139,937 trusted pages were read at 13.6 pages a second on two GPUs, 27 times faster than before."),
+        ("What we learned", "NVIDIA's draft fits our fine-tuned weights badly: about 4 of 16 drafted tokens are accepted, where NVIDIA reports about 11 on its own weights. A draft trained on our own reader is the next gain (E52). vLLM picks FlashAttention 2 on our workstation Blackwell GPUs; version 3 is for Hopper only."),
+    ]),
+    (51, "reader", "worked", "Loop detector", "Stopping a looping page early", [
+        ("Why we did it", "A few pages make the reader repeat itself until the token limit: 3 of the 200 test pages, about 1 % of pool pages. In vLLM our earlier guard does not exist, and a looping page costs twenty times a normal one."),
+        ("What we found", "vLLM has a detector that stops a reading whose tail is one token pattern repeated. Settings were replayed over 14 saved loops and 5,086 good pages, as Reducto's note of September 2026 does it: every setting caught all 14 at about token 180; patterns of 4 to 120 tokens repeated 6 times wrongly stop 1 good page in 5,086. Live, the 3 test loops stop at tokens 144, 571 and 971."),
+        ("What we learned", "A stopped page is a partial page and must be read again or left out: with the 3 read again by the guarded reader the score is 6.76 % against 6.73 %. Loops that count upward, and very long repeated blocks, are not caught."),
+    ]),
+    (59, "labels", "measured", "Reader against old label", "Our reader against the old label on 616,000 pool pages", [
+        ("Why we did it", "The first pretraining pointed at the labels, not the amount of pages. With vLLM the reader can read every pool page, and its disagreement with the old label is a filter."),
+        ("What we found", "On a typical page the two disagree on about 10 % of the characters. A quarter of the pages are under 5.6 %, a tenth over 30 %, one page in twenty over 45 %. A limit of 30 % keeps 90 % of the pages, 20 % keeps 81 %, 10 % keeps 52 %. Andra arkiv's labels agree better (8 %) than Svea's (10 %)."),
+        ("What we do not know yet", "Which side is wrong where they disagree. Our reader makes 6 to 7 % errors itself, so 10 % says a typical label is about as good as the reader. Pages at each level have still to be looked at before a limit is chosen. The read stopped at 476,404 of a million pages when the file server failed on 19 November."),
+    ]),
+    (52, "reader", "queued", "A draft model of our own", "A DFlash2 draft trained on our own reader", [
+        ("Why it is planned", "NVIDIA's draft was trained against NVIDIA's weights, and our fine-tune moved everything it reads. A draft trained on our reader's own answers should be accepted far more often."),
+        ("Where it is", "The usual route fails: vLLM's mode for extracting the reader's inner states refuses this model's configuration. The states can be made with Transformers in the format the training tool reads; that extractor is designed and not yet written. Whether the tool loads this model's embeddings is untried."),
+        ("What it needs", "The reader's own answers, which the pool reads already give, and a few hours on one GPU after a small end-to-end trial."),
+    ]),
+    (53, "tables", "queued", "More passes", "Double and triple pass over tables", [
+        ("Why it is planned", "The model's repository reads a page once, then reads the blocks it called a table again as crops, and scores higher on tables that way."),
+        ("Why it waits", "It only re-reads blocks the first pass calls a table, and our reader writes no tables yet. It follows the table model (E56)."),
+        ("What it needs", "A reader that writes tables, and a choice of how two readings of one table are merged."),
+    ]),
+    (54, "reader", "queued", "The repository's postprocessing", "The model's own postprocessing in place of our text stripping", [
+        ("Why it is planned", "We strip the layout tokens from the reader's output with a pattern of our own. The repository has tested helpers that give blocks with class, box and text, and tables as HTML with merged cells."),
+        ("Where it is", "Read in full. The reader's blocks are already scored: 94 % of the ground truth's blocks found, class right on 99 %, order exact on 60 of the 64 pages with two or more blocks."),
+        ("What it needs", "Its cosmetic options switched off, so the transcribed text and its order stay as the reader wrote them."),
+    ]),
+    (55, "reader", "queued", "Publish the reader", "The reader and its draft on Hugging Face", [
+        ("Why it is planned", "As the earlier line reader and its draft were published."),
+        ("What it will hold", "The model, a README with how to serve and call it in vLLM, the loop detector and its setting, the evaluation with its numbers and the files to reproduce them, the training logs, and speeds with their hardware."),
+        ("What it needs", "The choice of checkpoint, the repository names and whether it is public."),
+    ]),
+    (56, "tables", "queued", "A table model of its own", "A second reader trained only on tables", [
+        ("Why it is planned", "Tables are the reader's weakest kind and need another output: rows and cells as HTML. They are kept out of the running-text sets."),
+        ("Where it is", "The columns mark 331,109 pool scans as tables; the ground truth marks 232 tables."),
+        ("What it needs", "Table targets that can be trusted, since the pools' old labels on tables are poor, and a structure score (E49)."),
+    ]),
+    (57, "reader", "queued", "Blackwell and smaller weights", "Kernels for our GPUs, and 4-bit or 8-bit weights", [
+        ("Why it is planned", "Our GPUs are workstation Blackwell cards. Formats such as NVFP4 and MXFP8 could make reading faster."),
+        ("Where it is", "The prebuilt kernels are installed and the compiler inside the serving environment is found. Whether this serving stack runs those formats for this model is not known."),
+        ("What it needs", "To be looked up, then measured on a quiet GPU: speed and text on the same 200 pages. A format is kept only if the text holds."),
     ]),
     (5, "cut", "failed", "Gutter network", "A small gutter network on thumbnails", [
         ("Why we did it", "Cutting by the old labels' line positions goes wrong on about 870,000 pages. A tiny network (0.2 M parameters) on a 384 × 256 thumbnail was cheap enough to run over all 3.15 million scans."),
@@ -194,11 +239,11 @@ E = [
         ("What we found", "On 15,110 marked scans, whole volumes held out. Qwen 8B: 95.5 % right, finds 95.3 % of the scans not to cut. DINOv3 alone: 94.0 % right, finds 96.0 %, and holds back 5.6 % of good openings where Qwen holds back 3.9 %. Of the scans either would cut, about 0.5 % are not to be cut."),
         ("What we learned", "The small vision models are enough for cut-or-not. They embedded 45,000 scans at 35 a second on one GPU, so all 3.15 million pool scans take about 13 hours on two GPUs, and the vision-language model is not needed at that scale."),
     ]),
-    (40, "decide", "running", "Whole pools through the rule", "The whole pools through the cut rule", [
-        ("Why we are doing it", "Only 3 % of the pools has been through the checks. With a small model's vectors and the fold placer, every scan can be."),
-        ("Where it is", "Running since 18 November 09:17 on both GPUs, with the second fine-tune paused for it: vectors for all 3,068,985 pool scans with labelled lines, about 125 scans a second, done about 16:30. Every fold is being placed on the CPU, done in the night to 19 November. The first 40,000 scans are checked: 541 of them had been embedded before, and the new vectors match the old ones."),
-        ("What we found so far", "Small classifiers on the vectors give every scan its columns: the class of the hand marks, table or not, kind, layout, colour. On 742 scans that the VL model described and the classifiers never saw, table or not agrees on 98 %, layout on 94 %, kind on 87 %. Of scans that nobody had marked, 8 were drawn from each of the five classes and looked at: all 40 were what the column says. Shares there: cut 88 %, odd layout 6 %, single page 2.6 %, do not cut 2.4 %, not a page 1.2 %; tables 12 %."),
-        ("What it should give", "Projected from the run's first 40,000 scans, a random sample: about 2.3 million openings with running text to cut, 4.3 million pages; about 320,000 table scans, kept apart as their own set; about 70,000 single pages. One epoch of pretraining covers about 280,000 pages a day, so the size of the next set is a choice of GPU days."),
+    (40, "decide", "worked", "Whole pools through the rule", "Every pool scan through the checks, as columns of one table", [
+        ("Why we did it", "Only 3 % of the pools had been through the checks. With a small model's vectors and the fold placer, every scan can be."),
+        ("What we found", "Vectors from two small models for 3,068,911 pool scans in about 7 hours on two GPUs, and a fold placed on 2.9 million. Small classifiers on the vectors give every scan its columns: the class of the hand marks (94.6 % right with whole volumes held out), table or not (97.3 %), layout (93.4 %), kind (87.1 %), colour, and a 64-number summary for search. Of scans nobody had marked, 8 were drawn from each of the five classes and looked at: all 40 were what the column says."),
+        ("What it gives", "2,302,377 openings with running text to cut, about 4.25 million single pages. 331,109 table scans, kept apart for a table model of their own. 75,976 single pages. A first million pages (999,808, from 541,000 scans drawn at random) is built; all are single pages by the same builder as the first set."),
+        ("What it does not do", "The classifier calls 6.1 % of scans an odd layout where the hand marks say about 3 %, so it holds back some good openings. Kind is its weakest column. The checks by eye were small samples."),
     ]),
     (7, "embed", "worked", "DINOv3 + EVoC clusters", "DINOv3 page embeddings clustered with EVoC", [
         ("Why we did it", "To map what the pools hold without any labels, and to find what is not handwriting."),
@@ -260,6 +305,11 @@ E = [
         ("What we found", "A 0.19 M-parameter network on a 256 × 256 thumbnail: 99.94 % on held-out pages. On 20,000 pool pages 0.17 % are turned with confidence."),
         ("What we learned", "Typed pages fool it, so it runs after what is not handwriting is set aside. It has not yet been run over the pools."),
     ]),
+    (58, "checks", "partly", "Orientation of every page", "Which way up every page is", [
+        ("Why we did it", "A turned page should be turned back or left out before training, and the small orientation network had only been a trial."),
+        ("What we found", "Run on the CPU over the 139,937 trusted pages and the 999,808 pages of the million-page set, 133 pages a second. In the first 40,000 pages, 99.6 % are upright; 165 are called turned, 26 of them with confidence above 90 %."),
+        ("What is not done", "The turned pages have not been looked at by eye. Most are called at about 50 % confidence, probably near-empty pages. The result is in files by page and not yet a column of the table."),
+    ]),
     (10, "checks", "worked", "Writing layer tuned", "The writing layer tuned on real line outlines", [
         ("Why we did it", "A layer that marks where writing is, to find writing the labels skip. Its first score (0.93) turned out to be against boxes and not outlines, so it was redone on the ground truth's polygons."),
         ("What we found", "Embedder, head and resolution all land within 0.01: an overlap of 0.71 to 0.73 out of a possible 0.84. DINOv3 with a linear head is enough."),
@@ -309,11 +359,11 @@ ALSO = [
 ]
 
 OPEN = [
-    ("The second score of E38", "Pretraining followed by 4 epochs on ground truth, against 6.73 %. It comes in the night to 19 November and says whether pool pages add anything to longer training on ground truth."),
-    ("Filtering the labels", "Our reader has to read the 139,937 trusted pages. On the 1,881 that have a reading, about 6 % disagree with the old label by more than half."),
-    ("Tables", "6 % of the trusted set and the reader's weakest kind. The pools' labels on tables are poor (E42), so better table reading has to come from ground truth, a fixed reading order, or the double pass on table regions, which is queued."),
+    ("One GPU", "From 20 November we have one GPU, not two. Reading the rest of the million pages takes about 21 hours, one epoch of pretraining on a million pages about a week, on all 4.25 million about a month."),
+    ("Choosing the label limit", "The reader and the old label disagree by 30 % or more on a tenth of the pages (E59). Pages at each level have to be looked at before those are dropped from the next pretraining."),
+    ("Tables", "The reader's weakest kind (13 % against 5.7 % for running text). 331,109 pool scans are tables and are kept out of the running-text sets. They are for a table model of its own that writes HTML; the pools' old labels on tables are poor (E42), so its targets have to be made first (E49)."),
     ("Openings without a fold line", "About one in ten. The trained placer (E26) is for these."),
-    ("Scale", "The 139,937 pages come from the 100,083 pool scans checked so far, 3 % of the pools. By the same rule the pools hold about 4.4 million pages. With E39 every scan can be embedded in about 13 hours on two GPUs. Training time then sets the size: one epoch covers about 280,000 pages a day."),
+    ("The next pretraining", "The million-page set without its worst tenth by label disagreement and without looped pages, about 900,000 pages, one epoch, measured against 6.59 %. All 4.25 million only if that gain grows with size."),
     ("Still to look at by eye", "The table test pages, the test pages with one side empty, and a sample from each cluster."),
     ("Partial ground truth", "Found on two test pages. The check over the whole ground truth needs two readers' readings (E28)."),
 ]
@@ -324,8 +374,8 @@ CHARTS = [
         ("Nemotron Parse, 2 epochs on ground truth", 7.55, "7.55 %", "with the 10-token no-repeat guard"),
         ("the same after unfiltered Svea pretraining", 7.18, "7.18 %", "53,490 pool pages first (E3)"),
         ("the same after trusted-cut pretraining", 6.92, "6.92 %", "139,937 pool pages first (E38); gain 0.63 points, 95 % interval +0.14 to +1.16"),
-        ("Nemotron Parse, 4 epochs on ground truth", 6.73, "6.73 %", "the best reader so far (E4)"),
-        ("4 epochs after trusted-cut pretraining", None, "19 Nov, morning", "the second fine-tune of E38, paused for the vectors of every pool scan, resumes by itself"),
+        ("Nemotron Parse, 4 epochs on ground truth", 6.73, "6.73 %", "4 epochs without pool pages (E4)"),
+        ("4 epochs after trusted-cut pretraining", 6.59, "6.59 %", "the best reader so far (E38); the gain over 4 epochs alone, 0.15 points, is not shown (95 % interval −0.20 to +0.49)"),
     ], "Off this scale: the old YOLO and TrOCR pipeline reads the same pages at 14.5 % with today's TrOCR and 16.6 % with the 2024 one (E43), Unlimited-OCR 2 at 63.7 %."),
     ("What the trusted-cut rule keeps", "described pool scans left after each check", 100083.0, [
         ("Described pool scans", 100083, "100,083", "Svea and andra arkiv, described and embedded"),

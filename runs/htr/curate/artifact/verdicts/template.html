@@ -158,10 +158,10 @@ footer code { font-family: var(--mono); font-size: 12px; }
 
 <div class="wrap">
 <header class="top">
-  <span class="tag">GT-Lejonet · curating the pretraining pools · 14 to 17 November 2026</span>
+  <span class="tag">GT-Lejonet · curating the pretraining pools · 14 to 20 November 2026</span>
   <h1>What worked, what did not, and what we learned</h1>
   <p class="lede">Two pools of archive scans, 3.15 million in all, were read years ago by the old YOLO and TrOCR pipeline. We want to turn them into pretraining data for a whole-page reader. This page gives every experiment so far its verdict: why we ran it, what came out, and what it taught us.</p>
-  <p class="state"><b>Where it stands, {{STATE}}.</b> The cut into single pages is solved for about nine openings in ten. Pretraining on a first set of 139,937 pages with a trusted cut took the reader from 7.55 to 6.92 % character error on the 200 test pages. Two more epochs on ground truth are under way ({{PROGRESS}}); their score says whether pool pages add anything to the best reader, at 6.73 %. Since 18 November both GPUs make vectors for all 3.07 million pool scans with labelled lines, so that every scan gets its checks as columns and the next training set is a filter over the whole pools.</p>
+  <p class="state"><b>Where it stands, {{STATE}}.</b> The best reader makes 6.59 % character errors on the 200 test pages; the old YOLO and TrOCR pipeline makes 14.5 % on the same pages. Every one of the 3.07 million pool scans now holds its checks as columns of one table, which gives 2.3 million openings to cut, about 4.25 million single pages, and 331,109 table scans kept apart. Served by vLLM the reader reads 13.6 pages a second on two GPUs, and has read 616,000 pool pages so far; its disagreement with the old labels is the filter for the next pretraining. {{PROGRESS}}</p>
 </header>
 
 <section aria-labelledby="h-counts">
