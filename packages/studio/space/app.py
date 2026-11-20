@@ -76,8 +76,18 @@ def gpu_seconds(width: int, height: int, dit_passes: int) -> int:
 
 
 def _duration(
-    plan: CropPlan, sample: object, lines: object, steps: int, guidance: float, seed: int, mode: str, *_: object
+    plan: CropPlan,
+    sample: object,
+    lines: object,
+    steps: int,
+    guidance: float,
+    seed: int,
+    mode: str,
+    *_: object,
+    **__: object,
 ) -> int:
+    """The GPU seconds ZeroGPU is asked for, from the arguments :func:`draw_on_gpu` is called with (its progress
+    tracker among them, by keyword)."""
     return gpu_seconds(plan.width, plan.height, passes(mode, steps, guidance))
 
 
