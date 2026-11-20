@@ -51,11 +51,11 @@ from __future__ import annotations
 import json
 import time
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import nullcontext
 from pathlib import Path
 from statistics import fmean
-from typing import Annotated, Self
+from typing import Annotated, Any, Self
 
 import torch
 import torch.distributed as dist
@@ -422,6 +422,15 @@ class LoraTraining:
         self._schedule.step()
         self._optimizer.zero_grad(set_to_none=True)
         return learning_rate
+
+    def state_dict(self) -> dict[str, Any]:
+        """The optimizer's and its schedule's states, for a run that resumes."""
+        return {"optimizer": self._optimizer.state_dict(), "schedule": self._schedule.state_dict()}
+
+    def load_state_dict(self, state: Mapping[str, Any]) -> None:
+        """The optimizer and its schedule set to ``state`` (:meth:`state_dict`'s)."""
+        self._optimizer.load_state_dict(state["optimizer"])
+        self._schedule.load_state_dict(state["schedule"])
 
     def save(self, directory: Path, progress: Progress) -> None:
         """The LoRA's weights and shape at ``progress``'s step, into ``directory``."""

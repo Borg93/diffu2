@@ -31,11 +31,12 @@ import time
 from collections.abc import Sequence
 from itertools import pairwise
 from pathlib import Path
-from statistics import fmean
 from typing import Annotated
 
 import torch
+import torch.distributed as dist
 import typer
+from peft import set_peft_model_state_dict
 from pydantic import BaseModel, ConfigDict, Field
 from safetensors.torch import load_file
 from torch import Tensor
@@ -43,12 +44,15 @@ from torch.nn import functional as F
 
 from diffu_moss.modular_pipelines.moss.before_denoise import SAMPLING_SHIFT, sampling_sigmas
 from diffu_moss.modular_pipelines.moss.denoise import DEMO_UNCOND_SKIP_LAYERS, GUIDANCE_SCALE
-from diffu_moss.train.cache import load_sample, read_entries
+from diffu_moss.train.cache import load_sample, read_entries, target_shape
+from diffu_moss.train.distributed import Ranks, joined, left
 from diffu_moss.train.loop import CHECKPOINTS, LOG, LoraTraining, TrainSettings, console, sample_size_of
-from diffu_moss.train.records import JsonRecord, Progress
+from diffu_moss.train.records import ADAPTER_WEIGHTS, PROGRESS_RECORD, JsonRecord, Progress
 from diffu_moss.transformer import MossTransformer
 
 DISTILL_RECORD = "distill.json"  # beside a checkpoint's LoRA: how its student is drawn
+OPTIMIZER_STATE = "optimizer.pt"
+RESUMABLE = {"stop_at", "save_every", "device"}  # what a resumed run may change
 
 app = typer.Typer(add_completion=False)
 
@@ -161,7 +165,8 @@ def distillation_loss(
 class DistillRun(BaseModel):
     """A distillation run: its length, the student LoRA's shape and learning rate (warmed up over ``warmup`` steps),
     the samples whose losses one optimizer step averages, how the student is taught (``distill``), and when it is
-    saved."""
+    saved; ``stop_at`` ends this run at that step with a checkpoint (a chain of short jobs, each resumed from the
+    last)."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -174,6 +179,7 @@ class DistillRun(BaseModel):
     grad_clip: float = 1.0
     distill: DistillSettings = DistillSettings()
     save_every: int = Field(default=250, ge=1)
+    stop_at: int | None = Field(default=None, ge=1)
     seed: int = 0
     device: str = "cuda"
 
@@ -201,23 +207,43 @@ class DistillLog(BaseModel):
     seconds: float
 
 
-def distill(teacher: Path, cache: Path, negative: Path, out: Path, run: DistillRun) -> Path:
+def distill(
+    teacher: Path,
+    cache: Path,
+    negative: Path,
+    out: Path,
+    run: DistillRun,
+    *,
+    resume: Path | None = None,
+    ranks: Ranks | None = None,
+) -> Path:
     """A LoRA student of the DiT at ``teacher`` distilled on the prompts and sample pages of ``cache`` (the module's
     docstring), the teacher guided against the negative prompt's embeddings in ``negative`` (a safetensors file's
-    ``prompt_embeds``); the log and checkpoints go to ``out``. Each sample draws an entry, its noise and the student
-    step it is taught at from one generator seeded with ``run.seed``.
+    ``prompt_embeds``); the log and checkpoints go to ``out``. Each sample draws an entry, the student step it is
+    taught at and its noise from one generator seeded with ``run.seed``.
+
+    Over several ``ranks`` (a ``torchrun`` launch) every rank holds the teacher and the student whole, draws every
+    sample's entry, step and noise in turn as one process does, computes the samples it owns, and the ranks sum their
+    gradients before each takes the same optimizer step: one process's training up to the sum's rounding. The main rank
+    writes the log and the checkpoints. From ``resume``, a checkpoint of ``out``, the run goes on at its next step
+    with its optimizer's state and its generator's, as the run would have gone on.
 
     Returns:
         The last checkpoint's directory.
 
     Raises:
-        ValueError: If ``out`` holds a run's log already, or the cache holds no entry.
+        ValueError: If ``out`` holds a run's log already (unless resumed), the cache holds no entry, the samples of a
+            step do not share out evenly among the ranks, or ``resume`` holds no state of this run's settings.
     """
-    if (out / LOG).exists():
+    ranks = Ranks() if ranks is None else ranks
+    if run.samples_per_step % ranks.world:
+        raise ValueError(f"{run.samples_per_step} samples a step do not share out among {ranks.world} ranks")
+    if resume is None and (out / LOG).exists():
         raise ValueError(f"{out} holds a training already ({LOG}); give a new directory")
     entries = read_entries(cache)
     if not entries:
         raise ValueError(f"{cache} holds no entry to distill on")
+    device = run.device
     settings = TrainSettings(
         steps=run.steps,
         rank=run.rank,
@@ -226,31 +252,45 @@ def distill(teacher: Path, cache: Path, negative: Path, out: Path, run: DistillR
         warmup=run.warmup,
         save_every=run.save_every,
         seed=run.seed,
-        device=run.device,
+        device=device,
     )
     training = LoraTraining(teacher, settings, sample_size_of(cache, None))
-    frozen = MossTransformer.from_pretrained(str(teacher), torch_dtype=torch.bfloat16).to(run.device).eval()
+    frozen = MossTransformer.from_pretrained(str(teacher), torch_dtype=torch.bfloat16).to(device).eval()
     frozen.requires_grad_(False)
-    negative_embeds = load_file(str(negative), device=run.device)["prompt_embeds"]
+    negative_embeds = load_file(str(negative), device=device)["prompt_embeds"]
     record = DistillRecord(
         teacher=str(teacher.resolve()), student_steps=run.distill.student_steps, shift=run.distill.shift
     )
     generator = torch.Generator().manual_seed(run.seed)
-    out.mkdir(parents=True, exist_ok=True)
-    checkpoint = out
-    for step in range(1, run.steps + 1):
+    done = 0
+    if resume is not None:
+        done = _resumed(training, generator, resume, run, device)
+        if ranks.main:
+            lines = (out / LOG).read_text(encoding="utf-8").splitlines(keepends=True)
+            kept = [line for line in lines if DistillLog.model_validate_json(line).step <= done]
+            (out / LOG).write_text("".join(kept), encoding="utf-8")
+    if ranks.main:
+        out.mkdir(parents=True, exist_ok=True)
+    checkpoint = out if resume is None else resume
+    last = run.steps if run.stop_at is None else min(run.stop_at, run.steps)
+    for step in range(done + 1, last + 1):
         started = time.monotonic()
-        losses, pairs, indices = [], [], []
-        for _ in range(run.samples_per_step):
+        losses = torch.zeros(run.samples_per_step, dtype=torch.float64, device=device)
+        pairs, indices = [], []
+        for place in range(run.samples_per_step):
             entry = entries[int(torch.randint(len(entries), (1,), generator=generator))]
             index = int(torch.randint(run.distill.student_steps, (1,), generator=generator))
-            sample = load_sample(cache, entry, run.device)
-            noise = torch.randn(sample.target.shape, generator=generator).to(run.device)
+            noise = torch.randn(target_shape(cache, entry), generator=generator)
+            pairs.append(entry.pair)
+            indices.append(index)
+            if not ranks.owns(place):  # drawn all the same, so every rank's generator goes on alike
+                continue
+            sample = load_sample(cache, entry, device)
             references = None if sample.reference is None else [sample.reference]
             loss = distillation_loss(
                 training.transformer,
                 frozen,
-                noise,
+                noise.to(device),
                 index,
                 sample.prompt_embeds,
                 negative_embeds,
@@ -258,14 +298,20 @@ def distill(teacher: Path, cache: Path, negative: Path, out: Path, run: DistillR
                 references,
             )
             (loss / run.samples_per_step).backward()
-            losses.append(loss.item())
-            pairs.append(entry.pair)
-            indices.append(index)
+            losses[place] = loss.detach().double()
+        if ranks.mesh is not None:  # each rank's share of the mean's gradient, summed
+            dist.all_reduce(losses)
+            for parameter in training.parameters:
+                if parameter.grad is None:
+                    parameter.grad = torch.zeros_like(parameter)
+                dist.all_reduce(parameter.grad)
         grad_norm = torch.nn.utils.clip_grad_norm_(training.parameters, run.grad_clip).item()
         learning_rate = training.step()
+        if not ranks.main:
+            continue
         logged = DistillLog(
             step=step,
-            loss=fmean(losses),
+            loss=losses.mean().item(),
             learning_rate=learning_rate,
             grad_norm=grad_norm,
             pairs=pairs,
@@ -274,16 +320,49 @@ def distill(teacher: Path, cache: Path, negative: Path, out: Path, run: DistillR
         )
         with (out / LOG).open("a", encoding="utf-8") as log:
             log.write(f"{logged.model_dump_json()}\n")
-        if step % 10 == 0 or step == 1:
+        if step % 10 == 0 or step == done + 1:
             console.print(f"step {step}: loss {logged.loss:.4f}, {logged.seconds:.1f} s")
-        if step % run.save_every == 0 or step == run.steps:
+        if step % run.save_every == 0 or step == last:
             checkpoint = out / CHECKPOINTS / f"step_{step:06d}"
             checkpoint.mkdir(parents=True, exist_ok=True)
-            training.save(
-                checkpoint, Progress(step=step, settings=run.model_dump_json(), generator=b"", order=[], drawn=0)
+            progress = Progress(
+                step=step,
+                settings=run.model_dump_json(exclude=RESUMABLE),
+                generator=bytes(generator.get_state().numpy()),
+                order=[],
+                drawn=0,
             )
+            training.save(checkpoint, progress)
             record.write(checkpoint / DISTILL_RECORD)
+            torch.save(training.state_dict(), checkpoint / OPTIMIZER_STATE)
+            progress.write(checkpoint / PROGRESS_RECORD)  # last: a checkpoint with it is whole
     return checkpoint
+
+
+def _resumed(training: LoraTraining, generator: torch.Generator, checkpoint: Path, run: DistillRun, device: str) -> int:
+    """``training`` and ``generator`` set to the state saved in ``checkpoint``; the step it was saved at.
+
+    Raises:
+        ValueError: If the checkpoint holds no whole state, or was trained with other settings.
+    """
+    if not (checkpoint / PROGRESS_RECORD).is_file():
+        raise ValueError(f"{checkpoint} holds no state to resume from")
+    progress = Progress.read(checkpoint / PROGRESS_RECORD)
+    if progress.settings != run.model_dump_json(exclude=RESUMABLE):
+        raise ValueError(f"{checkpoint} was trained with other settings: {progress.settings}")
+    weights = load_file(str(checkpoint / ADAPTER_WEIGHTS), device=device)
+    loaded = set_peft_model_state_dict(training.transformer, weights)
+    if loaded.unexpected_keys:
+        raise ValueError(f"{checkpoint}: weights that are not its LoRA's")
+    training.load_state_dict(torch.load(checkpoint / OPTIMIZER_STATE, map_location=device, weights_only=True))
+    generator.set_state(torch.frombuffer(bytearray(progress.generator), dtype=torch.uint8))
+    return progress.step
+
+
+def latest_checkpoint(out: Path) -> Path | None:
+    """The newest whole checkpoint of the run in ``out`` (its progress record is written last), or None."""
+    whole = [folder for folder in sorted((out / CHECKPOINTS).glob("step_*")) if (folder / PROGRESS_RECORD).is_file()]
+    return whole[-1] if whole else None
 
 
 @app.command()
@@ -304,6 +383,15 @@ def main(
     ] = 50,
     guidance_scale: Annotated[float, typer.Option(min=1.0, help="the teacher's guidance scale")] = GUIDANCE_SCALE,
     save_every: Annotated[int, typer.Option(min=1, help="a checkpoint every this many steps, and at the end")] = 250,
+    stop_at: Annotated[
+        int | None, typer.Option(min=1, help="train only to this step, save a checkpoint there and stop")
+    ] = None,
+    resume: Annotated[
+        str | None,
+        typer.Option(
+            help="a checkpoint of --out to go on from, or 'latest': its newest whole one (none: from the start)"
+        ),
+    ] = None,
     seed: Annotated[int, typer.Option(help="the samples, noise, student steps and the LoRA's start")] = 0,
     device: Annotated[str, typer.Option(help="where the student and the teacher run")] = "cuda",
 ) -> None:
@@ -318,14 +406,21 @@ def main(
             student_steps=student_steps, teacher_steps=teacher_steps, guidance_scale=guidance_scale
         ),
         save_every=save_every,
+        stop_at=stop_at,
         seed=seed,
         device=device,
     )
+    ranks, device = joined(device)
+    run = run.model_copy(update={"device": device})
+    start = latest_checkpoint(out) if resume == "latest" else None if resume is None else Path(resume)
     try:
-        checkpoint = distill(teacher, cache, negative, out, run)
+        checkpoint = distill(teacher, cache, negative, out, run, resume=start, ranks=ranks)
     except ValueError as error:
         raise typer.BadParameter(str(error)) from error
-    console.print(f"the student after {steps} steps -> {checkpoint}")
+    finally:
+        left()
+    if ranks.main:
+        console.print(f"the student -> {checkpoint}")
 
 
 if __name__ == "__main__":

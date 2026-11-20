@@ -2,17 +2,22 @@
 teacher's guided target across one student step, a loss that is zero for a student that already steps as its teacher,
 a LoRA student whose few-step drawing moves toward its teacher's many-step guided drawing when trained on it, and
 a distillation run whose checkpoint merges into the teacher's DiT as a student that steps closer to the teacher's
-guided steps (a used run directory refused)."""
+guided steps (a used run directory refused); a run stopped and resumed goes on exactly as the run that went
+through, and a run on two processes (torchrun, gloo) trains as one process does up to the rounding of the summed
+gradients."""
 
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from itertools import pairwise
 from pathlib import Path
 
 import pytest
 import torch
-from safetensors.torch import save_file
+from safetensors.torch import load_file, save_file
 from torch import Tensor
 
 from diffu_moss.modular_pipelines.moss.before_denoise import sampling_sigmas
@@ -23,6 +28,7 @@ from diffu_moss.train.distill import (
     DistillSettings,
     distill,
     distillation_loss,
+    latest_checkpoint,
     rolled_out,
     student_levels,
     teacher_levels,
@@ -191,3 +197,65 @@ def test_a_distillation_run_saves_a_lora_that_merges_into_a_student_stepping_clo
     assert loss_of(student) < 0.7 * loss_of(teacher)
     with pytest.raises(ValueError, match="holds a training already"):
         distill(tiny_moss_dit, tiny_pair_cache, tmp_path / "negative.safetensors", tmp_path / "run", run)
+
+
+def _rows(run: Path) -> list[dict[str, object]]:
+    lines = (run / LOG).read_text(encoding="utf-8").splitlines()
+    return [{key: value for key, value in json.loads(line).items() if key != "seconds"} for line in lines]
+
+
+def test_a_distillation_stopped_and_resumed_goes_on_exactly_as_the_run_that_went_through(
+    tiny_moss_dit: Path, tiny_pair_cache: Path, negative: Tensor, tmp_path: Path
+) -> None:
+    file = tmp_path / "negative.safetensors"
+    save_file({"prompt_embeds": negative}, str(file))
+    run = DistillRun(
+        steps=4, rank=4, alpha=4, learning_rate=3e-3, warmup=2, distill=SETTINGS, save_every=4, device="cpu"
+    )
+    through = distill(tiny_moss_dit, tiny_pair_cache, file, tmp_path / "through", run)
+
+    stopped = run.model_copy(update={"stop_at": 2})
+    distill(tiny_moss_dit, tiny_pair_cache, file, tmp_path / "chained", stopped)
+    first = latest_checkpoint(tmp_path / "chained")
+    resumed = distill(tiny_moss_dit, tiny_pair_cache, file, tmp_path / "chained", run, resume=first)
+
+    assert first is not None and first.name == "step_000002" and resumed.name == "step_000004"
+    assert _rows(tmp_path / "chained") == _rows(tmp_path / "through")
+    weights = [load_file(str(folder / "adapter.safetensors")) for folder in (resumed, through)]
+    assert [name for name in weights[1] if not torch.equal(weights[0][name], weights[1][name])] == []
+    other = run.model_copy(update={"learning_rate": 1e-3})
+    with pytest.raises(ValueError, match="other settings"):
+        distill(tiny_moss_dit, tiny_pair_cache, file, tmp_path / "chained", other, resume=first)
+
+
+def test_a_distillation_on_two_processes_trains_as_one_process_does(
+    tiny_moss_dit: Path, tiny_pair_cache: Path, negative: Tensor, tmp_path: Path
+) -> None:
+    file = tmp_path / "negative.safetensors"
+    save_file({"prompt_embeds": negative}, str(file))
+
+    def launched(world: int) -> Path:
+        out = tmp_path / f"world_{world}"
+        command = [
+            *(sys.executable, "-m", "torch.distributed.run", "--standalone", f"--nproc-per-node={world}"),
+            *("-m", "diffu_moss.train.distill", "--device", "cpu", "--teacher", str(tiny_moss_dit)),
+            *("--cache", str(tiny_pair_cache), "--negative", str(file), "--out", str(out)),
+            *("--steps", "3", "--samples-per-step", "2", "--rank", "4", "--learning-rate", "3e-3"),
+            *("--student-steps", "2", "--teacher-steps", "8", "--save-every", "3"),
+        ]
+        env = {**os.environ, "CUDA_VISIBLE_DEVICES": "", "OMP_NUM_THREADS": "1"}
+        done = subprocess.run(command, env=env, capture_output=True, text=True, check=False)
+        assert done.returncode == 0, done.stderr[-3000:]
+        return out
+
+    one, two = launched(1), launched(2)
+
+    rows = _rows(one), _rows(two)
+    assert [(row["step"], row["pairs"], row["indices"]) for row in rows[0]] == [
+        (row["step"], row["pairs"], row["indices"]) for row in rows[1]
+    ]
+    for ours, theirs in zip(*rows, strict=True):
+        assert ours["loss"] == pytest.approx(theirs["loss"], rel=1e-4, abs=1e-8)
+    weights = [load_file(str(out / "checkpoints" / "step_000003" / "adapter.safetensors")) for out in (one, two)]
+    far = [name for name in weights[0] if not torch.allclose(weights[0][name], weights[1][name], rtol=1e-3, atol=1e-6)]
+    assert far == []
