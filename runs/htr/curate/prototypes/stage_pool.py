@@ -1,7 +1,7 @@
 """The pool scans to train on, taken by the columns every scan holds, staged for the set builder (CURATION E40).
 
 A scan is taken when the old pipeline labelled lines on it, the head on its patch vectors calls it an opening to cut
-(cut_class) with running text (is_table false), the placer finds a fold line (folds.lance), and its volume holds no
+(cut_class) with running text (is_table false) in handwriting (kind: not print or type), the placer finds a fold line (folds.lance), and its volume holds no
 ground-truth scan. With SINGLES=1 the scans the head calls a single page are taken too, uncut. Below OUT the scans are
 staged as stage_trusted.py stages them (per volume an ``alto/`` folder of links to the label files and links to the
 scans; ``OUT/cuts.json`` each scan's fold for ``--cuts``), with ``OUT/scans.parquet`` the scans taken and their columns.
@@ -33,6 +33,7 @@ from diffu_curate.settings import CurateSettings
 HOME = Path("runs/htr/curate")
 COLUMNS = ["image", "pool", "volume", "scan", "lines", "source", "cut_class", "cut_p", "is_table", "table_p", "kind", "layout", "colour"]
 SINGLES = os.environ.get("SINGLES") == "1"
+HANDWRITING = ("handwritten_text", "handwritten_table_or_ledger")  # kind: the VL model's first form over-calls tables, is_table decides those
 
 
 def pools() -> tuple[pd.DataFrame, int]:
@@ -56,10 +57,11 @@ def funnel(scans: pd.DataFrame, total: int) -> pd.DataFrame:
     labelled = step("lines labelled by the old pipeline", (scans.lines > 0) & (scans.source == "htrflow"))
     cut = step("... the head says an opening to cut", labelled & (scans.cut_class == "cut"))
     text = step("... with running text, no table", cut & ~scans.is_table)
+    text = step("... and handwriting, not print or type", text & scans.kind.isin(HANDWRITING))
     placed = step("... a fold is placed", text & scans.fold_found.notna())
     found = step("... a fold line is found", placed & (scans.fold_found == True))  # noqa: E712 (a column with nulls)
     taken = step("... outside the ground truth's volumes: TAKEN, cut", found & ~scans.in_truth)
-    single = step("single pages with running text, outside the truth", labelled & (scans.cut_class == "single") & ~scans.is_table & ~scans.in_truth)
+    single = step("single pages with running text, outside the truth", labelled & (scans.cut_class == "single") & ~scans.is_table & scans.kind.isin(HANDWRITING) & ~scans.in_truth)
     pages = round(taken.sum() * 1.847) + (int(single.sum()) if SINGLES else 0)  # the first trusted set gave 1.847 pages a cut scan
     print(f"{'pages, at 1.847 a cut scan as in the first set':52} {pages:10,}" + (" (with the single pages)" if SINGLES else ""))
     step("of the taken: colour scans", taken & scans.colour.fillna(False).astype(bool))
