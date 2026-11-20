@@ -54,15 +54,16 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 MAX_SEED = 2**31 - 1
 STEPS, GUIDANCE, MEGAPIXELS = 28, 2.0, 2.0  # a page's defaults: the guidance the model card suggests, at its size
 LONGEST_SAMPLE_SIDE = 4096  # px: a larger upload is shrunk to it once (the model reads a sample at 2 MP at most)
+FAST, GUIDED = "fast", "guided"  # a page's mode: the distilled student's few unguided steps, or the DiT's guided ones
 # The GPU seconds a page is asked for: the model's start on a GPU, its text encoder, VAE and judge, then each pass of
 # the DiT by the tokens it reads (the page's and the sample's latent cells and the prompt's tokens; two passes a step
-# under guidance). On a DGX Spark a pass took 0.59 to 0.66 s a thousand tokens from 7,500 to 16,700 of them
-# (docs/MOSS_RUNS.md); the rate here is ZeroGPU's half of an RTX PRO 6000, from its own runs (a page's status line
-# shows the seconds it took), with a margin.
-SETUP_SECONDS, SECONDS_PER_PASS_KILOTOKEN, LONGEST_SECONDS = 30, 0.23, 300
+# under guidance). On ZeroGPU's half of an RTX PRO 6000 (20 Nov 2026, a letter of 13,900 tokens in 8 passes) the DiT
+# alone took 0.16 s a pass and thousand tokens and with the student's LoRA beside it 0.18, the rest of a call under
+# 10 s: asked for with a margin, as a call that outruns its seconds is cut off.
+SETUP_SECONDS, LONGEST_SECONDS = 20, 300
+SECONDS_PER_PASS_KILOTOKEN = {FAST: 0.21, GUIDED: 0.18}
 
 MODELS: Models | None = None if STUB else load_models(DEVICE, student=HERE / "student")
-FAST, GUIDED = "fast", "guided"  # a page's mode: the distilled student's few unguided steps, or the DiT's guided ones
 STUDENT_STEPS = 8 if MODELS is None or MODELS.student is None else MODELS.student.student_steps
 HAS_STUDENT = STUB or (MODELS is not None and MODELS.student is not None)
 
@@ -83,10 +84,10 @@ def dit_tokens(plan: CropPlan, sample: Image.Image, sample_lines: list[LayoutBox
     return cells + (len(prompt) // 3 if words is None else words)
 
 
-def gpu_seconds(tokens: int, dit_passes: int) -> int:
-    """The GPU seconds asked for a page whose DiT reads ``tokens`` tokens a pass, in ``dit_passes`` passes."""
-    seconds = SETUP_SECONDS + dit_passes * tokens / 1000 * SECONDS_PER_PASS_KILOTOKEN
-    return min(LONGEST_SECONDS, math.ceil(seconds))
+def gpu_seconds(tokens: int, mode: str, steps: int, guidance: float) -> int:
+    """The GPU seconds asked for a page whose DiT reads ``tokens`` tokens a pass, drawn in ``mode``."""
+    drawing = passes(mode, steps, guidance) * tokens / 1000 * SECONDS_PER_PASS_KILOTOKEN[mode]
+    return min(LONGEST_SECONDS, math.ceil(SETUP_SECONDS + drawing))
 
 
 def _duration(
@@ -101,8 +102,7 @@ def _duration(
 ) -> int:
     """The GPU seconds ZeroGPU is asked for a page: it calls this with the arguments :func:`draw_on_gpu` is called
     with, so the two share one signature."""
-    tokens = dit_tokens(plan, sample, sample_lines, layout_prompt_of(plan))
-    return gpu_seconds(tokens, passes(mode, steps, guidance))
+    return gpu_seconds(dit_tokens(plan, sample, sample_lines, layout_prompt_of(plan)), mode, steps, guidance)
 
 
 @spaces.GPU(duration=_duration)
@@ -137,10 +137,17 @@ def editor_value(document: Document, result: str | None) -> str:
     return json.dumps({**document.model_dump(mode="json"), "result": result}, ensure_ascii=False)
 
 
-def chips(*parts: str, warn: bool = False) -> str:
-    """A status line of small labels."""
+def chips(*parts: str, warn: bool = False, title: str = "") -> str:
+    """A status line of small labels (``title``: what hovering over it explains)."""
     kind = "pd-chips pd-warn" if warn else "pd-chips"
-    return f"<div class='{kind}'>" + "".join(f"<span>{html.escape(part)}</span>" for part in parts if part) + "</div>"
+    labels = "".join(f"<span>{html.escape(part)}</span>" for part in parts if part)
+    return f"<div class='{kind}' title='{html.escape(title, quote=True)}'>{labels}</div>"
+
+
+ASKED_TITLE = (
+    "ZeroGPU reserves the seconds a page asks for out of your daily GPU quota before it is drawn; "
+    "a page is usually drawn in about two thirds of them."
+)
 
 
 def token_count(prompt: str) -> int | None:
@@ -179,7 +186,7 @@ def status(
         asked = "add a sample page to draw"
     else:
         read = dit_tokens(plan, image, ready.sample_lines, ready.prompt)
-        asked = f"asks for {gpu_seconds(read, passes(mode, int(steps), guidance))} s of GPU time"
+        asked = f"asks for {gpu_seconds(read, mode, int(steps), guidance)} s of GPU time"
     parts = [
         f"{len(plan.lines)} line{'s' if len(plan.lines) != 1 else ''}",
         f"{plan.width} x {plan.height} px",
@@ -187,7 +194,7 @@ def status(
         asked,
         *ready.notes,
     ]
-    return chips(*parts, warn=over or bool(ready.notes) or image is None), ready.prompt
+    return chips(*parts, warn=over or bool(ready.notes) or image is None, title=ASKED_TITLE), ready.prompt
 
 
 def pick_sample(chosen: gr.SelectData) -> str:
@@ -464,7 +471,7 @@ def build() -> gr.Blocks:
                     label="How it is drawn",
                     choices=[
                         (f"Fast · {STUDENT_STEPS} steps, distilled", FAST),
-                        ("Guided · the model itself, 4x the GPU time", GUIDED),
+                        ("Guided · the model itself, slower", GUIDED),
                     ],
                     value=start_mode,
                     visible=HAS_STUDENT,
