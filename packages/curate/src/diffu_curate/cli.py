@@ -163,3 +163,38 @@ def sample(
         f"{staged.scans} scans of {staged.offered} staged in {out} "
         f"({staged.volumes_left_out} ground-truth volumes left out)"
     )
+
+
+@app.command()
+def writing(
+    out: Annotated[Path, typer.Option(help="folder for the Parquet parts")],
+    scans: Annotated[Path, typer.Option(help="the scan table (scans.lance)")] = Path("runs/htr/curate/scans.lance"),
+    heads: Annotated[Path, typer.Option(help="writing_eval.py's heads.pt")] = Path(
+        "runs/htr/curate/writing_tune/heads.pt"
+    ),
+    where: Annotated[str, typer.Option(help="which scans, as a filter on the table")] = "pool != 'gt' AND lines > 0",
+    shard: Annotated[int, typer.Option(help="this process's shard")] = 0,
+    shards: Annotated[int, typer.Option(help="how many shards the scans are split over")] = 1,
+    limit: Annotated[int | None, typer.Option(help="at most so many scans (a trial)")] = None,
+    workers: Annotated[int, typer.Option(help="processes that read and fit the scans")] = 20,
+    device: Annotated[str, typer.Option(help="cuda, or cpu for a check")] = "cuda",
+) -> None:
+    """Where each scan holds writing against where its labels say lines are, as Parquet parts (resumable).
+
+    The scans are taken in an order shuffled once, so those scored at any moment are a random sample.
+    """
+    from diffu_curate.writing import WritingLayer, quiet_threads, write_coverage
+
+    quiet_threads()
+    import random
+
+    import lance
+
+    settings = CurateSettings()
+    rows = lance.dataset(str(scans)).to_table(columns=["image", "pool", "scan"], filter=where).to_pylist()
+    random.Random(0).shuffle(rows)
+    pairs = [
+        (row["image"], str(_pool(settings, row["pool"]).label_file(row["scan"]))) for row in rows[shard::shards][:limit]
+    ]
+    scored, lost = write_coverage(pairs, out, WritingLayer(heads, device), workers=workers, label=str(shard))
+    console.print(f"{scored:,} scans scored, {lost:,} unreadable, in {out}")
