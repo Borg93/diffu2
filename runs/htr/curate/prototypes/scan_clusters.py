@@ -1,45 +1,47 @@
-"""The described scans' clusters and how far the embeddings carry the model's answers (CURATION task 9).
+"""A cluster and its name for every embedded scan, as columns of scans.lance: `pool_cluster`, `pool_cluster_name`
+(CURATION E65).
 
-EVoC on the TIPSv2 and DINOv3 embeddings of the scans in runs/htr/curate/embed_scans (whole scans, 448 px); then, on
-the scans the vision-language model has described so far (runs/htr/curate/vl/sample.jsonl): how pure each cluster is
-in the model's kind and layout, and how well a linear head on the embeddings gives the model's answer for a scan it
-was not fitted on (5 folds, split by volume).
+    flock runs/htr/curate/scans.lock uv run python runs/htr/curate/prototypes/scan_clusters.py [CLUSTERS]
 
-    uv run --with evoc python runs/htr/curate/prototypes/scan_clusters.py
+K-means (64 by default) on the `pca` column (the first 64 components of the DINOv3 and TIPSv2 vectors, each scan
+of unit length), over the pools and the ground truth together. A cluster's name says what its scans mostly are by
+the columns (class, table, colour, language, pool) and the words the VL model's captions use more in it than
+elsewhere. A first, plain clustering: every scan gets a cluster, none is left out as noise.
 """
-import json
-from pathlib import Path
-import evoc, numpy as np, pandas as pd
-from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import GroupKFold
-from sklearn.preprocessing import normalize
+import os
 
-E = Path("runs/htr/curate/embed_scans"); pages = pd.read_json(E / "pages.json"); ok = np.load(E / "ok.npy")
-emb = {"tipsv2": np.load(E / "tipsv2.npy"), "dinov3": np.load(E / "dinov3.npy")}
-for name, X in emb.items():
-    if not (E / f"evoc_{name}.npy").exists():
-        model = evoc.EVoC(random_state=0); labels = np.full(len(pages), -2); labels[ok] = model.fit_predict(X[ok])
-        np.save(E / f"evoc_{name}.npy", labels)
-        print(name, "clusters", labels.max() + 1, "noise %.2f" % (labels[ok] == -1).mean(), "layers", [int(l.max()) + 1 for l in model.cluster_layers_], flush=True)
-        for depth, layer in enumerate(model.cluster_layers_):
-            full = np.full(len(pages), -2); full[ok] = layer; np.save(E / f"evoc_{name}_layer{depth}.npy", full)
-said = pd.read_json("runs/htr/curate/vl/sample.jsonl", lines=True); said = said[said.kind.notna()] if "kind" in said else said.iloc[:0]
-place = {image: i for i, image in enumerate(pd.read_json(E / "sample.json").image)}
-said = said[said.image.isin(place)]; rows = said.image.map(place).to_numpy(); keep = ok[rows]; said, rows = said[keep], rows[keep]
-print("described scans with an embedding:", len(said), said.pool.value_counts().to_dict())
-for answer in ("kind", "layout", "written_side"):
-    print(answer, said[answer].value_counts().to_dict())
-for name, X in emb.items():
-    labels = np.load(E / f"evoc_{name}.npy")[rows]; d = said.assign(cluster=labels); d = d[d.cluster >= 0]
-    for answer in ("kind", "layout"):
-        top = d.groupby("cluster")[answer].agg(lambda s: s.value_counts(normalize=True).iloc[0]); size = d.groupby("cluster").size()
-        print(f"{name} clusters, {answer}: a scan's cluster's commonest answer is its own for %.3f of clustered scans (always saying the commonest: %.3f); clusters at least 0.9 pure hold %.2f of them" % ((top * size).sum() / size.sum(), d[answer].value_counts(normalize=True).iloc[0], size[top >= 0.9].sum() / size.sum()))
-feats = {**{k: normalize(v[rows]) for k, v in emb.items()}, "both": np.hstack([normalize(emb["tipsv2"][rows]), normalize(emb["dinov3"][rows])])}
-for answer in ("kind", "layout", "written_side", "writing_at_fold"):
-    y = said[answer].astype(str).to_numpy(); line = [f"{answer}: always the commonest %.3f" % pd.Series(y).value_counts(normalize=True).iloc[0]]
-    for name, X in feats.items():
-        hit = np.zeros(len(y), bool)
-        for fit, held in GroupKFold(5).split(X, y, said.volume.astype(str)):
-            hit[held] = LogisticRegression(max_iter=2000, C=10).fit(X[fit], y[fit]).predict(X[held]) == y[held]
-        line.append(f"{name} %.3f" % hit.mean())
-    print(" | ".join(line), flush=True)
+os.environ.setdefault("NUMPY_MADVISE_HUGEPAGE", "0"); os.environ.setdefault("ARROW_DEFAULT_MEMORY_POOL", "system")
+import re, sys
+from collections import Counter
+from pathlib import Path
+
+import lance, numpy as np, pandas as pd, pyarrow as pa
+from sklearn.cluster import MiniBatchKMeans
+from sklearn.feature_extraction.text import TfidfVectorizer
+
+from diffu_curate.table import add_features
+
+HOME = Path("runs/htr/curate"); K = int(sys.argv[1]) if len(sys.argv) > 1 else 64
+held = lance.dataset(str(HOME / "scans.lance"))
+t = held.to_table(columns=["image", "pool", "pca", "cut_class", "is_table", "colour", "language", "vl_caption"], filter="pca IS NOT NULL").to_pandas()
+Z = np.stack(t.pca.to_numpy()).astype(np.float32); Z /= np.linalg.norm(Z, axis=1, keepdims=True) + 1e-9
+fitted = MiniBatchKMeans(n_clusters=K, random_state=0, batch_size=20000, n_init=3, max_iter=200).fit(Z)
+t["cluster"] = fitted.labels_.astype(np.int32); print(len(t), "scans in", K, "clusters; sizes from", int(t.cluster.value_counts().min()), "to", int(t.cluster.value_counts().max()), flush=True)
+captions = t[t.vl_caption.notna()].groupby("cluster").vl_caption.apply(" ".join)
+words = TfidfVectorizer(stop_words="english", token_pattern=r"[a-zA-Z]{4,}", max_df=0.6, sublinear_tf=True).fit(captions); scores = words.transform(captions); vocab = np.array(words.get_feature_names_out())
+top = {cluster: ", ".join(vocab[np.asarray(scores[row].todense()).ravel().argsort()[::-1][:4]]) for row, cluster in enumerate(captions.index)}
+def share(part, mask): return float(mask.mean()) if len(part) else 0.0
+names = {}
+for cluster, part in t.groupby("cluster"):
+    said = [f"{part.cut_class.value_counts(normalize=True).index[0]} {part.cut_class.value_counts(normalize=True).iloc[0]:.0%}"]
+    if share(part, part.is_table.fillna(False).astype(bool)) > 0.3: said.append(f"tables {share(part, part.is_table.fillna(False).astype(bool)):.0%}")
+    if share(part, part.colour.fillna(False).astype(bool)) > 0.5: said.append("colour")
+    other = part.language[part.language.notna() & (part.language != "swedish")]
+    if len(other) / max(1, part.language.notna().sum()) > 0.15: said.append(f"{other.value_counts().index[0]} {len(other) / part.language.notna().sum():.0%}")
+    pool = part.pool.value_counts(normalize=True); said.append(f"{pool.index[0]} {pool.iloc[0]:.0%}")
+    names[cluster] = f"{cluster:02d}: " + "; ".join(said) + (f" | {top[cluster]}" if cluster in top else "")
+t["name"] = t.cluster.map(names)
+for cluster in t.cluster.value_counts().index[:64]: print(f"{int((t.cluster == cluster).sum()):8,}  {names[cluster]}")
+features = pa.table({"image": pa.array(t.image, pa.utf8()), "pool_cluster": pa.array(t.cluster, pa.int32()), "pool_cluster_name": pa.array(t.name, pa.utf8())})
+print(f"{add_features(HOME / 'scans.lance', features):,} scans given pool_cluster and pool_cluster_name")
+np.save(HOME / "heads/pool_cluster_centres.npy", fitted.cluster_centers_.astype(np.float32))
