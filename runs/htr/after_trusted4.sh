@@ -1,4 +1,5 @@
 #!/bin/bash
+echo "retired 20 Nov 2026: this script starts jobs on GPU 1, which is no longer ours; see runs/htr/resume_after_mount.sh"; exit 1
 # 18 Nov: the GPUs after the trusted pages' read (after_trusted3.sh), until Friday. Our best reader reads the
 # million pages of pool_v2 through vLLM (DFlash2 draft, repetition detector), one server a GPU: every page then has
 # its disagreement with its old label (the label filter for the next pretraining) and the reader's own answer (the

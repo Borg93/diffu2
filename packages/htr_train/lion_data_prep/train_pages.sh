@@ -11,7 +11,7 @@ SPEC=$1
 NAME=$2
 RUN=${HTR_TRAIN_RUNS:-runs/htr}/$NAME
 RETRIES=${RETRIES:-10}
-export HTR_TRAIN_LOCAL_GPUS=${GPUS:-1,2}
+export HTR_TRAIN_LOCAL_GPUS=${GPUS:-2}  # from 20 Nov 2026 only GPU 2 is ours
 log() { echo "[$(date '+%F %T')] $*"; }
 gpus_free() {  # until no process computes on the GPUs $GPUS names
   local uuids busy

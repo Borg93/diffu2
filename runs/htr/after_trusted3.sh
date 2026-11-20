@@ -1,4 +1,5 @@
 #!/bin/bash
+echo "retired 20 Nov 2026: this script starts jobs on GPU 1, which is no longer ours; see runs/htr/resume_after_mount.sh"; exit 1
 # 18 Nov, in place of after_trusted2.sh: what the GPUs do when the training queue (tmux `trusted`, `aftertrusted`) has
 # ended. (1) The ground-truth scans without patch vectors are embedded and get their columns. (2) Our best reader
 # (nemotron-parse-more) reads the 139,937 trusted-cut pages through vLLM with the DFlash2 draft, one server a GPU

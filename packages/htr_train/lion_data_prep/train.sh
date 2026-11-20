@@ -15,7 +15,7 @@ HOLD=${HOLD:-runs/htr/HOLD}
 SPECS=packages/htr_train/lion_data_prep/configs
 RUNS=${HTR_TRAIN_RUNS:-runs/htr}
 RETRIES=${RETRIES:-10}
-export HTR_TRAIN_LOCAL_GPUS=${GPUS:-1,2}
+export HTR_TRAIN_LOCAL_GPUS=${GPUS:-2}  # from 20 Nov 2026 only GPU 2 is ours
 mkdir -p "$M"
 log() { echo "[$(date '+%F %T')] $*"; }
 step() {  # step NAME CMD...: run once, stop on failure
