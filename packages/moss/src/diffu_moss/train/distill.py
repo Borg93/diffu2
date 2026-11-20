@@ -6,9 +6,10 @@ One training sample (:func:`distillation_loss`):
 1. The student draws from noise along its own few noise levels (:func:`student_levels`) to one of them, chosen at
    random, without gradients (:func:`rolled_out`): the states it is trained on are the states it will meet when it
    draws, not noised real pages.
-2. From that state the teacher draws on to the student's next level in several Euler sub-steps with classifier-free
-   guidance (:func:`teacher_velocity`), and the straight line from the state to where the teacher arrived is the target:
-   the one velocity that takes the student there in its single step.
+2. From that state the teacher draws on to the student's next level through its own noise levels that lie between
+   (:func:`teacher_levels`: the levels of its many-step drawing, so the target is what that drawing would do from
+   there), in Euler steps with classifier-free guidance (:func:`teacher_velocity`), and the straight line from the
+   state to where the teacher arrived is the target: the one velocity that takes the student there in its single step.
 3. The student's velocity at the state, with gradients, is regressed onto that target (mean squared error over the
    drawn image's tokens).
 
@@ -53,15 +54,15 @@ app = typer.Typer(add_completion=False)
 
 
 class DistillSettings(BaseModel):
-    """How a student is distilled: the steps it draws in, the shift of its noise levels, the Euler sub-steps the
-    teacher takes across one student step, and the teacher's guidance (its scale, and the blocks its unconditional
-    pass skips)."""
+    """How a student is distilled: the steps it draws in, the steps of the teacher's drawing it is taught from (both
+    on noise levels of one shift), and the teacher's guidance (its scale, and the blocks its unconditional pass
+    skips)."""
 
     model_config = ConfigDict(frozen=True)
 
     student_steps: int = Field(default=8, ge=1)
     shift: float = Field(default=SAMPLING_SHIFT, gt=0)
-    teacher_substeps: int = Field(default=6, ge=1)
+    teacher_steps: int = Field(default=50, ge=1)
     guidance_scale: float = Field(default=GUIDANCE_SCALE, ge=1.0)
     uncond_skip_layers: tuple[int, ...] = DEMO_UNCOND_SKIP_LAYERS
 
@@ -69,6 +70,13 @@ class DistillSettings(BaseModel):
 def student_levels(settings: DistillSettings) -> list[float]:
     """The noise levels the student draws through, from 1 down to 0: the sampler's levels for its step count, then 0."""
     return [*sampling_sigmas(settings.student_steps, settings.shift), 0.0]
+
+
+def teacher_levels(start: float, end: float, settings: DistillSettings) -> list[float]:
+    """The noise levels the teacher steps through from ``start`` to ``end``: the two, and between them every level of
+    its own ``settings.teacher_steps``-step drawing that lies strictly inside."""
+    inside = [level for level in sampling_sigmas(settings.teacher_steps, settings.shift) if end < level < start]
+    return [start, *inside, end]
 
 
 def _velocity(
@@ -112,12 +120,11 @@ def teacher_velocity(
     references: Sequence[Tensor] | None = None,
 ) -> Tensor:
     """The velocity that takes ``latents`` from level ``start`` to where the teacher arrives at ``end`` in one Euler
-    step: the teacher's ``settings.teacher_substeps`` guided Euler sub-steps across the interval (evenly spaced
-    levels), then ``(arrived - latents) / (end - start)``. At guidance scale 1 the unconditional pass is not run."""
+    step: the teacher's guided Euler steps through :func:`teacher_levels`, then ``(arrived - latents) / (end -
+    start)``. At guidance scale 1 the unconditional pass is not run."""
     skipped = frozenset(settings.uncond_skip_layers)
     arrived = latents.float()
-    levels = torch.linspace(start, end, settings.teacher_substeps + 1).tolist()
-    for now, after in pairwise(levels):
+    for now, after in pairwise(teacher_levels(start, end, settings)):
         velocity = _velocity(teacher, arrived, now, text, references)
         if settings.guidance_scale != 1.0:
             unconditional = _velocity(teacher, arrived, now, negative, references, skipped)
@@ -161,7 +168,7 @@ class DistillRun(BaseModel):
     steps: int = Field(default=1000, ge=1)
     rank: int = Field(default=64, ge=1)
     alpha: int = Field(default=64, ge=1)
-    learning_rate: float = 1e-4
+    learning_rate: float = 2e-5
     warmup: int = Field(default=50, ge=1)
     samples_per_step: int = Field(default=1, ge=1)
     grad_clip: float = 1.0
@@ -290,11 +297,11 @@ def main(
     steps: Annotated[int, typer.Option(min=1, help="optimizer steps")] = 1000,
     samples_per_step: Annotated[int, typer.Option(min=1, help="samples whose losses a step averages")] = 1,
     rank: Annotated[int, typer.Option(min=1, help="the student LoRA's rank (its alpha the same)")] = 64,
-    learning_rate: Annotated[float, typer.Option(help="AdamW's, after the warmup")] = 1e-4,
+    learning_rate: Annotated[float, typer.Option(help="AdamW's, after the warmup")] = 2e-5,
     student_steps: Annotated[int, typer.Option(min=1, help="the steps the student draws in")] = 8,
-    teacher_substeps: Annotated[
-        int, typer.Option(min=1, help="the teacher's guided Euler sub-steps across one student step")
-    ] = 6,
+    teacher_steps: Annotated[
+        int, typer.Option(min=1, help="the steps of the teacher's drawing the student is taught from")
+    ] = 50,
     guidance_scale: Annotated[float, typer.Option(min=1.0, help="the teacher's guidance scale")] = GUIDANCE_SCALE,
     save_every: Annotated[int, typer.Option(min=1, help="a checkpoint every this many steps, and at the end")] = 250,
     seed: Annotated[int, typer.Option(help="the samples, noise, student steps and the LoRA's start")] = 0,
@@ -308,7 +315,7 @@ def main(
         learning_rate=learning_rate,
         samples_per_step=samples_per_step,
         distill=DistillSettings(
-            student_steps=student_steps, teacher_substeps=teacher_substeps, guidance_scale=guidance_scale
+            student_steps=student_steps, teacher_steps=teacher_steps, guidance_scale=guidance_scale
         ),
         save_every=save_every,
         seed=seed,

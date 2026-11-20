@@ -15,6 +15,7 @@ import torch
 from safetensors.torch import save_file
 from torch import Tensor
 
+from diffu_moss.modular_pipelines.moss.before_denoise import sampling_sigmas
 from diffu_moss.train.cache import CachedSample, load_sample, read_entries
 from diffu_moss.train.distill import (
     DISTILL_RECORD,
@@ -24,13 +25,14 @@ from diffu_moss.train.distill import (
     distillation_loss,
     rolled_out,
     student_levels,
+    teacher_levels,
     teacher_velocity,
 )
 from diffu_moss.train.export import export_merged
 from diffu_moss.train.loop import LOG, TrainSettings, lora_transformer
 from diffu_moss.transformer import MossTransformer
 
-SETTINGS = DistillSettings(student_steps=2, teacher_substeps=3, guidance_scale=3.0, uncond_skip_layers=(1,))
+SETTINGS = DistillSettings(student_steps=2, teacher_steps=8, guidance_scale=3.0, uncond_skip_layers=(1,))
 
 
 @pytest.fixture(scope="module")
@@ -79,16 +81,20 @@ def test_the_student_rolls_out_from_noise_in_unguided_euler_steps_with_its_sampl
     assert not torch.allclose(states[1], rolled_out(teacher, noise, levels, 1, sample.prompt_embeds, None), atol=1e-4)
 
 
-def test_the_teachers_velocity_takes_a_state_where_its_guided_sub_steps_arrive(
+def test_the_teachers_velocity_takes_a_state_where_its_guided_steps_through_its_own_levels_arrive(
     teacher: MossTransformer, sample: CachedSample, negative: Tensor
 ) -> None:
     state, text = _noise(sample), sample.prompt_embeds
-    start, end = 0.9, 0.3
+    levels = student_levels(SETTINGS)
+    start, end = levels[0], levels[1]
+    between = teacher_levels(start, end, SETTINGS)
+    eight = [*sampling_sigmas(8, SETTINGS.shift), 0.0]
 
     velocity = teacher_velocity(teacher, state, start, end, text, negative, SETTINGS, [_page(sample)])
 
     arrived = state.clone()
-    for now, after in pairwise(torch.linspace(start, end, SETTINGS.teacher_substeps + 1).tolist()):
+    assert between == [level for level in eight if end <= level <= start] and len(between) > 2
+    for now, after in pairwise(between):
         conditional = _step(teacher, arrived, now, text, sample)
         with torch.no_grad():
             unconditional = teacher(
@@ -101,10 +107,10 @@ def test_the_teachers_velocity_takes_a_state_where_its_guided_sub_steps_arrive(
     assert not torch.allclose(plain, velocity, atol=1e-4)  # the guidance moves the target
 
 
-def test_the_loss_is_zero_for_a_student_that_steps_as_its_unguided_teacher_in_one_sub_step(
+def test_the_loss_is_zero_for_a_student_that_steps_as_its_unguided_teacher_on_the_same_levels(
     teacher: MossTransformer, sample: CachedSample, negative: Tensor
 ) -> None:
-    same = DistillSettings(student_steps=2, teacher_substeps=1, guidance_scale=1.0)
+    same = DistillSettings(student_steps=2, teacher_steps=2, guidance_scale=1.0)
 
     losses = [
         distillation_loss(teacher, teacher, _noise(sample), index, sample.prompt_embeds, negative, same).item()
