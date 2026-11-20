@@ -141,7 +141,8 @@ def chips(*parts: str, warn: bool = False, title: str = "") -> str:
     """A status line of small labels (``title``: what hovering over it explains)."""
     kind = "pd-chips pd-warn" if warn else "pd-chips"
     labels = "".join(f"<span>{html.escape(part)}</span>" for part in parts if part)
-    return f"<div class='{kind}' title='{html.escape(title, quote=True)}'>{labels}</div>"
+    hover = f" title='{html.escape(title, quote=True)}'" if title else ""
+    return f"<div class='{kind}'{hover}>{labels}</div>"
 
 
 ASKED_TITLE = (
