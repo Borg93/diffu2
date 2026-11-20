@@ -51,8 +51,10 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 MAX_SEED = 2**31 - 1
 STEPS, GUIDANCE, MEGAPIXELS = 28, 2.0, 2.0  # a page's defaults: the guidance the model card suggests, at its size
 # The GPU seconds a page is asked for: the model's start on a GPU and its text encoder, VAE and judge, then each
-# pass of the DiT by the megapixels it draws (two passes a step under guidance)
-SETUP_SECONDS, SECONDS_PER_PASS_MEGAPIXEL, LONGEST_SECONDS = 30, 1.1, 300
+# pass of the DiT by the megapixels it draws (two passes a step under guidance). A pass of a 2 MP page took 5.6 s on
+# a DGX Spark; the rate here is a first estimate for ZeroGPU's half of an RTX PRO 6000, to be set from its own runs
+# (a page's status line shows the seconds it took).
+SETUP_SECONDS, SECONDS_PER_PASS_MEGAPIXEL, LONGEST_SECONDS = 30, 1.6, 300
 
 MODELS: Models | None = None if STUB else load_models(DEVICE, student=HERE / "student")
 FAST, GUIDED = "fast", "guided"  # a page's mode: the distilled student's few unguided steps, or the DiT's guided ones

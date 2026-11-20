@@ -21,7 +21,7 @@ git fetch -q origin main
 git merge-base --is-ancestor "$commit" origin/main || { echo "refused: $commit is not on origin/main" >&2; exit 1; }
 ls "$SAMPLES"/*.jpg > /dev/null 2>&1 || { echo "refused: no sample pages in $SAMPLES" >&2; exit 1; }
 rm -rf "$stage" && mkdir -p "$stage/samples"
-rsync -a --exclude tests --exclude __pycache__ --exclude ruff.toml "$here/space/" "$stage/"
+rsync -a --exclude tests --exclude __pycache__ --exclude ruff.toml --exclude ".*_cache" "$here/space/" "$stage/"
 cp "$SAMPLES"/*.jpg "$stage/samples/"
 if [ -f "$STUDENT/adapter.safetensors" ]; then
   mkdir -p "$stage/student"
