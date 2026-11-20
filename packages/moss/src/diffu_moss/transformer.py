@@ -34,7 +34,12 @@ MODULATIONS = 6  # shift, scale and gate of the attention half, then of the feed
 
 
 class RMSNorm(nn.Module):
-    """Root-mean-square norm computed in fp32, scaled by its weight in the input's dtype."""
+    """Root-mean-square norm computed in fp32, scaled by its weight in the input's dtype.
+
+    A float32 input is normed as the verified implementation norms it, to the bit. A narrower one (the DiT's
+    bfloat16) gets the same numbers without three float32 tensors of its own size: its mean square from one reduction
+    that reads it as it is and sums in float32, and the product left to type promotion. Half the time a call on a
+    2 MP page's tokens, and one element in fifty thousand a rounding step off (``docs/MOSS_RUNS.md``)."""
 
     def __init__(self, dim: int) -> None:
         super().__init__()
@@ -44,8 +49,10 @@ class RMSNorm(nn.Module):
         self,
         x: Tensor,
     ) -> Tensor:
-        wide = x.float()
-        return (wide * torch.rsqrt(wide.square().mean(-1, keepdim=True) + NORM_EPS)).to(x.dtype) * self.weight
+        if x.dtype == torch.float32:
+            return x * torch.rsqrt(x.square().mean(-1, keepdim=True) + NORM_EPS) * self.weight
+        norm = torch.linalg.vector_norm(x, dim=-1, keepdim=True, dtype=torch.float32)
+        return (x * torch.rsqrt(norm.square() / x.shape[-1] + NORM_EPS)).to(x.dtype) * self.weight
 
 
 def soft_gated(hidden: Tensor, gate: Tensor) -> Tensor:

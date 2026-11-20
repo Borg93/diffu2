@@ -25,7 +25,7 @@ from diffu_moss.modular_pipelines.moss.before_denoise import Sampler
 from diffu_moss.modular_pipelines.moss.encoders import MossTextEncoderStep
 from diffu_moss.modular_pipelines.moss.modular_blocks_moss import MossCoreDenoiseStep
 from diffu_moss.step_cache import FirstBlockCache, enable_step_cache
-from diffu_moss.transformer import MossTransformer, token_positions
+from diffu_moss.transformer import NORM_EPS, MossTransformer, RMSNorm, token_positions
 
 # The verified implementation's velocities (the scratchpad's moss_model.MossTransformer, from which this DiT was
 # ported, 27 Oct) for the weights and inputs below, with every block and with block 1 skipped; float32 values as JSON
@@ -77,6 +77,34 @@ def test_moss_transformer_without_references_predicts_exactly_the_velocity_the_v
 
     golden = json.loads(VELOCITIES.read_text(encoding="utf-8"))[expected]
     assert torch.equal(velocity, torch.tensor(golden, dtype=torch.float32))  # bit for bit, as before references
+
+
+def test_rms_norm_of_a_bfloat16_tensor_is_its_float32_norm_rounded_to_bfloat16_values_and_gradients() -> None:
+    generator = torch.Generator().manual_seed(0)
+    scales = torch.tensor([1e-3, 0.2, 1.0, 7.0, 300.0])[:, None]  # tokens of very different sizes, and one of zeros
+    values = torch.cat((torch.randn(5, 96, generator=generator) * scales, torch.zeros(1, 96)))[None].to(torch.bfloat16)
+    norm = RMSNorm(96).to(torch.bfloat16)
+    with torch.no_grad():
+        norm.weight.copy_(1 + 0.3 * torch.randn(96, generator=generator))
+
+    def in_float32(x: Tensor) -> Tensor:  # the norm as the verified implementation writes it
+        return x.float() * torch.rsqrt(x.float().square().mean(-1, keepdim=True) + NORM_EPS)
+
+    x, exact = values.clone().requires_grad_(True), values.float().requires_grad_(True)
+    normed = norm(x)
+    expected = in_float32(values).to(torch.bfloat16) * norm.weight
+
+    assert normed.dtype == torch.bfloat16
+    step = expected.float().abs() * 2.0**-7  # a bfloat16 value's rounding step is at most this
+    assert ((normed.float() - expected.float()).abs() <= step).all()
+    assert (normed == expected).float().mean() > 0.99
+    assert not normed[0, -1].any()  # the token of zeros stays zeros
+    normed.float().square().sum().backward()
+    (in_float32(exact) * norm.weight.float()).square().sum().backward()
+    assert x.grad is not None and exact.grad is not None
+    assert torch.isfinite(x.grad).all()
+    largest = exact.grad.abs().amax(-1, keepdim=True)  # bfloat16 rounds every step back: a few percent of a token's
+    assert ((x.grad.float() - exact.grad).abs() <= 0.05 * largest + 1e-6).all()
 
 
 def test_moss_transformer_under_a_step_cache_refuses_more_than_one_sample_a_call() -> None:
