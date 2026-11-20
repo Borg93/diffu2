@@ -1,0 +1,191 @@
+[
+ {
+  "item": "001",
+  "verdict": "B",
+  "structure": "",
+  "confidence": "medium",
+  "note": "Line 1 reads 'att wysa dhetta kiöpetz': B 'att wysa dhetenkiöpetz', A 'Berg /a dhettekiöpt'; A is better only on line 4 ('inkomt då opbud' vs B 'inkent då och bor'); B also has the 5th visible line 'skulle skie at, intet'."
+ },
+ {
+  "item": "005",
+  "verdict": "A",
+  "structure": "",
+  "confidence": "high",
+  "note": "Image 'Öfwerjägaremästaren begärte att': A 'Öfwerjag mästaren', B 'Öfwer-Äganaßaren'; A also 'nämde förskrifning' vs B 'förskrifningz'; B lacks the first visible line (window)."
+ },
+ {
+  "item": "009",
+  "verdict": "A",
+  "structure": "windows offset: A ends at 'i Upsala beswärja; Kl. Rätten', B starts one line before it; only 2 lines overlap",
+  "confidence": "medium",
+  "note": "Overlap line reads 'i Upsala beswärja; Kl. Rätten': A exact, B 'i Naula bedragas Hr Rätten'; B's two further lines ('nogsamt Swerigt är', 'myndige resor') are only roughly right (image 'kunnigt', 'mödige')."
+ },
+ {
+  "item": "013",
+  "verdict": "equal",
+  "structure": "A window starts 3 lines later than the crop; only the last 2 visible lines overlap",
+  "confidence": "medium",
+  "note": "On the overlap ('frijheet och frälßemanne Tiensth ... / troo, Barn och effterkommande Erfwingar till') A has 'Erfwingar' right but 'Tienss/efter', B has 'Tiensth/effter' right but 'Efwingar'; B's three earlier lines match the image well."
+ },
+ {
+  "item": "017",
+  "verdict": "A",
+  "structure": "",
+  "confidence": "medium",
+  "note": "Image 'men dessförinnan welat i ämnet inhämta ... / Till underdånigt följe häraf': A 'dess förinnan ... inhämta', 'Till ... häraf'; B 'deß förnimma ... i namnet inhämtie', 'Uti ... härads', 'skitit'; B only wins 'Ecclesiastica' (A 'Efficietice')."
+ },
+ {
+  "item": "021",
+  "verdict": "equal",
+  "structure": "B has spurious lines 'NB / NB' and 'NB' fused into the names line; A turns the marginal mark into '18.' and 'Ikot.'",
+  "confidence": "medium",
+  "note": "Names line 'Slååt. C.Mtw: Jost. Mhdlh. G.Bonde': A 'Slååt. C Mtw: Goth. Adolf. Grömde', B 'NBååt. Mtew: Jock. Mahlhs. G Bonde'; next line A has 'Till Cammaren' right but 'Erick gesells', B has 'Kock gesells' right but 'Nils Cammaren'."
+ },
+ {
+  "item": "025",
+  "verdict": "equal",
+  "structure": "A includes the struck-through line as two fragments ('urfiäll,' / 'tilläst till än hon tro¬')",
+  "confidence": "high",
+  "note": "The three shared lines are almost identical; A 'ro utsatt' is right where B has 'räntsatt', B 'utj' is right where A has 'uti'; B adds the 5th visible line 'fiällaren äfwen blifwit' (as 'tiällaren')."
+ },
+ {
+  "item": "029",
+  "verdict": "B",
+  "structure": "A drops the line-end word 'Landt=' and stops two visible lines early",
+  "confidence": "high",
+  "note": "Image 'Secret:n Swan skickades uthat fråga Landt= / marskalken om dhe begära Conferentz / med hela Senaten?': B 'Conferenter', 'Landt¬' present; A 'Caflente', no 'Landt'."
+ },
+ {
+  "item": "033",
+  "verdict": "mismatch",
+  "structure": "B's window is not the lines in the crop",
+  "confidence": "high",
+  "note": "B does not correspond to the image (its lines about 'Hanß Åkhestens egne Systrar' are not visible); A's first two lines 'göra sin högsta flyt, at opfordra giällen så myckit som honom / mögeliget wara kundhe' match the last visible lines well."
+ },
+ {
+  "item": "037",
+  "verdict": "equal",
+  "structure": "",
+  "confidence": "high",
+  "note": "Only spelling details differ: image 'Fögderie' (B right, A 'Fogderie'), 'effter' and 'Befallningzman' (A right, B 'efter', 'Befallningsman'); B lacks first and last visible lines (window)."
+ },
+ {
+  "item": "041",
+  "verdict": "mismatch",
+  "structure": "A gives the names line several times as fragments ('Olof Birlingh' / 'h. Lars Sparre Jacob v: derbinda. Olof Bärlingz' / 'Janes v: der Linde' / 'Jacob A: der Linde Olof Bärelingh'); B's window is not in the crop",
+  "confidence": "high",
+  "note": "B does not correspond to the image ('tå stiga nedh till honom ... ad acta' is not visible); image line 3 is 'H: Lars Sparre  Jacob v: der Linde  Olof Bärlingh', which A contains but duplicated; neither has the two visible lines above it."
+ },
+ {
+  "item": "045",
+  "verdict": "B",
+  "structure": "",
+  "confidence": "medium",
+  "note": "Image 'ährligit Christ- och lofl: achtenskap Med een dygdig / wäl upfostradt kiereste': B 'ährligit Christ- ... dygdig och / wäl upostradt kiereste', A 'åhrligit Christ och ... dygdigne / wal upfostradt föreeste'; A is right on 'tanckar' (B 'tankar')."
+ },
+ {
+  "item": "049",
+  "verdict": "A",
+  "structure": "",
+  "confidence": "high",
+  "note": "Image 'Nils Zellen Carl Estenberg ... von Ehrenheim ... ProtoNotarien Eric Levin': A nearly exact (only 'Ehrenhlein', 'Schröterheim'), B 'Herr Zellan Carl Edenberg', 'ron Ehrensjelien', 'Protocollotarien Eric Levico'."
+ },
+ {
+  "item": "053",
+  "verdict": "B",
+  "structure": "windows offset: A starts at the last visible line and continues below the crop; only one line overlaps",
+  "confidence": "low",
+  "note": "The one shared line reads 'Sommar uti Botheå Kyrka': B exact, A 'Bothei'; B also has the two lines above it ('Underteknade Fastchjon' for 'Fästehjon', 'Lysning till Ägtenskap sistledne' right)."
+ },
+ {
+  "item": "057",
+  "verdict": "B",
+  "structure": "both miss the small last line under 'Doctorens' (…tienare)",
+  "confidence": "medium",
+  "note": "Image 'Städze med all Wördnadt och Högachtning': B 'Städe med all Wördnadt', A 'Städze med all Nordnåck'; the end of the next line is unreadable in both ('insin B' / 'FrisieBe¬')."
+ },
+ {
+  "item": "061",
+  "verdict": "A",
+  "structure": "B fuses the marginal 'fol: 16' into a text line; A sets it as its own line",
+  "confidence": "high",
+  "note": "Image 'den rätta Tallen, hwar aff wår twistighe Terminus begynner ... Wederpart Oloff Kelvastßon ... Mäns attest sub lit:': A reads these, B has 'der detta Tallm ... wistighe. Tormnäs', 'Medepart Oloff Helundßon', 'Philip Mod: altest och Löös'."
+ },
+ {
+  "item": "065",
+  "verdict": "equal",
+  "structure": "",
+  "confidence": "medium",
+  "note": "Image 'så wijda att dhe måtte hafua præferens / fram för andra Creditorer, ifrå dhem / afgår myckit här nog': A 'præsenad', 'andre', 'ifr dhem', 'her nog'; B 'præstens', 'andra', 'ifrå dhen', 'henne'; errors of similar weight on each side."
+ },
+ {
+  "item": "069",
+  "verdict": "both_bad",
+  "structure": "A's window is not the text in the crop",
+  "confidence": "medium",
+  "note": "The crop is upside down; turned, it is a Swedish endorsement 'P. et P. i Tuna um ... / och dertil med om Succession i N... / och Capellans lägenheten i ... / 6 Julij 1669 ankommet den 12 Eiusd'; A gives a Latin address ('Reverandissimo domino ...') that is not in the crop, B gives gibberish ('Schogz27 pgr 9 — 13 nnngr')."
+ },
+ {
+  "item": "073",
+  "verdict": "A",
+  "structure": "",
+  "confidence": "high",
+  "note": "Image 'räkning d: 6 Martii 1734,': A exact, B '6 in artii 1734'; other shared lines identical; A also has the last visible line 'godtgiöra - - - 8: 16.'"
+ },
+ {
+  "item": "077",
+  "verdict": "both_bad",
+  "structure": "A gives line 3 twice (once as 'Tullfiscalen G. T. Bolander', again as a full line, and the interlinear 'Tullupsyningsmannen' and 'contracteren Alex Sundsen och wakt¬' again); B splits the lines into fragments ('Mathias Olsson' / 'Ca' / 'G. T. Bolander afl.' / 'angå') and most of lines 1, 2, 4 is missing in both",
+  "confidence": "medium",
+  "note": "Image has four full lines ('D.C. Föredrog Assessoren Ungberg ... / Mathias Olsson ifrån Lysekihl ... / Tullfiscalen G. T. Bolander, [Tullupsyningsmannen] Controlleuren Alex. Bundsen och wakt- / mästaren C. G. Lamberg ...'); both give only pieces of line 3; B's pieces are spelled better ('Controleuren Alex Bundsen'), A's 'Conträneuren Alex, kundsen'."
+ },
+ {
+  "item": "081",
+  "verdict": "equal",
+  "structure": "A cuts line 5 short ('enflytta underutrelse', missing 'på egen be-'); B lacks the first visible line (window)",
+  "confidence": "medium",
+  "note": "Image 'ock kan finna något skäl att påbörda / Ombudzrådet Cronhielm at aflefwerera / deße annotations böcker som han för det': A right on 'ock kan', 'Ombudzrådet', 'annotations', 'som han för det' but 'hiel', 'ut aflofwerera'; B right on 'skäl', 'at aflefwerera', 'deße' but 'ocken finne', 'Ombudradt serhålen', 'annatatiens', 'som som för de'."
+ },
+ {
+  "item": "085",
+  "verdict": "A",
+  "structure": "A window starts two lines above the crop",
+  "confidence": "medium",
+  "note": "Image 'lige skatten. Palmerus, åter nögd med / 100 Dr Kmt i lön': A 'Palmeru, utur nögd' and 'Knt', B 'skatten skal willis, åter nögd' and 'Kmt'; A keeps the name and also reads the next visible line 'Kåsthåld hos sin swåger pastor Dahlstrand'."
+ },
+ {
+  "item": "089",
+  "verdict": "mismatch",
+  "structure": "A's window is not the lines in the crop (short marginal speaker names from further down)",
+  "confidence": "high",
+  "note": "A does not correspond to the image ('och Norrigär / H R. Cancel. / Ere Axel Lilje'); B reads the visible lines well: 'h. R. Drotzeten Tyckte det intet aldeles kunna effterlåtas, effter / som det går emot Städernes handel / h Harald ... Kunde intet förbiuda helt och hållit den handel'."
+ },
+ {
+  "item": "093",
+  "verdict": "mismatch",
+  "structure": "B interleaves fragments of the left column ('widig och sålunda', 'betalnings skyldigheter', 'bestred;') with the right-hand marginal note; A's window lies almost wholly below the crop",
+  "confidence": "low",
+  "note": "Two-column crop with deletions and insertions; the only shared visible line is 'stämning som grundlagt före' (A 'stämning ... för', B 'stämnig ... före¬'); B alone has the visible 'derpå ... genom den'; too little overlap to compare."
+ },
+ {
+  "item": "097",
+  "verdict": "mismatch",
+  "structure": "A's window starts below the crop",
+  "confidence": "high",
+  "note": "A does not correspond to the visible lines (starts at 'hafwer, och sin klagan in Secruuda instantia', which is below the crop); B reads the visible lines well: 'emot dhen begärthe Syn oppå sin uhrminnes altijd prætenderade / höfd, och Klare tågangh å termino á qvo och till guum (image quem) hade att före¬'."
+ },
+ {
+  "item": "101",
+  "verdict": "B",
+  "structure": "A window starts two lines below the top of the crop",
+  "confidence": "medium",
+  "note": "Image 'nen sammanskiutas at där med betahla / musicaliske instrumenterne, Hwilken / skrifft sedhan Testis ändtel. underskrifwit': B 'sammanskiutas', 'Testis', A 'sammanRätas', 'Tettis'; both miss 'musicaliske' (A 'mülualiske', B 'mutualiska'); A is right on 'ändtel.' (B 'ändhel.')."
+ },
+ {
+  "item": "105",
+  "verdict": "mismatch",
+  "structure": "A's window is not the text in the crop (a salutation, perhaps the faint show-through above)",
+  "confidence": "high",
+  "note": "A does not correspond to the visible lines ('Venerandi Consistorii Högwördige Herrar Assessores, / Mine Höggunstige Fäder'); B reads lines 2-4 exactly: 'och Venerandi Consistorii, af d 2 Novemb, til mig / ankomne höga befalning at inkomma med en / omständelig och tilförlitelig underrättelse om'; B lacks the first visible line 'Effter Högwördigste Fadrens Herr Ärchebiskopens'."
+ }
+]

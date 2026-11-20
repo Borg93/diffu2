@@ -1,0 +1,191 @@
+[
+ {
+  "item": "000",
+  "verdict": "B",
+  "structure": "",
+  "confidence": "high",
+  "note": "Image 'som wij förhoppes E.K.M.t / lather sig broderligen ... klarlig'; B has 'lather', 'E.C.M.tz', 'klarlig.', A has 'Clarera', 'lacher', 'fther S. M.r', '60. M.ttz'."
+ },
+ {
+  "item": "004",
+  "verdict": "B",
+  "structure": "A: lines given twice as fragments ('af han den faken till höste', 'och instämma skulle, som och skedde') and the following lines missing",
+  "confidence": "high",
+  "note": "Image 'den saken till höste Tinget i Kon- / neby d: 12 Novbris instäma'; B matches, A has 'fällen til höstetingetikan' and '5. till 16 Novembris'."
+ },
+ {
+  "item": "008",
+  "verdict": "A",
+  "structure": "B: last visible line ('hade ett batteri ... artilleri med Carl ...') missing",
+  "confidence": "medium",
+  "note": "Difficult late hand; image 'Bertil Lillie.. stod ... batterier', 'gaf oss'; A has 'Bertil Lillieskörtä stor vid sine betterier', B has '1 rubel Lilliohert thes en sin ballerie'."
+ },
+ {
+  "item": "012",
+  "verdict": "B",
+  "structure": "A: two slanted lines merged into one ('Lars Larsson i Äggaren, då vittnet', 'omkull med skyndat undan ett') and a line fragment repeated; B: window ends two lines into the crop, later visible lines absent",
+  "confidence": "medium",
+  "note": "Image 'omkull målsägaren, då vittnet / förskräckt skyndat undan ett / stycke och derifrån sett Lars Lars-'; B has 'omkull målsägaren, då vittnet' right, A garbles it to 'i Äggaren'; overlap is only about two lines."
+ },
+ {
+  "item": "016",
+  "verdict": "B",
+  "structure": "",
+  "confidence": "high",
+  "note": "Image 'att I medh thet aller förste schole bekomme undsätt- / ningh, hwarföre mågh I nu göre edherß bästhe / flijtt I sakenn'; B follows this, A has 'är Öndothen eller förste skola', 'måghe Swen', 'Pilitt Saken'."
+ },
+ {
+  "item": "020",
+  "verdict": "A",
+  "structure": "B: heading line 'Carolus.' missing",
+  "confidence": "high",
+  "note": "Image 'Carolus. / Fullmacht för Georg ..ön- / nies att wara Protonotarius', margin 'J. Swanhielm'; A has 'Fullmacht', 'Swanielm'; B has 'Fullknehl', 'Lewanhielm'."
+ },
+ {
+  "item": "024",
+  "verdict": "A",
+  "structure": "B: window starts at the 4th visible line, first three visible lines absent",
+  "confidence": "medium",
+  "note": "Image '... Immission / uti berörde halfva Krono Nybygge, / under förbindelse etc: === / Mutatis Mutandis'; A reads all of it ('Mutalis Mutandis'), B covers only the last two lines and writes 'Mucatio Mietandis'."
+ },
+ {
+  "item": "028",
+  "verdict": "B",
+  "structure": "",
+  "confidence": "medium",
+  "note": "Image 'måste Wystas', 'hörandhe', 'sampt Wyrdigheter'; B has these, A has 'Wystes', 'Hörende', 'Wy enligheten' and 'E:s'; otherwise near identical."
+ },
+ {
+  "item": "032",
+  "verdict": "A",
+  "structure": "B: last two visible lines missing",
+  "confidence": "high",
+  "note": "German; image 'Sollet Ihr aber dießes / Unsers gnedigs wollmainen hindan / setzen, Und Wir dahero getrungen'; A is close ('Sollet Ihr aber dießes', 'wollmainen hindan'), B is Swedish-looking nonsense ('Sållet h.r åbor', 'wollmannen hädan')."
+ },
+ {
+  "item": "036",
+  "verdict": "B",
+  "structure": "A: top visible line ('at på RänteCamare ...') absent",
+  "confidence": "medium",
+  "note": "Image 'redan undfåt.' / '... brefwet som til Kgl. Stats / Cont komer at afgå för Kgl. Gard'; B has 'redan undfåt.', 'Stats', 'Gard'; A has 'reda, undfåt', 'skall', 'Jard'."
+ },
+ {
+  "item": "040",
+  "verdict": "equal",
+  "structure": "A: first visible line ('man och Erchiebiskop') absent, possibly only the window",
+  "confidence": "high",
+  "note": "Crop shows only 'man och Erchiebiskop / höggunstige herre.' and blank paper; both give 'höggunstige herre', B also has 'man och Erickiebiskop'; the remaining lines are outside the crop and nearly identical."
+ },
+ {
+  "item": "044",
+  "verdict": "B",
+  "structure": "",
+  "confidence": "high",
+  "note": "Image 'medh een nådhgunstigh resolution och swar ... , Under / hwilkets afwäntande, som elliest till min dödh: Jagh öfwer / ändrat skall framhärda och Continuera'; B follows it, A has 'Bor Wer Werömmånligste' and 'brukats att Märitandz'."
+ },
+ {
+  "item": "048",
+  "verdict": "A",
+  "structure": "Heavily struck-through passage with interlinear insertions; A: lines split into fragments and 'att då' placed after 'alla de bewis'; B: 'Olof Olsson jemwäl' missing, struck text mixed into lines",
+  "confidence": "medium",
+  "note": "Unstruck text reads 'laga ... Olof Olsson jemwäl / anmanad ... wara försedd med / att då ... alla de bewis'; A has exactly these words in fragments, B has 'allmän', 'waan försedd med', 'anteck är då sine ona de bewis'."
+ },
+ {
+  "item": "052",
+  "verdict": "mismatch",
+  "structure": "",
+  "confidence": "high",
+  "note": "A does not correspond to the image: image reads 'statsmedel; Altså wille T. låta ... / berde medel affölja sådane fyratio / fyra dahlr, 8 öre Silfmt emot / Befallningsmannen Wälbetde', which is B; A is another passage of the same letter ('fögderi har enligt ... 44 D. 8')."
+ },
+ {
+  "item": "056",
+  "verdict": "B",
+  "structure": "Draft with strike-outs and marginal insertions; B: 'uptagandes som jag' placed before the lines it follows; A: marginal words as loose fragments ('hafwer', 'det')",
+  "confidence": "medium",
+  "note": "Image 'förmodar Jag det Tit warder / effter deß bekandta godheet emot / ... uptagandes som jag'; B has 'förmodar Jag', 'emot', A has 'förmodar ting', 'emel¬' (A's 'deß bekandta' spelling is the closer one)."
+ },
+ {
+  "item": "060",
+  "verdict": "A",
+  "structure": "B: top visible line missing and lines shorter than what is written",
+  "confidence": "low",
+  "note": "Very cursive hand I can only partly read; line 3 ends 'igen at denna' and line 1 '... blifvit up' as in A; B has 'igen et' and an unsupported '6 Aug.'."
+ },
+ {
+  "item": "064",
+  "verdict": "B",
+  "structure": "A: 'Excell:' and 'tiers' given as two separate lines; lines 'Den Högl: Kongl: Hof Rettens' and 'af Lindes bärgh' missing",
+  "confidence": "medium",
+  "note": "Image 'Excell:tiers / och / Den Högl: Kongl: Hof Rettens', left 'af Lindes bärgh'; B has all four, A stops at 'och'."
+ },
+ {
+  "item": "068",
+  "verdict": "B",
+  "structure": "A: window ends at the first visible line, the three following visible lines absent",
+  "confidence": "medium",
+  "note": "Only one shared line: image 'han sitt iäf waret här adpro..', B 'han sitt iäf waret här adproberat', A 'lan sitt iäf ... adputerat'; the rest of the crop ('Wallerstet ... citation', 'Gref Gustaf begärar Communication', 'Hofrättens förklaring') is only in B."
+ },
+ {
+  "item": "072",
+  "verdict": "mismatch",
+  "structure": "B: fragments ('mans', 'å kunna', 'straten')",
+  "confidence": "high",
+  "note": "B does not correspond to the image: image reads 'taga Saken emellan Mag: Pijhl- / man och een Cornett. / Carl p.p.p. / Wår synnerlige ynnest', which is A; B starts at a later line ('heet angifwit, huruledes Mag: Haqvid Pijhl¬') and then gives loose fragments."
+ },
+ {
+  "item": "076",
+  "verdict": "A",
+  "structure": "B: visible line 'öfwersändas, i Maji månad näste års' absent",
+  "confidence": "medium",
+  "note": "Image 'igenom H.rr Contracts Prostarnes / försorg införwäntas.'; A 'Contracts Prostarnes / Försorg införwäntas' (but 'C.rr'), B 'Contracte Prostaren / lösorg införa äntas' (but 'h.rr' right)."
+ },
+ {
+  "item": "080",
+  "verdict": "A",
+  "structure": "B: the centred numeral line '1.' missing",
+  "confidence": "high",
+  "note": "Image 'äre detta wåra ... / Nembl:n / 1. / ... dat. in Novembri 1672 ... som det hwarken är'; A has 'äre', 'wåra', '1.', 'Novembii', 'är'; B has 'are', 'wåre', 'November', 'än'."
+ },
+ {
+  "item": "084",
+  "verdict": "A",
+  "structure": "",
+  "confidence": "medium",
+  "note": "Image 'innehafwaren ej kan skiljas från pan- / ... deruti ej ... förrän han / erhållit sin betalning'; A has 'innehafwaren ej kan skiljas', B has 'innehafwunen ej kan biljest'; neither gets 'förrän'/'erhållit'."
+ },
+ {
+  "item": "088",
+  "verdict": "A",
+  "structure": "B: line 'Bultius.' missing",
+  "confidence": "high",
+  "note": "German/Latin; image 'unnd hinterstelligenn Rests, oder Besoldung halbenn, dreyhundertt gulden Pol- / nisch gebenn ... Commisit Dns Secretarius / S R.M. subscripsit. / Eodem Die.'; A is close, B has 'Besoldingzhallenn', 'Commiset', 'S R. A.1. subscripst', 'Eodem Dü'."
+ },
+ {
+  "item": "092",
+  "verdict": "mismatch",
+  "structure": "",
+  "confidence": "high",
+  "note": "A does not correspond to the image except its first line: the crop shows 'Parternes å ömse sidor förde klagan / i afseende på Tings Rättens yttrande / ang. hö och halm, som Broberg i lifstiden / låtit från Bo och Stocklinge Säterier / bortföra, så pröfwar jag', which B gives correctly; A covers the lines below the crop."
+ },
+ {
+  "item": "096",
+  "verdict": "equal",
+  "structure": "A: window ends at the 3rd visible line; the visible line 'och troohiertige broderlige Affection högst betacka' is only in B",
+  "confidence": "medium",
+  "note": "Image 'Mündig- / heet Auktoritera och Corrobirera ... mine H.d K. H. Bröder för sådan deres wällmente'; A has 'Mndig', 'Auktorisera', 'Bröder för sådan deres'; B has 'Middig', 'Auktoritera', 'Bröde försådanderer'; errors balance out."
+ },
+ {
+  "item": "100",
+  "verdict": "B",
+  "structure": "A: visible line 'anspråk han hos' absent",
+  "confidence": "high",
+  "note": "Image 'anspråk han hos / Handels Bolaget / Welckes & Erdman för / ment sig äga och'; B has 'Welcke & Erdman', 'ment'; A has 'Kecke, J Erdman', 'men'."
+ },
+ {
+  "item": "104",
+  "verdict": "mismatch",
+  "structure": "",
+  "confidence": "high",
+  "note": "A does not correspond to the image: image reads 'garnes upgående kring den utmark, som är / belägen imellan Halmstad, Holm och flera / byar. / I anledning häraf har bref ... Hr Hans Ring i Harplinge', which is B; A is a different text ('Kongl Majts Nådige Skrifwelse ... Capellan')."
+ }
+]

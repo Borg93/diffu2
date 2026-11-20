@@ -1,0 +1,1072 @@
+{
+ "000": {
+  "id": "4dd2fea67297_right",
+  "disagreement": 0.21966269025092555,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 39,
+  "read_lines": 40,
+  "label_blocks": 2,
+  "read_blocks": 2
+ },
+ "001": {
+  "id": "c04938661e58_right",
+  "disagreement": 0.31103074141048825,
+  "label_is": "A",
+  "pool": "andraarkiv",
+  "label_lines": 28,
+  "read_lines": 28,
+  "label_blocks": 1,
+  "read_blocks": 1
+ },
+ "002": {
+  "id": "a116ff443335_right",
+  "disagreement": 0.09330628803245436,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 24,
+  "read_lines": 25,
+  "label_blocks": 2,
+  "read_blocks": 2
+ },
+ "003": {
+  "id": "f45513f8e544_left",
+  "disagreement": 0.20130932896890344,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 29,
+  "read_lines": 29,
+  "label_blocks": 2,
+  "read_blocks": 2
+ },
+ "004": {
+  "id": "dac447983916_left",
+  "disagreement": 0.4821852731591449,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 28,
+  "read_lines": 27,
+  "label_blocks": 2,
+  "read_blocks": 2
+ },
+ "005": {
+  "id": "035ef2149c82_right",
+  "disagreement": 0.28614008941877794,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 20,
+  "read_lines": 20,
+  "label_blocks": 1,
+  "read_blocks": 2
+ },
+ "006": {
+  "id": "b3bd695ffa76_left",
+  "disagreement": 0.38342440801457195,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 31,
+  "read_lines": 16,
+  "label_blocks": 1,
+  "read_blocks": 3
+ },
+ "007": {
+  "id": "253da94d8783_left",
+  "disagreement": 0.10577644411102775,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 38,
+  "read_lines": 38,
+  "label_blocks": 2,
+  "read_blocks": 4
+ },
+ "008": {
+  "id": "265ef91de113_left",
+  "disagreement": 0.41194724592707527,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 24,
+  "read_lines": 24,
+  "label_blocks": 2,
+  "read_blocks": 2
+ },
+ "009": {
+  "id": "c5d753f631db_left",
+  "disagreement": 0.39174107142857145,
+  "label_is": "B",
+  "pool": "andraarkiv",
+  "label_lines": 32,
+  "read_lines": 38,
+  "label_blocks": 2,
+  "read_blocks": 1
+ },
+ "010": {
+  "id": "0f70a9de2fab_left",
+  "disagreement": 0.08670520231213873,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 35,
+  "read_lines": 34,
+  "label_blocks": 1,
+  "read_blocks": 1
+ },
+ "011": {
+  "id": "70ae5c703839_left",
+  "disagreement": 0.08819714656290532,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 56,
+  "read_lines": 54,
+  "label_blocks": 1,
+  "read_blocks": 2
+ },
+ "012": {
+  "id": "003efeb9ec0f_right",
+  "disagreement": 0.3171052631578947,
+  "label_is": "A",
+  "pool": "andraarkiv",
+  "label_lines": 47,
+  "read_lines": 62,
+  "label_blocks": 1,
+  "read_blocks": 1
+ },
+ "013": {
+  "id": "c695a2a84667_left",
+  "disagreement": 0.2850574712643678,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 32,
+  "read_lines": 32,
+  "label_blocks": 1,
+  "read_blocks": 1
+ },
+ "014": {
+  "id": "aee079c9e418_left",
+  "disagreement": 0.28958210712183635,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 43,
+  "read_lines": 35,
+  "label_blocks": 1,
+  "read_blocks": 1
+ },
+ "015": {
+  "id": "48c3ed328d7b_right",
+  "disagreement": 0.39327830188679247,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 23,
+  "read_lines": 24,
+  "label_blocks": 3,
+  "read_blocks": 1
+ },
+ "016": {
+  "id": "7913493e74c1_right",
+  "disagreement": 0.4055884843353091,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 25,
+  "read_lines": 24,
+  "label_blocks": 2,
+  "read_blocks": 2
+ },
+ "017": {
+  "id": "8268a719bde3_left",
+  "disagreement": 0.5445465441470235,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 46,
+  "read_lines": 46,
+  "label_blocks": 1,
+  "read_blocks": 1
+ },
+ "018": {
+  "id": "230d1a91adee_right",
+  "disagreement": 0.3917361938816051,
+  "label_is": "A",
+  "pool": "andraarkiv",
+  "label_lines": 36,
+  "read_lines": 35,
+  "label_blocks": 2,
+  "read_blocks": 2
+ },
+ "019": {
+  "id": "708e3189722a_right",
+  "disagreement": 0.5574162679425837,
+  "label_is": "A",
+  "pool": "andraarkiv",
+  "label_lines": 10,
+  "read_lines": 19,
+  "label_blocks": 1,
+  "read_blocks": 1
+ },
+ "020": {
+  "id": "d16e623f05cd_right",
+  "disagreement": 0.0835509138381201,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 23,
+  "read_lines": 22,
+  "label_blocks": 2,
+  "read_blocks": 2
+ },
+ "021": {
+  "id": "c74c7e75570a_right",
+  "disagreement": 0.19785575048732942,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 23,
+  "read_lines": 25,
+  "label_blocks": 2,
+  "read_blocks": 2
+ },
+ "022": {
+  "id": "cc2d1e036d13_right",
+  "disagreement": 0.3131115459882583,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 29,
+  "read_lines": 29,
+  "label_blocks": 4,
+  "read_blocks": 5
+ },
+ "023": {
+  "id": "1e6c86327144_right",
+  "disagreement": 0.11367127496159754,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 27,
+  "read_lines": 27,
+  "label_blocks": 3,
+  "read_blocks": 3
+ },
+ "024": {
+  "id": "fc52ed50dd54_left",
+  "disagreement": 0.19421257651641624,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 56,
+  "read_lines": 49,
+  "label_blocks": 2,
+  "read_blocks": 3
+ },
+ "025": {
+  "id": "a697535a345c_right",
+  "disagreement": 0.2835526315789474,
+  "label_is": "B",
+  "pool": "andraarkiv",
+  "label_lines": 48,
+  "read_lines": 55,
+  "label_blocks": 1,
+  "read_blocks": 1
+ },
+ "026": {
+  "id": "6c45651669c4_right",
+  "disagreement": 0.09663865546218488,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 26,
+  "read_lines": 25,
+  "label_blocks": 1,
+  "read_blocks": 1
+ },
+ "027": {
+  "id": "47106c4e7e55_left",
+  "disagreement": 0.39173228346456695,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 42,
+  "read_lines": 34,
+  "label_blocks": 2,
+  "read_blocks": 2
+ },
+ "028": {
+  "id": "446434dedd12_right",
+  "disagreement": 0.21215733015494637,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 30,
+  "read_lines": 32,
+  "label_blocks": 3,
+  "read_blocks": 2
+ },
+ "029": {
+  "id": "598726cf3e1c_right",
+  "disagreement": 0.21882640586797067,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 27,
+  "read_lines": 22,
+  "label_blocks": 2,
+  "read_blocks": 2
+ },
+ "030": {
+  "id": "57927af84c6e_right",
+  "disagreement": 0.49537037037037035,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 36,
+  "read_lines": 36,
+  "label_blocks": 1,
+  "read_blocks": 1
+ },
+ "031": {
+  "id": "f4978647fb60_left",
+  "disagreement": 0.10467706013363029,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 28,
+  "read_lines": 28,
+  "label_blocks": 1,
+  "read_blocks": 1
+ },
+ "032": {
+  "id": "c9b74eebe7de_right",
+  "disagreement": 0.2880299251870324,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 24,
+  "read_lines": 23,
+  "label_blocks": 2,
+  "read_blocks": 3
+ },
+ "033": {
+  "id": "6afd9d2a3754_right",
+  "disagreement": 0.18981064021641117,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 46,
+  "read_lines": 27,
+  "label_blocks": 1,
+  "read_blocks": 2
+ },
+ "034": {
+  "id": "8ff4a9ee871f_right",
+  "disagreement": 0.18896925858951175,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 27,
+  "read_lines": 26,
+  "label_blocks": 2,
+  "read_blocks": 3
+ },
+ "035": {
+  "id": "ee239c624e9b_right",
+  "disagreement": 0.3128390596745027,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 28,
+  "read_lines": 28,
+  "label_blocks": 1,
+  "read_blocks": 1
+ },
+ "036": {
+  "id": "a6bfc07399f7_left",
+  "disagreement": 0.41706161137440756,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 32,
+  "read_lines": 29,
+  "label_blocks": 1,
+  "read_blocks": 1
+ },
+ "037": {
+  "id": "d53acfbac75e_right",
+  "disagreement": 0.19680851063829788,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 15,
+  "read_lines": 14,
+  "label_blocks": 1,
+  "read_blocks": 3
+ },
+ "038": {
+  "id": "cd6082e52abc_right",
+  "disagreement": 0.2038073908174692,
+  "label_is": "A",
+  "pool": "andraarkiv",
+  "label_lines": 50,
+  "read_lines": 53,
+  "label_blocks": 1,
+  "read_blocks": 1
+ },
+ "039": {
+  "id": "dd5eb1f7e753_left",
+  "disagreement": 0.18251273344651953,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 41,
+  "read_lines": 40,
+  "label_blocks": 1,
+  "read_blocks": 1
+ },
+ "040": {
+  "id": "668596a2e2a4_right",
+  "disagreement": 0.523936170212766,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 22,
+  "read_lines": 22,
+  "label_blocks": 3,
+  "read_blocks": 1
+ },
+ "041": {
+  "id": "0d950ea324ec_left",
+  "disagreement": 0.1904176904176904,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 39,
+  "read_lines": 9,
+  "label_blocks": 1,
+  "read_blocks": 7
+ },
+ "042": {
+  "id": "8301b3bc83de_right",
+  "disagreement": 0.2916989914662529,
+  "label_is": "B",
+  "pool": "andraarkiv",
+  "label_lines": 26,
+  "read_lines": 32,
+  "label_blocks": 2,
+  "read_blocks": 1
+ },
+ "043": {
+  "id": "e51c4a4627f6_left",
+  "disagreement": 0.2006172839506173,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 26,
+  "read_lines": 7,
+  "label_blocks": 2,
+  "read_blocks": 10
+ },
+ "044": {
+  "id": "6204b48547a5_left",
+  "disagreement": 0.3019038984587489,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 18,
+  "read_lines": 16,
+  "label_blocks": 2,
+  "read_blocks": 2
+ },
+ "045": {
+  "id": "06bbc41cd5da_left",
+  "disagreement": 0.08866995073891626,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 29,
+  "read_lines": 28,
+  "label_blocks": 1,
+  "read_blocks": 1
+ },
+ "046": {
+  "id": "407e8df733d6_right",
+  "disagreement": 0.08640406607369759,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 20,
+  "read_lines": 14,
+  "label_blocks": 2,
+  "read_blocks": 4
+ },
+ "047": {
+  "id": "97c1923dbc98_left",
+  "disagreement": 0.19877675840978593,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 22,
+  "read_lines": 22,
+  "label_blocks": 1,
+  "read_blocks": 1
+ },
+ "048": {
+  "id": "7a51b7a0bb1d_left",
+  "disagreement": 0.3860329776915616,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 27,
+  "read_lines": 29,
+  "label_blocks": 2,
+  "read_blocks": 2
+ },
+ "049": {
+  "id": "422c1695a93b_right",
+  "disagreement": 0.2878598247809762,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 25,
+  "read_lines": 25,
+  "label_blocks": 5,
+  "read_blocks": 6
+ },
+ "050": {
+  "id": "4a06a049a476_right",
+  "disagreement": 0.5216852540272615,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 29,
+  "read_lines": 28,
+  "label_blocks": 3,
+  "read_blocks": 1
+ },
+ "051": {
+  "id": "b7a34cc1cd8c_left",
+  "disagreement": 0.10181818181818182,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 12,
+  "read_lines": 9,
+  "label_blocks": 1,
+  "read_blocks": 2
+ },
+ "052": {
+  "id": "694fe092b74c_left",
+  "disagreement": 0.5512820512820513,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 15,
+  "read_lines": 24,
+  "label_blocks": 1,
+  "read_blocks": 1
+ },
+ "053": {
+  "id": "01f4ce618429_right",
+  "disagreement": 0.5415821501014199,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 24,
+  "read_lines": 5,
+  "label_blocks": 1,
+  "read_blocks": 3
+ },
+ "054": {
+  "id": "aff3ceb66b08_right",
+  "disagreement": 0.11217948717948718,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 12,
+  "read_lines": 12,
+  "label_blocks": 2,
+  "read_blocks": 2
+ },
+ "055": {
+  "id": "6d398d3bc767_right",
+  "disagreement": 0.4824824824824825,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 30,
+  "read_lines": 28,
+  "label_blocks": 1,
+  "read_blocks": 10
+ },
+ "056": {
+  "id": "b8ce44b8c852_right",
+  "disagreement": 0.39048400328137817,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 41,
+  "read_lines": 50,
+  "label_blocks": 3,
+  "read_blocks": 1
+ },
+ "057": {
+  "id": "59f29349f973_right",
+  "disagreement": 0.4096,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 21,
+  "read_lines": 14,
+  "label_blocks": 4,
+  "read_blocks": 4
+ },
+ "058": {
+  "id": "7c0dd5006acb_right",
+  "disagreement": 0.38636363636363635,
+  "label_is": "A",
+  "pool": "andraarkiv",
+  "label_lines": 29,
+  "read_lines": 25,
+  "label_blocks": 1,
+  "read_blocks": 1
+ },
+ "059": {
+  "id": "94a044df3336_left",
+  "disagreement": 0.09204712812960236,
+  "label_is": "B",
+  "pool": "andraarkiv",
+  "label_lines": 33,
+  "read_lines": 32,
+  "label_blocks": 1,
+  "read_blocks": 1
+ },
+ "060": {
+  "id": "138ed46ae658_right",
+  "disagreement": 0.49765807962529274,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 33,
+  "read_lines": 34,
+  "label_blocks": 2,
+  "read_blocks": 1
+ },
+ "061": {
+  "id": "b788519b8aa8_left",
+  "disagreement": 0.2924174174174174,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 30,
+  "read_lines": 32,
+  "label_blocks": 2,
+  "read_blocks": 2
+ },
+ "062": {
+  "id": "92410834ce12_left",
+  "disagreement": 0.31243358129649307,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 32,
+  "read_lines": 9,
+  "label_blocks": 3,
+  "read_blocks": 4
+ },
+ "063": {
+  "id": "36904ce16ed6_right",
+  "disagreement": 0.09317963496637849,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 26,
+  "read_lines": 27,
+  "label_blocks": 1,
+  "read_blocks": 2
+ },
+ "064": {
+  "id": "5e2365e449bb_right",
+  "disagreement": 0.5087822014051522,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 24,
+  "read_lines": 23,
+  "label_blocks": 5,
+  "read_blocks": 2
+ },
+ "065": {
+  "id": "f8791fd2c9d7_left",
+  "disagreement": 0.21256038647342995,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 26,
+  "read_lines": 27,
+  "label_blocks": 2,
+  "read_blocks": 2
+ },
+ "066": {
+  "id": "63ebee81c756_left",
+  "disagreement": 0.2987854251012146,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 38,
+  "read_lines": 28,
+  "label_blocks": 3,
+  "read_blocks": 6
+ },
+ "067": {
+  "id": "31b0c761e59b_left",
+  "disagreement": 0.19141914191419143,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 28,
+  "read_lines": 27,
+  "label_blocks": 2,
+  "read_blocks": 4
+ },
+ "068": {
+  "id": "3d76f4703992_left",
+  "disagreement": 0.5096153846153846,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 28,
+  "read_lines": 20,
+  "label_blocks": 3,
+  "read_blocks": 2
+ },
+ "069": {
+  "id": "0e81c72d0803_left",
+  "disagreement": 0.5594059405940595,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 16,
+  "read_lines": 12,
+  "label_blocks": 1,
+  "read_blocks": 1
+ },
+ "070": {
+  "id": "7d210aa77961_left",
+  "disagreement": 0.49851301115241636,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 42,
+  "read_lines": 19,
+  "label_blocks": 1,
+  "read_blocks": 3
+ },
+ "071": {
+  "id": "9add2b82ab83_left",
+  "disagreement": 0.5501813784764208,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 27,
+  "read_lines": 27,
+  "label_blocks": 1,
+  "read_blocks": 1
+ },
+ "072": {
+  "id": "916104ba0bc4_left",
+  "disagreement": 0.38900414937759337,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 30,
+  "read_lines": 25,
+  "label_blocks": 2,
+  "read_blocks": 4
+ },
+ "073": {
+  "id": "2220e64dda94_left",
+  "disagreement": 0.09185441941074524,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 27,
+  "read_lines": 25,
+  "label_blocks": 2,
+  "read_blocks": 2
+ },
+ "074": {
+  "id": "4c2244e971ff_left",
+  "disagreement": 0.11455108359133127,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 26,
+  "read_lines": 25,
+  "label_blocks": 1,
+  "read_blocks": 1
+ },
+ "075": {
+  "id": "b90d2f8b3053_right",
+  "disagreement": 0.2927689594356261,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 25,
+  "read_lines": 25,
+  "label_blocks": 2,
+  "read_blocks": 2
+ },
+ "076": {
+  "id": "499d1a4f07ab_left",
+  "disagreement": 0.4040955631399317,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 39,
+  "read_lines": 39,
+  "label_blocks": 4,
+  "read_blocks": 4
+ },
+ "077": {
+  "id": "fa811d25ab4a_left",
+  "disagreement": 0.10068337129840546,
+  "label_is": "A",
+  "pool": "andraarkiv",
+  "label_lines": 42,
+  "read_lines": 43,
+  "label_blocks": 2,
+  "read_blocks": 2
+ },
+ "078": {
+  "id": "b8111f4a6b8a_right",
+  "disagreement": 0.48842592592592593,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 14,
+  "read_lines": 12,
+  "label_blocks": 2,
+  "read_blocks": 3
+ },
+ "079": {
+  "id": "988632c9df57_right",
+  "disagreement": 0.10779595765158806,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 22,
+  "read_lines": 24,
+  "label_blocks": 3,
+  "read_blocks": 2
+ },
+ "080": {
+  "id": "701714c0f977_right",
+  "disagreement": 0.5525982256020279,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 13,
+  "read_lines": 13,
+  "label_blocks": 3,
+  "read_blocks": 3
+ },
+ "081": {
+  "id": "094a22540d1b_left",
+  "disagreement": 0.30402010050251255,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 22,
+  "read_lines": 23,
+  "label_blocks": 2,
+  "read_blocks": 2
+ },
+ "082": {
+  "id": "7a2c4ab3c57d_right",
+  "disagreement": 0.20921052631578949,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 39,
+  "read_lines": 39,
+  "label_blocks": 2,
+  "read_blocks": 5
+ },
+ "083": {
+  "id": "b7fd816a39d6_right",
+  "disagreement": 0.19391947411668037,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 22,
+  "read_lines": 33,
+  "label_blocks": 1,
+  "read_blocks": 1
+ },
+ "084": {
+  "id": "cfa0c887e817_left",
+  "disagreement": 0.31766489764973466,
+  "label_is": "B",
+  "pool": "andraarkiv",
+  "label_lines": 36,
+  "read_lines": 39,
+  "label_blocks": 1,
+  "read_blocks": 1
+ },
+ "085": {
+  "id": "cf98ae993271_left",
+  "disagreement": 0.3131970260223048,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 37,
+  "read_lines": 15,
+  "label_blocks": 3,
+  "read_blocks": 7
+ },
+ "086": {
+  "id": "d0143d0f4c76_right",
+  "disagreement": 0.19570707070707072,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 25,
+  "read_lines": 24,
+  "label_blocks": 1,
+  "read_blocks": 1
+ },
+ "087": {
+  "id": "1c94b183616d_left",
+  "disagreement": 0.18304668304668303,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 21,
+  "read_lines": 21,
+  "label_blocks": 1,
+  "read_blocks": 1
+ },
+ "088": {
+  "id": "fd49fd519431_left",
+  "disagreement": 0.30608453320947515,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 36,
+  "read_lines": 37,
+  "label_blocks": 2,
+  "read_blocks": 2
+ },
+ "089": {
+  "id": "2864b5385f9a_left",
+  "disagreement": 0.40381558028616854,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 36,
+  "read_lines": 23,
+  "label_blocks": 2,
+  "read_blocks": 1
+ },
+ "090": {
+  "id": "09a6828d08bd_right",
+  "disagreement": 0.38101694915254236,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 20,
+  "read_lines": 26,
+  "label_blocks": 2,
+  "read_blocks": 2
+ },
+ "091": {
+  "id": "4c778c51cbab_right",
+  "disagreement": 0.3922480620155039,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 35,
+  "read_lines": 36,
+  "label_blocks": 1,
+  "read_blocks": 2
+ },
+ "092": {
+  "id": "50fe430b9341_right",
+  "disagreement": 0.3903107861060329,
+  "label_is": "A",
+  "pool": "andraarkiv",
+  "label_lines": 29,
+  "read_lines": 28,
+  "label_blocks": 1,
+  "read_blocks": 1
+ },
+ "093": {
+  "id": "b52185aa5f45_left",
+  "disagreement": 0.4022503516174402,
+  "label_is": "A",
+  "pool": "andraarkiv",
+  "label_lines": 63,
+  "read_lines": 66,
+  "label_blocks": 1,
+  "read_blocks": 1
+ },
+ "094": {
+  "id": "b24c28c54225_right",
+  "disagreement": 0.09001233045622688,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 22,
+  "read_lines": 21,
+  "label_blocks": 1,
+  "read_blocks": 1
+ },
+ "095": {
+  "id": "0f48acb6028a_right",
+  "disagreement": 0.10373066424021839,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 29,
+  "read_lines": 29,
+  "label_blocks": 4,
+  "read_blocks": 4
+ },
+ "096": {
+  "id": "d5a5eb3ab097_right",
+  "disagreement": 0.5513413506012951,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 27,
+  "read_lines": 18,
+  "label_blocks": 3,
+  "read_blocks": 3
+ },
+ "097": {
+  "id": "5be4711f8d0a_right",
+  "disagreement": 0.4037472446730345,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 51,
+  "read_lines": 31,
+  "label_blocks": 2,
+  "read_blocks": 3
+ },
+ "098": {
+  "id": "ee570ef8d6fe_right",
+  "disagreement": 0.5432409739714525,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 30,
+  "read_lines": 21,
+  "label_blocks": 4,
+  "read_blocks": 2
+ },
+ "099": {
+  "id": "19e914d14390_right",
+  "disagreement": 0.4822384428223844,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 22,
+  "read_lines": 22,
+  "label_blocks": 2,
+  "read_blocks": 1
+ },
+ "100": {
+  "id": "d6ba9221f99b_right",
+  "disagreement": 0.4872881355932203,
+  "label_is": "A",
+  "pool": "andraarkiv",
+  "label_lines": 29,
+  "read_lines": 33,
+  "label_blocks": 3,
+  "read_blocks": 1
+ },
+ "101": {
+  "id": "026ea6d95e57_right",
+  "disagreement": 0.48986125933831376,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 26,
+  "read_lines": 27,
+  "label_blocks": 2,
+  "read_blocks": 2
+ },
+ "102": {
+  "id": "4546350b8396_right",
+  "disagreement": 0.4835680751173709,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 19,
+  "read_lines": 17,
+  "label_blocks": 3,
+  "read_blocks": 2
+ },
+ "103": {
+  "id": "39d476d64d8a_right",
+  "disagreement": 0.48996913580246915,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 41,
+  "read_lines": 29,
+  "label_blocks": 1,
+  "read_blocks": 1
+ },
+ "104": {
+  "id": "3e9ae3f36401_left",
+  "disagreement": 0.5502958579881657,
+  "label_is": "A",
+  "pool": "svea",
+  "label_lines": 58,
+  "read_lines": 54,
+  "label_blocks": 1,
+  "read_blocks": 4
+ },
+ "105": {
+  "id": "26cd65c5e650_right",
+  "disagreement": 0.5289079229122056,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 14,
+  "read_lines": 5,
+  "label_blocks": 3,
+  "read_blocks": 2
+ },
+ "106": {
+  "id": "a03b9bd36899_right",
+  "disagreement": 0.5015957446808511,
+  "label_is": "B",
+  "pool": "svea",
+  "label_lines": 30,
+  "read_lines": 30,
+  "label_blocks": 2,
+  "read_blocks": 1
+ }
+}
