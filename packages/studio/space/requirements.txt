@@ -1,0 +1,9 @@
+torch==2.13.0
+torchvision==0.28.0
+transformers==5.20.1
+peft==0.21.2
+accelerate==1.15.0
+diffusers @ git+https://github.com/huggingface/diffusers@e04f0c5f24392fcd34b32d18d0ce03668f9bcd50
+diffu-core @ git+https://github.com/Borg93/diffu2@DIFFU_COMMIT#subdirectory=packages/core
+diffu-moss @ git+https://github.com/Borg93/diffu2@DIFFU_COMMIT#subdirectory=packages/moss
+diffu-page @ git+https://github.com/Borg93/diffu2@DIFFU_COMMIT#subdirectory=packages/page

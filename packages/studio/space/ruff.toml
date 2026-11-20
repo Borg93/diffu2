@@ -1,0 +1,5 @@
+# The Space's own package sorts as first-party.
+extend = "../../../pyproject.toml"
+
+[lint.isort]
+known-first-party = ["diffu_core", "diffu_moss", "diffu_page", "pagedemo"]

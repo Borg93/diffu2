@@ -1,0 +1,45 @@
+<div class="pe">
+  <div class="pe-bar">
+    <label class="pe-field">Page
+      <select class="pe-shape" aria-label="page shape">
+        <option value="0.667">Folio, upright (2:3)</option>
+        <option value="0.707">Sheet, upright (A-size)</option>
+        <option value="0.8">Quarto, upright (4:5)</option>
+        <option value="1">Square</option>
+        <option value="1.333">Oblong (4:3)</option>
+        <option value="1.5">Wide (3:2)</option>
+      </select>
+    </label>
+    <label class="pe-field">Lines
+      <input class="pe-lines" type="range" min="12" max="50" step="1" aria-label="lines down the page" />
+      <span class="pe-lines-value"></span>
+    </label>
+    <span class="pe-gap"></span>
+    <button class="pe-btn pe-toggle-result" type="button" hidden>Hide page</button>
+    <button class="pe-btn pe-toggle-boxes" type="button">Hide boxes</button>
+    <button class="pe-btn pe-clear" type="button">Clear</button>
+  </div>
+  <div class="pe-inspector is-idle">
+    <p class="pe-idle">Select a box to write its text, or drag on the page to draw a new one.</p>
+    <div class="pe-inspector-head">
+      <span class="pe-swatch"></span>
+      <select class="pe-kind" aria-label="what the box holds">
+        <option value="text">Text</option>
+        <option value="heading">Heading</option>
+        <option value="note">Margin note</option>
+        <option value="number">Page number</option>
+        <option value="rule">Ruled line</option>
+      </select>
+      <span class="pe-gap"></span>
+      <span class="pe-room"></span>
+      <button class="pe-btn pe-copy" type="button">Duplicate</button>
+      <button class="pe-btn pe-delete" type="button">Delete</button>
+    </div>
+    <textarea class="pe-text" rows="4" spellcheck="false" placeholder="The text of this box. A line break starts a new line on the page."></textarea>
+  </div>
+  <div class="pe-stage" tabindex="0" aria-label="the page: drag to draw a box">
+    <img class="pe-result" alt="" hidden />
+    <div class="pe-layer"></div>
+  </div>
+  <p class="pe-hint"></p>
+</div>

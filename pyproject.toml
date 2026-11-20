@@ -88,7 +88,9 @@ replace-imports-with-any = [
 [tool.ty.terminal]
 error-on-warning = true
 
-# The demo Space runs in its own environment (Gradio, ZeroGPU's `spaces`), with two modules copied in when it is staged
-# (packages/htr_train/lion_data_prep/publish_space.sh): checked there, not here.
+# The demo Spaces run in their own environments (Gradio, ZeroGPU's `spaces`): the readers' with two modules copied in
+# when it is staged (packages/htr_train/lion_data_prep/publish_space.sh), the page demo's with its own package on its
+# path (packages/studio/space: `ty check --extra-search-path packages/studio/space packages/studio/space`, where only
+# the `spaces` import is unresolved). Checked there, not here.
 [tool.ty.src]
-exclude = ["packages/htr_train/lion_data_prep/space"]
+exclude = ["packages/htr_train/lion_data_prep/space", "packages/studio/space"]
