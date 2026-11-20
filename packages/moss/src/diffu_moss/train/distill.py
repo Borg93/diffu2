@@ -11,16 +11,19 @@ One training sample (:func:`distillation_loss`):
    there), in Euler steps with classifier-free guidance (:func:`teacher_velocity`), and the straight line from the
    state to where the teacher arrived is the target: the one velocity that takes the student there in its single step.
 3. The student's velocity at the state, with gradients, is regressed onto that target (mean squared error over the
-   drawn image's tokens).
+   drawn image's tokens), and with ``repulsion`` pushed from the teacher's unguided velocity across the step
+   (:func:`teacher_velocities`).
 
 The sample page, when the entry has one, goes to the student and to both of the teacher's passes, as it does in
 drawing. Velocities follow the trainer's convention: a state at level ``sigma`` is ``(1 - sigma) * image + sigma *
 noise`` and the DiT predicts ``noise - image``, so an Euler step to ``after`` adds ``(after - sigma) * velocity``.
 
 :func:`distill` trains a LoRA student of a teacher DiT on a cache's prompts and sample pages (the cached target only
-gives the page's size; no real page is drawn toward), and saves it as a reference training saves a LoRA, so
-``diffu-moss-export-ref`` merges it into the teacher's DiT. The student is then drawn in ``student_steps`` steps at
-guidance 1.
+gives the page's size; no real page is drawn toward), and saves it as a reference training saves a LoRA. Its LoRA
+also adapts the layers that read the noise level (``DISTILL_TARGETS``): a student steps much further from a level than
+its teacher does. The student is drawn in ``student_steps`` steps at guidance 1 with its LoRA beside the teacher's
+weights (:func:`student_of`), not merged into them: a short distillation's update is smaller than bfloat16's rounding
+step for most weights, and a merge into bfloat16 drops it there.
 
     diffu-moss-distill --teacher <DiT folder> --cache <cache> --negative <negative prompt embeds> --out <run>
 """
@@ -46,21 +49,41 @@ from diffu_moss.modular_pipelines.moss.before_denoise import SAMPLING_SHIFT, sam
 from diffu_moss.modular_pipelines.moss.denoise import DEMO_UNCOND_SKIP_LAYERS, GUIDANCE_SCALE
 from diffu_moss.train.cache import load_sample, read_entries, target_shape
 from diffu_moss.train.distributed import Ranks, joined, left
-from diffu_moss.train.loop import CHECKPOINTS, LOG, LoraTraining, TrainSettings, console, sample_size_of
-from diffu_moss.train.records import ADAPTER_WEIGHTS, PROGRESS_RECORD, JsonRecord, Progress
+from diffu_moss.train.loop import (
+    CHECKPOINTS,
+    LOG,
+    LORA_TARGETS,
+    LoraTraining,
+    TrainSettings,
+    add_lora,
+    console,
+    sample_size_of,
+)
+from diffu_moss.train.records import (
+    ADAPTER_RECORD,
+    ADAPTER_WEIGHTS,
+    PROGRESS_RECORD,
+    AdapterRecord,
+    JsonRecord,
+    LoraSettings,
+    Progress,
+)
 from diffu_moss.transformer import MossTransformer
 
 DISTILL_RECORD = "distill.json"  # beside a checkpoint's LoRA: how its student is drawn
 OPTIMIZER_STATE = "optimizer.pt"
 RESUMABLE = {"stop_at", "save_every", "device"}  # what a resumed run may change
+# a reference LoRA's modules, and the layers that turn the noise level into the blocks' and the head's modulation
+DISTILL_TARGETS = LORA_TARGETS + r"|time_embedding\.(0|2)|shared_block_modulation|video_head_modulation"
 
 app = typer.Typer(add_completion=False)
 
 
 class DistillSettings(BaseModel):
     """How a student is distilled: the steps it draws in, the steps of the teacher's drawing it is taught from (both
-    on noise levels of one shift), and the teacher's guidance (its scale, and the blocks its unconditional pass
-    skips)."""
+    on noise levels of one shift), the teacher's guidance (its scale, and the blocks its unconditional pass
+    skips), and how strongly the student is pushed from the teacher's unguided velocity (``repulsion``, 0: not at
+    all)."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -69,6 +92,7 @@ class DistillSettings(BaseModel):
     teacher_steps: int = Field(default=50, ge=1)
     guidance_scale: float = Field(default=GUIDANCE_SCALE, ge=1.0)
     uncond_skip_layers: tuple[int, ...] = DEMO_UNCOND_SKIP_LAYERS
+    repulsion: float = Field(default=0.0, ge=0.0, lt=1.0)
 
 
 def student_levels(settings: DistillSettings) -> list[float]:
@@ -113,6 +137,38 @@ def rolled_out(
 
 
 @torch.no_grad()
+def teacher_velocities(
+    teacher: MossTransformer,
+    latents: Tensor,
+    start: float,
+    end: float,
+    text: Tensor,
+    negative: Tensor,
+    settings: DistillSettings,
+    references: Sequence[Tensor] | None = None,
+) -> tuple[Tensor, Tensor | None]:
+    """The teacher's guided and unguided velocities across the step from level ``start`` to ``end``.
+
+    The guided one takes ``latents`` to where the teacher arrives at ``end`` in one Euler step: the teacher's guided
+    Euler steps through :func:`teacher_levels`, then ``(arrived - latents) / (end - start)``. The unguided one is what
+    its unconditional passes along that same path add up to across the step (each weighted by its step's share of it),
+    or None where they are not run: at guidance scale 1 without repulsion.
+    """
+    skipped = frozenset(settings.uncond_skip_layers)
+    unconditional_pass = settings.guidance_scale != 1.0 or settings.repulsion > 0
+    arrived = latents.float()
+    unguided = torch.zeros_like(arrived) if unconditional_pass else None
+    for now, after in pairwise(teacher_levels(start, end, settings)):
+        velocity = _velocity(teacher, arrived, now, text, references)
+        if unguided is not None:
+            unconditional = _velocity(teacher, arrived, now, negative, references, skipped)
+            velocity = unconditional + settings.guidance_scale * (velocity - unconditional)
+            unguided = unguided + (after - now) * unconditional
+        arrived = arrived + (after - now) * velocity
+    span = end - start
+    return (arrived - latents.float()) / span, None if unguided is None else unguided / span
+
+
 def teacher_velocity(
     teacher: MossTransformer,
     latents: Tensor,
@@ -124,17 +180,8 @@ def teacher_velocity(
     references: Sequence[Tensor] | None = None,
 ) -> Tensor:
     """The velocity that takes ``latents`` from level ``start`` to where the teacher arrives at ``end`` in one Euler
-    step: the teacher's guided Euler steps through :func:`teacher_levels`, then ``(arrived - latents) / (end -
-    start)``. At guidance scale 1 the unconditional pass is not run."""
-    skipped = frozenset(settings.uncond_skip_layers)
-    arrived = latents.float()
-    for now, after in pairwise(teacher_levels(start, end, settings)):
-        velocity = _velocity(teacher, arrived, now, text, references)
-        if settings.guidance_scale != 1.0:
-            unconditional = _velocity(teacher, arrived, now, negative, references, skipped)
-            velocity = unconditional + settings.guidance_scale * (velocity - unconditional)
-        arrived = arrived + (after - now) * velocity
-    return (arrived - latents.float()) / (end - start)
+    step (:func:`teacher_velocities`' guided one)."""
+    return teacher_velocities(teacher, latents, start, end, text, negative, settings, references)[0]
 
 
 def distillation_loss(
@@ -149,7 +196,9 @@ def distillation_loss(
 ) -> Tensor:
     """The on-policy distillation loss of one sample at the student's step ``index`` (the module's docstring): the
     mean squared error between the student's velocity at the state it drew itself to and the teacher's velocity
-    across that step.
+    across that step, less ``settings.repulsion`` times its mean squared error to the teacher's unguided velocity
+    across it. That is least where the student steps at ``guided + repulsion / (1 - repulsion) * (guided - unguided)``:
+    the teacher's step, pushed further along its guidance.
 
     Raises:
         ValueError: If ``index`` is not one of the student's steps.
@@ -158,12 +207,19 @@ def distillation_loss(
     if not 0 <= index < len(levels) - 1:
         raise ValueError(f"step {index} is not one of the student's {len(levels) - 1}")
     state = rolled_out(student, noise, levels, index, text, references)
-    target = teacher_velocity(teacher, state, levels[index], levels[index + 1], text, negative, settings, references)
-    return F.mse_loss(_velocity(student, state, levels[index], text, references), target)
+    guided, unguided = teacher_velocities(
+        teacher, state, levels[index], levels[index + 1], text, negative, settings, references
+    )
+    velocity = _velocity(student, state, levels[index], text, references)
+    loss = F.mse_loss(velocity, guided)
+    if settings.repulsion > 0 and unguided is not None:
+        loss = loss - settings.repulsion * F.mse_loss(velocity, unguided)
+    return loss
 
 
 class DistillRun(BaseModel):
-    """A distillation run: its length, the student LoRA's shape and learning rate (warmed up over ``warmup`` steps),
+    """A distillation run: its length, the student LoRA's shape (``targets``: the modules it adapts, a regex matched
+    in full against the DiT's module names) and learning rate (warmed up over ``warmup`` steps),
     the samples whose losses one optimizer step averages, how the student is taught (``distill``), and when it is
     saved; ``stop_at`` ends this run at that step with a checkpoint (a chain of short jobs, each resumed from the
     last)."""
@@ -173,6 +229,7 @@ class DistillRun(BaseModel):
     steps: int = Field(default=1000, ge=1)
     rank: int = Field(default=64, ge=1)
     alpha: int = Field(default=64, ge=1)
+    targets: str = DISTILL_TARGETS
     learning_rate: float = 2e-5
     warmup: int = Field(default=50, ge=1)
     samples_per_step: int = Field(default=1, ge=1)
@@ -254,7 +311,8 @@ def distill(
         seed=run.seed,
         device=device,
     )
-    training = LoraTraining(teacher, settings, sample_size_of(cache, None))
+    lora = LoraSettings(rank=run.rank, alpha=run.alpha, target_modules=run.targets)
+    training = LoraTraining(teacher, settings, sample_size_of(cache, None), lora=lora)
     frozen = MossTransformer.from_pretrained(str(teacher), torch_dtype=torch.bfloat16).to(device).eval()
     frozen.requires_grad_(False)
     negative_embeds = load_file(str(negative), device=device)["prompt_embeds"]
@@ -359,6 +417,22 @@ def _resumed(training: LoraTraining, generator: torch.Generator, checkpoint: Pat
     return progress.step
 
 
+def student_of(teacher: Path, checkpoint: Path, *, device: str = "cuda") -> MossTransformer:
+    """The student saved in ``checkpoint``: the DiT at ``teacher`` in bfloat16 on ``device`` with the checkpoint's
+    LoRA beside its weights in float32, as it was trained (each adapted layer adds its LoRA's output to its own), in
+    eval mode. Drawn in its record's (``DISTILL_RECORD``) steps at guidance 1.
+
+    Raises:
+        ValueError: If the checkpoint's weights are not its LoRA's.
+    """
+    student = MossTransformer.from_pretrained(str(teacher), torch_dtype=torch.bfloat16)
+    add_lora(student, AdapterRecord.read(checkpoint / ADAPTER_RECORD).lora)
+    loaded = set_peft_model_state_dict(student, load_file(str(checkpoint / ADAPTER_WEIGHTS)))
+    if loaded.unexpected_keys:
+        raise ValueError(f"{checkpoint}: weights that are not its LoRA's")
+    return student.requires_grad_(False).to(device).eval()
+
+
 def latest_checkpoint(out: Path) -> Path | None:
     """The newest whole checkpoint of the run in ``out`` (its progress record is written last), or None."""
     whole = [folder for folder in sorted((out / CHECKPOINTS).glob("step_*")) if (folder / PROGRESS_RECORD).is_file()]
@@ -377,6 +451,10 @@ def main(
     samples_per_step: Annotated[int, typer.Option(min=1, help="samples whose losses a step averages")] = 1,
     rank: Annotated[int, typer.Option(min=1, help="the student LoRA's rank (its alpha the same)")] = 64,
     learning_rate: Annotated[float, typer.Option(help="AdamW's, after the warmup")] = 2e-5,
+    repulsion: Annotated[
+        float,
+        typer.Option(min=0.0, max=0.99, help="how strongly the student is pushed from the teacher's unguided step"),
+    ] = 0.0,
     student_steps: Annotated[int, typer.Option(min=1, help="the steps the student draws in")] = 8,
     teacher_steps: Annotated[
         int, typer.Option(min=1, help="the steps of the teacher's drawing the student is taught from")
@@ -403,7 +481,10 @@ def main(
         learning_rate=learning_rate,
         samples_per_step=samples_per_step,
         distill=DistillSettings(
-            student_steps=student_steps, teacher_steps=teacher_steps, guidance_scale=guidance_scale
+            student_steps=student_steps,
+            teacher_steps=teacher_steps,
+            guidance_scale=guidance_scale,
+            repulsion=repulsion,
         ),
         save_every=save_every,
         stop_at=stop_at,

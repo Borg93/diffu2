@@ -31,10 +31,11 @@ from diffu_moss.train.distill import (
     latest_checkpoint,
     rolled_out,
     student_levels,
+    student_of,
     teacher_levels,
+    teacher_velocities,
     teacher_velocity,
 )
-from diffu_moss.train.export import export_merged
 from diffu_moss.train.loop import LOG, TrainSettings, lora_transformer
 from diffu_moss.transformer import MossTransformer
 
@@ -130,6 +131,40 @@ def test_the_loss_is_zero_for_a_student_that_steps_as_its_unguided_teacher_on_th
         distillation_loss(teacher, teacher, _noise(sample), 2, sample.prompt_embeds, negative, same)
 
 
+def test_repulsion_pushes_the_student_from_the_teachers_unguided_velocity_across_the_step(
+    teacher: MossTransformer, sample: CachedSample, negative: Tensor
+) -> None:
+    state, text, references = _noise(sample), sample.prompt_embeds, [_page(sample)]
+    levels = student_levels(SETTINGS)
+    start, end = levels[0], levels[1]
+    pushed = SETTINGS.model_copy(update={"repulsion": 0.25})
+
+    guided, unguided = teacher_velocities(teacher, state, start, end, text, negative, SETTINGS, references)
+    loss = distillation_loss(teacher, teacher, state, 0, text, negative, pushed, references).item()
+
+    assert unguided is not None
+    arrived, summed = state.clone(), torch.zeros_like(state)
+    for now, after in pairwise(teacher_levels(start, end, SETTINGS)):  # the unconditional passes along the guided path
+        conditional = _step(teacher, arrived, now, text, sample)
+        with torch.no_grad():
+            unconditional = teacher(
+                arrived, torch.tensor([now * 1000]), negative, None, frozenset({1}), references=references
+            ).float()
+        summed = summed + (after - now) * unconditional
+        arrived = arrived + (after - now) * (unconditional + 3.0 * (conditional - unconditional))
+    assert torch.allclose(unguided, summed / (end - start), atol=1e-5)
+    own = _step(teacher, state, start, text, sample)
+    plain = (own - guided).square().mean().item()
+    assert loss == pytest.approx(plain - 0.25 * (own - unguided).square().mean().item(), rel=1e-4)
+    assert loss != pytest.approx(plain, rel=1e-3)
+    least = guided + 0.25 / 0.75 * (guided - unguided)  # where the pushed loss is least: its gradient is zero there
+    velocity = least.clone().requires_grad_(True)
+    ((velocity - guided).square().mean() - 0.25 * (velocity - unguided).square().mean()).backward()
+    assert velocity.grad is not None and velocity.grad.abs().max().item() < 1e-9
+    alone = SETTINGS.model_copy(update={"guidance_scale": 1.0})
+    assert teacher_velocities(teacher, state, start, end, text, negative, alone, references)[1] is None
+
+
 def test_a_lora_student_trained_on_the_loss_draws_closer_to_its_teachers_guided_drawing(
     tiny_moss_dit: Path, teacher: MossTransformer, sample: CachedSample, negative: Tensor
 ) -> None:
@@ -162,7 +197,7 @@ def test_a_lora_student_trained_on_the_loss_draws_closer_to_its_teachers_guided_
     assert gap() < 0.5 * before
 
 
-def test_a_distillation_run_saves_a_lora_that_merges_into_a_student_stepping_closer_to_its_teacher(
+def test_a_distillation_run_saves_a_lora_over_the_noise_levels_layers_too_whose_student_steps_closer_to_its_teacher(
     tiny_moss_dit: Path, tiny_pair_cache: Path, teacher: MossTransformer, negative: Tensor, tmp_path: Path
 ) -> None:
     save_file({"prompt_embeds": negative}, str(tmp_path / "negative.safetensors"))
@@ -177,8 +212,10 @@ def test_a_distillation_run_saves_a_lora_that_merges_into_a_student_stepping_clo
     assert {index for row in logged for index in row["indices"]} == {0, 1}  # both of the student's steps taught
     record = json.loads((checkpoint / DISTILL_RECORD).read_text(encoding="utf-8"))
     assert (record["student_steps"], record["guidance_scale"]) == (2, 1.0)
-    export_merged(tiny_moss_dit, checkpoint, tmp_path / "student")
-    student = MossTransformer.from_pretrained(str(tmp_path / "student")).eval()
+    adapted = {key.split(".lora_")[0] for key in load_file(str(checkpoint / "adapter.safetensors"))}
+    assert {"time_embedding.0", "time_embedding.2", "shared_block_modulation", "video_head_modulation"} <= adapted
+    assert {"video_embedder", "final_linear_video", "layers.0.proj.q"} <= adapted
+    student = student_of(tiny_moss_dit, checkpoint, device="cpu").float()
     entries = read_entries(tiny_pair_cache)
 
     def loss_of(model: MossTransformer) -> float:  # on noise the run never drew, at both steps of every entry

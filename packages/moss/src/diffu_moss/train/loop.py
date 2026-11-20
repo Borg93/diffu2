@@ -391,6 +391,7 @@ def validation_losses(
 class LoraTraining:
     """A reference LoRA in training (the module's docstring): the DiT at ``base`` with a fresh LoRA, AdamW over the
     LoRA's weights, and the warmup; its checkpoints record how the samples it trains on were sized (``sample_size``).
+    ``lora`` gives the LoRA another shape than the settings' (other modules).
 
     Attributes:
         transformer: The DiT, frozen in bfloat16, with its LoRA in float32.
@@ -399,8 +400,16 @@ class LoraTraining:
 
     compute_dtype: torch.dtype | None = None  # the frozen DiT in its bfloat16 and the LoRA in its float32
 
-    def __init__(self, base: Path, settings: TrainSettings, sample_size: SampleSize = SampleSize.HALF) -> None:
-        self.transformer = lora_transformer(base, settings.lora, device=settings.device, seed=settings.seed)
+    def __init__(
+        self,
+        base: Path,
+        settings: TrainSettings,
+        sample_size: SampleSize = SampleSize.HALF,
+        *,
+        lora: LoraSettings | None = None,
+    ) -> None:
+        lora = settings.lora if lora is None else lora
+        self.transformer = lora_transformer(base, lora, device=settings.device, seed=settings.seed)
         self.parameters: list[nn.Parameter] = [
             parameter for parameter in self.transformer.parameters() if parameter.requires_grad
         ]
@@ -408,7 +417,7 @@ class LoraTraining:
             self.parameters, lr=settings.learning_rate, betas=settings.betas, weight_decay=settings.weight_decay
         )
         self._schedule = LambdaLR(self._optimizer, learning_rate_schedule(settings))
-        self._lora = settings.lora
+        self._lora = lora
         self._sample_size = sample_size
 
     def step(self) -> float:
