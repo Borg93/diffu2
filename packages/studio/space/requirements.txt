@@ -7,8 +7,6 @@ safetensors==0.8.0
 numpy==2.4.6
 opencv-python-headless==5.0.0.93
 pillow==12.2.0
-pydantic==2.13.4
-pydantic-settings==2.16.1
 diffusers @ git+https://github.com/huggingface/diffusers@e04f0c5f24392fcd34b32d18d0ce03668f9bcd50
 diffu-core @ git+https://github.com/Borg93/diffu2@DIFFU_COMMIT#subdirectory=packages/core
 diffu-moss @ git+https://github.com/Borg93/diffu2@DIFFU_COMMIT#subdirectory=packages/moss
