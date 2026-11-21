@@ -377,16 +377,18 @@ the judge after each page.
 Nearly all of a page's time is the DiT's passes (94 % of a fast page on the Spark; the judge's read-back, the VAE and
 the text encoder share the rest), and a pass's time follows its tokens, the page's, the sample's and the prompt's
 (with the first student on the Spark 0.59-0.66 s a thousand: 4.4 s at 7,500 tokens, a 1 MP page, 9.0 s at 13,900). So
-a page gets faster by fewer passes or by cheaper ones. Everything below was measured on the DGX Spark (GB10) on 20 Nov
-2026 with the sample-above model at 2 MP, each row in [MOSS_RUNS.md](MOSS_RUNS.md) ("Guidance", "Drawing speed");
-nothing is measured on a cluster's Blackwell cards yet (section 11).
+a page gets faster by fewer passes or by cheaper ones. Everything below was measured on the DGX Spark (GB10) on 20-21
+Nov 2026 with the sample-above model at 2 MP, each row in [MOSS_RUNS.md](MOSS_RUNS.md), and one on the demo Space's
+ZeroGPU (half an RTX PRO 6000 Blackwell); nothing is measured on a cluster's Blackwell cards yet (section 11).
 
 | Change | Gain | The page |
 |---|---|---|
-| Guidance over the first half of the steps (`guidance_stop: 0.5`) | 26-27 % less time for a guided page | the same page (ink, lines read back) at guidance 3 and at 2; over the first third a letter lost 4 of 15 lines |
+| Guidance over the first half of the steps (`guidance_stop: 0.5`, the default since 21 Nov) | 26-27 % less time for a guided page | the same page (ink, lines read back) at guidance 3 and at 2; over the first third a letter lost 4 of 15 lines |
 | UniPC in 16 steps instead of Euler in 28 (`sampler: "unipc"`, `steps: 16`) | 44-47 % less time | read back the same; one word garbled and one page's paper mottled |
 | A first-block step cache on Euler's 28 (`cache: {"kind": "first_block", "threshold": 0.05}`) | 44-47 % less time | read back the same, no fault seen |
 | Compiled joint blocks (`compile_blocks`) | 1.74 times faster a step (6.75 to 3.88 s), the same memory (33 GB) | the same words in the same hand, strokes placed a little differently (latents' cosine to the eager page 0.984) |
+| The joint blocks from a bfloat16 AOTInductor package (`aoti_package`), a sample on the page | 1.5 times a pass (guided 5.43 to 3.73 s, a page 231 to 160 s; the student 5.68 to 3.78 s); built in 12 s, 3.9 MB; on ZeroGPU a fast page 23 to 14-15 s | the same page by eye, the same lines read (PSNR 33-36 dB) |
+| A student merged into the weights (`fuse_lora`) instead of beside them | 7-10 % faster a page | the same page by eye (PSNR 31-36 dB) for a student of 400 steps at 1e-4; a short weak student rounds away in bfloat16 |
 | MXFP8 joint blocks, compiled (`precision: "mxfp8"`) | 2.41 times (2.80 s a step, 28 GB) | lighter in ink, some letter forms changed (cosine 0.934); not judged against sample pages yet |
 | MXFP8 in the text encoder too | 2.34 times, 22 GB | further off (cosine 0.864); not judged yet |
 | A distilled student ([MOSS.md](MOSS.md), "Distillation") | 8 unguided passes instead of 56: a 2 MP page in 65-99 s against 315 s | the text as given; the ink as its teacher's |
@@ -395,8 +397,32 @@ nothing is measured on a cluster's Blackwell cards yet (section 11).
 
 The UniPC and step-cache rows are two pages and one seed: not enough to change a default on. A smaller sample is also
 faster (15-32 % a pass) but the page keeps less of the sample's ink and pen, so the sample is given whole. The demo
-Space runs on ZeroGPU, whose GPU workers refuse `torch.compile`: there the compiled blocks' gain needs a package built
-ahead of time on its own GPU (below), which is not done yet.
+Space runs on ZeroGPU, whose GPU workers refuse `torch.compile`: it builds a package at start-up on its own GPU (one
+long `@spaces.GPU` call, as Hugging Face's ZeroGPU AoTI guide does) and runs every joint block from it. On ZeroGPU the
+build first failed in Inductor's autotuning ("Both events must be completed before calculating elapsed time"): the
+Space's build waits for each CUDA timing event before reading it (`pagedemo/drawing.py`).
+
+### Recommended on Blackwell (what is measured, and what is not yet)
+
+For many pages (a Ray cluster, section 7): one actor a GPU drawing whole pages (one page a GPU beats splitting a page
+over GPUs for throughput: NVIDIA's own FLUX.3 figures on 8 B200s are 0.54 against 0.33 images a second, and 2.9
+against 0.9 for the distilled model), the model itself guided (the students' pages smear and misspell words, MOSS_RUNS
+21 Nov), at the defaults: Euler 28 steps, guidance 2 over the first half, 2 MP. Then:
+
+1. the joint blocks compiled: `aoti_package` built once per GPU kind and torch version on a node of that kind (bf16,
+   measured 1.5x a pass with a sample on the page), or `compile_blocks` where the workers may compile (1.74x, measured
+   without a sample);
+2. not yet: MXFP8. It lightens the ink and changes letters, likely because `mxfp8.quantize` rounds each block's scale
+   down and clips the largest values by up to 12.5 % (NVIDIA's RCEIL rounds up); an MXFP8 package also fails at run
+   time. Both in [TODO.md](../TODO.md);
+3. not yet measured: the attention kernel (`--attention cudnn` or `flash` on `diffu-run`; attention is roughly 35-45 %
+   of a compiled pass at 10-16k tokens), the step cache with warm-up and a cap on skips in a row, and the guided pair
+   in one batch-2 call. Each is exact or nearly so and listed in TODO.md.
+
+Engines: SGLang Diffusion runs MOSS-Image with our plugin (section 13) but has no page pipeline, and its speed on our
+pages is not measured. vLLM (vLLM-Omni) and TensorRT-LLM's VisualGen have no MOSS-Image model; VisualGen's FP8 and
+sparse attention kernels are for B200/B300 (sm_100/103), not the RTX PRO 6000 (sm_120), and change the picture measurably
+on photos (LPIPS 0.07-0.16), which thin handwritten strokes stand less well.
 
 ### The options
 
@@ -435,8 +461,8 @@ latents to bf16's at the same noise, one JSON line each (`--images` keeps every 
         --package-bf16 runs/aoti/moss_bf16_sm100.pt2 --package-mxfp8 runs/aoti/moss_mxfp8_sm100.pt2 \
         --out runs/bench/inference.jsonl --images runs/bench/pages
 
-The eager and compiled configurations are the ones measured above. The packaged ones are not measured: an MXFP8 package
-fails at run time (PyTorch's `isIntList()` assert, open in [TODO.md](../TODO.md)). Inside an AOTInductor package,
+The eager and compiled configurations are the ones measured above; the bf16 package was measured on the Demo Space's
+path (above). An MXFP8 package fails at run time (PyTorch's `isIntList()` assert, open in [TODO.md](../TODO.md)). Inside an AOTInductor package,
 `scaled_mm` (torch's `_scaled_mm_v2`) has no C shim and runs through AOTInductor's proxy executor; `torch._scaled_mm`
 (v1, which has one) takes the same operands.
 
