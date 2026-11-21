@@ -8,9 +8,7 @@ __pycache__/
 .pytest_cache/
 
 # data and run outputs: big, rebuilt by the diffu_page.data builders and the jobs
-data_flux3/
-data_iam/
-data_raw/
+/data_*/
 runs/
 *.log
 
@@ -22,5 +20,5 @@ runs/
 
 .DS_Store
 
-# local settings (FLUX3_MODEL=...): read by diffu_page.settings, never committed
+# local settings (DIFFU_MOSS_MODEL=...): read by diffu_page.settings, never committed
 .env

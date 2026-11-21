@@ -1,4 +1,4 @@
-"""Evaluate a model (MOSS-Image, or FLUX.3 and its LoRAs) on held-out crops: draw each from its stored caption with the
+"""Evaluate a MOSS-Image model (and its LoRAs) on held-out crops: draw each from its stored caption with the
 crop pipeline (:func:`diffu_page.draw.pipeline.crop_blocks`), crop ``k`` from noise seed ``--seed + k``, and read every
 line back, beside the real crop's read-back.
 
@@ -10,8 +10,8 @@ measured beside the real crop's (``diffu_page.captions.hand``) and, when the cro
 reference at all (``HandFidelity``). Writes contact sheets (``[reference,] real, generated``), ``generated/NNN.png`` and
 ``results.json``; a crop that fails is recorded there and the rest still run.
 
-    diffu-evaluate --crops data_flux3/style_pairs_v3d/val_eval --model runs/moss/ref_full --out <dir> -n 8
-    diffu-evaluate --crops data_flux3/layout_crops_v2/val_eval --lora v2=<ckpt>/model --out <dir> -n 24
+    diffu-evaluate --crops data_pages/style_pairs_v3d/val_eval --model runs/moss/ref_full --out <dir> -n 8
+    diffu-evaluate --crops data_pages/layout_crops_v2/val_eval --lora hand=<adapter folder> --out <dir> -n 24
 """
 
 from __future__ import annotations
@@ -40,7 +40,6 @@ from diffu_page.cli.options import (
     ReferenceGuidanceScale,
     SamplingShift,
     Steps,
-    TextLayers,
     lora_dirs,
     required_model,
     settings_from_options,
@@ -202,7 +201,7 @@ def evaluate(
         Path, typer.Option(help="an eval set: a val_eval dir of build_crops (pick_eval), style_pairs or page_pairs")
     ],
     out: Annotated[Path, typer.Option(help="where the sheets, generated/ and results.json go")],
-    model: Model = settings.flux3_model,
+    model: Model = settings.moss_model,
     lora: Loras = None,
     n: Annotated[int, typer.Option("-n", min=1, help="crops to evaluate")] = 16,
     steps: Steps = DEFAULTS.steps,
@@ -210,7 +209,6 @@ def evaluate(
     reference_guidance: ReferenceGuidanceScale = DEFAULTS.reference_guidance_scale,
     guidance_stop: GuidanceStop = DEFAULTS.guidance_stop,
     seed: int = 0,
-    text_layer: TextLayers = None,
     device: Device = DEFAULTS.device,
     max_line_cer: MaxLineCer = DEFAULTS.max_line_cer,
     lora_scale: LoraScale = DEFAULTS.lora_scale,
@@ -233,7 +231,6 @@ def evaluate(
         guidance=guidance,
         reference_guidance=reference_guidance,
         guidance_stop=guidance_stop,
-        text_layer=text_layer,
         device=device,
         max_line_cer=max_line_cer,
         lora_scale=lora_scale,

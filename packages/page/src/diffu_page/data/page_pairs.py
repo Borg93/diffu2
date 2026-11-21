@@ -70,7 +70,7 @@ Written under ``--out``:
   every scan, page and window).
 
     python -m diffu_page.data.page_pairs --gt-root ~/Desktop/data/GT-Lejonet_HTR_202602 --model runs/moss/base \\
-        --out data_flux3/page_pairs --workers 8 --windows-per-page 2
+        --out data_pages/page_pairs --workers 8 --windows-per-page 2
 """
 
 from __future__ import annotations

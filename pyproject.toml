@@ -1,6 +1,6 @@
 # The root is the workspace alone, no [project] (a virtual root): `uv sync` and `uv run` install every member under
-# packages/, which are what the others share about a model directory (core), MOSS-Image, the page pipeline, FLUX.3's
-# training glue and what runs them.
+# packages/, which are what the others share about a model directory (core), MOSS-Image, the page pipeline and what
+# runs them.
 [tool.uv]
 environments = ["sys_platform == 'linux'"]  # CUDA wheels are Linux-only
 
@@ -14,15 +14,13 @@ exclude = ["packages/sglang_moss", "packages/htr_train/envs/*"]
 diffu-core = { workspace = true }
 diffu-moss = { workspace = true }
 diffu-page = { workspace = true }
-diffu-flux3 = { workspace = true }
 diffu-runner = { workspace = true }
 diffu-studio = { workspace = true }
 diffu-htr-train = { workspace = true }
 diffu-curate = { workspace = true }
 torch = { index = "pytorch-cu130" }
 torchvision = { index = "pytorch-cu130" }
-# FLUX.3 (Flux3Transformer2DModel, its Modular Diffusers blocks and LoRA loader) is on diffusers main only. This is
-# the commit the NeMo AutoModel environment runs, so both environments run the same blocks.
+# diffusers main, pinned to one commit: the Modular Diffusers that MOSS-Image's blocks are written against.
 diffusers = { git = "https://github.com/huggingface/diffusers", rev = "e04f0c5f24392fcd34b32d18d0ce03668f9bcd50" }
 
 [[tool.uv.index]]
@@ -50,10 +48,10 @@ select = ["E", "W", "F", "I", "B", "C4", "UP", "SIM", "TID251"]
 ignore = ["E501"]
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
-"dataclasses.dataclass".msg = "Structured values are pydantic BaseModel (NeMo dataloader configs are the exception)."
+"dataclasses.dataclass".msg = "Structured values are pydantic BaseModel."
 
 [tool.ruff.lint.isort]
-known-first-party = ["diffu_core", "diffu_moss", "diffu_page", "diffu_flux3", "diffu_runner", "diffu_studio", "diffu_sglang_moss", "diffu_htr_train", "diffu_curate"]
+known-first-party = ["diffu_core", "diffu_moss", "diffu_page", "diffu_runner", "diffu_studio", "diffu_sglang_moss", "diffu_htr_train", "diffu_curate"]
 
 [tool.pytest.ini_options]
 testpaths = ["packages"]
@@ -66,20 +64,17 @@ strict = true
 timeout = 3600  # pytest-timeout: a hung test fails; the slowest (the studio's draw test) takes about a minute on CPU
 
 [tool.coverage.run]  # per-test coverage when pruning: production lines only, never the tests'
-source = ["packages/core/src", "packages/moss/src", "packages/page/src", "packages/runner/src", "packages/studio/src", "packages/flux3/src", "packages/htr_train/src", "packages/curate/src"]
+source = ["packages/core/src", "packages/moss/src", "packages/page/src", "packages/runner/src", "packages/studio/src", "packages/htr_train/src", "packages/curate/src"]
 omit = ["packages/*/tests/*", "conftest.py"]
 
 # ty, as pyrefly.toml: diffusers, transformers and safetensors are typed as Any (diffusers exports a torch-less dummy
-# for every class, so each use reads as "real class or dummy"), NeMo AutoModel and its torchdata exist only in NeMo's
-# own environment and SGLang only in its own (packages/sglang_moss). torch, numpy and PIL ship their own types and are
-# checked.
+# for every class, so each use reads as "real class or dummy"), and SGLang exists only in its own
+# environment (packages/sglang_moss). torch, numpy and PIL ship their own types and are checked.
 [tool.ty.analysis]
 replace-imports-with-any = [
     "diffusers.**", "diffusers",
     "transformers.**", "transformers",
     "safetensors.**", "safetensors",
-    "nemo_automodel.**", "nemo_automodel",
-    "torchdata.**", "torchdata",
     "sglang.**", "sglang",
     "swift.**", "swift",  # ms-swift: only in packages/htr_train/envs (its training plugin imports it)
     "vllm.**", "vllm",  # vLLM: only in packages/htr_train/envs/vllm (diffu_htr_train.jev.score runs there)

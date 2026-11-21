@@ -10,15 +10,10 @@ CAPTIONS = {"encoder_hidden_states": (torch.tensor([1.0]), torch.tensor([0.0]))}
 
 
 class _ReferenceProbe(torch.nn.Module):
-    """A denoiser that answers whether its call carried the reference tokens."""
+    """A denoiser that answers whether its call carried the reference latents."""
 
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        image_cond_hidden_states: torch.Tensor | None = None,
-        image_cond_ids: torch.Tensor | None = None,
-    ) -> bool:
-        return image_cond_hidden_states is not None
+    def forward(self, hidden_states: torch.Tensor, references: list[torch.Tensor] | None = None) -> bool:
+        return references is not None
 
 
 def _at_step(guider: ReferenceGuidance, step: int) -> ReferenceGuidance:
@@ -63,7 +58,7 @@ def test_reference_guidance_restores_the_reference_after_a_pass_that_raised() ->
 
     guider.prepare_models(denoiser)
 
-    assert denoiser(torch.zeros(1), image_cond_hidden_states=torch.zeros(1), image_cond_ids=torch.zeros(1)) is True
+    assert denoiser(torch.zeros(1), references=[torch.zeros(1)]) is True
 
 
 def test_reference_guidance_refuses_its_third_pass_on_a_crop_without_a_reference() -> None:

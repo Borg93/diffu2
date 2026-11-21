@@ -22,10 +22,9 @@ from gradio_client import utils as client_utils
 from PIL import Image, ImageDraw
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from diffu_moss.modular_pipelines.moss import MossAutoBlocks
 from diffu_page.captions.prompt import PageStyle
 from diffu_page.draw.blocks import DrawnCrop, crop_identity
-from diffu_page.draw.pipeline import DrawSettings, PagePlanBlocks, crop_blocks, draw_crop, load_pipeline, model_family
+from diffu_page.draw.pipeline import DrawSettings, PagePlanBlocks, crop_blocks, draw_crop, load_pipeline, require_moss
 from diffu_page.draw.plan import CropPlan
 from diffu_page.output import JPEG_QUALITY, jpeg_bytes, plain_file_name, side_by_side
 from diffu_page.page.crops.geometry import pixel_box
@@ -178,8 +177,10 @@ def check_drawers(drawers: list[Drawer]) -> None:
     if shared_names:
         raise ValueError(f"two drawers share each of the names {shared_names}: a name is its draw node's")
     for drawer in drawers:
-        if model_family(drawer.model).blocks is not MossAutoBlocks:
-            raise ValueError(f"{drawer.name}: {drawer.model} is no MOSS-Image model directory (diffu-moss-init's)")
+        try:
+            require_moss(drawer.model)
+        except ValueError as error:
+            raise ValueError(f"{drawer.name}: {error}") from error
 
 
 def load_draw_nodes(drawers: list[Drawer], *, settings: DrawSettings, out: Path) -> dict[str, DrawNode]:

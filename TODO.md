@@ -12,40 +12,45 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
 - **MOSS-Image is the model** (Apache-2.0; our own implementation and training). The prize: a MOSS-Image fine-tune
   that draws any template in the look and hand of a sample page, judged by eye beside the real scans (realism and the
   sample's hand first; CER is information only).
-- **FLUX.3 Klein with our LoRAs is the research reference**, kept as it is.
+- **Where it stands** ([docs/MOSS_RUNS.md](docs/MOSS_RUNS.md), "What matters now"): the sample-above model
+  (`Gabriel/diffu-moss-above`, 2 MP) writes the layout and text as given and takes the paper, the kind of scan and the
+  pen's weight from the sample; the letter forms follow on some kinds of page only.
 
-## To the HPC run (Wed/Thu 4-5 Nov)
+## The model: the hand and the ink
 
-- [ ] **The content pilot is running** (`~/diffu_queue/queue_pilot2.sh` -> `jobs/moss/run_content_pilot.sh`, from 2
-      Nov 17:20): from Base on the 55-collection set without `GT-RA_landskapshandlingar_20260227` (the scans of
-      `..._20260220` again), the content mix (no prompt names an archive, years or hand), legible samples, look and hand
-      changes for half the sample-form entries each; 2,500 steps; then the hand swap test. It passes on the rule fixed in
-      `~/diffu_queue/VERIFY_SAMPLE.md`: the sample's hand +0.30 over the page's own sample on at least half the swaps,
-      the look kept (L1 4/5, L2 + L3 at least r6b's), and the pages beside the scans. Before it, r6b: L1 4/5, L2 3/5,
-      L2 + L3 78 %, H1 1/12; r6c (r6b trained on) regressed (L2 0/5, H1 0/12).
-- [x] The recipe (6 Nov): **B**, look and text from the sample page, hands from per-hand adapters afterwards. The pilot's
-      hand did not follow the sample at any checkpoint (one page drawn with four samples keeps the same hand letter
-      for letter, only its paper changes), though the VAE keeps the hand (writer ID 0.59 real, 0.57 decoded, 47 pages);
-      published reference-hand methods add a writer signal or train on very many styles. The HPC cache: the content mix,
-      look changes for half the sample-form entries, no hand changes. The sample's hand stays a research track (the
-      reference off the target's RoPE grid, writer supervision, more styles).
-- [ ] The full training set with that recipe: the page pairs of the whole GT (~59,000 single pages; the duplicate
-      collection left out), their content forms and legible samples (`page_pair_forms`, `page_pair_samples`).
-- [ ] An HPC runbook (written, not run: `docs/MOSS_HPC.md`; open there: the cache's size and shards, the environment
-      with torch from cu126 (Leonardo's driver is 535: CUDA 13 does not run, cu126 does), the smoke test): the environment, the Base snapshot and the data on a filesystem every node reads (Leonardo's
-      compute nodes have no internet), the submit script, a 1-node smoke test; `--ema` and `--save-state` there only.
-      `jobs/moss/hpc_full.sbatch.example` is tested on CPU only (gloo, world size 2, tiny models). Estimates for one
-      pass over 200,000 pages: ~23 h on 8 A100s or ~9 h on 3 B200s at 1 MP, ~51 h / ~19 h at 2 MP; ~30 GB a GPU on 4
-      A100s, ~22 GB on 8. The legible 1 MP sample adds ~25 % to a step.
-- [ ] Optional: the old recipe on the 55 collections (full_m1, killed by the memory guard at step ~370 on 2 Nov) as a
-      control, ~18 GPU hours.
+- [ ] Letter forms follow the sample on short-entry pages (the 16th-century accounts) and not on running text, and not
+      at all on the demo Space's new pages (the same letter from four samples in one hand). Not tried: writer-ID
+      supervision in training, training weighted toward low noise (`--sigma-shift`) on a full run, more scribes.
+- [ ] A faint sample's ink is beyond the model's range: from the 1687 sample (ink L 48.7) the model itself draws L 17-21
+      at every guidance that writes, and at guidance 1 no line is readable. No student of this model can follow it:
+      the model itself has to learn it.
+- [ ] The model's default guidance is still MOSS-Image's 3 (`GUIDANCE_SCALE`); the measurements support 2 (20 Nov).
+      Until the default changes, pass `--guidance 2`. Not drawn: the swaps at 1.5.
+- [ ] Caption dropout (`--caption-dropout 0.1`) showed no difference after 480 steps, which may be too few: decide it
+      on a longer run or drop it.
+- [ ] Compiled joint blocks in training under FSDP2 (`compile_loop.py`, 30 steps at 2 MP): waiting for a slot on 11
+      Nov, no result recorded.
+- [ ] Six of the 30 template jobs (dense registers and tables) are refused: their prompts pass the text encoder's 4,096
+      tokens.
+- [ ] On the Space's path lines flagged printed are written by hand and the short ruled lines under them left out.
+- [ ] A blind realism rating of real and drawn pages mixed, with the sample-above model's pages, more raters and
+      several seeds a page (the first, 27 Oct, picked the real scan in 12 of 12 sets); what gives the scans away
+      decides what to train next.
+- [ ] Drawn ink on the real page's paper (scratchpad `paper/paper_composite.py`), and writing no label asks for
+      (scratchpad `hand/unlabelled_words.py`): each as a stage after drawing, checked in a blind test.
+
+## Distillation
+
+- [ ] Students g and h (`--swap 0.5`, teachers at guidance 2.0 and 1.5; queued 20 Nov 22:55): draw them on the held-out
+      pages and on the Space's six template pages beside d and e at step 400 and the first student, which the Space
+      keeps until a student's ink is closer to the sample's there.
+- [ ] Student f (teacher at guidance 1.25) waits for room in the debug queue.
+- [ ] The first student's text was never checked against the labels on the held-out pages.
 
 ## MOSS-Image drawing
 
-- [ ] A full fine-tune's checkpoint saves its DiT's `config.json` as `FSDPMossTransformer` (FSDP2's wrapper class)
-      with `_name_or_path` the cluster's Base path; it should say `MossTransformer` and name no path (fixed by hand for
-      the published B, 9 Nov). A converter of `train_log.jsonl` to TensorBoard for model cards lives in the
-      scratch queue (`hf_publish/to_tensorboard.py`); into the repo when a second model is published.
+- [ ] A converter of `train_log.jsonl` to TensorBoard for model cards lives in the scratch queue
+      (`hf_publish/to_tensorboard.py`); into the repo, now that a second model is published.
 - [ ] A content-mix model drawn without a sample should be prompted in its generic form (nothing named); diffu-generate
       captions a page drawn without a sample in its named style, and has no option for the generic form yet.
 - [ ] A legible model draws a window only from a sample given with its line boxes (a job's `reference.lines`,
@@ -53,38 +58,38 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
       takes a sample sized already.
 - [ ] The four hand adapters (`Gabriel/diffu-moss-hand-*`) drawn through `--lora` on a GPU, fused and not, looked at
       beside the pages their merged DiTs drew (`runs/moss_hand_*/windows_step*`) and the scans; then a presets file of
-      the MOSS hands beside `styles.json`, and an adapter in the studio.
-- [ ] Reference guidance (a third pass toward the sample, off by default) never tried for the hand: scales 2 and 3 on
-      the swap set, ~3.3 GPU hours; passes if the hand follows in at least 4 of 12 swaps with L1 and L2 + L3 kept.
-- [ ] A blind realism rating of real and drawn pages mixed, more raters (the first, 27 Oct, picked the real scan in 12
-      of 12 sets) and several seeds a page; what gives the scans away decides what to train next.
+      the MOSS hands (`--styles`), and an adapter in the studio.
 - [ ] Not looked at yet: the 27-29 Oct queue's pages (microfilm LoRAs, the print mix, the blank-page canvas test, the
       1715 LoRA at guidance 2 and 2.5).
-- [ ] Drawn ink on the real page's paper (scratchpad `paper/paper_composite.py`), and writing no label asks for
-      (scratchpad `hand/unlabelled_words.py`): each as a stage after drawing, checked in a blind test.
-- [ ] KohakuMossTrainer's glue (manifests, caches, configs, checks) still lives in the scratchpad.
+- [ ] KohakuMossTrainer's glue (manifests, caches, configs, checks) still lives in the scratchpad, and the
+      sample-above set's builders (`sibling_pairs.py`, `sibling_cache.py`) with the runs on the cluster.
 - [ ] A sample-page input in the studio for a model trained with references.
 - [ ] Drawing checks `--reference-caption` against the form a model trained on, once training records it.
-- [ ] Training never sees the negative prompt guidance draws against (MOSS's demo default): caption dropout in training
-      would give guidance a trained unconditional branch.
 
 ## Inference speed
 
-- [ ] The speed sweep (queued after the pilot): UniPC and Euler at 20 steps, guidance stopped at 80 %, FirstBlockCache,
-      TaylorSeer, each against the 50-step pages (writer ID, colour, pixel difference, by eye).
-- [ ] **Few-step distillation** of the final model after the HPC run: on-policy distillation as DiffSynth-Studio's
-      `examples/moss_image/model_training/special/opd` does it (teacher 50 steps at guidance 3, student 8 steps at
-      guidance 1, a rank-64 LoRA, lr 1e-4), in our trainer and with the sample page in both; ~12x fewer DiT passes a
-      page. Passes only if the 8-step pages match the 50-step ones on read-back, writer ID, look, the swap test and by
-      eye.
-- [ ] Profile on the cluster's Blackwell GPUs (Morgan, `~/diffu_queue/morgan_test.tar.gz`): bf16 against MXFP8 +
-      compiled blocks, actors per card; then NVFP4 and fused QKV projections. The MXFP8 AOTInductor package fails at run
-      time (PyTorch's `isIntList()` assert); compiled blocks work.
+- [ ] The demo Space on ZeroGPU cannot compile at run time (`torch.compile` is refused in its GPU workers): the
+      compiled blocks' 1.74x needs the joint block compiled ahead of time on ZeroGPU's own GPU (a `diffu-moss-aoti`
+      package built in a ZeroGPU call) and loaded by the Space.
+- [ ] UniPC in 16 steps and the first-block step cache each drew a guided page in 44-47 % less time on two pages and
+      one seed: more pages and seeds before either becomes a default. TaylorSeer and MagCache are not measured.
+- [ ] MXFP8 (2.41x compiled, the page lighter in ink, some letter forms changed) is not judged against sample pages.
+- [ ] The MXFP8 AOTInductor package fails at run time (PyTorch's `isIntList()` assert); compiled blocks work.
+- [ ] `diffu-generate` has no flags for `precision`, `sampler`, `cache` or `aoti_package` (draw settings only).
+- [ ] The leaner RMSNorm is not measured on an A100 or in a training step.
 - [ ] Qwen3.5's linear-attention layers run in transformers' reference code (`causal-conv1d` and
       `flash-linear-attention` are not installed), which slows caching and drawing.
+
+## Scaling (waiting: no scaling work until testing on one machine is done)
+
+- [ ] Profile on the cluster's Blackwell GPUs (Morgan, `~/diffu_queue/morgan_test.tar.gz`): bf16 against MXFP8 +
+      compiled blocks, actors per card; then NVFP4 and fused QKV projections.
+- [ ] `diffu-run` draws at 1.0 MP unless told (`--page-megapixels`), and `deploy/kuberay/stage-models.yaml` still
+      stages `Gabriel/diffu-moss-r6b`: both to the 2 MP sample-above model.
 - [ ] A crop is drawn one per call and one actor does everything in turn: batch same-size crops, and split the work into
       stages with their own resources (encode, denoise, read-back, labels and sink); the line repair as such a stage.
 - [ ] `diffu-run` writes ALTO and PAGE only: the page readers' formats come from `diffu-reader-set --xml` on its export.
+- [ ] The runner's draw test should call `run()`; its direct imports (numpy, pillow) declared.
 
 ## Line reader against the Swedish Lion TrOCR (dmlpai01)
 
@@ -170,14 +175,6 @@ What runs, what is queued, the numbers and the reasons: [docs/HTR_RUNS.md](docs/
 - [ ] Training crops cut from the wrong image have their boxes on blank paper (fixed for Byggningskollegium's JPEG/TIFF
       pairs): check a whole set by reading its real crops back.
 
-## FLUX.3 Klein (the reference, paused)
-
-- [ ] Open from the LoRA studies: the style-reference LoRA (`packages/flux3/configs/flux3_style_ref_lora_v3d.yaml`)
-      never trained (rebuild `data_flux3/style_pairs_v3d` with the overlap fix first); caption probes on base FLUX.3;
-      `norm_q`/`norm_k` trained in bf16 but drawn in float32; the caption-dropout wiring untested in NeMo's environment;
-      Klein's tokenizer regex warning; guidance 4 with shift 6.93 (the hand LoRAs' ink is truest at 2).
-
 ## Repo
 
 - [ ] Publish our blocks to the Hub (`diffusers-cli custom_blocks`) if others should use them.
-- [ ] The runner's draw test should call `run()`; its direct imports (numpy, pillow) declared.

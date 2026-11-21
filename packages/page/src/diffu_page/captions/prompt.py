@@ -1,4 +1,4 @@
-"""The FLUX.3 layout prompt of a crop (BFL's layout-prompt guide): a paragraph citing every line, then the layout rows.
+"""The layout caption of a crop (BFL's layout-prompt guide): a paragraph citing every line, then the layout rows.
 
 The caption grammar writes a crop's caption once, as a :class:`CaptionTemplate` with each style phrase as a slot; the
 caption of a style is that template rendered with the style's phrases (:func:`phrases_for`), and a caption in another
@@ -44,7 +44,7 @@ def scan_ending(greyscale: bool) -> str:
 
 
 class LayoutRow(BaseModel):
-    """One element of a FLUX.3 layout prompt."""
+    """One element of a layout caption."""
 
     id: str
     bbox: LayoutBox
@@ -152,7 +152,7 @@ def caption_text(paragraph: str, rows: Sequence[BaseModel]) -> str:
 
 
 class Caption(BaseModel):
-    """A crop's FLUX.3 layout prompt with the template and line records it was written from."""
+    """A crop's layout caption with the template and line records it was written from."""
 
     text: str  # the prompt: the caption paragraph, a space and the layout rows as JSON
     template: CaptionTemplate
@@ -165,11 +165,10 @@ def caption_order(lines: list[TextLine]) -> list[TextLine]:
 
 
 def caption_for(crop: Crop, style: PageStyle) -> Caption:
-    """The FLUX.3 layout prompt of a crop: one English paragraph citing every element as ``<id>``, a space, the
+    """The layout caption of a crop: one English paragraph citing every element as ``<id>``, a space, the
     layout rows as JSON.
 
-    Follows the annotation rules FLUX.3 was trained on (the ``t2i_bbox`` system prompt of its prompt upsampler)
-    and BFL's layout-prompt guide: medium, setting and light first; each ``<id>`` cited beside the words that
+    Follows BFL's layout-prompt guide: medium, setting and light first; each ``<id>`` cited beside the words that
     name it, with its position in words as well as in its box; visible details (paper and ink colour) rather
     than names alone; every visible text a row quoting its words with style and alignment. A text line's id is
     ``Sv_Text_`` and its place in :func:`caption_order` (top to bottom, then left to right). Lines cut by the top

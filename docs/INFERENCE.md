@@ -9,9 +9,9 @@ and fails the stages, and why the code is built the way it is, is in [RAY.md](RA
 
 A run turns a file of page jobs into synthetic archive pages: each job names a real page layout (a PAGE XML file, the
 template) or gives one inline, the text to write into its lines (or none: its lines keep their own), the style (archive,
-years, paper, ink) and a sample page whose hand, ink and paper to copy. A fine-tuned MOSS-Image model draws the page
-whole; a handwriting reader (TrOCR) reads every line back; the page's exact ALTO and PAGE XML labels are written from
-the plan, with every line the reader could not confirm tagged `unclear`. Ray Data does the scheduling: it reads the run
+years, paper, ink) and a sample page whose paper, kind of scan and pen to take. A fine-tuned MOSS-Image model draws
+the page whole; a handwriting reader (TrOCR) reads every line back; the page's exact ALTO and PAGE XML labels are
+written from the plan, with every line the reader could not confirm tagged `unclear`. Ray Data does the scheduling: it reads the run
 file, plans pages on CPU workers, and hands them to a pool of GPU actors, each holding one copy of the model, the same
 batch pattern as Ray Data LLM's batch inference (a dataset of rows, a `map_batches` stage of a callable class with
 `concurrency` actors, then a sink). The driver commits the drawn pages to a Lance table as they arrive, so a stopped run
@@ -56,8 +56,8 @@ The code is `packages/runner` (`diffu-run`, `diffu-run-export`); the drawing its
 
 | Artifact | What it is | Version | Size | Staged at (example) |
 |---|---|---|---|---|
-| MOSS-Image-Base, `text_encoder/` `tokenizer/` `vae/` | the frozen Qwen3.5-9B text encoder, its tokenizer and the FLUX.2-class VAE that every MOSS-Image model shares | `OpenMOSS-Team/MOSS-Image-Base` at revision `85975793d8b3d432f1b6e27f352abaa4c2a4c0d3` | 16.8 GB + 0.02 GB + 0.25 GB | `/models/MOSS-Image-Base` |
-| The fine-tuned DiT | our MOSS-Image transformer trained to draw from a sample page: `config.json`, `diffusion_pytorch_model.safetensors` (5.1 B parameters, bf16) and `export.json` (it says the DiT takes a sample image) | [`Gabriel/diffu-moss-r6b`](https://huggingface.co/Gabriel/diffu-moss-r6b) at commit `9da723d920d580abc8f462117f05c0b6f865c88b` (public), or a checkpoint folder you are handed | 10.2 GB | `/models/dit/diffu-moss-r6b` |
+| MOSS-Image-Base, `text_encoder/` `tokenizer/` `vae/` | the frozen Qwen3.5-9B text encoder, its tokenizer and the VAE (`AutoencoderKLFlux2`) that every MOSS-Image model shares | `OpenMOSS-Team/MOSS-Image-Base` at revision `85975793d8b3d432f1b6e27f352abaa4c2a4c0d3` | 16.8 GB + 0.02 GB + 0.25 GB | `/models/MOSS-Image-Base` |
+| The fine-tuned DiT | our MOSS-Image transformer trained at 2 MP to draw from a sample page placed above the page (the sample-above model): `config.json` (it says `reference_place: above`), `diffusion_pytorch_model.safetensors` (5.1 B parameters, bf16) and `export.json` (it says the DiT takes a sample image) | [`Gabriel/diffu-moss-above`](https://huggingface.co/Gabriel/diffu-moss-above) at commit `3d5d3d966a0d32d4b9573c3d6a6d2324d19bb5a8`, or a checkpoint folder you are handed | 10.2 GB | `/models/dit/diffu-moss-above` |
 | The handwriting judge | the Swedish TrOCR model every drawn line is read back with | `Riksarkivet/trocr-base-handwritten-hist-swe-2` at revision `aa79fcb1850bf3155ebc442570d6c6bfc0ac8100` | 1.5 GB | `/models/trocr-base-handwritten-hist-swe-2` |
 | The model directory | a 2 KB `modular_model_index.json` naming where the text encoder, tokenizer, VAE and DiT are (written by `diffu-moss-init`) | written on the cluster | - | `/models/moss-<dit-name>` |
 | A hand's adapter (optional) | a PEFT LoRA adapter of Base's own DiT, one collection's handwriting ("A hand's adapter", below) | `Gabriel/diffu-moss-hand-<hand>`, four, public | 0.16 GB | `/models/adapters/<hand>` |
@@ -72,8 +72,8 @@ Pick one way to get the files onto the models volume.
 
 **A. A PersistentVolumeClaim filled by a staging Job (recommended).** `deploy/kuberay/volumes.yaml` creates the three
 claims (models, data, outputs); `deploy/kuberay/stage-models.yaml` runs a Job in the inference image that downloads
-the Base folders and the judge at their pinned revisions, fetches the DiT (`Gabriel/diffu-moss-r6b` as it is set, or
-another model repository, see C), and writes the model directory. Fill in their placeholders, then:
+the Base folders and the judge at their pinned revisions, fetches the DiT (`DIT_REPO`, `DIT_REVISION`, `DIT_NAME`:
+see C), and writes the model directory. Fill in their placeholders, then:
 
 ```bash
 kubectl -n <namespace> apply -f deploy/kuberay/volumes.yaml
@@ -89,10 +89,11 @@ and `draw.json`, copied in with your site's tool (`kubectl cp` into a pod that m
 mounts the claim (`aws s3 sync s3://<bucket>/models/ /models/`, `rclone copy <remote>:models /models`), then write the
 model directory as in "The model directory" below.
 
-**C. A model repository.** The published DiT is `Gabriel/diffu-moss-r6b`, public, at commit
-`9da723d920d580abc8f462117f05c0b6f865c88b`: the staging Job fetches it as it is set (`DIT_NAME` `diffu-moss-r6b`, so
-the model directory is `/models/moss-diffu-moss-r6b`), with no token. A DiT of your own is uploaded once by the person
-who trained it:
+**C. A model repository.** The DiT to draw with is `Gabriel/diffu-moss-above` at commit
+`3d5d3d966a0d32d4b9573c3d6a6d2324d19bb5a8`: set the staging Job's `DIT_REPO` and `DIT_REVISION` to them and
+`DIT_NAME` to `diffu-moss-above`, so the model directory is `/models/moss-diffu-moss-above` (the manifest as committed
+still names the earlier 1 MP model, `Gabriel/diffu-moss-r6b`; the Secret's read token is needed only for a repository
+that is not public). A DiT of your own is uploaded once by the person who trained it:
 
 ```bash
 hf upload <org>/<dit-repo> <path to the checkpoint>/transformer . --private
@@ -172,9 +173,9 @@ A run file has one page job per line (JSON Lines), the input of `diffu_page.draw
 | `layout` | one of `template` and `layout` | the page's layout inline: `{"width": ..., "height": ..., "lines": [...]}` in pixels. A line needs only its `box`, `[x0, y0, x1, y1]`; it may also give `text`, `kind` (default `body`, running text; or `heading`, `marginalia`, `page-number`, ...), `production` (`printed` or `handwritten`; default: drawn as handwriting), `baseline_y` (default the box's bottom) and `block` (lines of one block are read together, top to bottom; default one block). Optional `rules`, its ruled lines: `{"x0": ..., "y0": ..., "x1": ..., "y1": ...}`. A layout is one page: it takes no `side` and is never split. |
 | `text` | no | the text to write into the running-text (`body`) lines, in order (a form's printed lines among its handwriting keep theirs); a blank line ends a paragraph. Lines beyond the end of the text are left out; other lines keep their own text. Without it every line keeps its own text, so each line of a `layout` must then hold one. |
 | `style` | yes | `{"provenance": {"title": ..., "years": ...}, "look": {"greyscale": ..., "paper": ..., "ink": ...}}`: paper is one of grey, light grey, white, off-white, cream, yellowed; ink one of black, dark grey, faded grey, dark brown, brown, faded brown |
-| `reference` | for a model that takes a sample image | `{"image": <a sample page of the hand>, "caption": "sample"}`. `caption` must be a form the DiT was trained on; the eight-hands fine-tunes know `named`, `hand` and `sample`. |
+| `reference` | for a model that takes a sample image | `{"image": <a sample page>, "caption": "sample"}`. `caption` must be a form the DiT was trained on; the sample-above model's is `sample`. |
 | `side` | no | `left` or `right` to draw one page of a template's two-page opening; without it an opening is drawn as both its pages, as `<id>_left` and `<id>_right` |
-| `page_pixels` | no | the page's size in pixels (default: `--page-megapixels`, 1.0 MP, the eight-hands fine-tunes' training size) |
+| `page_pixels` | no | the page's size in pixels (default: the run's `--page-megapixels`, which is 1.0 MP unless the run names another). The sample-above model is trained at 2 MP: give `2000000` here, or run with `--page-megapixels 2`. |
 | `seed` | no | added to the id's own seed (default 0) |
 
 The layout and the text are two separate choices. Text written into a template, or into a layout whose lines hold text,
@@ -212,19 +213,25 @@ The draw settings are one JSON object, `--draw-settings /data/runs/draw.json`, o
 default holds. For example:
 
 ```json
-{"steps": 50, "guidance_scale": 3.0, "device": "cuda"}
+{"steps": 28, "guidance_scale": 2.0, "guidance_stop": 0.5, "device": "cuda"}
 ```
+
+These are the demo Space's guided settings. Guidance 2 rather than the default 3: on six held-out pages the ink's
+colour was 11.0 (Delta E) from the sample's at 3 and 5.2 at 2, the strokes 1.23 and 1.13 times the sample's width, the
+words the same ([MOSS.md](MOSS.md), "Guidance"). Guiding the first half of the steps drew the same page as guiding all
+of them, in about a quarter less time.
 
 | Field | Default | Meaning |
 |---|---|---|
 | `steps` | 50 | denoising steps per page: the main speed and quality knob |
-| `guidance_scale` | MOSS-Image's own, 3 | how hard guidance pushes toward the caption |
-| `reference_guidance_scale` | 1 | above 1 also pushes toward the sample page (a third pass a step, so slower) |
-| `guidance_stop` | 1 | the share of the steps after which guidance stops |
+| `guidance_scale` | MOSS-Image's own, 3 | how hard guidance pushes toward the caption; set 2 (above) |
+| `reference_guidance_scale` | 1 | above 1 also pushes toward the sample page (a third pass a step, so slower; it did not move the hand) |
+| `guidance_stop` | 1 | the share of the steps after which guidance stops: one pass a step after it |
 | `sampling_shift` | MOSS-Image's own, 5 | the timestep shift |
 | `max_line_cer` | 0.25 | a line the judge reads with a higher character error rate is tagged `unclear` in the labels |
 | `lora_scale` | 1 | how strongly a hand's adapter (`--lora`, section 3) applies: 1 as trained, 0 not at all |
 | `fuse_loras` | false | merge the adapter into the DiT's weights at load: no LoRA matmuls a step, but it can no longer be switched |
+| `sampler`, `cache`, `compile_blocks`, `precision`, `text_encoder_precision`, `aoti_package` | off | the speed options of section 12 |
 | `device` | `cuda` | `cpu` only for tests (with `--gpus 0`) |
 
 The settings reach every actor whole: a field the page pipeline gains (such as the precision options of section 12)
@@ -250,7 +257,7 @@ The run's entry point, as the RayJob gives it:
 
 ```bash
 diffu-run --jobs /data/runs/example.jsonl --draw-settings /data/runs/draw.json \
-  --model /models/moss-<dit-name> --out /outputs/<run-name> \
+  --model /models/moss-<dit-name> --out /outputs/<run-name> --page-megapixels 2 \
   --htr-model /models/trocr-base-handwritten-hist-swe-2 --htr-revision "" \
   --gpus <total GPUs> --actors-per-gpu 1
 ```
@@ -366,12 +373,37 @@ A yardstick: SGLang's MOSS-Image integration reports 0.296 images a second at 10
 on one H200 (BF16, eager). Our pages are not that workload: 50 steps by default, the sample page in every pass, and
 the judge after each page.
 
-## 12. Faster inference: MXFP8, compiled blocks, AOTInductor packages
+## 12. Faster drawing: what was measured, and the options
 
-Three options of `DrawSettings` make a MOSS-Image worker draw faster (`diffu_moss.inference`, applied by
-`load_pipeline`). Each is off by default, and with all of them off a page is drawn byte for byte as before. A drawing
-script and the Ray runner's `RunConfig.settings` reach them by settings alone (diffu-generate and the runner's CLI have
-no flags for them yet); another model family refuses them.
+Nearly all of a page's time is the DiT's passes (94 % of a fast page on the Spark; the judge's read-back, the VAE and
+the text encoder share the rest), and a pass's time follows its tokens, the page's, the sample's and the prompt's
+(with the first student on the Spark 0.59-0.66 s a thousand: 4.4 s at 7,500 tokens, a 1 MP page, 9.0 s at 13,900). So
+a page gets faster by fewer passes or by cheaper ones. Everything below was measured on the DGX Spark (GB10) on 20 Nov
+2026 with the sample-above model at 2 MP, each row in [MOSS_RUNS.md](MOSS_RUNS.md) ("Guidance", "Drawing speed");
+nothing is measured on a cluster's Blackwell cards yet (section 11).
+
+| Change | Gain | The page |
+|---|---|---|
+| Guidance over the first half of the steps (`guidance_stop: 0.5`) | 26-27 % less time for a guided page | the same page (ink, lines read back) at guidance 3 and at 2; over the first third a letter lost 4 of 15 lines |
+| UniPC in 16 steps instead of Euler in 28 (`sampler: "unipc"`, `steps: 16`) | 44-47 % less time | read back the same; one word garbled and one page's paper mottled |
+| A first-block step cache on Euler's 28 (`cache: {"kind": "first_block", "threshold": 0.05}`) | 44-47 % less time | read back the same, no fault seen |
+| Compiled joint blocks (`compile_blocks`) | 1.74 times faster a step (6.75 to 3.88 s), the same memory (33 GB) | the same words in the same hand, strokes placed a little differently (latents' cosine to the eager page 0.984) |
+| MXFP8 joint blocks, compiled (`precision: "mxfp8"`) | 2.41 times (2.80 s a step, 28 GB) | lighter in ink, some letter forms changed (cosine 0.934); not judged against sample pages yet |
+| MXFP8 in the text encoder too | 2.34 times, 22 GB | further off (cosine 0.864); not judged yet |
+| A distilled student ([MOSS.md](MOSS.md), "Distillation") | 8 unguided passes instead of 56: a 2 MP page in 65-99 s against 315 s | the text as given; the ink as its teacher's |
+| The student's LoRA in bfloat16 (`cast_lora`) | 18-27 % faster a pass | the same page, not the same pixels (PSNR 31-33 dB) |
+| The RMSNorm without its float32 round trip (in the code, nothing to set) | 7-8 % of a pass | the same numbers but for one element in fifty thousand a rounding step off |
+
+The UniPC and step-cache rows are two pages and one seed: not enough to change a default on. A smaller sample is also
+faster (15-32 % a pass) but the page keeps less of the sample's ink and pen, so the sample is given whole. The demo
+Space runs on ZeroGPU, whose GPU workers refuse `torch.compile`: there the compiled blocks' gain needs a package built
+ahead of time on its own GPU (below), which is not done yet.
+
+### The options
+
+The options are fields of `DrawSettings` (`diffu_moss.inference`, applied by `load_pipeline`). Each is off by default,
+and with all of them off a page is drawn byte for byte as before. A run's `draw.json` (section 6) and a drawing script
+reach every one of them; `diffu-generate` has flags for `--compile-blocks`, `--guidance-stop` and `--fuse-loras` only.
 
 | Setting | What it changes | Needs |
 |---|---|---|
@@ -379,6 +411,8 @@ no flags for them yet); another model family refuses them.
 | `text_encoder_precision="mxfp8"` | The same for the text encoder's decoder-layer projections (6.9 B weights: ~10.1 GB instead of ~16.8; the delta rule's two 32-wide gates, the embeddings, norms and vision tower stay bfloat16) | As above |
 | `compile_blocks=True` | The 42 joint blocks compiled once at load (regional `torch.compile`, one full graph, dynamic token count), after any MXFP8 swap, so each layer's input quantization fuses in; the first page pays for the compiling | Any device |
 | `aoti_package=<path>.pt2` | The joint blocks run from a package built ahead of time with AOTInductor: nothing is compiled at load. Refused if it was built for another GPU architecture or torch version (before the model loads), or another precision, width or dtype | One package per GPU kind, torch version and precision (`diffu-moss-aoti`); not with `compile_blocks` |
+| `sampler="unipc"` | diffusers' multistep UniPC solver steps the sampling grid instead of Euler: as good a page in fewer `steps`, one DiT call a pass a step as before | Any device |
+| `cache={"kind": ...}` | A step cache skips the joint blocks at some steps (`diffu_moss.step_cache`): `first_block` (with a `threshold`), `taylorseer`, `magcache`; `magcache_calibration` skips nothing and measures MagCache's ratios | Not with `compile_blocks` |
 
 MXFP8 is meant to run with `compile_blocks` or an `aoti_package`: run eagerly, each layer's input quantization is some
 fifteen small kernels, which can cost more than the faster matmul saves. The text encoder is never compiled, so its
@@ -393,21 +427,19 @@ that kind, with the torch version the workers run, put it where every actor can 
 
     python -m diffu_moss.aoti --model <MOSS model dir> --precision mxfp8 --out runs/aoti/moss_mxfp8_sm100.pt2
 
-`python -m diffu_moss.bench_inference` measures the nine configurations (bf16, MXFP8 in the DiT, MXFP8 in both; each
-eager, compiled and packaged) on a model directory at 1 MP: seconds per denoising step (CUDA events, warm), one
-prompt's encoding, peak memory, load and first step, and the cosine of the first velocity and of the final latents to
-bf16's at the same noise, one JSON line each (`--images` keeps every page to look at beside bf16's).
+`python -m diffu_moss.bench_inference` measures the configurations (bf16, MXFP8 in the DiT, MXFP8 in both; each
+eager, compiled and packaged; `--config` picks some) on a model directory: seconds per denoising step (CUDA events,
+warm), one prompt's encoding, peak memory, load and first step, and the cosine of the first velocity and of the final
+latents to bf16's at the same noise, one JSON line each (`--images` keeps every page to look at beside bf16's).
 
-    python -m diffu_moss.bench_inference --model <MOSS model dir> \
+    python -m diffu_moss.bench_inference --model <MOSS model dir> --size 1184x1680 --steps 8 \
         --package-bf16 runs/aoti/moss_bf16_sm100.pt2 --package-mxfp8 runs/aoti/moss_mxfp8_sm100.pt2 \
         --out runs/bench/inference.jsonl --images runs/bench/pages
 
-Not yet run on a GPU. cuBLAS's MXFP8 GEMM, the compiled MXFP8 block and an MXFP8 package are tested only by tests that
-skip without a Blackwell GPU. Inside an AOTInductor package, `scaled_mm` (torch's `_scaled_mm_v2`) has no C shim and
-runs through AOTInductor's proxy executor; if that fails, `torch._scaled_mm` (v1, which has one) takes the same
-operands.
-> Measured speeds on Blackwell are not in yet: the options are tested on CPU, and the GPU benchmark runs next.
-> In a run's `draw.json` (section 6) they are fields like any other draw setting.
+The eager and compiled configurations are the ones measured above. The packaged ones are not measured: an MXFP8 package
+fails at run time (PyTorch's `isIntList()` assert, open in [TODO.md](../TODO.md)). Inside an AOTInductor package,
+`scaled_mm` (torch's `_scaled_mm_v2`) has no C shim and runs through AOTInductor's proxy executor; `torch._scaled_mm`
+(v1, which has one) takes the same operands.
 
 ## 13. The SGLang Diffusion route, and SGLang inside Ray Data
 
@@ -435,7 +467,7 @@ every process it starts; nothing of SGLang is patched or copied):
 - **The sample page is a request field.** It is SGLang's usual image input: `image_path` (a path, a URL, or several
   paths) offline, the `image` upload of `POST /v1/images/edits` online. A request with one runs as SGLang's TI2I task,
   one without as T2I.
-- **A stage encodes it** after the text encoder: the FLUX.2 VAE's mode, patched 2x2 and normalised by the VAE's
+- **A stage encodes it** after the text encoder: the VAE's latent mode, patched 2x2 and normalised by the VAE's
   batch-norm statistics, as `diffu_moss.latents` does. A model whose `transformer/export.json` does not say
   `takes_reference` is refused a sample ("this MOSS-Image model takes no reference image").
 - **The DiT reads it** (`DiffuMOSSImageTransformer`, which SGLang loads in place of its own): the sample's tokens
@@ -630,8 +662,8 @@ otherwise) and flag the pages to drop or redraw; the result goes into the table 
   time (no `kernels` package, no hub kernels).
 - **"names component folders that are not on this machine".** The model directory was written where the volume is
   mounted elsewhere: write it again on the cluster (section 3).
-- **"the adapter 'hand' does not fit this DiT".** The `--lora` folder is no adapter of MOSS-Image's DiT (a FLUX.3
-  LoRA, a DiT of other widths): its layers are named or shaped otherwise. A hand's adapter is of Base's own DiT
+- **"the adapter 'hand' does not fit this DiT".** The `--lora` folder is no adapter of MOSS-Image's DiT (another
+  model's LoRA, a DiT of other widths): its layers are named or shaped otherwise. A hand's adapter is of Base's own DiT
   (section 3).
 - **"precision only with the LoRAs fused".** MXFP8, a package or `compile_blocks` with an adapter: set
   `"fuse_loras": true` in `draw.json`.

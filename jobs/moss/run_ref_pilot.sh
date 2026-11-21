@@ -1,13 +1,13 @@
 #!/bin/bash
 # MOSS-Image reference pilot: teach MOSS-Image's DiT to draw from a sample page (a reference crop of the same hand) with
-# our own LoRA training (diffu_moss.train), on v3d's style pairs (data_flux3/style_pairs_v3d: each target with a crop of
+# our own LoRA training (diffu_moss.train), on v3d's style pairs (data_pages/style_pairs_v3d: each target with a crop of
 # its own or its facing page, sharing none of its lines, captioned with the reference's measured look; the 85 pairs
 # whose reference repeats a target's line are left out by the cache). A fifth of the pairs train without the
 # reference (as MOSS was trained), the rest with it, half of those with the look words dropped so the look must come
 # from the image. The 1715 hand LoRA's recipe: rank 32, alpha 32, AdamW 1e-4, constant after 50 warmup steps, 2
 # samples a step at ~1 MP (plus a 0.5 MP reference). One GPU job at a time through jobs/spark_guard.sh:
 #   1. MOSS-Image Base as a model directory (CPU): the encoders the caches are made with      runs/moss/base
-#   2. cache 4,000 training pairs (one prompt form each) and 32 validation pairs (all three)  data_flux3/cache_moss_ref_v3d(_val)
+#   2. cache 4,000 training pairs (one prompt form each) and 32 validation pairs (all three)  data_pages/cache_moss_ref_v3d(_val)
 #   3. a 5-step smoke run: the memory and the step time, before the long run                 runs/moss_ref_pilot/smoke
 #   4. train 1,500 steps, a checkpoint and a validation (loss by prompt form) every 250       runs/moss_ref_pilot/lora
 #   5. merge the last checkpoint into Base (CPU) and write its model directory                runs/moss/ref_pilot
@@ -23,9 +23,9 @@ REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 PY="$REPO/.venv/bin/python"
 GUARD="$REPO/jobs/spark_guard.sh"
 BASE="${MOSS_BASE:-$HOME/.cache/huggingface/hub/models--OpenMOSS-Team--MOSS-Image-Base/snapshots/85975793d8b3d432f1b6e27f352abaa4c2a4c0d3}"
-PAIRS="$REPO/data_flux3/style_pairs_v3d"
-CACHE="$REPO/data_flux3/cache_moss_ref_v3d"
-VAL_CACHE="$REPO/data_flux3/cache_moss_ref_v3d_val"
+PAIRS="$REPO/data_pages/style_pairs_v3d"
+CACHE="$REPO/data_pages/cache_moss_ref_v3d"
+VAL_CACHE="$REPO/data_pages/cache_moss_ref_v3d_val"
 OUT="$REPO/runs/moss_ref_pilot"
 BASE_MODEL="$REPO/runs/moss/base"
 MODEL="$REPO/runs/moss/ref_pilot"

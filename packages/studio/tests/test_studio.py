@@ -4,6 +4,7 @@ every drawer, and drawers it could not tell apart or draw with are refused befor
 
 from __future__ import annotations
 
+import json
 import re
 import zipfile
 from collections.abc import Iterator
@@ -82,9 +83,12 @@ def test_draw_nodes_refuse_two_drawers_of_one_name_before_loading(tmp_path: Path
 
 
 def test_draw_nodes_refuse_a_model_directory_that_is_not_moss_images_before_loading(
-    tiny_moss: Path, tiny_flux3: Path, tmp_path: Path
+    tiny_moss: Path, tmp_path: Path
 ) -> None:
-    drawers = [Drawer(name="moss", model=tiny_moss), Drawer(name="flux3", model=tiny_flux3)]
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "modular_model_index.json").write_text(json.dumps({"_blocks_class_name": "OtherAutoBlocks"}))
+    drawers = [Drawer(name="moss", model=tiny_moss), Drawer(name="other", model=other)]
 
-    with pytest.raises(ValueError, match=re.escape(f"flux3: {tiny_flux3} is no MOSS-Image model directory")):
+    with pytest.raises(ValueError, match=re.escape(f"other: {other} is no MOSS-Image model directory")):
         load_draw_nodes(drawers, settings=TINY_SETTINGS, out=tmp_path)

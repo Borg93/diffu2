@@ -1,11 +1,11 @@
-"""FLUX.3 Klein LoRA training crops with layout captions, from the HTR ground truth (PAGE XML pages).
+"""Training crops with layout captions, from the HTR ground truth (PAGE XML pages).
 
-Archival spreads are ~5000 px wide with 60-120 lines, so a whole page at FLUX's ~1 MP shrinks the letters
+Archival spreads are ~5000 px wide with 60-120 lines, so a whole page at ~1 MP shrinks the letters
 to a few pixels. Each crop instead covers consecutive WHOLE lines of one text column (a text region plus
 the margin notes, headings and page numbers beside, above or below it), scaled so the line spacing is
 about ``--line-spacing`` px and saved at the exact size of a NeMo bucket. Its caption follows BFL's
 layout-prompt guide: the collection, the volume's years and the scan's look (the style handles), every
-line cited as ``<Sv_Text_i>`` with special lines placed in words, then FLUX.3's layout JSON
+line cited as ``<Sv_Text_i>`` with special lines placed in words, then the layout JSON
 (``[y_min, x_min, y_max, x_max]`` on 0-1000, y first) quoting each line's transcription.
 
 Input: the Transkribus-export layout of the GT folders, ``<root>/<collection>/<volume>/<volume>/`` with the
@@ -14,7 +14,7 @@ scans and a ``page/`` folder of PAGE XML named like them. Output: an imagefolder
 ``datasets.load_dataset("<out>/<split>")``.
 
     python -m diffu_page.data.build_crops \
-        --gt-root ~/Desktop/data/GT-Lejonet_HTR_202602 --max-pages 40 --out-dir data_flux3/layout_crops_v2
+        --gt-root ~/Desktop/data/GT-Lejonet_HTR_202602 --max-pages 40 --out-dir data_pages/layout_crops_v2
 """
 
 from __future__ import annotations
@@ -190,7 +190,7 @@ def main(
         int, typer.Option(help="lines shared by consecutive windows of a column")
     ] = CropSettings().overlap_lines,
 ) -> None:
-    """Cut GT pages into FLUX.3 training crops with layout captions."""
+    """Cut GT pages into training crops with layout captions."""
     if out_dir.exists() and any(out_dir.iterdir()):
         raise typer.BadParameter(
             f"{out_dir} is not empty: an earlier build's crops would stay beside this one's", param_hint="--out-dir"

@@ -1,7 +1,7 @@
 """What a crop's handwriting looks like, measured from its pixels inside its line boxes: slant, pen width, letter
 size, density, and the paper's and ink's colours.
 
-BFL's FLUX guidance asks a caption to name a style by its visible properties (a hand's slant and stroke, colours as
+BFL's prompting guidance asks a caption to name a style by its visible properties (a hand's slant and stroke, colours as
 hex) rather than by an era or an archive, which the model reads as a colour grade. These numbers are what the
 described reference captions (``diffu_page.captions.restyle``) say about a reference's hand, and what the
 hand-fidelity check compares between a drawing and the crop it should look like.

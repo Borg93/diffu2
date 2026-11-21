@@ -33,7 +33,7 @@ from ray.data import Dataset
 
 from diffu_page.cli.options import Loras, lora_dirs
 from diffu_page.draw.jobs import PageJob
-from diffu_page.draw.pipeline import DrawSettings, model_family
+from diffu_page.draw.pipeline import DrawSettings, require_moss
 from diffu_page.output import console, validation_problems
 from diffu_page.settings import settings
 from diffu_runner.stages import Attention, DrawActor, DrawConfig, JudgeModel, plan_rows
@@ -179,10 +179,10 @@ def model_index(model: Path) -> dict[str, object]:
     """The ``modular_model_index.json`` of the model directory ``model``.
 
     Raises:
-        RunRefused: If the directory has no model index, or its blocks are no model family's.
+        RunRefused: If the directory has no model index, or its blocks are not MOSS-Image's.
     """
     try:
-        model_family(model)
+        require_moss(model)
     except ValueError as error:
         raise RunRefused(str(error)) from error
     return json.loads((model / INDEX).read_text(encoding="utf-8"))
@@ -421,7 +421,7 @@ def main(
         Path,
         typer.Option(help="the run's directory: pages.lance and runs/ go there; one that holds a table is resumed"),
     ],
-    model: Annotated[Path, typer.Option(help="the model directory: MOSS-Image's (diffu-moss-init), or FLUX.3 Klein's")],
+    model: Annotated[Path, typer.Option(help="the model directory: MOSS-Image's (diffu-moss-init)")],
     draw_settings: Annotated[
         Path | None,
         typer.Option(

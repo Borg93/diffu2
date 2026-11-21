@@ -7,8 +7,8 @@ published design, around the released weights, and our own reference training. H
 - `transformer.py`: `MossTransformer`, the DiT; the released Base transformer, a merged LoRA or a full fine-tune's
   checkpoint loads into it by name. It also reads reference images (sample pages) once trained to.
 - `modular_pipelines/moss/`: `MossAutoBlocks` and `MossModularPipeline`: the Layout prompt (`layout_prompt.py`,
-  compiled from a crop plan's caption), the Qwen3.5-9B text encoder, the reference encoder, the denoise loop (laid out
-  as FLUX.3's, so the page pipeline's line repair runs in it) and the FLUX.2 VAE (`latents.py`).
+  compiled from a crop plan's caption), the Qwen3.5-9B text encoder, the reference encoder, the denoise loop (the
+  page pipeline's line repair runs in it) and the VAE (diffusers' `AutoencoderKLFlux2`, `latents.py`).
 - `sample_caption.py`: a reference-drawn caption in the forms MOSS draws from and trains on (the sample image named,
   dropped, or its look words dropped).
 - `init.py`: `diffu-moss-init`, a model directory of the Base snapshot's components around its own or a trained DiT.

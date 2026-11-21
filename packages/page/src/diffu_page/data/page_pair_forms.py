@@ -19,10 +19,10 @@ then to write each row in every form. Each scan's forms, planned in between, wai
 (removed at the end, and with it what was written of ``--out`` when a row is refused), the last few scans' read back as
 their rows are written.
 
-    python -m diffu_page.data.page_pair_forms --pairs data_flux3/page_pairs_eight/train_bal.jsonl \\
-        --out data_flux3/page_pairs_eight/train_bal_sample.jsonl --workers 4
-    python -m diffu_page.data.page_pair_forms --pairs data_flux3/page_pairs_eight/train_bal_sample.jsonl \\
-        --out data_flux3/page_pairs_eight/train_bal_sample2.jsonl --replace sample --workers 4
+    python -m diffu_page.data.page_pair_forms --pairs data_pages/page_pairs_eight/train_bal.jsonl \\
+        --out data_pages/page_pairs_eight/train_bal_sample.jsonl --workers 4
+    python -m diffu_page.data.page_pair_forms --pairs data_pages/page_pairs_eight/train_bal_sample.jsonl \\
+        --out data_pages/page_pairs_eight/train_bal_sample2.jsonl --replace sample --workers 4
 """
 
 from __future__ import annotations

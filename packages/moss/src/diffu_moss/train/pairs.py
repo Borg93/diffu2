@@ -1,7 +1,7 @@
 """Pairs as MOSS-Image trains on them, of two kinds. A style pair: a target crop, a reference crop of the same hand (its
 page or the facing page, sharing none of its lines) and the target's caption in the described reference form
-(``diffu_page.data.style_pairs``, v3d's set), read from the image-edit manifest FLUX.3's style-reference LoRA trains
-on. A page pair (:class:`PagePair`): a whole single page, or a window of one, and a sample page of its volume sharing
+(``diffu_page.data.style_pairs``, v3d's set), read from the style pairs' image-edit manifest
+(``train.jsonl``). A page pair (:class:`PagePair`): a whole single page, or a window of one, and a sample page of its volume sharing
 none of its lines, its Layout prompt in each form compiled by ``diffu_page.data.page_pairs``, read from its page-pair
 manifest. :func:`read_manifest` reads either.
 

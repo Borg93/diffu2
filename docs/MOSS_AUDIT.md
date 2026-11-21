@@ -4,6 +4,11 @@ Why the page's look follows the sample page and its handwriting does not: every 
 checked against the code and against measurements, the one fault found, and what follows from it. The runs it speaks
 of are in [MOSS_RUNS.md](MOSS_RUNS.md); how they are run, in [MOSS_HPC.md](MOSS_HPC.md).
 
+The page stands as written on 11 Nov, with what was running or queued then. What followed (MOSS_RUNS.md): the rebuilt
+2 MP cache was whole that night; the sibling pilot's `above` arm from Base followed the hand most (7 of 8 swaps) and
+became the sample-above model, a full run at 2 MP to step 10,257; the per-scribe adapters carried no hand; the queued
+B 2 MP run was cancelled; compiled blocks in training have no result recorded.
+
 ## In plain words
 
 Think of the model as a scribe. He is handed a sample page and a text, and asked for a new page that looks as if the

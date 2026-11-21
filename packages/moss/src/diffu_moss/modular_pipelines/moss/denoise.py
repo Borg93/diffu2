@@ -1,11 +1,11 @@
 """MOSS-Image's denoising loop: at each noise level the DiT predicts the velocity of the latents from the prompt, and
 under classifier-free guidance from the negative prompt too with some of its blocks skipped; the two are combined in
-fp32 and the scheduler (the Euler sampler or UniPC) steps the latents with it (FLUX.3's own scheduler step). A
+fp32 and the scheduler (the Euler sampler or UniPC) steps the latents with it (diffusers' ``Flux3LoopAfterDenoiser``). A
 reference image's latents, for a DiT trained to take them, go into every pass: the reference conditions the look,
 guidance pushes toward the prompt.
 
-The latents stay tokens through the loop, as FLUX.3's do, and the loop's steps carry FLUX.3's names (``denoiser``,
-``after_denoiser``), so the page pipeline's line repair (``diffu_page.draw.blocks.repair``) runs in it as in FLUX.3's.
+The latents stay tokens through the loop, and the loop's steps are named ``denoiser`` and ``after_denoiser``: the page
+pipeline's line repair (``diffu_page.draw.blocks.repair``) is put into it by those names.
 The DiT itself takes the latents on their grid. Each pass runs in the DiT's cache context, named as the guider names
 it, so a step cache (:mod:`diffu_moss.step_cache`) keeps a state per pass, cleared as the loop starts.
 """
@@ -185,7 +185,7 @@ class MossDenoiseLoopWrapper(LoopSequentialPipelineBlocks):
 
 
 class MossDenoiseStep(MossDenoiseLoopWrapper):
-    """The denoising loop: at each timestep :class:`MossLoopDenoiser`, then FLUX.3's scheduler step."""
+    """The denoising loop: at each timestep :class:`MossLoopDenoiser`, then the scheduler step (diffusers' ``Flux3LoopAfterDenoiser``)."""
 
     block_classes = [MossLoopDenoiser(), Flux3LoopAfterDenoiser()]
     block_names = ["denoiser", "after_denoiser"]

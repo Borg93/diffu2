@@ -1,4 +1,4 @@
-"""A crop's FLUX.3 layout caption as a MOSS-Image Layout prompt, from the facts the caption carries and no others: its
+"""A crop's layout caption as a MOSS-Image Layout prompt, from the facts the caption carries and no others: its
 prose as the summary, then one item per row of its layout list: a line (a row whose id names one of the crop's lines)
 as a text item with its exact text and its look, the paper, a cut-off line fragment or a ruled line as an object.
 

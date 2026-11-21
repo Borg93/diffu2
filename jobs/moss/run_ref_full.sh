@@ -13,7 +13,7 @@
 # (--muon-momentum-dtype; stepped in float32, stored rounded): 9.5 GB less, ~64 GB, so the guard is asked for 66 (86 GB
 # free to start); unset, the momentum stays float32. One GPU job at a time through jobs/spark_guard.sh:
 #   1. MOSS-Image Base as a model directory (CPU): the encoders the caches are made with      runs/moss/base
-#   2. cache 4,000 training pairs and 32 validation pairs, unless the pilot did              data_flux3/cache_moss_ref_v3d(_val)
+#   2. cache 4,000 training pairs and 32 validation pairs, unless the pilot did              data_pages/cache_moss_ref_v3d(_val)
 #   3. a 5-step smoke run: each step's time and peak memory from the trainer's log           runs/moss_ref_full/smoke
 #   4. the overfit test: OVERFIT_STEPS steps on the cache's first OVERFIT_PAIRS pairs drawn   runs/moss_ref_full/overfit
 #      with their reference, its last checkpoint as a model directory, those pairs drawn     runs/moss/ref_full_overfit
@@ -42,9 +42,9 @@ REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 PY="$REPO/.venv/bin/python"
 GUARD="$REPO/jobs/spark_guard.sh"
 BASE="${MOSS_BASE:-$HOME/.cache/huggingface/hub/models--OpenMOSS-Team--MOSS-Image-Base/snapshots/85975793d8b3d432f1b6e27f352abaa4c2a4c0d3}"
-PAIRS="$REPO/data_flux3/style_pairs_v3d"
-CACHE="$REPO/data_flux3/cache_moss_ref_v3d"
-VAL_CACHE="$REPO/data_flux3/cache_moss_ref_v3d_val"
+PAIRS="$REPO/data_pages/style_pairs_v3d"
+CACHE="$REPO/data_pages/cache_moss_ref_v3d"
+VAL_CACHE="$REPO/data_pages/cache_moss_ref_v3d_val"
 OUT="$REPO/runs/moss_ref_full"
 BASE_MODEL="$REPO/runs/moss/base"
 MODEL="$REPO/runs/moss/ref_full"

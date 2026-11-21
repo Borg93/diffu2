@@ -1,23 +1,21 @@
-"""Style pairs: a crop's text and layout drawn in the hand of a reference crop of the same hand, for FLUX.3 Klein's
-style-reference LoRA (``packages/flux3/configs/flux3_style_ref_lora_v3d.yaml``) and MOSS-Image's reference training
-(``diffu_moss.train``).
+"""Style pairs: a crop's text and layout drawn in the hand of a reference crop of the same hand, for MOSS-Image's
+reference training (``diffu_moss.train``).
 
 Every training crop of ``diffu_page.data.build_crops`` becomes a target; its reference is a crop of its own page sharing
 none of its lines, else of its facing page (the same scribe as far as the pages tell), shrunk to the reference size
-(``diffu_page.page.crops.grid.as_reference``). The caption is the target's caption rewritten as a FLUX.3 image-edit
+(``diffu_page.page.crops.grid.as_reference``). The caption is the target's caption rewritten as an image-edit
 record that takes the hand, ink and paper from ``<ref_image_0>`` and describes the reference's measured hand, ink and
 paper in words (``diffu_page.captions.restyle``'s ``described`` form, as a crop drawn from a reference is captioned;
 MOSS-Image's training drops the words where a prompt form leaves the look to the image, ``diffu_moss.sample_caption``).
 Writes, under ``--out`` (a new or empty dir):
 
-- ``train.jsonl``: the manifest NeMo's FLUX.3 image-edit encoder caches (``diffu_flux3.cache_pairs``) and
-  ``diffu-moss-cache-pairs`` reads, its media under ``targets/`` (hard links to the crops: the encoder only reads files
-  inside the manifest's dir) and ``refs/``;
+- ``train.jsonl``: the image-edit manifest ``diffu-moss-cache-pairs`` reads, its media under ``targets/`` (hard links
+  to the crops, so the set is whole inside the manifest's dir) and ``refs/``;
 - ``val_eval/``: the held-out crops (the crops' ``val_eval`` split, ``diffu_page.data.pick_eval``), each with a
   reference picked as the training ones are: a ``diffu_page.cli.evaluate`` dir whose rows carry their reference's line
   boxes, so evaluate can measure how close a drawing's hand comes to its reference's;
 - with ``--val-pairs N``, ``val/val.jsonl``: N pairs from the val split's pages, captioned as the training pairs are,
-  the held-out set NeMo scores ``val_loss`` on during training;
+  the held-out set a training scores its validation loss on;
 - ``build.json``, last: how the set was built (``BuildRecord``).
 
 The references are picked first (training, then held-out, from one seeded stream; the val pairs from their own), then
@@ -25,8 +23,8 @@ measured (in parallel), then every set is captioned, and only then is any file w
 no half-written set. A crop whose record keeps no caption template (built before records kept one) stops the build
 before any file is written.
 
-    python -m diffu_page.data.style_pairs --val-pairs 64 --crops data_flux3/layout_crops_v2b \\
-        --out data_flux3/style_pairs_v3d
+    python -m diffu_page.data.style_pairs --val-pairs 64 --crops data_pages/layout_crops_v2b \\
+        --out data_pages/style_pairs_v3d
 """
 
 from __future__ import annotations
@@ -78,14 +76,14 @@ class Media(BaseModel):
 
 
 class PairMetadata(BaseModel):
-    """What NeMo's manifest carries of a pair besides its media: the row index it requires, and the reference."""
+    """What the manifest carries of a pair besides its media: its row index, and the reference."""
 
     row_index: int
     reference: str
 
 
 class ManifestRow(BaseModel):
-    """One row of NeMo's image-edit manifest (``nemo_automodel.components.models.flux3.preprocessing``)."""
+    """One row of the image-edit manifest."""
 
     id: str
     prompt: str
@@ -143,7 +141,7 @@ def volume_of(record: CropRecord) -> Volume:
 
 
 def link(source: Path, destination: Path) -> None:
-    """Hard-link ``source`` to ``destination`` unless it is there (NeMo reads only files inside the manifest's dir)."""
+    """Hard-link ``source`` to ``destination`` unless it is there (a set is whole inside its manifest's dir)."""
     if not destination.exists():
         destination.hardlink_to(source)
 
@@ -252,7 +250,7 @@ def eval_placements(pair: Pair) -> list[Placement]:
 
 
 def renumbered(row: ManifestRow, index: int) -> ManifestRow:
-    """``row`` at ``index`` of a manifest (NeMo requires the row indices to count from 0)."""
+    """``row`` at ``index`` of a manifest (its row indices count from 0)."""
     return row.model_copy(update={"metadata": row.metadata.model_copy(update={"row_index": index})})
 
 
@@ -298,7 +296,9 @@ def write_set(directory: Path, built: TrainingSet | EvalSet, *, manifest: str) -
 def main(
     crops: Annotated[Path, typer.Option(help="the crops (diffu_page.data.build_crops output, with its val_eval)")],
     out: Annotated[Path, typer.Option(help="where the pairs go: a new or empty dir")],
-    val_pairs: Annotated[int, typer.Option(min=0, help="pairs from the val split for NeMo's val_loss")] = 0,
+    val_pairs: Annotated[
+        int, typer.Option(min=0, help="pairs from the val split, for a training's validation loss")
+    ] = 0,
     workers: Annotated[
         int, typer.Option(min=1, help="processes measuring the references: fewer beside a training")
     ] = max(1, (os.cpu_count() or 2) // 2),

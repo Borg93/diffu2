@@ -1,4 +1,4 @@
-"""MOSS-Image's decoder block: the denoised latents through the FLUX.2 VAE (:func:`diffu_moss.latents.decode_latents`),
+"""MOSS-Image's decoder block: the denoised latents through the VAE (:func:`diffu_moss.latents.decode_latents`),
 as images."""
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ class MossDecodeStep(ModularPipelineBlocks):
     @override
     def description(self) -> str:
         return (
-            "Step that decodes the denoised latents into images with the FLUX.2 VAE: un-normalized by its batch-norm "
+            "Step that decodes the denoised latents into images with the VAE: un-normalized by its batch-norm "
             "statistics, un-patched 2x2, decoded."
         )
 

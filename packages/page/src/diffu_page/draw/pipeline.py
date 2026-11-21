@@ -1,19 +1,18 @@
-"""The page pipeline: our blocks around a model's own Modular Diffusers blocks.
+"""The page pipeline: our blocks around MOSS-Image's own Modular Diffusers blocks.
 
-A model repo (MOSS-Image, ``diffu-moss-init``'s; FLUX.3 Klein for the reference runs) names its blocks in
-``modular_model_index.json``; :data:`FAMILIES` maps those to the model's blocks and pipeline class, so a model is
-chosen by its directory alone. Two sets of blocks are built:
+A model directory is MOSS-Image's (``diffu-moss-init``'s): its ``modular_model_index.json`` names MOSS-Image's blocks,
+and :func:`require_moss` refuses any other. Two sets of blocks are built:
 
 - :class:`PagePlanBlocks` (no model): ``LoadLayoutStep`` -> ``MarkFromScanStep`` -> ``OpeningPageStep`` ->
   ``RefillStep`` -> ``PlanCropsStep``. A template page (or one page of a two-page opening) or a layout given in its
   place, a text (or none: the lines keep their own), a style and optionally a reference crop and a print/hand
   classifier (to mark the template from its scan) in; the crops to draw out, captioned for the reference if there is
   one.
-- :func:`crop_blocks`: ``CropPromptStep`` -> ``ReferenceGridStep`` -> the model's text encoder, VAE encoders, denoise
-  and decode. A crop plan in; its image out. The model's auto blocks pick text-to-image or reference-conditioned
-  denoising from the inputs (``image``); a line repair sits in both (:mod:`diffu_page.draw.blocks.repair`). MOSS-Image
-  compiles the plan's caption and lines into its own Layout prompt first, and takes a reference only when its DiT was
-  trained to (``takes_reference`` in its model index: ``diffu_moss.train``).
+- :func:`crop_blocks`: ``CropPromptStep`` -> ``ReferenceGridStep`` -> MOSS-Image's Layout prompt, text encoder,
+  reference encoder, denoise and decode. A crop plan in; its image out. A line repair sits in the denoise step
+  (:mod:`diffu_page.draw.blocks.repair`). MOSS-Image compiles the plan's caption and lines into its own Layout prompt
+  first, and takes a reference (``image``) only when its DiT was trained to (``takes_reference`` in its model index:
+  ``diffu_moss.train``).
 
 A page is planned with :class:`PagePlanBlocks`; each of its crops is drawn on its own with the crop pipeline, judged
 line by line (:mod:`diffu_page.quality.judge`) and labelled (:func:`diffu_page.draw.blocks.ground_truth.crop_labels`).
@@ -30,8 +29,8 @@ from pathlib import Path
 from typing import Self, override
 
 import torch
-from diffusers import FlowMatchEulerDiscreteScheduler, Flux3AutoBlocks, Flux3ModularPipeline
-from diffusers.modular_pipelines import ModularPipeline, OutputParam, PipelineState, SequentialPipelineBlocks
+from diffusers import FlowMatchEulerDiscreteScheduler
+from diffusers.modular_pipelines import ModularPipeline, OutputParam, SequentialPipelineBlocks
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -58,7 +57,6 @@ from diffu_page.draw.blocks import (
 from diffu_page.draw.blocks.ground_truth import crop_labels
 from diffu_page.draw.blocks.repair import RepairBlendStep, RepairPrepareStep
 from diffu_page.draw.guidance import ReferenceGuidance
-from diffu_page.draw.lora import nemo_lora_state_dict
 from diffu_page.draw.plan import CropPlan
 from diffu_page.page.crops.geometry import LayoutBox, pixel_box
 from diffu_page.page.crops.grid import LATENT_GRID
@@ -71,37 +69,18 @@ DEVICE_ERRORS = (torch.OutOfMemoryError, torch.AcceleratorError)
 REPAIR_SEED_STRIDE = 7919  # between a crop's seed and each repair pass's, so no pass redraws from the crop's own noise
 
 
-class ModelFamily(BaseModel):
-    """A model family's own blocks and pipeline class, the blocks of its that generation leaves out, and the guidance
-    scale it draws at unless the settings name one."""
-
-    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
-
-    blocks: type[SequentialPipelineBlocks]
-    pipeline: type[ModularPipeline]
-    unused: tuple[str, ...] = ()
-    guidance_scale: float = 4.0
-
-
-FAMILIES: dict[str, ModelFamily] = {
-    # FLUX.3's prompt upsampler rewrites a prompt as prose: it would rewrite the quoted lines of a layout caption
-    "Flux3AutoBlocks": ModelFamily(blocks=Flux3AutoBlocks, pipeline=Flux3ModularPipeline, unused=("prompt_upsampler",)),
-    "MossAutoBlocks": ModelFamily(
-        blocks=MossAutoBlocks, pipeline=MossModularPipeline, guidance_scale=MOSS_GUIDANCE_SCALE
-    ),
-}
-
-
-def model_family(model: Path) -> ModelFamily:
-    """The family of the Modular Diffusers repo at ``model``, by the blocks its ``modular_model_index.json`` names.
+def require_moss(model: Path) -> None:
+    """Check that the Modular Diffusers repo at ``model`` is MOSS-Image's, by the blocks its
+    ``modular_model_index.json`` names.
 
     Raises:
-        ValueError: If no family has those blocks.
+        ValueError: If the directory holds no model index, or its index names other blocks.
     """
     blocks = ModelIndex.read(model).blocks_class_name
-    if blocks not in FAMILIES:
-        raise ValueError(f"{model} names the blocks {blocks!r}; the known model families are {sorted(FAMILIES)}")
-    return FAMILIES[blocks]
+    if blocks != MossAutoBlocks.__name__:
+        raise ValueError(
+            f"{model} is no MOSS-Image model directory (diffu-moss-init's): its index names the blocks {blocks!r}"
+        )
 
 
 class CropBlocks(SequentialPipelineBlocks):
@@ -115,7 +94,7 @@ class CropBlocks(SequentialPipelineBlocks):
     @property
     @override
     def description(self) -> str:
-        return "Draws a planned crop with a model's own blocks (reference-conditioned when an `image` is given)."
+        return "Draws a planned crop with MOSS-Image's own blocks (reference-conditioned when an `image` is given)."
 
     @property
     @override
@@ -123,16 +102,14 @@ class CropBlocks(SequentialPipelineBlocks):
         return [OutputParam.template("images")]
 
 
-def crop_blocks(family: ModelFamily) -> CropBlocks:
-    """Our crop steps before ``family``'s own blocks (the crop prompt and the reference grid), and a line repair in each
-    of its denoise branches (:mod:`diffu_page.draw.blocks.repair`), idle unless a repair mask is given.
+def crop_blocks() -> CropBlocks:
+    """Our crop steps before MOSS-Image's own blocks (the crop prompt and the reference grid), and a line repair in its
+    denoise step (:mod:`diffu_page.draw.blocks.repair`), idle unless a repair mask is given.
 
     Raises:
-        TypeError: If a denoise branch of ``family`` has no scheduler step (``after_denoiser``) in its denoise loop.
+        TypeError: If a denoise workflow of MOSS-Image's has no scheduler step (``after_denoiser``) in its denoise loop.
     """
-    model = family.blocks().sub_blocks
-    for name in family.unused:
-        model.pop(name)
+    model = MossAutoBlocks().sub_blocks
     denoise = copy.deepcopy(model["denoise"])  # diffusers shares its blocks' instances process-wide: change a copy
     for branch in denoise.sub_blocks.values():
         steps = branch.sub_blocks
@@ -179,41 +156,37 @@ class DrawSettings(BaseModel):
     Attributes:
         steps: Denoising steps per crop.
         guidance_scale: Classifier-free guidance scale; exactly 1 samples without guidance (one pass a step). ``None``
-            is the model's own (4 for FLUX.3; 3 for MOSS-Image, its demo's).
+            is MOSS-Image's own (3, its demo's).
         reference_guidance_scale: How hard guidance also pushes toward the reference image
             (:mod:`diffu_page.draw.guidance`, a third pass per step); 1 guides the caption alone.
         guidance_stop: The fraction of the steps after which guidance stops: one pass a step after it; 1 guides every
             step.
         label_format: ``alto`` or ``page``.
         max_line_cer: The read-back CER above which a line's label is tagged ``unclear``.
-        text_layers: The text-encoder hidden layers stacked into the prompt embeddings; ``None`` is the model's own
-            choice (FLUX.3: every 4th of Qwen3-VL's).
         device: Where the components run.
-        sampling_shift: The timestep shift the scheduler samples at; ``None`` is the model's own (FLUX.3's 6.93, which
-            its LoRAs trained at; MOSS-Image's 5, its demo's).
+        sampling_shift: The timestep shift the scheduler samples at; ``None`` is MOSS-Image's own (5, its
+            demo's).
         lora_scale: How strongly every LoRA applies: 1 at its trained strength, 0 not at all (diffusers'
             ``set_adapters`` weights, which fusing keeps).
         fuse_loras: Fuse the LoRAs into the transformer's weights at load and drop their adapter layers: no LoRA
-            matmuls per step, and the transformer can be compiled (or MOSS-Image's DiT quantized or run from a
-            package); the LoRAs can't be switched or rescaled after.
-        compile_blocks: Compile the transformer's repeated blocks (torch.compile, diffusers' regional compilation) at
-            load; the first crop pays for the compilation. A run with LoRAs must fuse them first. MOSS-Image's joint
-            blocks are compiled after any MXFP8 swap, so the quantization of their inputs fuses into them; not with a
+            matmuls per step, and the transformer can be compiled, quantized or run from a package; the LoRAs can't be switched or rescaled after.
+        compile_blocks: Compile the DiT's joint blocks (torch.compile) at load; the first crop pays for the
+            compilation. A run with LoRAs must fuse them first. The blocks are compiled after any MXFP8 swap, so the quantization of their inputs fuses into them; not with a
             step cache (``cache``), whose hooks decide eagerly around each block.
-        precision: MOSS-Image only: its DiT's joint-block projections in their own bfloat16, or in MXFP8: weights and
+        precision: The DiT's joint-block projections in their own bfloat16, or in MXFP8: weights and
             inputs in blocks of 32 FP8 values sharing a power-of-two scale, multiplied by a Blackwell GPU's tensor cores
             (:mod:`diffu_moss.mxfp8`; emulated on the CPU). It pays off with ``compile_blocks`` or ``aoti_package``,
             which fuse each layer's quantization of its input: run eagerly, that is some fifteen small kernels. A run
             with LoRAs must fuse them first.
-        text_encoder_precision: MOSS-Image only: its text encoder's decoder-layer projections alike (half their
+        text_encoder_precision: The text encoder's decoder-layer projections alike (half their
             memory).
-        aoti_package: MOSS-Image only: run its joint blocks from this AOTInductor package (``diffu-moss-aoti``), built
+        aoti_package: Run the DiT's joint blocks from this AOTInductor package (``diffu-moss-aoti``), built
             for ``precision``, this GPU's architecture and this torch version (any other is refused); instead of
             ``compile_blocks``. A run with LoRAs must fuse them first.
-        sampler: MOSS-Image only: what steps its sampling grid: ``euler``, its own sampler, or ``unipc``, diffusers'
+        sampler: What steps the sampling grid: ``euler``, MOSS-Image's own sampler, or ``unipc``, diffusers'
             multistep UniPC solver, which draws as well in fewer ``steps``. Either calls the DiT once a pass a step, at
             the grid's levels.
-        cache: MOSS-Image only: a step cache that skips its DiT's joint blocks at some steps
+        cache: A step cache that skips the DiT's joint blocks at some steps
             (:mod:`diffu_moss.step_cache`), by ``kind``: ``{"kind": "first_block", "threshold": 0.05}``,
             ``{"kind": "taylorseer", "cache_interval": 5, "disable_cache_before_step": 3}``, ``{"kind": "magcache",
             "mag_ratios": [...]}``, or ``{"kind": "magcache_calibration", "ratios_file": ...}``, which skips nothing
@@ -230,7 +203,6 @@ class DrawSettings(BaseModel):
     guidance_stop: float = Field(default=1.0, ge=0.0, le=1.0)
     label_format: LabelFormat = LabelFormat.ALTO
     max_line_cer: float = MAX_LINE_CER
-    text_layers: tuple[int, ...] | None = None
     device: str = "cuda"
     sampling_shift: float | None = Field(default=None, gt=0.0)
     lora_scale: float = Field(default=1.0, ge=0.0)
@@ -250,7 +222,7 @@ class DrawSettings(BaseModel):
 
     @property
     def moss_inference(self) -> MossInference:
-        """How a MOSS-Image model computes (:mod:`diffu_moss.inference`)."""
+        """How the model computes (:mod:`diffu_moss.inference`)."""
         return MossInference(
             precision=self.precision,
             text_encoder_precision=self.text_encoder_precision,
@@ -261,22 +233,9 @@ class DrawSettings(BaseModel):
         )
 
     @property
-    def moss_only(self) -> list[str]:
-        """The settings asked that only MOSS-Image takes, by name: MXFP8 for its DiT or text encoder, a package of its
-        joint blocks, UniPC, a step cache."""
-        asked = {
-            "precision": self.precision is not Precision.BF16,
-            "text_encoder_precision": self.text_encoder_precision is not Precision.BF16,
-            "aoti_package": self.aoti_package is not None,
-            "sampler": self.sampler is not Sampler.EULER,
-            "cache": self.cache is not None,
-        }
-        return [name for name, is_asked in asked.items() if is_asked]
-
-    @property
     def needs_fused_loras(self) -> list[str]:
         """The settings asked that rework the transformer's layers once its LoRAs are loaded, by name: its blocks
-        compiled, MOSS-Image's joint-block projections in MXFP8, its joint blocks run from a package. Each would leave
+        compiled, its joint-block projections in MXFP8, its joint blocks run from a package. Each would leave
         unfused adapter layers out of what it builds, or refuse them."""
         asked = {
             "compile_blocks": self.compile_blocks,
@@ -293,67 +252,32 @@ class DrawSettings(BaseModel):
     def pipeline_inputs(self) -> dict[str, object]:
         """The settings a pipeline takes per call, by input name (the guidance scale and device are set at load; the
         label format and the unclear limit apply after the judge)."""
-        layers = {} if self.text_layers is None else {"text_encoder_out_layers": self.text_layers}
-        return {"num_inference_steps": self.steps, **layers}
+        return {"num_inference_steps": self.steps}
 
 
-type BlocksFor = Callable[[ModelFamily], SequentialPipelineBlocks]
-type LoadLoras = Callable[[ModularPipeline, DrawSettings], None]  # loads LoRAs read before onto a loaded pipeline
+type BuildBlocks = Callable[[], SequentialPipelineBlocks]
 
 
-def _nemo_loras(loras: dict[str, Path]) -> LoadLoras:
-    """FLUX.3 Klein's LoRAs, NeMo LoRA checkpoints' ``model/`` dirs by adapter name, read now as diffusers LoRA state
-    dicts (:func:`diffu_page.draw.lora.nemo_lora_state_dict`, which refuses one that would load at the wrong strength).
-    The function returned loads them by the pipeline's own LoRA loader as named adapters, every one active at the
-    settings' ``lora_scale`` and fused into the transformer when they ask."""
-    state_dicts = {name: nemo_lora_state_dict(lora_dir) for name, lora_dir in loras.items()}
+def load_pipeline(
+    model: Path, blocks: BuildBlocks, *, loras: dict[str, Path], settings: DrawSettings
+) -> ModularPipeline:
+    """``blocks`` built for the MOSS-Image model at ``model``, its components loaded (VAE in float32, the rest in
+    bfloat16) on ``settings.device``, the guider at ``settings.guidance_scale`` (MOSS-Image's own when None, and
+    ``settings.reference_guidance_scale``) until ``settings.guidance_stop``, and every LoRA of ``loras`` (PEFT adapter
+    folders of its DiT by adapter name, ``diffu-moss-convert-lora``'s) active at ``settings.lora_scale``, fused into
+    the DiT's weights when ``settings.fuse_loras`` (:mod:`diffu_moss.adapters`). The model computes as
+    ``settings.moss_inference`` asks (:func:`diffu_moss.inference.prepare_inference`: its layers in MXFP8, UniPC, its
+    joint blocks from an AOTInductor package or compiled, a step cache around them, for pages of ``settings.steps``),
+    its LoRAs loaded first.
 
-    def load(pipe: ModularPipeline, settings: DrawSettings) -> None:
-        for name, state_dict in state_dicts.items():
-            pipe.load_lora_weights(state_dict, adapter_name=name)
-        if state_dicts:
-            pipe.set_adapters(list(state_dicts), adapter_weights=[settings.lora_scale] * len(state_dicts))
-        if state_dicts and settings.fuse_loras:
-            pipe.fuse_lora(adapter_names=list(state_dicts))
-            pipe.unload_lora_weights()
-
-    return load
-
-
-def _moss_adapters(loras: dict[str, Path]) -> LoadLoras:
-    """MOSS-Image's LoRAs, PEFT LoRA adapter folders of its DiT (``diffu-moss-convert-lora``'s) by adapter name, read
-    now (:func:`diffu_moss.adapters.read_adapter`). The function returned loads them onto the DiT under their names,
-    every one active at the settings' ``lora_scale`` and fused into its weights when they ask
-    (:mod:`diffu_moss.adapters`; it refuses an adapter that does not fit the DiT)."""
-    adapters = {name: read_adapter(lora_dir) for name, lora_dir in loras.items()}
-
-    def load(pipe: ModularPipeline, settings: DrawSettings) -> None:
-        load_adapters(pipe.transformer, adapters, scale=settings.lora_scale)
-        if adapters and settings.fuse_loras:
-            fuse_adapters(pipe.transformer)
-
-    return load
-
-
-def load_pipeline(model: Path, blocks: BlocksFor, *, loras: dict[str, Path], settings: DrawSettings) -> ModularPipeline:
-    """``blocks`` built for the model at ``model``, its components loaded (VAE in float32, the rest in bfloat16) on
-    ``settings.device``, the guider at ``settings.guidance_scale`` (the model family's own when None, and
-    ``settings.reference_guidance_scale``) until ``settings.guidance_stop``, every LoRA of ``loras`` (by adapter name:
-    a NeMo LoRA checkpoint's ``model/`` dir for FLUX.3 Klein, a PEFT adapter folder of its DiT for MOSS-Image,
-    ``diffu-moss-convert-lora``'s) active at ``settings.lora_scale``, fused into the transformer when
-    ``settings.fuse_loras``, and the transformer's repeated blocks compiled when ``settings.compile_blocks``. A
-    MOSS-Image model computes as ``settings.moss_inference`` asks (:func:`diffu_moss.inference.prepare_inference`: its
-    layers in MXFP8, UniPC, its joint blocks from an AOTInductor package or compiled, a step cache around them, for
-    pages of ``settings.steps``), its LoRAs loaded first.
-
-    Everything that can be checked without the model is checked first: its family, the guider, every LoRA as read, and
-    MOSS-Image's precision and package against the device.
+    Everything that can be checked without the model's weights is checked first: its index, the guider, every LoRA as
+    read, and the precision and package against the device.
 
     Raises:
-        ValueError: If the model's blocks have no family, the guidance settings do not go together, a LoRA would
-            load at the wrong strength or does not fit the DiT (MOSS-Image), the transformer's layers are to be
-            compiled, quantized or packaged around LoRAs that are not fused, a setting only MOSS-Image takes is asked of
-            another model, or MOSS-Image's precision or package does not fit the device, this process or the model.
+        ValueError: If the directory is not MOSS-Image's, the guidance settings do not go together, a LoRA is no
+            adapter of the DiT or does not fit it, the transformer's layers are to be compiled, quantized or packaged
+            around LoRAs that are not fused, or the precision or package does not fit the device, this process or the
+            model.
         RuntimeError: If a component failed to load.
     """
     reworked = settings.needs_fused_loras
@@ -362,20 +286,16 @@ def load_pipeline(model: Path, blocks: BlocksFor, *, loras: dict[str, Path], set
             f"{', '.join(reworked)} only with the LoRAs fused (fuse_loras): they rework the transformer's layers, and "
             "unfused adapter layers would stand in the way"
         )
-    family = model_family(model)
-    moss = family.pipeline is MossModularPipeline
-    if settings.moss_only and not moss:
-        raise ValueError(f"{model} is not MOSS-Image, which alone takes {', '.join(settings.moss_only)}")
-    if moss:
-        check_inference(settings.moss_inference, torch.device(settings.device))
-    guidance_scale = family.guidance_scale if settings.guidance_scale is None else settings.guidance_scale
+    require_moss(model)
+    check_inference(settings.moss_inference, torch.device(settings.device))
+    guidance_scale = MOSS_GUIDANCE_SCALE if settings.guidance_scale is None else settings.guidance_scale
     guider = ReferenceGuidance(
         guidance_scale=guidance_scale,
         reference_scale=settings.reference_guidance_scale,
         stop=settings.guidance_stop,
     )
-    load_loras = _moss_adapters(loras) if moss else _nemo_loras(loras)
-    pipe = family.pipeline(blocks=blocks(family), pretrained_model_name_or_path=str(model))
+    adapters = {name: read_adapter(lora_dir) for name, lora_dir in loras.items()}
+    pipe = MossModularPipeline(blocks=blocks(), pretrained_model_name_or_path=str(model))
     pipe.load_components(dtype=COMPONENT_DTYPES)
     require_loaded(pipe)
     pipe.update_components(guider=guider)
@@ -384,11 +304,10 @@ def load_pipeline(model: Path, blocks: BlocksFor, *, loras: dict[str, Path], set
             scheduler=FlowMatchEulerDiscreteScheduler.from_config(pipe.scheduler.config, shift=settings.sampling_shift)
         )
     pipe.to(settings.device)
-    load_loras(pipe, settings)
-    if moss:
-        prepare_inference(pipe, settings.moss_inference, steps=settings.steps)
-    elif settings.compile_blocks:  # dynamic: crop sizes and caption lengths vary, and each new shape would recompile
-        pipe.transformer.compile_repeated_blocks(fullgraph=True, dynamic=True)
+    load_adapters(pipe.transformer, adapters, scale=settings.lora_scale)
+    if adapters and settings.fuse_loras:
+        fuse_adapters(pipe.transformer)
+    prepare_inference(pipe, settings.moss_inference, steps=settings.steps)
     return pipe
 
 
@@ -481,19 +400,12 @@ def repair_lines(
 
 
 def page_latents(pipe: ModularPipeline, image: Image.Image) -> torch.Tensor:
-    """``image`` as the model's latents ``(1, C, height / 16, width / 16)``, made by the model's own VAE encoder step as
-    it encodes a reference image, without the reference preprocessing (a drawn crop is already on the latent grid).
-    MOSS-Image, whose reference encoder takes a reference only for a DiT trained with them, encodes as that step and
-    its decoder do (:func:`diffu_moss.latents.encode_latents`)."""
+    """``image`` as the model's latents ``(1, C, height / 16, width / 16)``, encoded as MOSS-Image's reference encoder
+    and its decoder do (:func:`diffu_moss.latents.encode_latents`), without the reference preprocessing (a drawn crop
+    is already on the latent grid)."""
     processor = pipe.image_processor
     pixels = processor.normalize(processor.numpy_to_pt(processor.pil_to_numpy(image.convert("RGB"))))
-    if isinstance(pipe, MossModularPipeline):
-        return encode_latents(pipe.vae, pixels)
-    encode = pipe.blocks.sub_blocks["vae_encoder"].sub_blocks["image_conditioning"].sub_blocks["encode"]
-    state = PipelineState()
-    state.set("condition_images", [pixels])
-    encode(pipe, state)
-    return state.get("image_cond_latents")[0]
+    return encode_latents(pipe.vae, pixels)
 
 
 def _draw(

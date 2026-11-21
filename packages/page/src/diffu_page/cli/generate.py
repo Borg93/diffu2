@@ -9,8 +9,8 @@ training-scale crops, or with ``--whole-page`` kept whole as one crop of ``--pag
 scan by ``--print-hand-model``, and its ruled lines found there if it has none, so its form's print is drawn as print
 and its grid as rules. A two-page opening (most scans) is planned as its single pages, never as a spread
 (:func:`diffu_page.draw.jobs.single_pages`), and ``summary.json`` lists them.
-Each crop is then drawn on its own by the crop pipeline (MOSS-Image or FLUX.3, and their LoRAs: a MOSS-Image hand's is
-its adapter, ``diffu-moss-convert-lora``'s), read back line by line, and labelled with badly read lines tagged
+Each crop is then drawn on its own by the crop pipeline (MOSS-Image and its LoRAs: a hand's is its adapter,
+``diffu-moss-convert-lora``'s), read back line by line, and labelled with badly read lines tagged
 ``unclear``, as diffu-runner's GPU actors draw it. The text comes from
 ``--text-from``: a PAGE/ALTO page's running text, or a plain text file as it stands (a blank line ends a paragraph).
 With ``--reference`` (a sample to draw in the hand of, for a model trained with references) every crop is drawn from it
@@ -76,7 +76,6 @@ from diffu_page.cli.options import (
     RepairPasses,
     SamplingShift,
     Steps,
-    TextLayers,
     lora_dirs,
     required_model,
     settings_from_options,
@@ -415,7 +414,7 @@ def generate(
             exists=True,
             dir_okay=False,
             help="the style presets --style and a job file's named styles come from: a JSON object of "
-            "diffu_page.draw.styles.StylePreset by name, such as the repo's styles.json",
+            "diffu_page.draw.styles.StylePreset by name",
         ),
     ] = None,
     templates: Annotated[
@@ -433,7 +432,7 @@ def generate(
             "the look options (--reference still gives the pages their own)"
         ),
     ] = None,
-    model: Model = settings.flux3_model,
+    model: Model = settings.moss_model,
     lora: Loras = None,
     years: str = "",
     greyscale: Annotated[bool, typer.Option("--greyscale/--colour")] = False,
@@ -448,8 +447,8 @@ def generate(
     reference_caption: Annotated[
         ReferenceCaption,
         typer.Option(
-            help="the caption form the model was trained on: described (style pairs, as FLUX.3's style-reference LoRA "
-            "trains), plain (MOSS-Image's plain form of style pairs), named, hand or sample (MOSS-Image's look, plain "
+            help="the caption form the model was trained on: described (the style pairs' own form), plain "
+            "(MOSS-Image's plain form of style pairs), named, hand or sample (MOSS-Image's look, plain "
             "and sample forms of page pairs)"
         ),
     ] = ReferenceCaption.PLAIN,
@@ -458,7 +457,6 @@ def generate(
     reference_guidance: ReferenceGuidanceScale = DEFAULTS.reference_guidance_scale,
     guidance_stop: GuidanceStop = DEFAULTS.guidance_stop,
     seed: int = 0,
-    text_layer: TextLayers = None,
     device: Device = DEFAULTS.device,
     max_line_cer: MaxLineCer = DEFAULTS.max_line_cer,
     label_format: Format = DEFAULTS.label_format,
@@ -478,9 +476,7 @@ def generate(
     whole_page: Annotated[
         bool, typer.Option("--whole-page/--windows", help="draw each page whole instead of as training-scale windows")
     ] = False,
-    page_megapixels: Annotated[
-        float, typer.Option(min=0.25, max=4.0, help="a whole page's size (FLUX.3 draws up to about 4 MP)")
-    ] = 2.5,
+    page_megapixels: Annotated[float, typer.Option(min=0.25, max=4.0, help="a whole page's size")] = 2.5,
     mark_from_scan: Annotated[
         bool,
         typer.Option(
@@ -502,7 +498,6 @@ def generate(
         guidance=guidance,
         reference_guidance=reference_guidance,
         guidance_stop=guidance_stop,
-        text_layer=text_layer,
         device=device,
         max_line_cer=max_line_cer,
         lora_scale=lora_scale,

@@ -4,7 +4,7 @@ the prompt's, all modulated by one shared projection of the timestep; the prompt
 text-only refiner blocks; positions are a 4-axis rotary table (reference, text index, row, column; the image's rows
 and columns centred). Each sample runs at its own prompt length, so no padding reaches the attention.
 
-Reference images (sample pages), as FLUX.3 Klein takes them: each one's clean latents become tokens after the prompt's,
+Reference images (sample pages): each one's clean latents become tokens after the prompt's,
 embedded as the drawn image's are, placed on the reference axis (the drawn image and the prompt at 0, reference ``k``
 at ``k + 1``) with their own grid centred, and modulated as at timestep 0 while the drawn image and the prompt are
 modulated at the flow timestep; they join the joint attention and only the drawn image's tokens are predicted. The

@@ -1,5 +1,5 @@
 """MOSS-Image's steps before the denoising loop: the initial noise, drawn in fp32 from the generator and packed into
-tokens as FLUX.3 packs its latents (so the page pipeline's line repair runs on them), and the sampling grid: ``steps``
+tokens row by row (so the page pipeline's line repair runs on them), and the sampling grid: ``steps``
 noise levels from 1 down, shifted, each moved to the nearest level of the 1,000-step training grid, stepped by
 MOSS-Image's own Euler sampler or by UniPC (:class:`Sampler`)."""
 
@@ -81,7 +81,7 @@ class MossPrepareLatentsStep(ModularPipelineBlocks):
     def description(self) -> str:
         return (
             "Prepare latents step that draws the initial noise in fp32 from the generator and packs it into tokens, "
-            "row by row, as FLUX.3 packs its latents."
+            "row by row."
         )
 
     @property

@@ -4,13 +4,12 @@ A caption from ``diffu_page.captions.prompt.caption_for`` is its :class:`Caption
 the crop's ``PageStyle``: the paragraph's opening sentence and its ink, the paper row, the ink of every handwritten
 line row and of every fragment row (``phrases_for``). A printed line's row (black printer's ink whatever the scan) and
 a ruled line's row hold no phrase. Each function here renders a :class:`CaptionParts`' template (a training record's,
-or a planned crop's) as a FLUX.3 image-edit record drawn from ``<ref_image_0>``:
+or a planned crop's) as an image-edit record drawn from ``<ref_image_0>``:
 
 - ``edit_caption``: the hand, ink and paper taken from ``<ref_image_0>``, none of them named (the plain form of
   MOSS-Image's style pairs);
 - ``described_edit_caption``: the reference's measured hand, ink and paper described in words as well (the style
-  pairs, ``diffu_page.data.style_pairs``: BFL's captions state a style's visible features, and FLUX.3 takes its style
-  from the caption more than from a reference);
+  pairs, ``diffu_page.data.style_pairs``: a caption that states a style's visible features);
 - ``named_edit_caption``: the archive and look named in words as well (the look form of MOSS-Image's page pairs);
 - ``hand_edit_caption``: the archive and years named alone, whose hand it is, the look left to the reference (the
   plain form of MOSS-Image's page pairs, ``diffu_page.data.page_pairs``);
@@ -96,9 +95,8 @@ def _phrases(style: PageStyle, parts: CaptionParts) -> StylePhrases:
     return phrases_for(style, printed=parts.printed)
 
 
-# An image-edit record draws a new page in <ref_image_0>'s hand: FLUX.3's i2i_bbox annotation (diffusers
-# modular_pipelines/flux3/prompt_upsampler.py), "Create a ..." when the references are drawn into a new frame and
-# the reference cited by its token where content is taken from it.
+# An image-edit record draws a new page in <ref_image_0>'s hand: "Create a ..." when the references are drawn into a
+# new frame and the reference cited by its token where content is taken from it.
 def _from_reference(parts: CaptionParts) -> StylePhrases:
     """The image-edit phrases that take the hand, ink and paper from the reference and name none of them."""
     return StylePhrases(
@@ -203,7 +201,7 @@ def _from_reference_describing(parts: CaptionParts, reference: ReferenceLook) ->
 
 
 class EditRow(BaseModel):
-    """One row of a FLUX.3 image-edit layout table, in the field order of its annotation."""
+    """One row of an image-edit layout table, in the field order of its annotation."""
 
     model_config = {"populate_by_name": True}
 
@@ -215,7 +213,7 @@ class EditRow(BaseModel):
 
 
 def edit_caption(parts: CaptionParts) -> str:
-    """The caption as a FLUX.3 image-edit record: its text and layout drawn in ``<ref_image_0>``'s hand.
+    """The caption as an image-edit record: its text and layout drawn in ``<ref_image_0>``'s hand.
 
     The paragraph becomes an instruction citing the reference and the layout rows the edit table: the paper taken
     from the whole reference, every line and fragment new content.

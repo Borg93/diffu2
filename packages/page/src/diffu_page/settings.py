@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     """The defaults the CLIs use, from the environment or a ``.env`` file in the working directory (gitignored).
 
     Attributes:
-        flux3_model: The FLUX.3 Klein directory (a Modular Diffusers repo), env ``FLUX3_MODEL``. None when unset: a
+        moss_model: The MOSS-Image model directory (``diffu-moss-init``'s), env ``DIFFU_MOSS_MODEL``. None when unset: a
             command that needs a model then asks for ``--model`` (``cli.options.required_model``).
         htr_model: The HTR model every drawn line is read back with (a Hub id or a local copy, for offline nodes), env
             ``DIFFU_HTR_MODEL``.
@@ -24,7 +24,7 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    flux3_model: Path | None = Field(default=None, alias="FLUX3_MODEL")
+    moss_model: Path | None = Field(default=None, alias="DIFFU_MOSS_MODEL")
     htr_model: str = Field(default="Riksarkivet/trocr-base-handwritten-hist-swe-2", alias="DIFFU_HTR_MODEL")
     htr_revision: str | None = Field(default="aa79fcb1850bf3155ebc442570d6c6bfc0ac8100", alias="DIFFU_HTR_REVISION")
     print_hand_model: Path = Field(default=Path("runs/print_hand/print_hand.pt"), alias="DIFFU_PRINT_HAND_MODEL")

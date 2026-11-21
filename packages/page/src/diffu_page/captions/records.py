@@ -1,4 +1,4 @@
-"""A crop's ``metadata.jsonl`` row: the imagefolder fields NeMo reads, its style and its line records."""
+"""A crop's ``metadata.jsonl`` row: the imagefolder fields, its style and its line records."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from diffu_page.page.crops.geometry import Crop
 
 
 class CropRecord(BaseModel):
-    """A ``metadata.jsonl`` row: the imagefolder fields NeMo reads (``file_name``, ``caption``) and the rest."""
+    """A ``metadata.jsonl`` row: the imagefolder fields (``file_name``, ``caption``) and the rest."""
 
     file_name: str
     caption: str

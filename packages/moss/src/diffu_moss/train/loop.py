@@ -1,10 +1,10 @@
 """diffu-moss-train-ref: teaches MOSS-Image's DiT to draw from a reference image, trained on a cache of style pairs
 (``diffu-moss-cache-pairs``): a LoRA, or with ``--full`` every weight of the DiT (:mod:`diffu_moss.train.full`).
 
-    diffu-moss-train-ref --transformer <MOSS-Image-Base snapshot>/transformer --cache data_flux3/cache_moss_ref_v3d \\
-        --val-cache data_flux3/cache_moss_ref_v3d_val --out runs/moss_ref_pilot/lora --steps 1500
+    diffu-moss-train-ref --transformer <MOSS-Image-Base snapshot>/transformer --cache data_pages/cache_moss_ref_v3d \\
+        --val-cache data_pages/cache_moss_ref_v3d_val --out runs/moss_ref_pilot/lora --steps 1500
     diffu-moss-train-ref --full --transformer <MOSS-Image-Base snapshot>/transformer \\
-        --cache data_flux3/cache_moss_ref_v3d --val-cache data_flux3/cache_moss_ref_v3d_val \\
+        --cache data_pages/cache_moss_ref_v3d --val-cache data_pages/cache_moss_ref_v3d_val \\
         --out runs/moss_ref_full/full --steps 500
 
 The LoRA follows the recipe of the 1715 hand LoRA (KohakuMossTrainer's, for parity): LoRA rank 32, alpha 32, on the

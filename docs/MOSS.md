@@ -1,10 +1,16 @@
 # MOSS-Image: our implementation and its training
 
-MOSS-Image (OpenMOSS; code and weights Apache-2.0) is the main model path: a 5B single-stream DiT with a frozen
-Qwen3.5-9B text encoder and the FLUX.2 VAE, whose Layout prompt writes every line's exact text in its box. The
-package `packages/moss` (diffu-moss) is our own implementation, written from the published design, around the released
-weights; nothing of the official pipeline is copied or run. This page is how it draws, what it is trained on and how it
-is trained. How a page becomes the crops it draws: [PIPELINE.md](PIPELINE.md).
+In plain words: MOSS-Image is a scribe who writes a page from a plan that says, line by line, which words go in which
+box. Our fine-tune also lays a sample page on the desk, above the sheet, and the scribe takes its paper, its kind of
+scan and its pen's weight from it. A distilled student is the same scribe working from eight strokes of practice
+instead of fifty: faster, a little less exact.
+
+MOSS-Image (OpenMOSS; code and weights Apache-2.0) is the model: a 5B single-stream DiT with a frozen Qwen3.5-9B text
+encoder and a VAE of 128 latent channels (diffusers' `AutoencoderKLFlux2`), whose Layout prompt writes every line's
+exact text in its box. The package `packages/moss` (diffu-moss) is our own implementation, written from the published
+design, around the released weights; nothing of the official pipeline is copied or run. This page is how it draws, the
+model we draw with, what it is trained on and how it is trained and distilled. How a page becomes the crops it draws:
+[PIPELINE.md](PIPELINE.md); every run and measurement: [MOSS_RUNS.md](MOSS_RUNS.md).
 
 ## The model
 
@@ -17,30 +23,35 @@ is trained. How a page becomes the crops it draws: [PIPELINE.md](PIPELINE.md).
   skill compiles a draft): the caption's prose as the summary, a text item per line with its exact text and its box in
   pixels from the canvas centre (`yxyx`), the paper, fragments and ruled lines as objects. The prompt is encoded by the
   frozen text encoder (its last hidden states over the chat template, thinking enabled) and refused past 4,096 tokens,
-  never cut (a 44-47-line page takes 1,500-2,500). The denoise step is laid out as FLUX.3's (`prepare_latents`,
-  `set_timesteps`, a loop of `denoiser` and `after_denoiser`, the latents as tokens in FLUX.3's order), so the page
-  pipeline's line repair runs in it unchanged; the noise is drawn in fp32, the sampling grid is the shifted steps moved
-  to the nearest level of the 1,000-step training grid (shift 5, MOSS's demo's), and guidance (3) combines in fp32 with
-  the unconditional pass skipping block 22 (`uncond_skip_layers` in the model index). The FLUX.2 VAE decodes
-  (`latents.py`, which also encodes a drawn crop for a repair). On a tiny random model the blocks draw bit for bit what
-  the verified scratchpad code drew, and that code redrew the official demo's published images at 20.9 and 26.2 dB.
+  never cut (a 44-47-line page takes 1,500-2,500). The denoise step is `prepare_latents`, `set_timesteps` and a loop of
+  `denoiser` and `after_denoiser` over the latents as tokens, and the page pipeline's line repair sits in that loop; the
+  noise is drawn in fp32, the sampling grid is the shifted steps moved to the nearest level of the 1,000-step training
+  grid (shift 5, MOSS's demo's), and guidance (MOSS's demo's scale is 3; "Guidance" below) combines in fp32 with the
+  unconditional pass skipping block 22 (`uncond_skip_layers` in the model index). The VAE decodes (`latents.py`, which
+  also encodes a drawn crop for a repair). On a tiny random model the blocks draw bit for bit what the verified
+  scratchpad code drew, and that code redrew the official demo's published images at 20.9 and 26.2 dB.
 - **A model directory** (`diffu-moss-init`): a `modular_model_index.json` naming `MossAutoBlocks`, the text encoder,
   tokenizer and VAE loading from the Base snapshot's folders, the DiT from the snapshot or a trained export. Nothing is
   copied. `takes_reference` is set only for a DiT of our reference training (read from its `export.json`).
 
       BASE=~/.cache/huggingface/hub/models--OpenMOSS-Team--MOSS-Image-Base/snapshots/85975793d8b3d432f1b6e27f352abaa4c2a4c0d3
       diffu-moss-init --base $BASE --out runs/moss/base
-      diffu-moss-init --base $BASE --transformer runs/moss_eight_full/full_r6b/checkpoints/step_000750/transformer \
-          --out runs/moss/eight_full_r6b_step_000750
+      diffu-moss-init --base $BASE --transformer models/dit/diffu-moss-above --out models/moss-above
 
 - **Reference images** (sample pages): the DiT reads a reference's clean latents as tokens after the prompt's, on the
-  reference axis (reference `k` at `k + 1`), its grid centred, modulated as at timestep 0 (FLUX.3 Klein's design), in
-  every guidance pass; without one it is the released model bit for bit. The released models were not trained with
-  references, so a model directory takes one only when its DiT was. `MossReferenceEncodeStep` encodes a reference on
-  its own grid after the page pipeline's `ReferenceGridStep` has sized it by the rule the DiT was trained on, which
-  the model index names (`sample_size`, below; 0.5 MP when it names none), and the Layout prompt names "the sample
-  image" where the caption cites `<ref_image_0>` (without a reference the citation is dropped). Reference guidance
-  (`--reference-guidance`) adds a pass without it.
+  reference axis (reference `k` at `k + 1`), modulated as at timestep 0, in every guidance pass; without one it is the
+  released model bit for bit. Where its rows and columns lie against the page's is the DiT's `reference_place`
+  (`transformer.py`: `token_positions`), read from its `config.json`: `over`, MOSS-Image's own, centre on centre, each
+  sample token at the place of the page token under it, as suits an image to edit; or `above`, the sample's rows moved
+  up so that its last row lies one above the page's first, its columns centred, nothing over the page. A sample page
+  holds other lines at the page's places; in the sibling pilot (11-12 Nov) a page drawn with another scribe's sample
+  took that hand in 7 of 8 swaps with the sample above (from Base; mean gap +0.104), in 6 of 8 laid over (+0.036), and
+  in 1 of 8 for run B, trained with the sample laid over and any page of the volume as the sample. The released models
+  were not trained with references, so a model directory takes one only when its DiT was. `MossReferenceEncodeStep`
+  encodes a reference on its own grid after the page pipeline's `ReferenceGridStep` has sized it by the rule the DiT was
+  trained on, which the model index names (`sample_size`, below; 0.5 MP when it names none), and the Layout prompt names
+  "the sample image" where the caption cites `<ref_image_0>` (without a reference the citation is dropped). Reference
+  guidance (`--reference-guidance`) adds a pass without it.
 - **The sample's size** (`sample_size`, `diffu_page/draw/sample.py`): `half`, the first rule, shrinks a sample under
   0.5 MP (`as_reference`) whatever its target, so a 1 MP page's sample shows its hand at about 0.7 of the page's
   scale and a window's at well under half (measured on real rows: a 23-25 px line pitch beside the window's 63 px).
@@ -53,46 +64,91 @@ is trained. How a page becomes the crops it draws: [PIPELINE.md](PIPELINE.md).
   `reference_lines`) and is refused without them, as is a rule it does not know, rather than drawn from a sample sized
   otherwise than in training. The SGLang plugin takes its reference sized already: size it so before.
 - **Drawing**: `diffu-generate --model <MOSS dir>` (and `diffu-evaluate`, `diffu-studio`) draws through the page
-  pipeline, at MOSS's own guidance and shift unless `--guidance` or `--sampling-shift` name others. `--lora
+  pipeline, at MOSS's own guidance (3) and shift (5) unless `--guidance` or `--sampling-shift` name others. `--lora
   hand=<adapter folder>` loads a hand LoRA onto the DiT ("Hand LoRAs", below); a LoRA of our reference training is
   merged into the DiT folder instead (`diffu-moss-export-ref`). `--reference` (a sample page) only for a DiT trained
   with references, its caption in the form it trained on (`--reference-caption`, below).
 
-      jobs/spark_guard.sh --need-gb 50 --name pages -- uv run diffu-generate --model runs/moss/eight_full_r6b_step_000750 \
+      jobs/spark_guard.sh --need-gb 50 --name pages -- uv run diffu-generate --model models/moss-above \
           --templates page_a.xml --text-from text.txt --title "the records of Överståthållarämbetet" \
-          --paper yellowed --ink brown --whole-page --page-megapixels 2 --out runs/pages_moss
+          --paper yellowed --ink brown --reference sample_page.jpg --reference-caption sample \
+          --whole-page --page-megapixels 2 --steps 28 --guidance 2 --out runs/pages_moss
+
+## The sample-above model
+
+[Gabriel/diffu-moss-above](https://huggingface.co/Gabriel/diffu-moss-above) is the model every page is drawn with: a
+full fine-tune of the released Base at 2 MP with `--reference-place above`, 10,257 steps (three passes of 16 samples a
+step on 8 A100s, the last sixth wound down, EMA 0.999; every test draws with the EMA). Its set is every sibling
+pair of windows of the 2 MP page pairs (27,350: a window with the other window of its own page as its sample, so the
+sample is the same scribe's for certain) and as many whole pages, in the content mix with look changes ("Training
+data"). The [README](../README.md) has the commands that fetch it and write its model directory.
+
+- **What it draws**: the layout and the text as given; the paper, the kind of scan (colour or greyscale) and the pen's
+  weight from the sample. The letter forms follow the sample on some kinds of page (short entries, as in the
+  16th-century accounts) and not on running text, where every sample gives a regular cursive of the page's period. On
+  the demo Space's new pages, laid out as boxes, the hand does not follow, and a faint sample's ink comes out too dark.
+- **How it is asked**: a whole page at 2 MP (`--whole-page --page-megapixels 2`, a job's `page_pixels`), the sample
+  page in the `sample` form (nothing named in the prompt: the look comes from the sample alone).
+- **Earlier models**: run B (`Gabriel/diffu-moss-r6b`, 1 MP, the sample laid over the page) and the hand adapters
+  ("Hand LoRAs"); what each showed is one line under "Superseded runs" in MOSS_RUNS.md.
+
+## Guidance
+
+The code's default is MOSS-Image's own scale, 3 (`GUIDANCE_SCALE`); the measurements of 20 Nov support **2**, so pass
+`--guidance 2` (`guidance_scale` in the draw settings). Measured on six held-out pages against the sample page each
+was drawn with, at 50 steps:
+
+| Guidance | Ink colour distance to the sample (Delta E) | Stroke width, of the sample's |
+|---|---|---|
+| 3.0 | 11.0 | x1.23 |
+| 2.5 | 7.8 | x1.18 |
+| 2.0 | 5.2 | x1.13 |
+| 1.5 | 3.2 | x1.06 |
+
+At 3 the ink is too dark and the strokes too thick. The words are the same at 3.0, 2.0 and 1.5 by reading; at 1.5 a
+few capitals and one number change form, so 2 was taken over 1.5. Another page's sample is
+followed at 2.0 as at 3.0 and its ink more closely (the twelve swaps; read back, mean CER 0.034 against 0.030).
+Nothing tried beat plain guidance 2: adaptive projected guidance changed nothing or drew guidance 2's page, and
+reference guidance (`--reference-guidance` 2 or 3, a third pass a step) moved the paper's tint slightly and the hand
+not at all.
+
+Guiding only the first half of the steps (`--guidance-stop 0.5`; the Space's `GUIDED_SHARE`) drew the same page in about
+a quarter less time (the ink and the words are settled in the first half); over the first third a letter lost four of
+its fifteen lines. The demo Space draws its guided pages so, 28 steps at guidance 2.
 
 ## Training data
 
 Built on CPU by diffu-page's builders, cached once on the GPU by `diffu-moss-cache-pairs`.
 
-- **Style pairs** (`python -m diffu_page.data.style_pairs`, also FLUX.3's style-reference LoRA's: [FLUX3.md](FLUX3.md)):
+- **Style pairs** (`python -m diffu_page.data.style_pairs`, the first reference pilots' data):
   a training crop (`diffu_page.data.build_crops`) and a crop of its own or its facing page sharing none of its lines,
-  the target's caption describing the reference's measured hand, ink and paper (`data_flux3/style_pairs_v3d`). The
+  the target's caption describing the reference's measured hand, ink and paper (`data_pages/style_pairs_v3d`). The
   cache leaves out the pairs whose reference repeats a target's line (85 of v3d's).
 - **Page pairs** (`python -m diffu_page.data.page_pairs`, the full fine-tune's data): every single page of the
-  handwritten GT (an opening split into its two; a scan wider than tall that its lines cannot split skipped and
-  counted, never a page), cut at about 1 MP exactly as `diffu-generate --whole-page` plans it and prompted as drawing
-  prompts it, with a sample page of its own volume sharing none of its lines (0.5 MP). Whole volumes are held out
-  (`val.jsonl`, `val_eval/` for `diffu-evaluate`); prompts past 4,096 tokens are skipped and counted; scans run in
-  parallel and a stopped build resumes from the scans it recorded (`scanned/`); `build.json` records the settings and
-  what became of every scan, page and window. The build holds no planned page: of each scan it keeps its pages' small
-  entries (id, volume, windows, too long or not, the lines' texts as digests), pairs and splits by them, and writes
-  each manifest row from its scan's record, so its memory grows by about 28 MB per 10,000 scans (7.8 GB when it held
-  the planned pages); `page_pair_forms` likewise holds no row but the one it writes. `--windows-per-page N` adds up to N windows of each page (whole lines of
-  one column, planned on the single page as diffu-generate plans its crops, cut at the pages' pixels: larger letters),
-  each a row of its own with its page's sample, after the page rows, which stay exactly as without windows.
-  `python -m diffu_page.data.page_pair_forms` gives the rows of a set built before a form every form, in a new manifest
-  beside it (each row planned again from its PAGE file and scan as the build planned it; `--replace <form>` plans a
-  form whose caption changed again), its images as they are. `python -m diffu_page.data.page_pair_samples` gives a
-  manifest's rows legible samples, in a new manifest beside it: each row's sample page cut from its scan at its
-  target's writing scale (`samples/<row id>.jpg`; the row records `sample_size: legible` and its sample page's id),
-  the pitches measured as drawing measures them (the window's on its lines, the sample page's on its whole-page plan's).
+  handwritten GT (an opening split into its two; a scan wider than tall that its lines cannot split skipped and counted,
+  never a page), cut at `--megapixels` (1 MP by default; 2 MP for every training since 9 Nov) exactly as `diffu-generate
+  --whole-page` plans it and prompted as drawing prompts it, with a sample page of its own volume sharing none of its
+  lines (`--sample-pick nearest`: the other page of its opening, else the closest scan, the same scribe more often than
+  a page drawn at random). Whole volumes are held out (`val.jsonl`, `val_eval/` for `diffu-evaluate`); prompts past
+  4,096 tokens are skipped and counted; scans run in parallel and a stopped build resumes from the scans it recorded
+  (`scanned/`); `build.json` records the settings and what became of every scan, page and window. The build holds no
+  planned page: of each scan it keeps its pages' small entries (id, volume, windows, too long or not, the lines' texts
+  as digests), pairs and splits by them, and writes each manifest row from its scan's record, so its memory grows by
+  about 28 MB per 10,000 scans (7.8 GB when it held the planned pages); `page_pair_forms` likewise holds no row but the
+  one it writes. `--windows-per-page N` adds up to N windows of each page (whole lines of one column, planned on the
+  single page as diffu-generate plans its crops, cut at the pages' pixels: larger letters), each a row of its own with
+  its page's sample, after the page rows, which stay exactly as without windows. `python -m
+  diffu_page.data.page_pair_forms` gives the rows of a set built before a form every form, in a new manifest beside it
+  (each row planned again from its PAGE file and scan as the build planned it; `--replace <form>` plans a form whose
+  caption changed again), its images as they are. `python -m diffu_page.data.page_pair_samples` gives a manifest's rows
+  legible samples, in a new manifest beside it: each row's sample page cut from its scan at its target's writing scale
+  (`samples/<row id>.jpg`; the row records `sample_size: legible` and its sample page's id), the pitches measured as
+  drawing measures them (the window's on its lines, the sample page's on its whole-page plan's).
 
-      python -m diffu_page.data.page_pairs --gt-root ~/Desktop/data/GT-Lejonet_HTR_202602 --model runs/moss/base \
-          --out data_flux3/page_pairs --workers 8 --windows-per-page 2
-      python -m diffu_page.data.page_pair_samples --pairs data_flux3/page_pairs_many_1mp/train_content.jsonl \
-          --out data_flux3/page_pairs_many_1mp/train_content_legible.jsonl --workers 4
+      python -m diffu_page.data.page_pairs --gt-root <GT folder> --model runs/moss/base \
+          --out data_pages/page_pairs_2mp --megapixels 2.0 --sample-pick nearest --workers 8 --windows-per-page 2
+      python -m diffu_page.data.page_pair_samples --pairs data_pages/page_pairs_many_1mp/train_content.jsonl \
+          --out data_pages/page_pairs_many_1mp/train_content_legible.jsonl --workers 4
 
 - **Prompt forms** (`train/pairs.py`: `Variant`, `MIXES`): each pair is cached in one form, fixed per pair by a seed,
   from one of two mixes (`--mix`). The named mix (the default): a fifth without the reference (`no_reference`: the
@@ -134,14 +190,18 @@ Built on CPU by diffu-page's builders, cached once on the GPU by `diffu-moss-cac
   the entry cached without it and the reason recorded. Each entry records its changes (a hand change its slant and
   its page's room), the cache's record the mix, how its samples were sized (`sample_size`, one rule for every pair),
   the changes made, the pages with no room for a slant and the refusals; a cache without them is written as before.
-  `diffu-draw-pairs` draws an entry back from its sample in its hand and look.
+  `diffu-draw-pairs` draws an entry back from its sample in its hand and look. `--shard i --shards N` caches one Nth
+  of the plan, one run a GPU, into one directory; a last run without them indexes it ([MOSS_HPC.md](MOSS_HPC.md)).
+- **Sibling pairs** (the sample-above model's set): each window with the other window of its own page as its sample,
+  cached from `train_siblings.jsonl` beside as many whole pages. Their builders (`sibling_pairs.py`,
+  `sibling_cache.py`) are kept with the runs on the cluster, not in this repo yet.
 
-      diffu-moss-cache-pairs --model runs/moss/base --pairs data_flux3/style_pairs_v3d/train.jsonl \
-          --out data_flux3/cache_moss_ref_v3d --limit 4000
-      diffu-moss-cache-pairs --model runs/moss/base --pairs data_flux3/page_pairs_eight/train_bal_sample2.jsonl \
-          --out data_flux3/cache_moss_eight_bal_restyle --restyle-share 0.5
-      diffu-moss-cache-pairs --model runs/moss/base --pairs data_flux3/page_pairs_many_1mp/train_content_legible.jsonl \
-          --out data_flux3/cache_moss_content_train --limit 12000 --mix content --restyle-share 0.5 \
+      diffu-moss-cache-pairs --model runs/moss/base --pairs data_pages/style_pairs_v3d/train.jsonl \
+          --out data_pages/cache_moss_ref_v3d --limit 4000
+      diffu-moss-cache-pairs --model runs/moss/base --pairs data_pages/page_pairs_eight/train_bal_sample2.jsonl \
+          --out data_pages/cache_moss_eight_bal_restyle --restyle-share 0.5
+      diffu-moss-cache-pairs --model runs/moss/base --pairs data_pages/page_pairs_many_1mp/train_content_legible.jsonl \
+          --out data_pages/cache_moss_content_train --limit 12000 --mix content --restyle-share 0.5 \
           --hand-restyle-share 0.5
 
 ## Reference training (`diffu-moss-train-ref`, our own loop)
@@ -157,8 +217,8 @@ KohakuMossTrainer has no reference or editing training, so the sample page needs
   50 warmup steps), the joint blocks checkpointed; `diffu-moss-export-ref` merges a checkpoint into Base for
   `diffu-moss-init`.
 
-      diffu-moss-train-ref --transformer $BASE/transformer --cache data_flux3/cache_moss_ref_v3d \
-          --val-cache data_flux3/cache_moss_ref_v3d_val --out runs/moss_ref_pilot/lora --steps 1500
+      diffu-moss-train-ref --transformer $BASE/transformer --cache data_pages/cache_moss_ref_v3d \
+          --val-cache data_pages/cache_moss_ref_v3d_val --out runs/moss_ref_pilot/lora --steps 1500
       diffu-moss-export-ref --transformer $BASE/transformer \
           --checkpoint runs/moss_ref_pilot/lora/checkpoints/step_001500 --out runs/moss_ref_pilot/export_step_001500
 
@@ -177,10 +237,15 @@ KohakuMossTrainer has no reference or editing training, so the sample page needs
   resumes from (`--resume <checkpoint>`, ~42 GB), both off by default: the Spark holds neither. `--transformer` also
   takes a checkpoint's `transformer/`: a new run from its weights (give it another `--seed`, or it draws that run's
   samples and noise again). `--limit-pairs N` trains on the cache's first N pairs drawn with their reference, and
-  `diffu-draw-pairs` draws them back beside their real pages: an overfit test.
+  `diffu-draw-pairs` draws them back beside their real pages: an overfit test. `--reference-place above` trains with
+  the sample above the page ("Reference images"; with `--full` only, written into every checkpoint's `config.json`,
+  so drawing reads it). `--decay-steps N --decay-to s` winds the learning rate down over the last N steps;
+  `--stop-at` trains to a step, saves and stops with the schedule still the whole run's, so a chain of short jobs
+  trains as one long job would; `--caption-dropout p --negative <embeddings>` replaces a share of the prompts by the
+  negative prompt guidance draws against (a 480-step pilot showed no difference).
 
-      diffu-moss-train-ref --full --transformer $BASE/transformer --cache data_flux3/cache_moss_ref_v3d \
-          --val-cache data_flux3/cache_moss_ref_v3d_val --out runs/moss_ref_full/full --steps 500
+      diffu-moss-train-ref --full --transformer $BASE/transformer --cache data_pages/cache_moss_ref_v3d \
+          --val-cache data_pages/cache_moss_ref_v3d_val --out runs/moss_ref_full/full --steps 500
       diffu-moss-init --base $BASE --transformer runs/moss_ref_full/full/checkpoints/step_000500/transformer \
           --out runs/moss/ref_full
 
@@ -193,10 +258,55 @@ KohakuMossTrainer has no reference or editing training, so the sample page needs
   every rank drawing every sample's noise as one process does; Muon gathers each matrix's update whole and
   orthogonalises it on every rank; the main rank writes the log and the same checkpoints. At world size 2 the tiny
   models train, score, checkpoint and resume exactly as at world size 1 (`tests/test_distributed.py`, gloo on the
-  CPU). Estimated per 80 GB A100: ~30 GB on 4 GPUs (47 with `--encode-text`, 52 with `--ema` too), ~22 GB on 8.
+  CPU). `--size-block 32` sorts each pass's samples by size inside blocks of 32 rounds, so a round's ranks hold
+  samples of like size (a sharded round runs at the pace of its largest sample): 15.2 s a step against 19.1 at 2 MP
+  on 8 A100s. `--replicas <nodes>` is HSDP, the DiT sharded within each node and only gradients crossing between
+  them (2.8x the speed of 2 nodes on 8, at 32.7 GB a GPU). Measured on 8 A100 64 GB with `--ema`, every block
+  checkpointed: about 20 GB a GPU and 11.6 s a step at 1 MP, 25 GB and 18.4 s at 2 MP.
 
       torchrun --standalone --nproc-per-node 4 -m diffu_moss.train.loop --full --transformer $BASE/transformer \
-          --cache data_flux3/cache_moss_pages --out runs/moss_pages_full/full --steps 500 --samples-per-step 8
+          --cache data_pages/cache_moss_pages --out runs/moss_pages_full/full --steps 500 --samples-per-step 8
+
+## Distillation (`diffu-moss-distill`, `train/distill.py`)
+
+A student is a LoRA of the fine-tuned DiT that draws a page in 8 steps without guidance: 8 DiT passes instead of the
+100 of 50 guided steps. It is trained by on-policy distillation (the method and the DiffSynth-Studio settings it
+follows are in the module's docstring):
+
+1. The student draws from noise along its own 8 noise levels to one of them, without gradients: it is trained on the
+   states it will meet when it draws, not on noised real pages.
+2. From there the teacher (the DiT itself, `--teacher-steps 50` at `--guidance-scale`) draws on to the student's next
+   level, and the straight line to where it arrives is the target.
+3. The student's velocity is regressed onto that target; `--repulsion` also pushes it from the teacher's unguided
+   velocity (it acts as more guidance: not used).
+
+The cache gives the prompts, the sample pages and each page's size; no real page is drawn toward. The sample page goes
+to the student and to both of the teacher's passes. `--negative` is the negative prompt's embeddings (a safetensors
+file holding `prompt_embeds`). Under `torchrun` every rank holds teacher and student whole and the ranks sum their
+gradients; `--stop-at` and `--resume latest` chain short jobs.
+
+    torchrun --standalone --nproc-per-node 4 -m diffu_moss.train.distill --teacher models/dit/diffu-moss-above \
+        --cache <cache> --negative <negative.safetensors> --out runs/distill/g --rank 128 --learning-rate 1e-4 \
+        --steps 400 --samples-per-step 16 --guidance-scale 2.0 --swap 0.5
+
+- **The LoRA** (default rank 64, learning rate 2e-5) adapts the reference LoRA's modules and the layers that read the
+  noise level (`DISTILL_TARGETS`): a student steps much further from a level than its teacher does. A checkpoint is
+  the LoRA with `distill.json`, which says how it is drawn (its teacher, its steps and shift, guidance 1).
+- **Drawing a student**: its LoRA beside the teacher's weights, not merged (`student_of`). A short distillation's
+  update is smaller than bfloat16's rounding step for most weights, and a merge into bfloat16 drops it there (the
+  first student merged was paler and thinner). `cast_lora` casts the LoRA's own weights to bfloat16: left in the
+  float32 they train in, PEFT casts every adapted layer's input to float32 and back, which added 73 % to a pass;
+  cast, the same page 18-27 % faster a pass. The demo Space loads its student so and switches it on for a fast page.
+- **`--swap s`**: that share of a run's samples take their sample page from another page of the cache (a layout and
+  text with a look that is not its own, as a new page is drawn), logged as page<-donor.
+- **A student copies its teacher's ink**, so the teacher's guidance decides it: the first student (**a**, teacher at
+  guidance 3, stopped at step 116) draws its teacher's dark ink (9.5 from the sample's on the held-out pages); **d**
+  and **e** (rank 128, learning rate 1e-4, 400 steps of 16, teachers at 2.0 and 1.5) became their teachers by step
+  200 (5.4 and 3.3 from the sample against the teachers' 5.2 and 3.2). On the demo Space's new pages, where the
+  sample is never the page's own, neither is closer in ink than the first student, which the Space keeps. **g** and
+  **h** (`--swap 0.5`) test whether a student taught from other pages' samples follows a sample there; they were
+  queued on 20 Nov and are not judged yet. Guidance on a student darkens its ink and sharpens its text, at twice the
+  passes.
 
 ## Jobs
 
@@ -207,17 +317,13 @@ CPU and GPU).
   training, the export and model directory, 8 held-out crops drawn with and without their reference.
 - `jobs/moss/run_ref_full.sh`: the full fine-tune on the Spark: a smoke run, the overfit test (300 steps on 8 pairs,
   its loss and drawings read against stated pass criteria), the training, its model directory and the held-out crops.
-- `jobs/moss/hpc_full.sbatch.example`: a Slurm template (no site names) for the full fine-tune over several GPUs; not
-  yet run on GPUs.
-- `jobs/moss/run_content_pilot.sh` (written, not run): does the hand follow the sample once no prompt names it? From
-  Base, on the 55-collection 1 MP page pairs (`data_flux3/page_pairs_many_1mp`, reused) less
-  `GT-RA_landskapshandlingar_20260227`, which holds the scans of `GT-RA_landskapshandlingar_20260220` again (418 of
-  the set's 15,745 training rows left out, so that hand counts once): the content forms and legible
-  samples added to its manifests on CPU (minutes), caches of 12,000 training rows in the content mix with look and
-  hand changes for half the sample-form entries each, a validation and a held-out cache (~5.5 h), 2,500 steps of one
-  sample (~22 s each at a 1 MP page and a 1 MP sample: ~16 h), and the model directory (`sample_size: legible`). It
-  passes when the sample form's validation loss falls below the generic form's and the swap test's pages follow their
-  samples' hands.
+- `jobs/moss/hpc_full.sbatch.example`: a Slurm template for the full fine-tune over several GPUs, the one the
+  Leonardo runs' scripts follow ([MOSS_HPC.md](MOSS_HPC.md)).
+- `jobs/moss/run_content_pilot.sh`: the content pilot on the Spark (run before 7 Nov): from Base, on the
+  55-collection 1 MP page pairs less `GT-RA_landskapshandlingar_20260227` (the scans of `..._20260220` again), the
+  content forms and legible samples added on CPU, caches of 12,000 training rows in the content mix with look and
+  hand changes for half the sample-form entries each, 2,500 steps of one sample, and the model directory
+  (`sample_size: legible`). Its look followed the sample and its hand did not.
 
       mkdir -p runs/moss_content_pilot && setsid nohup jobs/moss/run_content_pilot.sh \
           >> runs/moss_content_pilot/run.log 2>&1 < /dev/null &
@@ -278,7 +384,7 @@ DiT of its own. Four are published as PEFT LoRA adapters of the Base DiT (public
 
 - **Drawing** with a hand: a model directory of the Base DiT (`diffu-moss-init --base $BASE --out runs/moss/base`),
   and the hand's adapter by `--lora hand=<folder>` (or as the `lora` of a style preset, `--styles`; a run of several
-  hands draws them a pipeline at a time, as FLUX.3's hands are drawn: [PIPELINE.md](PIPELINE.md)). Its caption names
+  hands draws them a pipeline at a time: [PIPELINE.md](PIPELINE.md)). Its caption names
   the collection as the hand trained on it (the page's style: provenance title and years). `--lora-scale` sets its
   strength (1: as trained). The adapter's layers compute their change in float32 beside the DiT's bfloat16;
   `--fuse-loras` merges them into the DiT's weights at load instead (no LoRA matmul a step), each weight rounded to

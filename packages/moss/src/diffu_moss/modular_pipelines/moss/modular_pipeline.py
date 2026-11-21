@@ -8,7 +8,7 @@ from diffusers.modular_pipelines import ModularPipeline, ModularPipelineBlocks
 
 from diffu_moss.modular_pipelines.moss.modular_blocks_moss import MossAutoBlocks
 
-FLUX2_VAE_SCALE = 8  # the FLUX.2 VAE's downsampling, before a VAE is loaded
+VAE_SCALE = 8  # the VAE's downsampling, before a VAE is loaded
 LATENT_CHANNELS = 128  # the DiT's latent channels (the VAE's 32, packed 2x2), before a DiT is loaded
 
 
@@ -28,7 +28,7 @@ class MossModularPipeline(ModularPipeline):
     def vae_scale_factor(self) -> int:
         """The VAE's downsampling: its latents are half a latent cell (16 px) on a side."""
         vae = getattr(self, "vae", None)
-        return FLUX2_VAE_SCALE if vae is None else 2 ** (len(vae.config.block_out_channels) - 1)
+        return VAE_SCALE if vae is None else 2 ** (len(vae.config.block_out_channels) - 1)
 
     @property
     def num_channels_latents(self) -> int:

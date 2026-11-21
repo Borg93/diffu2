@@ -17,8 +17,8 @@ where it stopped, and ``--out``, a new manifest: the rows in their order, each a
 ``diffu-moss-cache-pairs`` records, and a training and a model after it. A row whose sample is legible already is
 refused.
 
-    python -m diffu_page.data.page_pair_samples --pairs data_flux3/page_pairs_many_1mp/train_content.jsonl \\
-        --out data_flux3/page_pairs_many_1mp/train_content_legible.jsonl --workers 4
+    python -m diffu_page.data.page_pair_samples --pairs data_pages/page_pairs_many_1mp/train_content.jsonl \\
+        --out data_pages/page_pairs_many_1mp/train_content_legible.jsonl --workers 4
 """
 
 from __future__ import annotations

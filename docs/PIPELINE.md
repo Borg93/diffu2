@@ -1,12 +1,12 @@
 # The page pipeline
 
 How a synthetic page is made: a real page's layout, new text and a style in; drawn crops or whole pages with their
-labels out. The repo map is in the [README](../README.md); how the models are trained: [MOSS.md](MOSS.md) and
-[FLUX3.md](FLUX3.md); open work in [TODO.md](../TODO.md).
+labels out. The repo map is in the [README](../README.md); the model and how it is trained: [MOSS.md](MOSS.md); open
+work in [TODO.md](../TODO.md).
 
 ## From a page to labelled crops
 
-Every step is a Modular Diffusers block; `diffu_page.draw.pipeline` assembles our blocks around a model's own.
+Every step is a Modular Diffusers block; `diffu_page.draw.pipeline` assembles our blocks around MOSS-Image's own.
 
 ```
 PAGE/ALTO page ──► LoadLayout ──► MarkFromScan ──► OpeningPage ──► Refill ──► PlanCrops ──► per crop: CropPrompt ──► model's blocks ──► judge ──► repair ──► labels
@@ -45,24 +45,26 @@ PAGE/ALTO page ──► LoadLayout ──► MarkFromScan ──► OpeningPage
    Lines with no text to measure (a layout given as boxes) take `CHARS_PER_LINE_ASPECT` (3.7) characters per unit of
    their width over their height. A job without text skips this step: every line keeps its own. A job may give its
    layout inline (`PageJob.layout`) instead of a template: it is one page, neither marked from a scan nor split.
-3. **Crops** (`PlanCropsStep`, `diffu_page.page.crops`, `diffu_page.draw.plan`): the page is cut into the windows the
-   models were trained on (whole lines, about 1 megapixel at a 64 px line pitch, NeMo bucket sizes, margin notes joined
-   to the column beside them), or planned whole as one crop at a pixel budget (`plan_whole_page`, `--whole-page`). Each
+3. **Crops** (`PlanCropsStep`, `diffu_page.page.crops`, `diffu_page.draw.plan`): the page is cut into training-scale
+   windows (whole lines, about 1 megapixel at a 64 px line pitch, a fixed set of sizes, margin notes joined to the
+   column beside them), or planned whole as one crop at a pixel budget (`plan_whole_page`, `--whole-page`), as the
+   sample-above model draws it (2 MP). Each
    is a `CropPlan`: its size, its caption and its lines with boxes (0–1000, y first) and reading order. Windows
    overlap by design (training windows share lines), so a page's windows are not a tiling of the page.
-4. **Caption** (`diffu_page.captions`): FLUX.3's layout prompt. A paragraph names the archive, years, scan, paper and
+4. **Caption** (`diffu_page.captions`): the layout caption. A paragraph names the archive, years, scan, paper and
    ink and cites every line; a JSON table gives each line's box and text. Training data and generation build it with
    the same code, and the phrases that carry the style are spelled in one place (`captions.prompt.phrases_for`); a
-   printed line's row and a ruled line's name no style and are left as written. A page drawn from a reference crop
+   printed line's row and a ruled line's name no style and are left as written. A page drawn from a sample page
    (`plan.Reference`, style by example) is captioned as the model's training pairs were (`restyle.reference_caption`):
-   the style's words give way to `<ref_image_0>`, with the reference's hand, ink and paper described as measured
-   (`described`: `captions.hand`, slant, pen width, letter size, spacing, colours as hex), or in one of MOSS-Image's
-   prompt forms (`plain`, `named`, `hand`, `sample`: [MOSS.md](MOSS.md)). The form must be the one the model was
-   trained on (`--reference-caption`). MOSS-Image compiles the caption into its own Layout prompt.
-5. **Drawing** (`diffu_page.draw.pipeline`): a model directory names its blocks in `modular_model_index.json`, and
-   `FAMILIES` maps those to the model's blocks and pipeline class (FLUX.3 Klein: `Flux3AutoBlocks` without its prompt
-   upsampler, which would rewrite the quoted lines; MOSS-Image: `MossAutoBlocks`, a `diffu-moss-init` directory) and
-   the guidance scale it draws at unless `--guidance` names one (FLUX.3's 4, MOSS's 3). Around them:
+   the style's words give way to `<ref_image_0>`, in one of the prompt forms of [MOSS.md](MOSS.md) (`sample`, the
+   sample-above model's: nothing named, the look from the sample alone; `sample_look`, `named`, `hand`, `plain`, or
+   `described`, the sample's hand, ink and paper in words as measured by `captions.hand`). The form must be one the
+   model was trained on (`--reference-caption`). `diffu_moss.layout_prompt` compiles the caption into MOSS-Image's
+   Layout prompt.
+5. **Drawing** (`diffu_page.draw.pipeline`): a model directory is `diffu-moss-init`'s, its `modular_model_index.json`
+   naming MOSS-Image's blocks (`MossAutoBlocks`); any other is refused. It draws at MOSS-Image's own guidance scale, 3,
+   unless `--guidance` names one (2 is what the measurements support: [MOSS.md](MOSS.md), "Guidance"). Around the
+   model's blocks:
    - `crop_blocks`: `CropPromptStep` (plan → prompt, boxes, size), `ReferenceGridStep` (a reference image on the
      training grid), the model's text encoder, VAE encoders (only with a reference image), denoise and decode. The
      model's auto blocks choose plain or reference-conditioned denoising from the inputs. Both denoise branches carry
@@ -81,9 +83,9 @@ PAGE/ALTO page ──► LoadLayout ──► MarkFromScan ──► OpeningPage
      follow the judge's verdicts on the result.
    - `PagePlanBlocks`: the plan steps alone, no model. `jobs.crop_jobs` turns a page's plans into crop jobs, crop k
      named `<page>_<k>` and drawn from noise seed `seed + k`, each with the page's reference image if it has one.
-   LoRAs load as named adapters, at `--lora-scale`: FLUX.3's (NeMo checkpoints) through the model's own LoRA loader
-   (`diffu_page.draw.lora`), MOSS-Image's (PEFT adapters of its DiT, `diffu-moss-convert-lora`'s: [MOSS.md](MOSS.md),
-   "Hand LoRAs") onto the DiT (`diffu_moss.adapters`); with `DrawSettings.fuse_loras` (`--fuse-loras`) they are fused
+   LoRAs load as named adapters, at `--lora-scale`: PEFT adapters of the DiT (`diffu-moss-convert-lora`'s:
+   [MOSS.md](MOSS.md), "Hand LoRAs"), loaded onto it by `diffu_moss.adapters`; with `DrawSettings.fuse_loras`
+   (`--fuse-loras`) they are fused
    into the transformer's weights at load, and `DrawSettings.compile_blocks` (`--compile-blocks`) then compiles the
    transformer's repeated blocks (diffusers' regional compilation), refused around unfused LoRAs, as MOSS-Image's MXFP8
    and AOTInductor packages are.
@@ -97,11 +99,15 @@ them name and seed crops alike, so a page comes out the same from any of them.
 ## Running it: diffu-generate
 
 ```bash
-jobs/spark_guard.sh --need-gb 50 --name pages -- uv run diffu-generate --model runs/moss/eight_full_r6b_step_000750 \
+jobs/spark_guard.sh --need-gb 50 --name pages -- uv run diffu-generate --model models/moss-above \
     --templates page_a.xml --templates page_b.xml --text-from other_page.xml \
-    --title "the records of Överståthållarämbetet" --paper yellowed --ink brown --whole-page --page-megapixels 2 \
-    --out runs/pages
+    --title "the records of Överståthållarämbetet" --paper yellowed --ink brown \
+    --reference sample_page.jpg --reference-caption sample --whole-page --page-megapixels 2 \
+    --steps 28 --guidance 2 --out runs/pages
 ```
+
+`models/moss-above` is the model directory of the [README](../README.md)'s "Drawing a page" (`diffu-moss-init` around
+`Gabriel/diffu-moss-above`).
 
 - `--text-from` takes a PAGE/ALTO page (its running text) or a plain text file, written as it stands (a blank line
   ends a paragraph).
@@ -118,16 +124,20 @@ jobs/spark_guard.sh --need-gb 50 --name pages -- uv run diffu-generate --model r
   {"template": "page_a.xml", "text": "Anno 1720 den 5 maj ...", "style": {"provenance": {"title": "the court records of Jämtlands domsaga", "years": "1720"}, "look": {"greyscale": false, "paper": "cream", "ink": "dark brown"}}, "page_pixels": 2000000, "id": "jamt_1720_p1"}
   ```
 
-- `--styles styles.json --style NAME` (or a job line's `"style": NAME`) draws in a named preset
+- `--styles <presets>.json --style NAME` (or a job line's `"style": NAME`) draws in a named preset
   (`diffu_page.draw.styles.StylePreset`: the archive and years, the look, a LoRA and a reference, paths relative to the
-  file); a run with several presets draws one pipeline per set of LoRAs in turn (`summary.json`: `groups`). The repo's
-  `styles.json` holds FLUX.3's hands; a preset of MOSS-Image's names a hand's adapter folder as its `lora`.
-- `--lora hand=<folder>` draws every page whose style is spelled out with a LoRA: a NeMo checkpoint's `model/` dir for
-  FLUX.3, a hand's adapter for MOSS-Image ([MOSS.md](MOSS.md), "Hand LoRAs").
+  file); a run with several presets draws one pipeline per set of LoRAs in turn (`summary.json`: `groups`). A preset's
+  `lora` names a hand's adapter folder.
+- `--lora hand=<folder>` draws every page whose style is spelled out with a hand's adapter ([MOSS.md](MOSS.md), "Hand
+  LoRAs").
 - `--repair N` draws the lines the read-back rejects again in place, up to N times, each pass from its own noise and
   kept only where it reads back; `summary.json` gives each crop's lines repaired.
-- `--reference <crop>` draws every page from a sample (a model trained with references), captioned in
-  `--reference-caption`'s form.
+- `--reference <image>` draws every page from a sample page (a model trained with references), captioned in
+  `--reference-caption`'s form; `--reference-guidance` above 1 adds a third pass toward the sample (it did not move
+  the hand: MOSS_RUNS.md, 18-19 Nov).
+- `--steps`, `--guidance`, `--guidance-stop` (the share of the steps that are guided: 0.5 drew the same page in about a
+  quarter less time), `--sampling-shift`, `--compile-blocks`; the other speed options are draw settings
+  ([INFERENCE.md](INFERENCE.md), sections 6 and 12).
 
 ## Labels for page readers
 
@@ -240,8 +250,8 @@ style = PageStyle(
     provenance=Provenance(title="the court records of Jämtlands domsaga", years="1690–1700"),
     look=ScanLook(greyscale=False, paper="cream", ink="dark brown"),
 )
-settings = DrawSettings(steps=50)
-pipe = load_pipeline(model_dir, crop_blocks, loras={}, settings=settings)  # a MOSS-Image or FLUX.3 Klein directory
+settings = DrawSettings(steps=28, guidance_scale=2.0)
+pipe = load_pipeline(model_dir, crop_blocks, loras={}, settings=settings)  # a diffu-moss-init model directory
 page = PageJob(template=Path("page.xml"), text=text, style=style, seed=0)  # a blank line in text ends a paragraph
 crops = [
     draw_crop(pipe, job.plan, name=job.name, seed=job.seed, reference=job.reference_image(), settings=settings)

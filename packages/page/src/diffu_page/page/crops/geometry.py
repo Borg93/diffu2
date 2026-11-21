@@ -1,4 +1,4 @@
-"""Where a page's lines are and how a page is cut into crops at the scale the FLUX.3 LoRAs train on.
+"""Where a page's lines are and how a page is cut into crops at the scale the models train on.
 
 Crops cover consecutive whole lines of one text column (a wide region plus the margin notes, headings and page
 numbers beside it), scaled to a ~64 px line pitch and saved at the exact size of a NeMo bucket. A table is one region:
@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 from diffu_page.page.layout.model import Layout, LineKind, PageBox, TextLine
 
-type LayoutBox = tuple[int, int, int, int]  # y0, x0, y1, x1 on 0-1000 of a crop: FLUX.3's layout boxes
+type LayoutBox = tuple[int, int, int, int]  # y0, x0, y1, x1 on 0-1000 of a crop: a layout caption's boxes
 
 
 def pixel_box(bbox: Sequence[int], size: tuple[int, int]) -> tuple[float, float, float, float]:
@@ -190,7 +190,7 @@ class Crop(BaseModel):
     rules: list[PageBox] = Field(default_factory=list)
 
     def layout_box(self, box: PageBox) -> LayoutBox:
-        """A page rectangle as a FLUX.3 layout box: ``[y_min, x_min, y_max, x_max]`` on 0-1000, clamped."""
+        """A page rectangle as a layout box: ``[y_min, x_min, y_max, x_max]`` on 0-1000, clamped."""
         x0, y0, x1, y1 = self.rect
         width, height = x1 - x0, y1 - y0
         relative = (

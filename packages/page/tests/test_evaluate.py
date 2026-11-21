@@ -1,9 +1,10 @@
-"""The evaluate CLI end to end on CPU (diffusers' tiny FLUX.3 test model, the real HTR read-back): every crop drawn
+"""The evaluate CLI end to end on CPU (conftest's tiny reference-trained MOSS-Image, the real HTR read-back): every crop drawn
 and scored into results.json, its hand measured beside its real crop's and its reference's, a crop that fails
 recorded while the rest still run."""
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from statistics import median
 
@@ -23,6 +24,10 @@ LINES = [
     LineRecord(id="Sv_Text_1", text="Göteborgs poliskammare", role="", bbox=[0, 0, 500, 1000]),
     LineRecord(id="Sv_Text_2", text="den 4 maj", role="", bbox=[500, 0, 1000, 1000]),
 ]
+ROWS = [
+    {"id": line.id, "bbox": line.bbox, "desc": f'a line of text reading "{line.text}", in brown ink'} for line in LINES
+]
+CAPTION = f"A handwritten page. {json.dumps(ROWS, ensure_ascii=False)}"  # a layout caption: its prose, then its rows
 
 
 def _eval_set(directory: Path, crops: list[EvalCrop]) -> Path:
@@ -39,7 +44,7 @@ REFERENCE_LINES = [[100, 50, 300, 950], [500, 50, 700, 950]]
 def _crop(name: str, reference: str | None = None, reference_lines: list[list[int]] | None = None) -> EvalCrop:
     return EvalCrop(
         file_name=name,
-        caption="A handwritten page.",
+        caption=CAPTION,
         width=64,
         height=32,
         lines=LINES,
@@ -48,9 +53,9 @@ def _crop(name: str, reference: str | None = None, reference_lines: list[list[in
     )
 
 
-def _evaluate(tiny_flux3: Path, crops: Path, out: Path, *options: str) -> Result:
-    args = ["--crops", str(crops), "--out", str(out), "--model", str(tiny_flux3), "-n", "2", "--steps", "2"]
-    return CliRunner().invoke(app, [*args, "--text-layer", "1", "--device", "cpu", *options])
+def _evaluate(model: Path, crops: Path, out: Path, *options: str) -> Result:
+    args = ["--crops", str(crops), "--out", str(out), "--model", str(model), "-n", "2", "--steps", "2"]
+    return CliRunner().invoke(app, [*args, "--device", "cpu", *options])
 
 
 def _referenced_set(crops_dir: Path) -> tuple[Path, list[Image.Image]]:
@@ -64,11 +69,11 @@ def _referenced_set(crops_dir: Path) -> tuple[Path, list[Image.Image]]:
     return crops, references
 
 
-def test_evaluate_records_a_failed_crop_and_scores_the_rest(tiny_flux3: Path, tmp_path: Path) -> None:
+def test_evaluate_records_a_failed_crop_and_scores_the_rest(tiny_reference_moss: Path, tmp_path: Path) -> None:
     crops = _eval_set(tmp_path / "crops", [_crop("a.jpg"), _crop("b.jpg")])
     (crops / "b.jpg").unlink()  # its real crop can't be read back
 
-    result = _evaluate(tiny_flux3, crops, tmp_path / "out")
+    result = _evaluate(tiny_reference_moss, crops, tmp_path / "out")
 
     results = Results.model_validate_json((tmp_path / "out" / "results.json").read_text())
     assert result.exit_code == 1
@@ -79,11 +84,11 @@ def test_evaluate_records_a_failed_crop_and_scores_the_rest(tiny_flux3: Path, tm
 
 
 def test_evaluate_measures_each_drawn_hand_beside_its_real_crop_and_its_reference(
-    tiny_flux3: Path, tmp_path: Path
+    tiny_reference_moss: Path, tmp_path: Path
 ) -> None:
     crops, references = _referenced_set(tmp_path / "crops")
 
-    exit_code = _evaluate(tiny_flux3, crops, tmp_path / "out").exit_code
+    exit_code = _evaluate(tiny_reference_moss, crops, tmp_path / "out").exit_code
 
     results = Results.model_validate_json((tmp_path / "out" / "results.json").read_text())
     boxes = [line.bbox for line in LINES]
@@ -109,28 +114,26 @@ def test_evaluate_measures_each_drawn_hand_beside_its_real_crop_and_its_referenc
     )
 
 
-def test_evaluate_guides_toward_each_crops_reference_when_asked(tiny_flux3: Path, tmp_path: Path) -> None:
+def test_evaluate_guides_toward_each_crops_reference_when_asked(tiny_reference_moss: Path, tmp_path: Path) -> None:
     crops, _ = _referenced_set(tmp_path / "crops")
-    _evaluate(tiny_flux3, crops, tmp_path / "caption")
+    _evaluate(tiny_reference_moss, crops, tmp_path / "caption")
 
-    exit_code = _evaluate(tiny_flux3, crops, tmp_path / "reference", "--reference-guidance", "3").exit_code
+    exit_code = _evaluate(tiny_reference_moss, crops, tmp_path / "reference", "--reference-guidance", "3").exit_code
 
     results = Results.model_validate_json((tmp_path / "reference" / "results.json").read_text())
     drawn = [(tmp_path / run / "generated" / "000.png").read_bytes() for run in ("caption", "reference")]
     assert exit_code == 0
-    assert results.summary.settings == DrawSettings(
-        steps=2, reference_guidance_scale=3.0, text_layers=(1,), device="cpu"
-    )
+    assert results.summary.settings == DrawSettings(steps=2, reference_guidance_scale=3.0, device="cpu")
     assert drawn[1] != drawn[0]
 
 
 def test_evaluate_without_reference_draws_each_crop_from_its_caption_alone_and_measures_it_beside_its_reference(
-    tiny_flux3: Path, tmp_path: Path
+    tiny_reference_moss: Path, tmp_path: Path
 ) -> None:
     crops, references = _referenced_set(tmp_path / "crops")
-    _evaluate(tiny_flux3, _eval_set(tmp_path / "plain", [_crop("a.jpg")]), tmp_path / "caption", "-n", "1")
+    _evaluate(tiny_reference_moss, _eval_set(tmp_path / "plain", [_crop("a.jpg")]), tmp_path / "caption", "-n", "1")
 
-    exit_code = _evaluate(tiny_flux3, crops, tmp_path / "out", "-n", "1", "--without-reference").exit_code
+    exit_code = _evaluate(tiny_reference_moss, crops, tmp_path / "out", "-n", "1", "--without-reference").exit_code
 
     results = Results.model_validate_json((tmp_path / "out" / "results.json").read_text())
     drawn = [(tmp_path / run / "generated" / "000.png").read_bytes() for run in ("caption", "out")]

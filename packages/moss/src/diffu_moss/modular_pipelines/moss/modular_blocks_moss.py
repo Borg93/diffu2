@@ -1,11 +1,11 @@
 """MOSS-Image's blocks: the Layout prompt and text encoder steps, the reference encoder, the denoise step and the
 decoder.
 
-The denoise step is laid out as FLUX.3's (``Flux3AutoCoreDenoiseStep``): an auto step whose one workflow runs
-``prepare_latents``, ``set_timesteps``, the loop of ``denoiser`` and ``after_denoiser`` and ``after_denoise`` (FLUX.3's
-own step, back from tokens to the latent grid). MOSS-Image's denoising is the same with a reference image or without:
+The denoise step is an auto step whose one workflow runs ``prepare_latents``, ``set_timesteps``, the loop of
+``denoiser`` and ``after_denoiser`` and ``after_denoise`` (diffusers' ``Flux3UnpackLatentsStep``, back from tokens to
+the latent grid). MOSS-Image's denoising is the same with a reference image or without:
 a reference (only for a DiT trained to take one) is encoded before it and read by the DiT in every pass. The page
-pipeline (``diffu_page.draw.pipeline.crop_blocks``) inserts its line repair by those names, as it does into FLUX.3's.
+pipeline (``diffu_page.draw.pipeline.crop_blocks``) inserts its line repair by those names.
 """
 
 from __future__ import annotations
@@ -90,7 +90,7 @@ class MossAutoBlocks(SequentialPipelineBlocks):
     def description(self) -> str:
         return (
             "Auto blocks that perform text-to-image generation using MOSS-Image: its DiT, the Qwen3.5 text encoder and "
-            "the FLUX.2 VAE. A crop's layout caption with its lines (`page_lines`) is compiled as MOSS's Layout "
+            "its VAE. A crop's layout caption with its lines (`page_lines`) is compiled as MOSS's Layout "
             "prompt first. A model trained with references (`takes_reference`) also takes a reference `image`."
         )
 

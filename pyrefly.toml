@@ -5,20 +5,17 @@ project-excludes = ["**/.git/**", "**/__pycache__/**", "**/.venv/**"]
 search-path = [".", "packages/sglang_moss/src"]
 
 # diffusers' and transformers' stubs don't model their dynamic attributes (block state, configs), so they are typed as
-# Any: we check our own logic, not theirs. NeMo AutoModel and the torchdata it brings exist only in NeMo's own
-# environment, SGLang only in its own (packages/sglang_moss), ms-swift only in packages/htr_train/envs (its training
-# plugin imports it). torch, numpy and PIL ship their own types and are checked, as ty checks them (pyproject.toml).
+# Any: we check our own logic, not theirs. SGLang exists only in its own environment
+# (packages/sglang_moss), ms-swift only in packages/htr_train/envs (its training plugin imports it). torch, numpy and PIL ship their own types and are checked, as ty checks them (pyproject.toml).
 replace-imports-with-any = [
     "diffusers", "diffusers.*",
     "transformers", "transformers.*",
     "safetensors", "safetensors.*",
-    "nemo_automodel", "nemo_automodel.*",
-    "torchdata", "torchdata.*",
     "sglang", "sglang.*",
     "swift", "swift.*",
 ]
 
 [errors]
-# diffusers and NeMo, typed as Any above, are the parents of most classes we override, so pyrefly cannot see them and
+# diffusers, typed as Any above, is the parent of most classes we override, so pyrefly cannot see them and
 # would report each @override as overriding nothing. ty checks the overrides whose parents it sees (torch's).
 bad-override = false

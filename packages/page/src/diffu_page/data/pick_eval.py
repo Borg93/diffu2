@@ -4,8 +4,8 @@ Each collection contributes its first crop with a margin note, heading or page n
 and when there are more collections than ``-n`` the picks are spread evenly over the alphabetical list, so
 every archive group is represented. The picked images are hard-linked next to their metadata.
 
-    python -m diffu_page.data.pick_eval data_flux3/layout_crops_v2/val \
-        data_flux3/layout_crops_v2/val_eval -n 24
+    python -m diffu_page.data.pick_eval data_pages/layout_crops_v2/val \
+        data_pages/layout_crops_v2/val_eval -n 24
 """
 
 from __future__ import annotations

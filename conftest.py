@@ -1,10 +1,9 @@
 """Fixtures shared by every workspace member's tests: PAGE pages to plan and draw, a ground-truth form beside its scan
-and a stand-in print/hand classifier to mark it with, a crop and its training record, diffusers' tiny FLUX.3 test model
-(with a VAE that downsamples as FLUX.3's does), a tiny MOSS-Image repo (MOSS's own tokenizer, a tiny Qwen3.5, a tiny
-FLUX.2-class VAE and a tiny DiT, random weights), and a reference training on it: a tiny style-pair set in the
+and a stand-in print/hand classifier to mark it with, a crop and its training record, a tiny MOSS-Image repo (MOSS's own
+tokenizer, a tiny Qwen3.5, a tiny VAE and a tiny DiT, random weights), and a reference training on it: a tiny style-pair set in the
 described reference form, its caches (one with look changes for its sample form, one with hand changes), a short
-training run and the MOSS repo of its merged export, which takes a reference image; and a LoRA of one module of either
-model, a NeMo LoRA checkpoint or a MOSS-Image adapter converted from a LyCORIS file. htr-train's line-set builder is
+training run and the MOSS repo of its merged export, which takes a reference image; and a LoRA of one module, a
+MOSS-Image adapter converted from a LyCORIS file or a bare PEFT adapter folder. htr-train's line-set builder is
 its own tests' fixture; its protocol is here, where ``conftest`` resolves for the type checkers."""
 
 from __future__ import annotations
@@ -377,40 +376,6 @@ def make_record() -> RecordMaker:
     return make
 
 
-TINY_FLUX3 = "hf-internal-testing/tiny-flux3-image-modular"
-TINY_FLUX3_REVISION = "9130f96f124d6c6fdd1beab63cfb6d2f1c8658a1"  # pinned: a changed fixture must not change results
-
-
-# 8x downsampling like FLUX.3's own VAE: the Hub test model's downsamples 2x, which made a bucket-sized crop some
-# 59,000 tokens and its drawing minutes of CPU attention in the transformer and the VAE
-TINY_FLUX3_VAE = {
-    "block_out_channels": [16, 16, 16, 16],
-    "down_block_types": ["DownEncoderBlock2D"] * 4,
-    "up_block_types": ["UpDecoderBlock2D"] * 4,
-}
-
-
-@pytest.fixture(scope="session")
-def tiny_flux3(tiny_flux3_snapshot: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """diffusers' tiny FLUX.3 test model (a few MB, downloaded once into the Hugging Face cache), copied with a tiny VAE
-    that downsamples 8x as FLUX.3's does, so a crop is drawn from as many tokens as the real model draws it from."""
-    snapshot = tiny_flux3_snapshot
-    repo = tmp_path_factory.mktemp("flux3")
-    shutil.copytree(snapshot, repo, ignore=shutil.ignore_patterns("vae"), dirs_exist_ok=True)
-    torch.manual_seed(0)
-    vae = AutoencoderKLFlux2.from_config(
-        {**AutoencoderKLFlux2.load_config(snapshot, subfolder="vae"), **TINY_FLUX3_VAE}
-    )
-    vae.save_pretrained(repo / "vae")
-    return repo
-
-
-@pytest.fixture(scope="session")
-def tiny_flux3_snapshot() -> Path:
-    """diffusers' tiny FLUX.3 test model as downloaded: its tiny Qwen3-VL text encoder and processor among it."""
-    return Path(snapshot_download(TINY_FLUX3, revision=TINY_FLUX3_REVISION))
-
-
 MOSS_BASE = "OpenMOSS-Team/MOSS-Image-Base"
 MOSS_BASE_REVISION = "85975793d8b3d432f1b6e27f352abaa4c2a4c0d3"  # pinned: the tokenizer and chat template MOSS reads
 
@@ -439,6 +404,28 @@ TINY_QWEN3_5 = {
         "num_position_embeddings": 64,
     },
 }
+# MOSS-Image's VAE class at width 16, downsampling 8x as MOSS's does: a crop is drawn from as many tokens as the real
+# model draws it from
+TINY_VAE = {
+    "act_fn": "silu",
+    "batch_norm_eps": 0.0001,
+    "batch_norm_momentum": 0.1,
+    "block_out_channels": [16, 16, 16, 16],
+    "decoder_block_out_channels": None,
+    "down_block_types": ["DownEncoderBlock2D"] * 4,
+    "force_upcast": True,
+    "in_channels": 3,
+    "latent_channels": 4,
+    "layers_per_block": 1,
+    "mid_block_add_attention": True,
+    "norm_num_groups": 16,
+    "out_channels": 3,
+    "patch_size": [2, 2],
+    "sample_size": 32,
+    "up_block_types": ["UpDecoderBlock2D"] * 4,
+    "use_post_quant_conv": True,
+    "use_quant_conv": True,
+}
 # three blocks of width 32 over the tiny VAE's 4 channels packed 2x2 and the tiny Qwen3.5's 16
 TINY_MOSS_DIT = {
     "dim": 32,
@@ -452,9 +439,9 @@ TINY_MOSS_DIT = {
 
 
 @pytest.fixture(scope="session")
-def tiny_moss_base(tiny_flux3_snapshot: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
+def tiny_moss_base(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """A tiny MOSS-Image Base snapshot: MOSS's own tokenizer and scheduler config (downloaded once), a tiny Qwen3.5
-    text encoder, a VAE of FLUX.2's class that downsamples 8x as MOSS's does (tiny FLUX.3's) and a tiny DiT, all random
+    text encoder, a tiny VAE of MOSS's class that downsamples 8x as MOSS's does and a tiny DiT, all random
     weights, so a prompt changes what it draws."""
     base = tmp_path_factory.mktemp("moss_base")
     snapshot = Path(
@@ -466,8 +453,7 @@ def tiny_moss_base(tiny_flux3_snapshot: Path, tmp_path_factory: pytest.TempPathF
     shutil.copytree(snapshot / "scheduler", base / "scheduler")
     torch.manual_seed(0)
     Qwen3_5Model(Qwen3_5Config(**TINY_QWEN3_5)).save_pretrained(base / "text_encoder")
-    vae_config = {**AutoencoderKLFlux2.load_config(tiny_flux3_snapshot, subfolder="vae"), **TINY_FLUX3_VAE}
-    AutoencoderKLFlux2.from_config(vae_config).save_pretrained(base / "vae")
+    AutoencoderKLFlux2.from_config(TINY_VAE).save_pretrained(base / "vae")
     MossTransformer(**TINY_MOSS_DIT).save_pretrained(base / "transformer")
     return base
 
@@ -623,16 +609,17 @@ def tiny_reference_moss(
     return repo
 
 
-class NemoLoraWriter(Protocol):
-    """``write_nemo_lora``: a NeMo LoRA of one ``module``, down weights ``a`` and up weights ``b``, its ``model/`` dir."""
+class PeftLoraWriter(Protocol):
+    """``write_peft_lora``: a bare PEFT LoRA of one ``module``, down weights ``a`` and up weights ``b``, its folder."""
 
     def __call__(self, module: str, a: torch.Tensor, b: torch.Tensor, *, alpha: int) -> Path: ...
 
 
 @pytest.fixture
-def write_nemo_lora(tmp_path: Path) -> NemoLoraWriter:
-    """Writes a NeMo AutoModel LoRA checkpoint (PEFT keys under ``base_model.model.``) for one module of a transformer:
-    ``write_nemo_lora(module, a, b, alpha=...)`` returns its ``model/`` dir."""
+def write_peft_lora(tmp_path: Path) -> PeftLoraWriter:
+    """Writes a LoRA adapter folder as PEFT saves one (keys under ``base_model.model.``) for one module of any
+    transformer, whether a MOSS DiT has that module or not: ``write_peft_lora(module, a, b, alpha=...)`` returns its
+    folder."""
     written: list[Path] = []
 
     def write(module: str, a: torch.Tensor, b: torch.Tensor, *, alpha: int) -> Path:

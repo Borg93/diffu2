@@ -1,6 +1,6 @@
 """Guidance toward the reference image as well as the caption.
 
-FLUX.3's classifier-free guidance compares the drawing with and without the caption. The reference image's tokens go
+Classifier-free guidance compares the drawing with and without the caption. The reference image's tokens go
 into both passes, so guidance never pushes toward the reference: the caption decides, and the reference barely
 counts. :class:`ReferenceGuidance` adds a third pass, without the caption and without the reference, and combines the
 three as InstructPix2Pix combines its text and image scales (Brooks et al., 2023)::
@@ -22,17 +22,15 @@ from diffusers.guiders.guider_utils import GuiderOutput
 from diffusers.modular_pipelines.modular_pipeline import BlockState
 from torch.utils.hooks import RemovableHandle
 
-# the transformers' reference inputs: Flux3Transformer2DModel's tokens and their ids, MossTransformer's latents
-REFERENCE_INPUTS = ("image_cond_hidden_states", "image_cond_ids", "references")
+REFERENCE_INPUTS = ("references",)  # MossTransformer's reference inputs: each reference image's latents
 
 
 class ReferenceGuidance(ClassifierFreeGuidance):
     """Classifier-free guidance on the caption and on the reference image.
 
     Diffusers' :class:`ClassifierFreeGuidance` with a third pass: the denoiser without the caption and without its
-    reference inputs (:data:`REFERENCE_INPUTS`), removed by a forward pre-hook for that pass only, so FLUX.3-family
-    and MOSS-Image denoiser blocks, which hand the reference to the transformer as those keyword arguments, work
-    unchanged. At ``reference_scale`` 1 there is no third pass and this is classifier-free guidance exactly.
+    reference inputs (:data:`REFERENCE_INPUTS`), removed by a forward pre-hook for that pass only, so MOSS-Image's
+    denoiser block, which hands the reference to the transformer as those keyword arguments, works unchanged. At ``reference_scale`` 1 there is no third pass and this is classifier-free guidance exactly.
     ``guidance_rescale`` rescales the caption's guidance only.
 
     Args:

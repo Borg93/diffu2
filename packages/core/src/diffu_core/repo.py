@@ -1,6 +1,6 @@
 """A Modular Diffusers model repo's ``modular_model_index.json``: the blocks it names and where each component loads
-from. diffu-moss-init writes it, and the page pipeline reads which blocks (FLUX.3 Klein's or MOSS-Image's) a repo is
-drawn with."""
+from. diffu-moss-init writes it, and the page pipeline reads which blocks a repo names (MOSS-Image's, or the
+repo is refused)."""
 
 from __future__ import annotations
 

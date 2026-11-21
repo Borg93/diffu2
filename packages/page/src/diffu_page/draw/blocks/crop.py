@@ -57,11 +57,9 @@ class ReferenceGridStep(ModularPipelineBlocks):
     """Puts a reference image at the size and on the grid the model was trained on, by the rule its model index names
     (``sample_size``, :func:`diffu_page.draw.sample.sized_sample`).
 
-    The first rule, ``half`` (every FLUX.3 model's and a MOSS-Image index's without the key): the training references
-    were shrunk to the reference size (half a target's pixels) and NeMo's cache encoder squashed them onto the 16-pixel
-    grid, while FLUX.3's own preprocessing would keep a 1 MP crop at 1 MP and pad it out to the grid with a reflected
-    border. Resizing here first makes FLUX.3's preprocessing a no-op, so a reference of any size is drawn from as in
-    training; MOSS-Image's reference training shrinks its samples alike (``as_reference``). The ``legible`` rule sizes
+    The first rule, ``half`` (an index's without the key): the training references were shrunk to the reference size
+    (half a target's pixels) and squashed onto the 16-pixel grid (``as_reference``), so a reference of any size is
+    resized the same way here and drawn from as in training. The ``legible`` rule sizes
     a sample at the crop's writing scale: a whole page's at its pixel count, a window's cut at its line pitch from the
     sample page, whose line boxes (``reference_lines``) it then needs. Without a reference the step does nothing.
 

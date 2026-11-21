@@ -53,7 +53,7 @@ from diffu_page.data.page_pairs import (
     scanned,
     text_digests,
 )
-from diffu_page.draw.pipeline import FAMILIES, crop_blocks
+from diffu_page.draw.pipeline import crop_blocks
 from diffu_page.draw.plan import CropPlan, plan_page, plan_whole_page, whole_page_size
 from diffu_page.draw.sample import legible_sample, line_pitch
 from diffu_page.page.crops.grid import as_reference
@@ -181,7 +181,7 @@ def _all_rows(out: Path) -> list[PagePairRow]:
 
 def _drawing_prompt(plan: CropPlan, sample: Image.Image | None) -> str:
     """The prompt the page pipeline's MOSS steps give ``plan`` drawn with ``sample`` (or without one)."""
-    blocks = crop_blocks(FAMILIES["MossAutoBlocks"]).sub_blocks
+    blocks = crop_blocks().sub_blocks
     steps = SequentialPipelineBlocks.from_blocks_dict({name: blocks[name] for name in ("crop_prompt", "layout_prompt")})
     return steps.init_pipeline()(crop_plan=plan, image=sample, output="prompt")
 

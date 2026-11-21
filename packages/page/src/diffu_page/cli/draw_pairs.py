@@ -9,7 +9,7 @@ model's own blocks at its own guidance and sampling shift, from seed ``--seed`` 
 ``generated/NNN.png`` and a contact sheet a pair (``NNN_<pair>.jpg``: the reference, the real page, in that hand and
 look too, the drawing).
 
-    python -m diffu_page.cli.draw_pairs --model runs/moss/ref_full_overfit --cache data_flux3/cache_moss_ref_v3d \\
+    python -m diffu_page.cli.draw_pairs --model runs/moss/ref_full_overfit --cache data_pages/cache_moss_ref_v3d \\
         --limit-pairs 8 --out runs/moss_ref_full/overfit_drawn
 """
 
@@ -22,12 +22,12 @@ import torch
 import typer
 from PIL import Image
 
-from diffu_moss.modular_pipelines.moss import MossModularPipeline
+from diffu_moss.modular_pipelines.moss import MossAutoBlocks
 from diffu_moss.train.cache import read_entries, styled, with_reference
 from diffu_moss.train.pairs import read_manifest
 from diffu_moss.train.records import CACHE_RECORD, CacheRecord
 from diffu_page.cli.options import DEFAULTS, Device, Steps
-from diffu_page.draw.pipeline import DrawSettings, load_pipeline, model_family
+from diffu_page.draw.pipeline import DrawSettings, load_pipeline
 from diffu_page.output import JPEG_QUALITY, console, load_rgb, side_by_side
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
@@ -46,13 +46,11 @@ def draw_pairs(model: Path, cache: Path, out: Path, *, count: int, seed: int, se
         ValueError: If ``model`` is not a MOSS-Image model, or the cache is not finished or holds no pair drawn with its
             reference; from drawing, if the model takes no reference image.
     """
-    if model_family(model).pipeline is not MossModularPipeline:
-        raise ValueError(f"{model} is not a MOSS-Image model: a reference training's pairs are MOSS's Layout prompts")
     entries = with_reference(read_entries(cache), count)
     if not entries:
         raise ValueError(f"{cache} holds no pair drawn with its reference")
     pairs = {pair.id: pair for pair in read_manifest(Path(CacheRecord.read(cache / CACHE_RECORD).pairs))}
-    pipe = load_pipeline(model, lambda family: family.blocks(), loras={}, settings=settings)
+    pipe = load_pipeline(model, MossAutoBlocks, loras={}, settings=settings)
     (out / "generated").mkdir(parents=True, exist_ok=True)
     sheets = []
     for index, entry in enumerate(entries):

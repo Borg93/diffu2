@@ -1,6 +1,6 @@
 """MOSS-Image's encoder blocks: a crop plan's layout caption compiled as MOSS's Layout prompt, the prompt encoded by the
 frozen Qwen3.5-9B text encoder (its last hidden states over its chat template, thinking enabled, no system prompt), as
-MOSS-Image was trained to read it, and a reference image encoded by the FLUX.2 VAE for a DiT trained to take one."""
+MOSS-Image was trained to read it, and a reference image encoded by the VAE for a DiT trained to take one."""
 
 from __future__ import annotations
 

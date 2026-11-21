@@ -28,7 +28,7 @@ from diffu_moss.train.loop import LORA_TARGETS
 from diffu_moss.transformer import MossTransformer
 
 if TYPE_CHECKING:
-    from conftest import MossAdapterWriter, NemoLoraWriter
+    from conftest import MossAdapterWriter, PeftLoraWriter
 
 RANK, ALPHA = 4, 8.0  # most modules': a scale of 2
 OWN_RANK = {"video_embedder": 2}  # a module of a rank of its own
@@ -311,7 +311,7 @@ def test_read_adapter_refuses_a_folder_that_is_no_peft_lora_adapter(
         read_adapter(adapter)
 
 
-def _wider_dits_adapter(tmp_path: Path, tiny_moss_dit: Path, write_nemo_lora: NemoLoraWriter) -> Path:
+def _wider_dits_adapter(tmp_path: Path, tiny_moss_dit: Path, write_peft_lora: PeftLoraWriter) -> Path:
     """An adapter of a DiT twice as wide as the tiny one, of the module the tiny one has by that name."""
     with torch.device("meta"):
         wider = MossTransformer.from_config({**MossTransformer.load_config(str(tiny_moss_dit)), "dim": 64})
@@ -323,9 +323,9 @@ def _wider_dits_adapter(tmp_path: Path, tiny_moss_dit: Path, write_nemo_lora: Ne
     return adapter
 
 
-def _flux3_lora(tmp_path: Path, tiny_moss_dit: Path, write_nemo_lora: NemoLoraWriter) -> Path:
-    """A FLUX.3 Klein LoRA (a NeMo checkpoint): a PEFT adapter folder too, of modules no MOSS DiT has."""
-    return write_nemo_lora("single_transformer_blocks.0.attn.to_q", torch.zeros(2, 8), torch.zeros(8, 2), alpha=2)
+def _other_models_lora(tmp_path: Path, tiny_moss_dit: Path, write_peft_lora: PeftLoraWriter) -> Path:
+    """A LoRA of another model: a PEFT adapter folder too, of modules no MOSS DiT has."""
+    return write_peft_lora("single_transformer_blocks.0.attn.to_q", torch.zeros(2, 8), torch.zeros(8, 2), alpha=2)
 
 
 @pytest.mark.parametrize(
@@ -337,17 +337,17 @@ def _flux3_lora(tmp_path: Path, tiny_moss_dit: Path, write_nemo_lora: NemoLoraWr
             r"\(of shape \(4, 64\) in the adapter, \(4, 32\) in the DiT\)",
             id="wider-dit",
         ),
-        pytest.param(_flux3_lora, "Target modules .* not found in the base model", id="flux3"),
+        pytest.param(_other_models_lora, "Target modules .* not found in the base model", id="other-model"),
     ],
 )
 def test_load_adapters_refuses_an_adapter_of_another_model_by_its_name(
     tiny_moss_dit: Path,
     tmp_path: Path,
-    write_nemo_lora: NemoLoraWriter,
-    adapter_of: Callable[[Path, Path, NemoLoraWriter], Path],
+    write_peft_lora: PeftLoraWriter,
+    adapter_of: Callable[[Path, Path, PeftLoraWriter], Path],
     error: str,
 ) -> None:
-    adapter = read_adapter(adapter_of(tmp_path, tiny_moss_dit, write_nemo_lora))
+    adapter = read_adapter(adapter_of(tmp_path, tiny_moss_dit, write_peft_lora))
     dit = MossTransformer.from_pretrained(str(tiny_moss_dit))
 
     with pytest.raises(ValueError, match=f"the adapter 'hand' does not fit this DiT: .*{error}"):

@@ -1,5 +1,5 @@
-"""MOSS-Image's latents: the FLUX.2 VAE's, each 2x2 patch packed on channels, normalized by the VAE's batch-norm
-running statistics.
+"""MOSS-Image's latents: its VAE's (``AutoencoderKLFlux2``), each 2x2 patch packed on channels, normalized by the
+VAE's batch-norm running statistics.
 
 The one place an image becomes the DiT's latents and back: the decode step decodes with :func:`decode_latents`, a
 drawn crop is encoded with :func:`encode_latents` for a line repair (``diffu_page.draw.pipeline.page_latents``), and a

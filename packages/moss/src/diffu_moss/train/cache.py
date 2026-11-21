@@ -1,11 +1,11 @@
 """diffu-moss-cache-pairs: style pairs or page pairs as a reference training reads them, encoded once on the GPU.
 
-    diffu-moss-cache-pairs --model runs/moss/base --pairs data_flux3/style_pairs_v3d/train.jsonl \\
-        --out data_flux3/cache_moss_ref_v3d --limit 4000
-    diffu-moss-cache-pairs --model runs/moss/base --pairs data_flux3/style_pairs_v3d/val/val.jsonl \\
-        --out data_flux3/cache_moss_ref_v3d_val --every-form
-    diffu-moss-cache-pairs --model runs/moss/base --pairs data_flux3/page_pairs/train.jsonl \\
-        --out data_flux3/cache_moss_pages
+    diffu-moss-cache-pairs --model runs/moss/base --pairs data_pages/style_pairs_v3d/train.jsonl \\
+        --out data_pages/cache_moss_ref_v3d --limit 4000
+    diffu-moss-cache-pairs --model runs/moss/base --pairs data_pages/style_pairs_v3d/val/val.jsonl \\
+        --out data_pages/cache_moss_ref_v3d_val --every-form
+    diffu-moss-cache-pairs --model runs/moss/base --pairs data_pages/page_pairs/train.jsonl \\
+        --out data_pages/cache_moss_pages
 
 The manifest is a style-pair set's or a page-pair set's (:func:`diffu_moss.train.pairs.read_manifest`): a page pair's
 row carries its Layout prompt in every form, a style pair's caption is compiled into it here; both are cached alike.

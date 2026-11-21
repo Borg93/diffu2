@@ -3,7 +3,7 @@
 # and the many-volumes fine-tunes drew a page's hand from its archive's name (three of the four prompt forms, 60 % of
 # the steps, name it) and read their samples shrunk to half a page's pixels (a window's sample letters several times
 # smaller than the window's own), so in the swap test a page kept its own volume's hand whatever the sample. This
-# pilot trains from MOSS-Image Base, on the 55-collection 1 MP page pairs already built (data_flux3/page_pairs_many_1mp:
+# pilot trains from MOSS-Image Base, on the 55-collection 1 MP page pairs already built (data_pages/page_pairs_many_1mp:
 # 80 scans a collection, 2 windows a page, 10 % of volumes held out), less GT-RA_landskapshandlingar_20260227: the GT
 # holds that collection twice (it and GT-RA_landskapshandlingar_20260220, the same scans by md5), so its rows (418 of
 # the 15,745 training rows, none held out) are left out and that hand counts once. With three changes, each off by
@@ -19,13 +19,13 @@
 #     none is refused, 16 % have no room for a slant, and the slants taken are 1.8 degrees on average.
 # CPU steps are capped (no GPU, 4 threads, 16 GB, no swap); GPU steps run one at a time through jobs/spark_guard.sh:
 #   1. CPU, seconds: the set's train and val rows without the duplicate collection's, each kept row as it is
-#                                                                     data_flux3/page_pairs_many_1mp/*_dedup.jsonl
+#                                                                     data_pages/page_pairs_many_1mp/*_dedup.jsonl
 #      CPU, ~10 min: the content forms for them, each row planned again from its PAGE file and scan (page_pair_forms;
 #      the set's 3,623 scans were built in 5 min on 6 processes)      .../*_dedup_content.jsonl
 #   2. CPU, ~20 min: legible samples for both manifests, each sample page cut from its scan (page_pair_samples; about
 #      16,900 JPEGs, ~6 GB)                                           .../*_dedup_content_legible.jsonl, .../samples/
 #   3. GPU, ~5.5 h: caches: 12,000 training rows; validation (30 rows in every form of the mix); held-out (120 rows in
-#      every form, seed 1, for the swap test)                         data_flux3/cache_moss_content_{train,val,heldout}
+#      every form, seed 1, for the swap test)                         data_pages/cache_moss_content_{train,val,heldout}
 #   4. GPU, ~16 h: the full fine-tune from Base, STEPS steps of one sample (~22 s each: a 1 MP page and a 1 MP sample),
 #      a checkpoint and a validation every SAVE_EVERY, Muon's momentum in bfloat16 (peak ~58 GB on the GPU)
 #                                                                     runs/moss_content_pilot/full_c1
@@ -46,12 +46,12 @@ REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 PY="$REPO/.venv/bin/python"
 GUARD="$REPO/jobs/spark_guard.sh"
 BASE="${MOSS_BASE:-$HOME/.cache/huggingface/hub/models--OpenMOSS-Team--MOSS-Image-Base/snapshots/85975793d8b3d432f1b6e27f352abaa4c2a4c0d3}"
-SET="$REPO/data_flux3/page_pairs_many_1mp"
+SET="$REPO/data_pages/page_pairs_many_1mp"
 OUT="$REPO/runs/moss_content_pilot"
 BASE_MODEL="$REPO/runs/moss/base"
-CACHE="$REPO/data_flux3/cache_moss_content_train"
-VAL_CACHE="$REPO/data_flux3/cache_moss_content_val"
-HELDOUT_CACHE="$REPO/data_flux3/cache_moss_content_heldout"
+CACHE="$REPO/data_pages/cache_moss_content_train"
+VAL_CACHE="$REPO/data_pages/cache_moss_content_val"
+HELDOUT_CACHE="$REPO/data_pages/cache_moss_content_heldout"
 RUN="$OUT/full_c1"
 STEPS="${STEPS:-2500}"
 SAVE_EVERY="${SAVE_EVERY:-500}"

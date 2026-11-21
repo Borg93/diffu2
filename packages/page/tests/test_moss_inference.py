@@ -5,7 +5,7 @@ draws close to bfloat16 but not as it; the joint blocks run from an AOTInductor 
 compiled with MXFP8 off and on, close to as they run eagerly; UniPC steps the snapped grid it is given, calling the DiT
 at its levels once a pass a step; each step cache computes the joint blocks only at the steps it does not cache, starts
 every page afresh, and wraps a package's blocks too; MagCache's calibration measures what diffusers' does, pass by pass;
-and what only MOSS-Image takes is refused for another model, as are MXFP8 on a GPU without it, a package or a step cache
+and refused are MXFP8 on a GPU without it, a package or a step cache
 beside compile_blocks, and a block cache for a model whose unconditional pass skips its first joint block."""
 
 from __future__ import annotations
@@ -334,25 +334,6 @@ def test_moss_magcache_calibration_measures_each_passs_ratios_as_diffusers_calib
     assert [line["pass"] for line in recorded] == ["pred_cond", "pred_uncond"]
     assert [line["mag_ratios"] for line in recorded] == printed
     assert calibrated_mag_ratios(ratios_file) == pytest.approx([(a + b) / 2 for a, b in zip(*printed, strict=True)])
-
-
-@pytest.mark.parametrize(
-    ("option", "name"),
-    [
-        pytest.param({"precision": Precision.MXFP8}, "precision", id="precision"),
-        pytest.param({"text_encoder_precision": Precision.MXFP8}, "text_encoder_precision", id="text-encoder"),
-        pytest.param({"aoti_package": Path("block.pt2")}, "aoti_package", id="aoti-package"),
-        pytest.param({"sampler": Sampler.UNIPC}, "sampler", id="sampler"),
-        pytest.param({"cache": FIRST_BLOCK}, "cache", id="cache"),
-    ],
-)
-def test_load_pipeline_refuses_what_only_moss_takes_for_another_model(
-    tiny_flux3: Path, option: dict[str, object], name: str
-) -> None:
-    settings = SETTINGS.model_copy(update=option)
-
-    with pytest.raises(ValueError, match=f"is not MOSS-Image, which alone takes {name}$"):
-        load_pipeline(tiny_flux3, crop_blocks, loras={}, settings=settings)
 
 
 def test_load_pipeline_refuses_mxfp8_on_a_gpu_before_blackwell_before_loading_the_model(

@@ -1,9 +1,8 @@
 """The page and crop pipelines with a MOSS-Image repo on CPU (conftest's tiny MOSS, random weights, so it draws noise):
 a crop plan's caption compiled as MOSS's Layout prompt exactly as the verified scratchpad code compiled it, a crop drawn
 end to end from its seed, the line repair in MOSS's denoise loop, MOSS's own guidance and sampling shift, what MOSS
-refuses, a crop drawn with a hand's adapter (diffu-moss-convert-lora's) loaded or fused, and each repo drawn by its own
-family. A MOSS trained to take a reference (conftest's tiny reference training,
-exported and initialised): its training cache holds what drawing encodes, it draws a crop from a reference and guides
+refuses, a crop drawn with a hand's adapter (diffu-moss-convert-lora's) loaded or fused. A MOSS
+trained to take a reference (conftest's tiny reference training, exported and initialised): its training cache holds what drawing encodes, it draws a crop from a reference and guides
 toward it, its own training pairs drawn back (diffu_page.cli.draw_pairs) are the crops the page pipeline draws (a pair
 the cache restyled, from its sample in that look), a described caption's look words drop to exactly the plain caption
 the page captions would write (or, given the sample form's paper row, its sample-form caption), and a named caption's
@@ -20,7 +19,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 import torch
-from diffusers import Flux3AutoBlocks, Flux3ModularPipeline
 from diffusers.modular_pipelines import ModularPipeline, SequentialPipelineBlocks
 from PIL import Image
 
@@ -45,12 +43,10 @@ from diffu_page.captions.restyle import (
 from diffu_page.cli.draw_pairs import draw_pairs
 from diffu_page.data.evalset import EvalCrop
 from diffu_page.draw.pipeline import (
-    FAMILIES,
     DrawSettings,
     crop_blocks,
     draw_crop,
     load_pipeline,
-    model_family,
     repair_lines,
 )
 from diffu_page.draw.plan import CropPlan, plan_page, plan_whole_page
@@ -113,7 +109,7 @@ def test_moss_crop_blocks_prompt_a_crop_plan_with_its_caption_compiled_as_the_ve
     certificate_page: Path, page_style: PageStyle
 ) -> None:
     plan = plan_page(load_xml_layout(certificate_page), page_style)[0]
-    blocks = crop_blocks(FAMILIES["MossAutoBlocks"]).sub_blocks
+    blocks = crop_blocks().sub_blocks
     prompt_steps = SequentialPipelineBlocks.from_blocks_dict(
         {name: blocks[name] for name in ("crop_prompt", "layout_prompt")}
     ).init_pipeline()
@@ -158,16 +154,8 @@ def test_repair_lines_draws_a_rejected_line_of_a_moss_crop_again_from_the_crops_
     assert repaired.image.tobytes() != crop.image.tobytes()
 
 
-@pytest.mark.parametrize(
-    ("repo", "guidance_scale"),
-    [pytest.param("tiny_flux3", 4.0, id="flux3"), pytest.param("tiny_moss", 3.0, id="moss")],
-)
-def test_load_pipeline_guides_at_the_model_familys_own_scale_when_the_settings_name_none(
-    repo: str, guidance_scale: float, request: pytest.FixtureRequest
-) -> None:
-    pipe = load_pipeline(request.getfixturevalue(repo), crop_blocks, loras={}, settings=MOSS_SETTINGS)
-
-    assert pipe.guider.guidance_scale == guidance_scale
+def test_load_pipeline_guides_at_moss_images_own_scale_when_the_settings_name_none(moss_pipe: ModularPipeline) -> None:
+    assert moss_pipe.guider.guidance_scale == 3.0
 
 
 @pytest.mark.parametrize(
@@ -219,7 +207,7 @@ def test_reference_cache_holds_what_drawing_encodes_for_the_same_crop_and_refere
 ) -> None:
     entry = next(entry for entry in read_entries(tiny_pair_cache) if entry.variant is Variant.LOOK)
     pair = next(pair for pair in read_pairs(tiny_pairs / "train.jsonl") if pair.id == entry.pair)
-    blocks = crop_blocks(FAMILIES["MossAutoBlocks"]).sub_blocks
+    blocks = crop_blocks().sub_blocks
     names = ("crop_prompt", "reference_grid", "layout_prompt", "text_encoder", "reference_encoder")
     steps = SequentialPipelineBlocks.from_blocks_dict({name: blocks[name] for name in names})
     pipe = MossModularPipeline(blocks=steps, pretrained_model_name_or_path=str(tiny_reference_moss))
@@ -294,7 +282,7 @@ def test_draw_pairs_draws_a_hand_changed_pair_back_from_its_moved_prompt_and_its
     entry = read_entries(tiny_hand_cache)[3]  # vol_06, the cache's fourth pair drawn with its reference
     assert entry.hand is not None
     pair = next(pair for pair in read_pairs(tiny_pairs / "train.jsonl") if pair.id == entry.pair)
-    pipe = load_pipeline(tiny_reference_moss, lambda family: family.blocks(), loras={}, settings=MOSS_SETTINGS)
+    pipe = load_pipeline(tiny_reference_moss, MossAutoBlocks, loras={}, settings=MOSS_SETTINGS)
     pipe.guider.set_state(step=0, num_inference_steps=MOSS_SETTINGS.steps, timestep=None)
     width, height = entry.target_size
     in_that_hand = pipe(
@@ -418,21 +406,6 @@ def test_moss_draws_a_crop_otherwise_with_an_adapter_and_with_it_fused_as_with_i
     torch.testing.assert_close(drawn["fused"], drawn["adapter"], rtol=0.0, atol=0.05)  # 0.024: weights in bfloat16
 
 
-@pytest.mark.parametrize(
-    ("repo", "blocks", "pipeline"),
-    [
-        pytest.param("tiny_flux3", Flux3AutoBlocks, Flux3ModularPipeline, id="flux3"),
-        pytest.param("tiny_moss", MossAutoBlocks, MossModularPipeline, id="moss"),
-    ],
-)
-def test_model_family_draws_each_repo_with_the_blocks_and_pipeline_of_its_own_family(
-    repo: str, blocks: type, pipeline: type, request: pytest.FixtureRequest
-) -> None:
-    family = model_family(request.getfixturevalue(repo))
-
-    assert (family.blocks, family.pipeline) == (blocks, pipeline)
-
-
 def _naming(repo: Path, out: Path, sample_size: str) -> Path:
     """``out``: the MOSS repo ``repo``'s model index (its components where they are), naming ``sample_size``."""
     index = json.loads((repo / INDEX).read_text(encoding="utf-8"))
@@ -481,7 +454,7 @@ def _at_its_line_pitch(sample: Image.Image, plan: CropPlan) -> Image.Image:
 def _sized_by(repo: Path, plan: CropPlan, sample: Image.Image) -> Image.Image:
     """``sample`` (its lines ``SAMPLE_LINES``) as the crop pipeline of the MOSS repo ``repo`` hands it to its own
     blocks for ``plan``."""
-    blocks = crop_blocks(FAMILIES["MossAutoBlocks"]).sub_blocks
+    blocks = crop_blocks().sub_blocks
     steps = SequentialPipelineBlocks.from_blocks_dict(
         {name: blocks[name] for name in ("crop_prompt", "reference_grid")}
     )

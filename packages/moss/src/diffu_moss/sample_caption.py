@@ -1,6 +1,6 @@
 """A reference-drawn caption in the forms MOSS-Image draws from and trains on.
 
-The page pipeline captions a crop drawn from a reference image as FLUX.3 image-edit records are captioned
+The page pipeline captions a crop drawn from a reference image as an image-edit record
 (``diffu_page.captions.restyle``): the paragraph takes the hand, ink and paper "of <ref_image_0>" and every handwritten
 line row is written "in the reference's hand". In the plain form that is all the caption says of the look; in the
 described form (the style pairs') it also names the reference's measured hand, ink and paper: the opening's clause

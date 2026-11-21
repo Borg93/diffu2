@@ -19,11 +19,11 @@ loop over many items).
   `LoadLayoutStep`, `MarkFromScanStep`, `OpeningPageStep`, `RefillStep`, `PlanCropsStep`. Around a model's own blocks:
   `CropPromptStep`, `ReferenceGridStep`, the line repair (`repair.py`) in its denoise loop; after it, the labels
   (`ground_truth.py`). The pipeline (`pipeline.py`) puts them around whichever model's blocks a model directory names
-  (FLUX.3 Klein or MOSS-Image), loaded with its LoRAs (`lora.py`), guided toward a reference too (`guidance.py`);
+  (MOSS-Image), loaded with its LoRAs (`lora.py`), guided toward a reference too (`guidance.py`);
   `styles.py` holds the style presets and `jobs.py` a run's page and crop jobs.
 - **`data/`**: the builders of the training and evaluation sets (each `python -m diffu_page.data.<name>`):
-  `build_crops` (FLUX.3's training windows), `pick_eval` (their held-out set), `style_pairs` (a crop and a reference
-  crop of the same hand, for FLUX.3's style-reference LoRA and MOSS-Image), `page_pairs` (whole pages with a sample
+  `build_crops` (training windows), `pick_eval` (their held-out set), `style_pairs` (a crop and a reference
+  crop of the same hand), `page_pairs` (whole pages with a sample
   page, for MOSS-Image) and `page_pair_forms` (a page-pair manifest's rows given every prompt form); `evalset.py` is
   the eval sets' rows, which the builders write and diffu-evaluate reads, and `reader_pages.py` the pages a page
   reader's set is written from (a run's, or PAGE and ALTO files' with their scans, split by the GT's test lists).

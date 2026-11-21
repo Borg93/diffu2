@@ -6,9 +6,8 @@ text and a sample page whose paper, scan and pen it takes. Every page comes with
 the page readers' own formats); every drawn line is read back by an HTR model and the labels mark the lines that came
 out wrong.
 
-Since 11 Nov 2026 the pages are drawn by **MOSS-Image** alone (Apache-2.0): our own implementation around its released
-weights, and our own full fine-tune of its DiT. The FLUX.3 Klein path that was the research reference before is kept in
-the tree as history and is not worked on (its licence forbids training another model on its outputs).
+The pages are drawn by **MOSS-Image** (Apache-2.0): our own implementation around its released weights, and our own
+full fine-tune of its DiT.
 
 ## What works today
 
@@ -33,7 +32,7 @@ machine is finished. Open work: [TODO.md](TODO.md).
 
 ## The repo
 
-A uv workspace of eight members under `packages/` (the root is the workspace alone), and one package outside it.
+A uv workspace of seven members under `packages/` (the root is the workspace alone), and one package outside it.
 Everything that draws is a Modular Diffusers pipeline: our blocks around a model's own.
 
 - **`packages/core`** (diffu-core): what every member shares about a model directory: its model index and loading its
@@ -54,20 +53,16 @@ Everything that draws is a Modular Diffusers pipeline: our blocks around a model
   the runs in [docs/HTR_RUNS.md](docs/HTR_RUNS.md)
 - **`packages/curate`** (diffu-curate): `diffu-curate`, the pools of old-labelled scans scored page by page in a Lance
   table and sampled into training sets. [docs/CURATION.md](docs/CURATION.md)
-- **`packages/flux3`** (diffu-flux3): history. FLUX.3 Klein LoRA training with NeMo AutoModel.
-  [docs/FLUX3.md](docs/FLUX3.md)
 - **`packages/sglang_moss`** (diffu-sglang-moss, not a workspace member: its own environment): a plugin that lets
   SGLang Diffusion's MOSS-Image draw from a sample page. [docs/INFERENCE.md](docs/INFERENCE.md), section 13
 
 ```
 jobs/         spark_guard.sh (one GPU job at a time on the DGX Spark, 128 GB shared by CPU and GPU),
-              moss/ (MOSS-Image training on the Spark; a Slurm example for the HPC run),
-              flux3/ and setup_nemo_env.sh (history: FLUX.3's training in NeMo's environment)
+              moss/ (MOSS-Image training on the Spark; a Slurm example for the HPC run)
 deploy/       kuberay/ (the manifests of docs/INFERENCE.md)
 docs/         MOSS.md (the model and its training), MOSS_RUNS.md (the experiment log), MOSS_AUDIT.md (why the hand
               did not follow, 11 Nov), MOSS_HPC.md (the HPC runbook), PIPELINE.md, INFERENCE.md, RAY.md,
-              HTR_TRAIN.md (with HTR_RUNS.md, HTR_HANDOVER.md), CURATION.md, FLUX3.md (history)
-styles.json   style presets of the FLUX.3 hand LoRAs (history)
+              HTR_TRAIN.md (with HTR_RUNS.md, HTR_HANDOVER.md), CURATION.md
 conftest.py   test fixtures shared by the members (pages, a scanned form, tiny random models)
 TODO.md       open work
 ```
@@ -111,12 +106,10 @@ of the draw settings: [docs/INFERENCE.md](docs/INFERENCE.md), sections 5 and 6; 
 `diffu-reader-set`, which writes pages as fine-tuning sets in the page readers' formats:
 [docs/PIPELINE.md](docs/PIPELINE.md).
 
-## History
+## Earlier models
 
-- **Earlier MOSS-Image models.** [Gabriel/diffu-moss-r6b](https://huggingface.co/Gabriel/diffu-moss-r6b) (run B, 1 MP,
+- [Gabriel/diffu-moss-r6b](https://huggingface.co/Gabriel/diffu-moss-r6b) (run B, 1 MP,
   the sample laid over the page: the look follows the sample, the hand does not) and the four hand adapters
   (`Gabriel/diffu-moss-hand-*`, PEFT adapters of MOSS-Image-Base's DiT, `--lora hand=<folder>`:
   [docs/MOSS.md](docs/MOSS.md), "Hand LoRAs"). Their runs are one line each under "Superseded runs" in
   [docs/MOSS_RUNS.md](docs/MOSS_RUNS.md).
-- **FLUX.3 Klein.** `packages/flux3`, `jobs/flux3`, `jobs/setup_nemo_env.sh`, `styles.json` and
-  [docs/FLUX3.md](docs/FLUX3.md); the page pipeline can still load a FLUX.3 model directory (`FLUX3_MODEL`).

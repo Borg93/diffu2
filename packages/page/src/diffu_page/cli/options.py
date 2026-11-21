@@ -18,19 +18,13 @@ DEFAULTS = DrawSettings()  # every draw option's default comes from here
 Steps = Annotated[int, typer.Option(min=1, help="denoising steps per crop")]
 Guidance = Annotated[
     float | None,
-    typer.Option(
-        help="how hard guidance pushes toward the caption (default: the model's own, 3 for MOSS-Image, 4 for FLUX.3)"
-    ),
+    typer.Option(help="how hard guidance pushes toward the caption (default: MOSS-Image's own, 3)"),
 ]
 ReferenceGuidanceScale = Annotated[
     float, typer.Option(help="how hard guidance also pushes toward the reference image (1: not at all)")
 ]
 GuidanceStop = Annotated[
     float, typer.Option(min=0.0, max=1.0, help="the fraction of the steps after which guidance stops (1: every step)")
-]
-TextLayers = Annotated[
-    list[int] | None,
-    typer.Option("--text-layer", help="a text-encoder layer to stack (repeat it; default: the model's own)"),
 ]
 Device = Annotated[str, typer.Option(help="where the models run")]
 MaxLineCer = Annotated[float, typer.Option(help="the read-back CER above which a line's label is tagged unclear")]
@@ -56,8 +50,7 @@ RepairPasses = Annotated[
 
 
 class Lora(BaseModel):
-    """A LoRA adapter folder (a NeMo LoRA checkpoint's ``model/`` dir for FLUX.3 Klein, ``diffu-moss-convert-lora``'s
-    for MOSS-Image) under the adapter name it loads as."""
+    """A LoRA adapter folder (``diffu-moss-convert-lora``'s, of MOSS-Image's DiT) under the adapter name it loads as."""
 
     name: str
     path: Path
@@ -90,20 +83,15 @@ def parse_lora(value: str) -> Lora:
 
 
 Model = Annotated[
-    Path | None, typer.Option(help="the model directory (MOSS-Image or FLUX.3 Klein); default $FLUX3_MODEL")
+    Path | None, typer.Option(help="the MOSS-Image model directory (diffu-moss-init's); default $DIFFU_MOSS_MODEL")
 ]
 Loras = Annotated[
     list[Lora] | None,
     typer.Option(
         parser=parse_lora,
-        help="name=<LoRA adapter folder>: a NeMo checkpoint's model/ dir (FLUX.3), diffu-moss-convert-lora's (MOSS-Image)",
+        help="name=<LoRA adapter folder>: diffu-moss-convert-lora's, of MOSS-Image's DiT",
     ),
 ]
-
-
-def text_layers(layers: list[int] | None) -> tuple[int, ...] | None:
-    """The ``--text-layer`` options as ``DrawSettings`` takes them: None (the model's own layers) when none is given."""
-    return tuple(layers) if layers else None
 
 
 def settings_from_options(
@@ -112,7 +100,6 @@ def settings_from_options(
     guidance: float | None,
     reference_guidance: float,
     guidance_stop: float,
-    text_layer: list[int] | None,
     device: str,
     max_line_cer: float,
     lora_scale: float,
@@ -132,7 +119,6 @@ def settings_from_options(
         guidance_stop=guidance_stop,
         label_format=label_format,
         max_line_cer=max_line_cer,
-        text_layers=text_layers(text_layer),
         device=device,
         lora_scale=lora_scale,
         sampling_shift=sampling_shift,
@@ -159,11 +145,11 @@ def lora_dirs(loras: list[Lora] | None) -> dict[str, Path]:
 
 
 def required_model(model: Path | None) -> Path:
-    """The model directory a command draws with: ``--model``, else ``FLUX3_MODEL``.
+    """The model directory a command draws with: ``--model``, else ``DIFFU_MOSS_MODEL``.
 
     Raises:
         typer.BadParameter: If neither names one.
     """
     if model is None:
-        raise typer.BadParameter("set FLUX3_MODEL (in the environment or a .env file) or pass --model")
+        raise typer.BadParameter("set DIFFU_MOSS_MODEL (in the environment or a .env file) or pass --model")
     return model

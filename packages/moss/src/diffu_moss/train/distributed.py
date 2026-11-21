@@ -2,7 +2,7 @@
 node or several.
 
     torchrun --nproc-per-node 4 -m diffu_moss.train.loop --full --transformer <snapshot>/transformer \\
-        --cache data_flux3/cache_moss_pages --out runs/moss_pages_full/full --steps 500 --samples-per-step 8
+        --cache data_pages/cache_moss_pages --out runs/moss_pages_full/full --steps 500 --samples-per-step 8
 
 A process started by ``torchrun`` (its ``WORLD_SIZE`` set) joins the process group (NCCL on CUDA, each rank on its local
 GPU; gloo on the CPU) over a one-dimensional mesh of every rank. Each joint block of the DiT is its own FSDP unit and

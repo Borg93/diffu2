@@ -1,4 +1,4 @@
-"""Style presets read from a presets file: a preset whose LoRA is not a NeMo LoRA checkpoint is refused when the file
+"""Style presets read from a presets file: a preset whose LoRA is no LoRA adapter folder is refused when the file
 is read, as ``--lora`` refuses one, naming the file and the preset. How a job file's named styles resolve into pages,
 LoRAs and references is test_pipeline's: diffu-generate reads both files."""
 
@@ -16,13 +16,13 @@ from diffu_page.captions.prompt import PageStyle
 from diffu_page.draw.styles import read_style_presets
 
 if TYPE_CHECKING:
-    from conftest import NemoLoraWriter
+    from conftest import PeftLoraWriter
 
 
 def test_read_style_presets_names_the_file_and_the_preset_whose_lora_is_no_adapter_folder(
-    tmp_path: Path, page_style: PageStyle, write_nemo_lora: NemoLoraWriter
+    tmp_path: Path, page_style: PageStyle, write_peft_lora: PeftLoraWriter
 ) -> None:
-    hand, not_a_lora = write_nemo_lora("to_q", torch.zeros(2, 8), torch.zeros(8, 2), alpha=2), tmp_path / "b_lora"
+    hand, not_a_lora = write_peft_lora("to_q", torch.zeros(2, 8), torch.zeros(8, 2), alpha=2), tmp_path / "b_lora"
     presets = tmp_path / "styles.json"
     style = page_style.model_dump(mode="json")
     presets.write_text(

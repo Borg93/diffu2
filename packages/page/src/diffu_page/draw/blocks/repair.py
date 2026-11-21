@@ -2,7 +2,7 @@
 
 Given a repair mask, the crop is drawn again from new noise, and after every scheduler step the latents outside the mask
 are set back to the drawn crop's own latents at that step's noise level (flow matching: ``(1 - sigma) * drawn + sigma *
-noise``, the scheduler's ``scale_noise``, from the one initial noise as diffusers' FLUX inpainting does). The masked
+noise``, the scheduler's ``scale_noise``, from the one initial noise, as flow-matching inpainting does). The masked
 lines are redrawn in the context of the page around them, and everything else ends where it was. Without a mask both
 steps do nothing. :func:`diffu_page.draw.pipeline.crop_blocks` puts them into the model's own denoise blocks, the blend
 into its denoise loop after the scheduler step; :func:`diffu_page.draw.pipeline.repair_lines` decides which lines to
@@ -27,7 +27,7 @@ from diffusers.modular_pipelines.modular_pipeline import BlockState
 
 
 def _tokens(grid: torch.Tensor) -> torch.Tensor:
-    """``(B, C, h, w)`` on the latent grid as tokens ``(B, h * w, C)``, in the order FLUX.3 packs its latents."""
+    """``(B, C, h, w)`` on the latent grid as tokens ``(B, h * w, C)``, row by row, as MOSS-Image's blocks pack its latents."""
     return grid.flatten(2).transpose(1, 2)
 
 
