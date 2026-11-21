@@ -43,7 +43,17 @@ from diffu_page.page.crops.grid import LATENT_GRID  # noqa: E402
 from diffu_page.page.labels import LabelFormat, export  # noqa: E402
 from diffu_page.quality.judge import MAX_LINE_CER, LineVerdict  # noqa: E402
 from pagedemo.document import Document  # noqa: E402
-from pagedemo.drawing import DIT_REPO, DIT_REVISION, GUIDED_SHARE, Drawn, Models, draw, load_models  # noqa: E402
+from pagedemo.drawing import (  # noqa: E402
+    DIT_REPO,
+    DIT_REVISION,
+    GUIDED_SHARE,
+    Drawn,
+    Models,
+    build_blocks_package,
+    draw,
+    install_blocks,
+    load_models,
+)
 from pagedemo.planning import PagePlan, layout_prompt_of, page_plan, planned  # noqa: E402
 from pagedemo.record import DrawRecord  # noqa: E402
 from pagedemo.templates import TEMPLATES  # noqa: E402
@@ -64,6 +74,24 @@ SETUP_SECONDS, LONGEST_SECONDS = 20, 300
 SECONDS_PER_PASS_KILOTOKEN = {FAST: 0.21, GUIDED: 0.18}
 
 MODELS: Models | None = None if STUB else load_models(DEVICE, student=HERE / "student")
+
+
+@spaces.GPU(duration=1500)  # the longest a start-up call may take; the build itself took 12 s on a DGX Spark
+def build_package_on_gpu() -> str:
+    """The DiTs' joint block compiled ahead of time on this Space's GPU (ZeroGPU refuses torch.compile in its GPU
+    calls; a package compiled once is loaded by each)."""
+    assert MODELS is not None
+    out = Path(tempfile.mkdtemp(prefix="pagedemo-aoti-")) / "blocks.pt2"
+    return str(build_blocks_package(MODELS, out))
+
+
+PACKAGE: str | None = None
+if MODELS is not None and os.environ.get("PAGEDEMO_COMPILE", "1") == "1":
+    try:
+        PACKAGE = build_package_on_gpu()
+    except Exception as error:  # the pages are drawn eagerly, a third slower, rather than not at all
+        print(f"no compiled blocks: {type(error).__name__}: {error}", flush=True)
+INSTALLED: set[int] = set()  # the processes whose DiTs run the package (a GPU call may run in a fresh process)
 STUDENT_STEPS = 8 if MODELS is None or MODELS.student is None else MODELS.student.student_steps
 HAS_STUDENT = STUB or (MODELS is not None and MODELS.student is not None)
 
@@ -119,6 +147,9 @@ def draw_on_gpu(
     if MODELS is None:  # the stub: a blank sheet, at once
         blank = Image.new("RGB", (plan.width, plan.height), (241, 234, 216))
         return Drawn(image=blank, verdicts=None, read_error="no model is loaded", draw_seconds=0.0, read_seconds=0.0)
+    if PACKAGE is not None and os.getpid() not in INSTALLED:
+        install_blocks(MODELS, Path(PACKAGE))
+        INSTALLED.add(os.getpid())
     return draw(MODELS, plan, sample, sample_lines, steps=steps, guidance=guidance, seed=seed, fast=mode == FAST)
 
 

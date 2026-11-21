@@ -4,13 +4,16 @@ The model is the page pipeline's own (:func:`diffu_page.draw.pipeline.load_pipel
 ``diffu-moss-init``'s): MOSS-Image-Base's text encoder, tokenizer and VAE around the fine-tuned DiT, both downloaded
 at pinned revisions, and the pipeline's line judge, a Swedish HTR model that reads every drawn line back. A distilled
 student, when one is given (a ``diffu-moss-distill`` checkpoint: a LoRA of the DiT that draws in a few steps without
-guidance), is loaded beside the DiT's weights, unmerged, and switched on for a fast page and off for a guided one.
+guidance), is merged into a copy of the DiT: a fast page is drawn by the copy, a guided one by the DiT itself. Both
+can run their joint blocks from one AOTInductor package (:func:`build_blocks_package`), built where they draw: a
+package holds no weights, each block hands it its own.
 :func:`draw` runs the crop pipeline as ``diffu_page.draw.pipeline.draw_crop`` does, the guidance scale set per page,
 and keeps the drawn page when the read-back fails: a page costs its author GPU time, its labels little of it.
 """
 
 from __future__ import annotations
 
+import copy
 import os
 import tempfile
 import time
@@ -24,11 +27,12 @@ from PIL import Image
 from pydantic import BaseModel, ConfigDict
 from safetensors.torch import load_file
 
+from diffu_moss.aoti import build_package, install_package
 from diffu_moss.init import write_moss_repo
 from diffu_moss.train.distill import DISTILL_RECORD, DistillRecord
 from diffu_moss.train.loop import add_lora, cast_lora
 from diffu_moss.train.records import ADAPTER_RECORD, ADAPTER_WEIGHTS, AdapterRecord
-from diffu_moss.transformer import MossTransformer
+from diffu_moss.transformer import JointBlock, MossTransformer
 from diffu_page.draw.guidance import ReferenceGuidance
 from diffu_page.draw.pipeline import DrawSettings, crop_blocks, load_pipeline
 from diffu_page.draw.plan import CropPlan
@@ -46,14 +50,26 @@ STUDENT_ENV = "PAGEDEMO_STUDENT"  # a student's checkpoint folder in place of th
 STUDENT_FILES = (ADAPTER_WEIGHTS, ADAPTER_RECORD, DISTILL_RECORD)
 
 
-class Models:
-    """What a page is drawn and read with: the crop pipeline and the line judge, on their device, and how the
-    pipeline's student draws (None: no student is loaded)."""
+# The token count a package is tuned for: a 2 MP page with its sample and prompt
+PACKAGE_TOKENS = 14_000
 
-    def __init__(self, pipe: ModularPipeline, judge: Judge, student: DistillRecord | None = None) -> None:
+
+class Models:
+    """What a page is drawn and read with: the crop pipeline (its DiT draws guided pages) and the line judge, on their
+    device, and the student: the DiT with it merged, and how it draws (None, None: no student is loaded)."""
+
+    def __init__(
+        self,
+        pipe: ModularPipeline,
+        judge: Judge,
+        student: DistillRecord | None = None,
+        student_transformer: MossTransformer | None = None,
+    ) -> None:
         self.pipe = pipe
         self.judge = judge
         self.student = student
+        self.transformer: MossTransformer = pipe.transformer
+        self.student_transformer = student_transformer
 
 
 class Drawn(BaseModel):
@@ -87,34 +103,51 @@ def student_folder(own: Path) -> Path | None:
     return folder if all((folder / name).is_file() for name in STUDENT_FILES) else None
 
 
-def add_student(transformer: MossTransformer, checkpoint: Path) -> DistillRecord:
-    """The student saved in ``checkpoint`` added to ``transformer`` as it was trained: its LoRA beside the DiT's
-    weights, not merged into them (a merge into bfloat16 rounds most of a short distillation's update away), and its
-    own weights cast to the DiT's bfloat16 (in float32 every adapted layer casts its input and its sum).
-
-    Returns:
-        How the student is drawn: its steps and noise levels' shift, without guidance.
+def merged_student(transformer: MossTransformer, checkpoint: Path) -> tuple[MossTransformer, DistillRecord]:
+    """A copy of ``transformer`` with the student saved in ``checkpoint`` merged into its weights, and how the student
+    draws. Merged into bfloat16 a short distillation's update rounds away; the demo's student (400 steps at 1e-4,
+    rank 128) draws the same page merged as beside the weights, a tenth sooner (docs/MOSS_RUNS.md, 21 Nov 2026).
 
     Raises:
         ValueError: If the checkpoint's weights are not its LoRA's.
     """
-    add_lora(transformer, AdapterRecord.read(checkpoint / ADAPTER_RECORD).lora)
-    loaded = set_peft_model_state_dict(transformer, load_file(str(checkpoint / ADAPTER_WEIGHTS)))
+    student = copy.deepcopy(transformer)
+    add_lora(student, AdapterRecord.read(checkpoint / ADAPTER_RECORD).lora)
+    loaded = set_peft_model_state_dict(student, load_file(str(checkpoint / ADAPTER_WEIGHTS)))
     if loaded.unexpected_keys:
         raise ValueError(f"{checkpoint}: weights that are not its LoRA's")
-    cast_lora(transformer)
-    return DistillRecord.read(checkpoint / DISTILL_RECORD)
+    cast_lora(student)
+    student.fuse_lora(lora_scale=1.0)
+    student.unload_lora()
+    return student, DistillRecord.read(checkpoint / DISTILL_RECORD)
 
 
 def load_models(device: str, *, student: Path) -> Models:
-    """The crop pipeline of the fine-tuned model, its student if there is one (:func:`student_folder`, the Space's
-    own in ``student``), and the line judge, on ``device``. The pipeline is built on the CPU and moved whole, the
-    student's LoRA with it."""
+    """The crop pipeline of the fine-tuned model, the student merged into a copy of its DiT if there is one
+    (:func:`student_folder`, the Space's own in ``student``), and the line judge, on ``device``. Both DiTs are built
+    on the CPU and moved."""
     pipe = load_pipeline(model_directory(), crop_blocks, loras={}, settings=DrawSettings(device="cpu"))
     folder = student_folder(student)
-    record = None if folder is None else add_student(pipe.transformer, folder)
+    merged, record = (None, None) if folder is None else merged_student(pipe.transformer, folder)
     pipe.to(device)
-    return Models(pipe=pipe, judge=TrOCRJudge(device=device), student=record)
+    if merged is not None:
+        merged.to(device)
+    return Models(pipe=pipe, judge=TrOCRJudge(device=device), student=record, student_transformer=merged)
+
+
+def build_blocks_package(models: Models, out: Path) -> Path:
+    """An AOTInductor package of the DiT's joint block built at ``out`` (a new ``.pt2`` file) on the device the models
+    are on: one compiled block for every block of both DiTs, the weights handed in at each call."""
+    block = next(layer for layer in models.transformer.layers if isinstance(layer, JointBlock))
+    build_package(block, out, tokens=PACKAGE_TOKENS)
+    return out
+
+
+def install_blocks(models: Models, package: Path) -> None:
+    """Every joint block of both DiTs run by ``package`` from now on (checked against this device and the DiTs)."""
+    install_package(models.transformer, package)
+    if models.student_transformer is not None:
+        install_package(models.student_transformer, package)
 
 
 # The share of a guided page's steps that are guided: the ink and the words are settled in the first half, and the
@@ -142,14 +175,11 @@ def draw(
         ValueError: If a fast page is asked of models without a student.
     """
     pipe = models.pipe
-    if fast and models.student is None:
-        raise ValueError("a fast page needs the distilled student, and none is loaded")
-    if models.student is not None:
-        if fast:
-            pipe.transformer.enable_adapters()
-            steps, guidance = models.student.student_steps, models.student.guidance_scale
-        else:
-            pipe.transformer.disable_adapters()
+    if fast:
+        if models.student is None or models.student_transformer is None:
+            raise ValueError("a fast page needs the distilled student, and none is loaded")
+        steps, guidance = models.student.student_steps, models.student.guidance_scale
+    pipe.update_components(transformer=models.student_transformer if fast else models.transformer)
     pipe.update_components(guider=ReferenceGuidance(guidance_scale=guidance, stop=GUIDED_SHARE))
     # the text encoder encodes the negative prompt only if the guider guides at its current step: the first, here
     pipe.guider.set_state(step=0, num_inference_steps=steps, timestep=None)
