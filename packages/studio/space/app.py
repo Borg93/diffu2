@@ -264,7 +264,7 @@ def readback_rows(plan: CropPlan, verdicts: list[LineVerdict] | None) -> list[li
 def draw_page(
     page: str,
     sample: str | None,
-    mode: str = FAST if HAS_STUDENT else GUIDED,
+    mode: str = GUIDED,
     megapixels: float = MEGAPIXELS,
     steps: int = STEPS,
     guidance: float = GUIDANCE,
@@ -476,7 +476,7 @@ TEMPLATES_JSON = json.dumps(
 def build() -> gr.Blocks:
     """The demo's page: three columns: what the page is drawn from, the settings and the button; the page's boxes as a
     list with the selected box's text; the page itself, where a drawn page takes the boxes' place."""
-    start_mode = FAST if HAS_STUDENT else GUIDED
+    start_mode = GUIDED  # the student's pages smear and misspell words (docs/MOSS_RUNS.md, 21 Nov 2026)
     start_sample = next((path for path in SAMPLES if "1701" in Path(path).name), SAMPLES[0] if SAMPLES else None)
     start_note, start_prompt = page_status(
         editor_value(TEMPLATES[FIRST], None), start_sample, MEGAPIXELS, STEPS, GUIDANCE, start_mode, 1.0
@@ -515,7 +515,10 @@ def build() -> gr.Blocks:
                     )
                 mode = gr.Radio(
                     label="How it is drawn",
-                    choices=[(f"Fast · {STUDENT_STEPS} steps", FAST), ("Guided · the model itself", GUIDED)],
+                    choices=[
+                        ("Guided · the model itself", GUIDED),
+                        (f"Fast preview · {STUDENT_STEPS} steps, rougher", FAST),
+                    ],
                     value=start_mode,
                     visible=HAS_STUDENT,
                     elem_id="pd-mode",
