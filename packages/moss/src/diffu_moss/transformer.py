@@ -7,8 +7,10 @@ and columns centred). Each sample runs at its own prompt length, so no padding r
 Reference images (sample pages): each one's clean latents become tokens after the prompt's,
 embedded as the drawn image's are, placed on the reference axis (the drawn image and the prompt at 0, reference ``k``
 at ``k + 1``) with their own grid centred, and modulated as at timestep 0 while the drawn image and the prompt are
-modulated at the flow timestep; they join the joint attention and only the drawn image's tokens are predicted. The
-released models were trained without them: only a DiT trained with references (``diffu_moss.train``) reads them.
+modulated at the flow timestep; they join the joint attention and only the drawn image's tokens are predicted. A
+reference may instead be placed at its own offset from the drawn image's centre (a line's crop over the line box it
+gives its hand to). The released models were trained without references: only a DiT trained with them
+(``diffu_moss.train``) reads them.
 
 The DiT takes diffusers' step caches, which skip its joint blocks at some denoising steps (:mod:`diffu_moss.step_cache`).
 """
@@ -90,6 +92,9 @@ def grid_positions(height: int, width: int, text_length: int, reference: int, de
     return image
 
 
+type ReferenceOffset = tuple[float, float] | None  # (rows, columns) of a reference's centre from the drawn image's
+
+
 def token_positions(
     height: int,
     width: int,
@@ -97,6 +102,7 @@ def token_positions(
     device: torch.device,
     references: Sequence[tuple[int, int]] = (),
     place: ReferencePlace = "over",
+    offsets: Sequence[ReferenceOffset] = (),
 ) -> Tensor:
     """The 4-axis position of every token in the order the DiT holds them: the drawn image's (:func:`grid_positions`
     on the reference axis at 0), the prompt's at (0, their index, 0, 0), then each reference's, of grid ``references[k]``
@@ -106,13 +112,28 @@ def token_positions(
     reference token at the row and column of the drawn token under it, as suits an image to edit. ``above``: its rows
     moved up so its last row lies one above the drawn image's first (several references stacked upwards in order),
     its columns centred as before, so a sample page lies where the lines before the page's first would and nothing
-    lies over the page (a sample holds other lines at the page's places)."""
+    lies over the page (a sample holds other lines at the page's places).
+
+    ``offsets`` (none, or one for each reference) puts a reference's centre that many rows and columns, in latent
+    cells, from the drawn image's centre whatever ``place`` (a line's crop over the box it gives its hand to,
+    ``diffu_page.draw.line_samples``); a reference whose offset is None lies by ``place``, and ``above`` stacks those
+    alone.
+
+    Raises:
+        ValueError: If ``offsets`` are given and are not one for each reference.
+    """
+    if offsets and len(offsets) != len(references):
+        raise ValueError(f"{len(offsets)} reference offsets for {len(references)} references: give one each, or none")
     text = torch.zeros(text_length, 4, device=device)
     text[:, 1] = torch.arange(text_length, device=device)
     images = [grid_positions(h, w, text_length, k + 1, device) for k, (h, w) in enumerate(references)]
-    if place == "above":
-        lifted = 0
-        for image, (rows, _) in zip(images, references, strict=True):
+    lifted = 0
+    for k, (image, (rows, _)) in enumerate(zip(images, references, strict=True)):
+        offset = offsets[k] if offsets else None
+        if offset is not None:
+            image[:, 2] += offset[0]
+            image[:, 3] += offset[1]
+        elif place == "above":
             image[:, 2] -= (height + rows) / 2 + lifted
             lifted += rows
     return torch.cat((grid_positions(height, width, text_length, 0, device), text, *images))
@@ -237,6 +258,9 @@ class MossTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, CacheMixin):
     ``references`` are reference images' clean latents, each ``[B, latent_channels, h, w]`` on its own grid of any
     size (row ``b`` is sample ``b``'s): their tokens follow the prompt's on the reference axis at ``k + 1``, modulated
     as at timestep 0, and are not predicted. Without references the forward is exactly the released model's.
+    ``reference_offsets`` (one for each reference, the same for every sample) puts a reference's centre that many
+    latent rows and columns from the drawn image's (:func:`token_positions`); without them each lies by the config's
+    ``reference_place``.
 
     As diffusers' own transformers, it takes PEFT adapters (``add_adapter``, ``fuse_lora``), checkpoints its joint
     blocks' activations while training once ``enable_gradient_checkpointing`` is called, and takes diffusers' step
@@ -246,7 +270,7 @@ class MossTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, CacheMixin):
         ValueError: From the constructor, if ``dim`` does not split into heads whose width is a multiple of 8 or
             ``freq_dim`` is odd; from ``forward``, if a sample has no prompt token, a reference is not a batch of
             latents like the drawn image's (as many samples, as many channels), or a step cache is given more than one
-            sample (it keeps one state per pass).
+            sample (it keeps one state per pass), or ``reference_offsets`` are not one for each reference.
     """
 
     _keys_to_ignore_on_load_unexpected = [r"^rope\.bands$"]  # the rotary frequencies are recomputed in fp32
@@ -290,6 +314,7 @@ class MossTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, CacheMixin):
         text_mask: Tensor | None,
         skip_layers: frozenset[int] = frozenset(),
         references: Sequence[Tensor] | None = None,
+        reference_offsets: Sequence[ReferenceOffset] | None = None,
     ) -> Tensor:
         batch, channels = latents.shape[:2]
         if batch > 1 and self.is_cache_enabled:
@@ -303,6 +328,7 @@ class MossTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, CacheMixin):
                     f"a reference must be latents [{batch}, {channels}, h, w] like the drawn image's, "
                     f"not {list(reference.shape)}"
                 )
+        offsets = list(reference_offsets or ())
         dtype = self.video_embedder.weight.dtype
         times = torch.as_tensor(timestep, device=latents.device, dtype=torch.float32).reshape(-1).expand(batch)
         time = self._time_embedding(times)
@@ -322,6 +348,7 @@ class MossTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, CacheMixin):
                     skip_layers,
                     [reference[k : k + 1] for reference in references],
                     None if clean is None else clean[k : k + 1],
+                    offsets,
                 )
                 for k in range(batch)
             ]
@@ -345,6 +372,7 @@ class MossTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, CacheMixin):
         skip_layers: frozenset[int],
         references: list[Tensor],
         clean_modulation: Tensor | None,
+        offsets: list[ReferenceOffset],
     ) -> Tensor:
         _, _, height, width = latents.shape
         if text.shape[1] == 0:
@@ -352,7 +380,9 @@ class MossTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, CacheMixin):
         image_tokens, text_tokens = height * width, text.shape[1]
         video = self._embedded(latents)
         grids = [(reference.shape[2], reference.shape[3]) for reference in references]
-        positions = token_positions(height, width, text_tokens, latents.device, grids, self.config.reference_place)
+        positions = token_positions(
+            height, width, text_tokens, latents.device, grids, self.config.reference_place, offsets
+        )
         rope = rope_table(positions, self.config.dim // self.config.num_heads, self.config.rope_base).to(video.dtype)
         prompt = self.text_embedder(text, rope[:, image_tokens : image_tokens + text_tokens])
         x = torch.cat((video, prompt, *(self._embedded(reference) for reference in references)), 1)

@@ -1,7 +1,8 @@
 """MOSS-Image on CPU: our DiT predicts bit for bit the velocity the verified implementation predicted when it is given
-no reference, and with a reference reads its tokens at timestep 0 on their own grid and reference axis; under a step
-cache it takes one sample a call; the text encoder refuses a prompt past its 4,096 tokens, a MOSS repo draws with the
-DiT folder it names, and UniPC steps MOSS-Image's grid of a smooth flow closer to its end than Euler in as many steps.
+no reference, and with a reference reads its tokens at timestep 0 on their own grid and reference axis, centred or at
+the offset given; under a step cache it takes one sample a call; the text encoder refuses a prompt past its 4,096
+tokens, a MOSS repo draws with the DiT folder it names, and UniPC steps MOSS-Image's grid of a smooth flow closer to its
+end than Euler in as many steps.
 The test marked for a GPU checks that a forward, once warm, never waits for the GPU, and is skipped without one."""
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from diffu_moss.modular_pipelines.moss.before_denoise import Sampler
 from diffu_moss.modular_pipelines.moss.encoders import MossTextEncoderStep
 from diffu_moss.modular_pipelines.moss.modular_blocks_moss import MossCoreDenoiseStep
 from diffu_moss.step_cache import FirstBlockCache, enable_step_cache
-from diffu_moss.transformer import NORM_EPS, MossTransformer, RMSNorm, token_positions
+from diffu_moss.transformer import NORM_EPS, MossTransformer, ReferenceOffset, RMSNorm, token_positions
 
 # The verified implementation's velocities (the scratchpad's moss_model.MossTransformer, from which this DiT was
 # ported, 27 Oct) for the weights and inputs below, with every block and with block 1 skipped; float32 values as JSON
@@ -200,6 +201,36 @@ def test_token_positions_above_put_each_reference_s_last_row_one_above_what_lies
     assert positions.tolist() == drawn + prompt + references
 
 
+def test_token_positions_put_a_reference_with_an_offset_there_and_stack_only_the_others_above() -> None:
+    positions = token_positions(
+        2, 2, 3, torch.device("cpu"), references=[(1, 2), (2, 1)], place="above", offsets=[(1.0, -0.5), None]
+    )
+
+    # the first centred a row below and half a column left of the drawn image's centre; the second above, as if alone
+    references = [[1, 3, 1, -1], [1, 3, 1, 0], [2, 3, -2.5, 0], [2, 3, -1.5, 0]]
+    assert positions[-4:].tolist() == references
+
+
+def test_token_positions_refuse_offsets_that_are_not_one_for_each_reference() -> None:
+    with pytest.raises(ValueError, match="1 reference offsets for 2 references"):
+        token_positions(2, 2, 3, torch.device("cpu"), references=[(1, 2), (2, 1)], offsets=[(0.0, 0.0)])
+
+
+def test_moss_transformer_places_a_reference_at_its_offset_centred_by_default() -> None:
+    model = _seeded_dit()
+    latents, text, mask = _inputs()
+    reference = torch.randn(2, 4, 1, 2, generator=torch.Generator().manual_seed(3))
+    timesteps = torch.tensor([700.0, 300.0])
+    with torch.no_grad():
+        centred = model(latents, timesteps, text, mask, references=[reference])
+        at_the_centre = model(latents, timesteps, text, mask, references=[reference], reference_offsets=[(0.0, 0.0)])
+
+        moved = model(latents, timesteps, text, mask, references=[reference], reference_offsets=[(1.0, 1.5)])
+
+    assert torch.equal(at_the_centre, centred)  # a zero offset is MOSS-Image's own place, bit for bit
+    assert not torch.allclose(moved, centred, rtol=0, atol=1e-4)
+
+
 @pytest.fixture(scope="module")
 def text_encoder_pipe(tiny_moss: Path) -> ModularPipeline:
     """The tiny MOSS's text encoder step alone, its text encoder and tokenizer loaded; no guider, so no negative."""
@@ -258,6 +289,7 @@ class GaussianFlow(MossTransformer):
         text_mask: Tensor | None,
         skip_layers: frozenset[int] = frozenset(),
         references: Sequence[Tensor] | None = None,
+        reference_offsets: Sequence[ReferenceOffset] | None = None,
     ) -> Tensor:
         sigma = timestep.float() / 1000
         image = 1 - sigma
