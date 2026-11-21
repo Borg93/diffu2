@@ -18,7 +18,9 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
 
 ## The model: the hand and the ink
 
-- [ ] **Experiment to try (owner, 21 Nov): a sample per line box, from the same page.** Today one sample page goes in
+- [ ] **Experiment to try (owner, 21 Nov): a sample per text-region box, from the same page** (regions, not lines: our
+      windows are text regions; the line-crop slice is committed, the region builder, cache and trainer option are
+      being written). Today one sample page goes in
       whole and nothing ties a line of the new page to anything in it; the pairs are pages of one volume, so the hand
       is shared only where the volume has one scribe. Instead give each line box (or a few) a crop of a real line,
       placed over its box (`reference_place: over`, one reference index each), and train on real pages whose other
@@ -36,8 +38,11 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
 - [ ] A faint sample's ink is beyond the model's range: from the 1687 sample (ink L 48.7) the model itself draws L 17-21
       at every guidance that writes, and at guidance 1 no line is readable. No student of this model can follow it:
       the model itself has to learn it.
-- [ ] Caption dropout (`--caption-dropout 0.1`) showed no difference after 480 steps, which may be too few: decide it
-      on a longer run or drop it.
+- [ ] Caption dropout: the 480-step pilot dropped to the tag negative prompt and showed nothing; a 2,000-step run
+      dropping to the empty prompt (the KohakuMossTrainer/MOSS recipe) is running on Leonardo (MOSS_RUNS 21 Nov):
+      draw both arms on the same pages and seeds and judge them beside the samples.
+- [x] Settings that do not fix the ink (21 Nov, MOSS_RUNS): the block-22 skip and the tag negative prompt, projected
+      guidance, guidance on a student, the sample's colours as a prompt palette.
 - [ ] Compiled joint blocks in training under FSDP2 (`compile_loop.py`, 30 steps at 2 MP from B's step 7,000, the 9 Nov
       probe's samples): 11 Nov 15.0 s a step against 18.4 eager, the same losses; 21 Nov with the leaner RMSNorm eager
       17.4 s (losses equal to the 9 Nov probe's to the third place), compiled failed in Inductor's C++ wrapper build on
@@ -80,9 +85,20 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
 
 ## Inference speed
 
-- [ ] The demo Space on ZeroGPU cannot compile at run time (`torch.compile` is refused in its GPU workers): the
-      compiled blocks' 1.74x needs the joint block compiled ahead of time on ZeroGPU's own GPU (a `diffu-moss-aoti`
-      package built in a ZeroGPU call) and loaded by the Space.
+- [ ] The demo Space's blocks compiled ahead of time (1.5x a pass on the Spark, the same pages; MOSS_RUNS 21 Nov): the
+      Space builds the package at start-up on its own GPU and runs both DiTs from it (student merged into a copy).
+      To do: confirm the build is accepted on ZeroGPU and measure a live page; then re-set the GPU seconds asked.
+- [ ] Choose the attention kernel (`sdpa_kernel`: cuDNN, flash) and measure it with a sample on the page: attention is
+      about 35-45 % of a compiled pass at our 10-16k tokens (the diffusers reading, 21 Nov). Exact, no fidelity cost.
+- [ ] The step cache with warm-up steps and a cap on skips in a row (as Cache-DiT's 4 and 3), thresholds 0.05-0.24,
+      on top of the compiled package; judged on the pages beside the samples.
+- [ ] `torch.compile`/AOTInductor with `emulate_precision_casts=True` (TensorRT-LLM VisualGen's FLUX.3 setting): may
+      bring a compiled page closer to the eager one.
+- [ ] MXFP8's scale rounds down (`mxfp8.quantize`: amax/scale in [256, 512) while E4M3 stops at 448, so a block's
+      largest values are clipped by up to 12.5 %): try NVIDIA's rounding up (RCEIL), then judge MXFP8 again against
+      bf16 compiled with a sample on the page (KohakuMossTrainer's MXFP8 keeps velocity cosine 0.998 on a 5090).
+- [ ] The speed numbers of compile and MXFP8 were taken without a sample on the page: re-measure with one.
+- [ ] Guided cond and uncond passes as one batch-2 call (TensorRT-LLM packs them): fewer weight reads a step.
 - [ ] UniPC in 16 steps and the first-block step cache each drew a guided page in 44-47 % less time on two pages and
       one seed: more pages and seeds before either becomes a default. TaylorSeer and MagCache are not measured.
 - [ ] MXFP8 (2.41x compiled, the page lighter in ink, some letter forms changed) is not judged against sample pages.
