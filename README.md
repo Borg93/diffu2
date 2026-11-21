@@ -1,106 +1,122 @@
 # Diffu
 
-Synthetic archive pages with ground truth, for training page-reading vision-language models (DeepSeek-OCR 2,
-PaddleOCR-VL) and HTR: any real page layout (from a PAGE or ALTO file), any text, a chosen archive's hand, paper and
-scan look. Every drawn line is read back by an HTR model, and the labels (PAGE or ALTO XML, and the page readers' own
-formats) mark the lines that came out wrong. The pages are drawn by **MOSS-Image** (Apache-2.0: our own implementation
-around its released weights, and our own training to teach it to draw from a sample page), the main path, or by
-**FLUX.3 Klein** with our LoRAs, the research reference.
+Synthetic archive pages with ground truth, to train page-reading vision-language models end to end (Unlimited-OCR 2,
+with MiniCPM-OCR as the crop control): millions of whole pages, each from a layout (a PAGE or ALTO file, or boxes), a
+text and a sample page whose paper, scan and pen it takes. Every page comes with its labels (ALTO and PAGE XML, and
+the page readers' own formats); every drawn line is read back by an HTR model and the labels mark the lines that came
+out wrong.
+
+Since 11 Nov 2026 the pages are drawn by **MOSS-Image** alone (Apache-2.0): our own implementation around its released
+weights, and our own full fine-tune of its DiT. The FLUX.3 Klein path that was the research reference before is kept in
+the tree as history and is not worked on (its licence forbids training another model on its outputs).
+
+## What works today
+
+- **The model**: [Gabriel/diffu-moss-above](https://huggingface.co/Gabriel/diffu-moss-above), a full fine-tune of
+  MOSS-Image's DiT on Swedish archival handwriting of the 16th to 19th centuries. It draws a whole page at 2 MP from a
+  layout (every line's exact text and box) and a sample page whose tokens are placed above the page's. The text is
+  written as given, the paper and the kind of scan follow the sample, the ink and the pen in part; the hand's letter
+  forms mostly do not follow yet. What was measured: [docs/MOSS_RUNS.md](docs/MOSS_RUNS.md).
+- **The demo Space**: [Gabriel/diffu-archive-pages](https://huggingface.co/spaces/Gabriel/diffu-archive-pages)
+  (Gradio on ZeroGPU, private while it is tested), its source in `packages/studio/space`: a page editor of boxes and
+  text, a sample page, the page drawn and read back, its ALTO and PAGE labels returned.
+- **Distillation** (`diffu-moss-distill`): LoRA students that draw a page in 8 steps without guidance; with `--swap` a
+  share of the samples come from another page. The Space's fast mode draws with the first student.
+- **Faster drawing**, each an option of the draw settings and off by default: compiled joint blocks, MXFP8 (Blackwell
+  GPUs), AOTInductor packages (`diffu-moss-aoti`), step caches and the UniPC sampler.
+  [docs/INFERENCE.md](docs/INFERENCE.md), section 12.
+- **The readers** (`packages/htr_train`): training and scoring the page and line readers the pages are made for, and
+  curating real scans with machine-made labels into training sets (`packages/curate`).
+
+Not done yet: generation at scale. `packages/runner` (Ray Data, Lance) is written and waits until testing on one
+machine is finished. Open work: [TODO.md](TODO.md).
 
 ## The repo
 
-A uv workspace of seven members under `packages/`; the root is the workspace alone (no package of its own). Everything
-that draws is a Modular Diffusers pipeline, our blocks around a model's own, the model chosen by its directory alone.
+A uv workspace of eight members under `packages/` (the root is the workspace alone), and one package outside it.
+Everything that draws is a Modular Diffusers pipeline: our blocks around a model's own.
 
-- **`packages/core`** (diffu-core): what every member shares about a model directory: its `modular_model_index.json`
-  (`diffu_core.repo.ModelIndex`) and loading its components without letting a failed one through
-  (`diffu_core.loading`).
-- **`packages/moss`** (diffu-moss): MOSS-Image: our DiT, its blocks, `diffu-moss-init` (a model directory), hand
-  LoRAs as PEFT adapters loaded at draw time (`diffu-moss-convert-lora`), and its reference training (`train/`:
-  `diffu-moss-cache-pairs`, `diffu-moss-train-ref`, a LoRA or every weight, on one GPU or sharded over several, and
-  `diffu-moss-export-ref`). [docs/MOSS.md](docs/MOSS.md)
-- **`packages/page`** (diffu-page), in layers: `page/` (a page as data: layouts, crops, labels, a template marked from
-  its scan), `captions/`, `quality/` (read-back, the judge, hand fidelity), `draw/` (planning, our blocks, the page and
-  crop pipelines) and `data/` (the training- and eval-set builders); `diffu-generate`, `diffu-evaluate`,
-  `diffu-draw-pairs`, `diffu-reader-set` (`cli/`). [docs/PIPELINE.md](docs/PIPELINE.md)
-- **`packages/flux3`** (diffu-flux3): FLUX.3 LoRA training with NeMo AutoModel: the configs, our dataloaders and the
-  style-pair cache (NeMo's environment). [docs/FLUX3.md](docs/FLUX3.md)
-- **`packages/runner`** (diffu-runner): generation at scale on a Ray cluster. [docs/RAY.md](docs/RAY.md),
-  [docs/INFERENCE.md](docs/INFERENCE.md) (KubeRay inference)
-- **`packages/studio`** (diffu-studio): MOSS-Image models drawing the same page side by side on a `gr.Workflow` canvas.
-- **`packages/htr_train`** (diffu-htr-train): training and scoring the readers: MiniCPM-OCR (lines and regions), its
-  proof-reader Jev, a DSpark draft for it and Unlimited-OCR 2 (the page reader), each tool in its own environment
-  (`htr-train`, `htr-eval`). [docs/HTR_TRAIN.md](docs/HTR_TRAIN.md); the runs on all of GT-Lejonet, matched to the
-  Swedish Lion TrOCR, their state and results: [docs/HTR_RUNS.md](docs/HTR_RUNS.md)
+- **`packages/core`** (diffu-core): what every member shares about a model directory: its model index and loading its
+  components.
+- **`packages/moss`** (diffu-moss): MOSS-Image: our DiT and blocks, `diffu-moss-init` (a model directory), the
+  reference training (`diffu-moss-cache-pairs`, `diffu-moss-train-ref`, `diffu-moss-export-ref`), `diffu-moss-distill`,
+  hand LoRAs as PEFT adapters (`diffu-moss-convert-lora`), the speed options, `diffu-moss-aoti` and
+  `diffu-moss-export-hf`. [docs/MOSS.md](docs/MOSS.md)
+- **`packages/page`** (diffu-page): a page as data (layouts, crops, labels), captions, read-back and the judge, the
+  page and crop pipelines, the set builders; `diffu-generate`, `diffu-evaluate`, `diffu-draw-pairs`,
+  `diffu-reader-set`. [docs/PIPELINE.md](docs/PIPELINE.md)
+- **`packages/studio`** (diffu-studio): `diffu-studio`, MOSS-Image models drawing the same page side by side on a
+  Gradio canvas, and the demo Space (`space/`, `publish_space.sh`).
+- **`packages/runner`** (diffu-runner): `diffu-run` and `diffu-run-export`, pages drawn on a Ray cluster into a Lance
+  table. [docs/RAY.md](docs/RAY.md), [docs/INFERENCE.md](docs/INFERENCE.md)
+- **`packages/htr_train`** (diffu-htr-train): `htr-train` and `htr-eval`: Unlimited-OCR 2, MiniCPM-OCR, its
+  proof-reader Jev and a DSpark draft, each tool in its own environment. [docs/HTR_TRAIN.md](docs/HTR_TRAIN.md),
+  the runs in [docs/HTR_RUNS.md](docs/HTR_RUNS.md)
+- **`packages/curate`** (diffu-curate): `diffu-curate`, the pools of old-labelled scans scored page by page in a Lance
+  table and sampled into training sets. [docs/CURATION.md](docs/CURATION.md)
+- **`packages/flux3`** (diffu-flux3): history. FLUX.3 Klein LoRA training with NeMo AutoModel.
+  [docs/FLUX3.md](docs/FLUX3.md)
+- **`packages/sglang_moss`** (diffu-sglang-moss, not a workspace member: its own environment): a plugin that lets
+  SGLang Diffusion's MOSS-Image draw from a sample page. [docs/INFERENCE.md](docs/INFERENCE.md), section 13
 
 ```
 jobs/         spark_guard.sh (one GPU job at a time on the DGX Spark, 128 GB shared by CPU and GPU),
-              moss/ (MOSS-Image training on the Spark, a LoRA or every weight; a Slurm template for the HPC run),
-              flux3/run_v3d.sh (FLUX.3's style-reference LoRA), setup_nemo_env.sh (the members in NeMo's environment)
-docs/         PIPELINE.md, MOSS.md (with MOSS_RUNS.md, MOSS_HPC.md), FLUX3.md, RAY.md, INFERENCE.md,
-              HTR_TRAIN.md (with HTR_RUNS.md, HTR_HANDOVER.md)
-styles.json   style presets: the FLUX.3 hand LoRAs, each in its archive's look
-conftest.py   test fixtures shared by the members (pages, a scanned form, diffusers' tiny FLUX.3, a tiny MOSS-Image
-              and a tiny reference training on it)
+              moss/ (MOSS-Image training on the Spark; a Slurm example for the HPC run),
+              flux3/ and setup_nemo_env.sh (history: FLUX.3's training in NeMo's environment)
+deploy/       kuberay/ (the manifests of docs/INFERENCE.md)
+docs/         MOSS.md (the model and its training), MOSS_RUNS.md (the experiment log), MOSS_AUDIT.md (why the hand
+              did not follow, 11 Nov), MOSS_HPC.md (the HPC runbook), PIPELINE.md, INFERENCE.md, RAY.md,
+              HTR_TRAIN.md (with HTR_RUNS.md, HTR_HANDOVER.md), CURATION.md, FLUX3.md (history)
+styles.json   style presets of the FLUX.3 hand LoRAs (history)
+conftest.py   test fixtures shared by the members (pages, a scanned form, tiny random models)
 TODO.md       open work
 ```
 
-Package names keep the `diffu-` prefix (imports `diffu_page`, ...) so they stay unique in NeMo's shared environment.
+`uv sync --all-packages` installs the workspace; the tests run on CPU with tiny random models
+(`CUDA_VISIBLE_DEVICES="" uv run pytest -n 4`). `DIFFU_HTR_MODEL` and `DIFFU_HTR_REVISION` choose the read-back model
+and pin its revision.
 
-## Environments
+## Drawing a page
 
-- **This repo** (`uv sync`): drawing with MOSS-Image, MOSS's training, CPU checks and tests
-  (`CUDA_VISIBLE_DEVICES="" uv run pytest -n 4`; the pipeline tests draw with tiny random models on CPU).
-- **NeMo AutoModel** (`~/Desktop/repos/Automodel/.venv-managed`): FLUX.3 LoRA training and FLUX.3's GPU jobs;
-  `jobs/setup_nemo_env.sh` installs diffu-core, diffu-moss, diffu-page and diffu-flux3 into it.
-- `FLUX3_MODEL`: the FLUX.3 Klein directory, from the environment or a `.env` file; there is no default, so a command
-  that needs a model and is given no `--model` stops before loading anything. `DIFFU_HTR_MODEL` and
-  `DIFFU_HTR_REVISION` choose the read-back model and pin its revision.
-
-## Drawing pages
-
-The model is [Gabriel/diffu-moss-r6b](https://huggingface.co/Gabriel/diffu-moss-r6b) (public): our fine-tuned
-MOSS-Image DiT, since 9 Nov 2026 run B (the whole ground truth, 54 collections, 7,000 steps on Leonardo; its first
-version, eight collections, is the repository's revision `726b9fe`). Its text encoder, tokenizer and VAE are
-MOSS-Image-Base's. Once:
+The quickest way is the demo Space. On a machine with a GPU, once (the fine-tuned DiT, with MOSS-Image-Base's text
+encoder, tokenizer and VAE around it):
 
 ```bash
 uv sync --all-packages
 hf download OpenMOSS-Team/MOSS-Image-Base --revision 85975793d8b3d432f1b6e27f352abaa4c2a4c0d3 \
     --include "text_encoder/*" --include "tokenizer/*" --include "vae/*" --local-dir models/MOSS-Image-Base
-hf download Gabriel/diffu-moss-r6b --revision 9da723d920d580abc8f462117f05c0b6f865c88b \
-    --local-dir models/dit/diffu-moss-r6b
-uv run diffu-moss-init --base models/MOSS-Image-Base --transformer models/dit/diffu-moss-r6b --out models/moss-r6b
+hf download Gabriel/diffu-moss-above --revision 3d5d3d966a0d32d4b9573c3d6a6d2324d19bb5a8 \
+    --local-dir models/dit/diffu-moss-above
+uv run diffu-moss-init --base models/MOSS-Image-Base --transformer models/dit/diffu-moss-above --out models/moss-above
 ```
 
 A run file holds one page job per line, as JSON. A page's layout is a PAGE or ALTO file (`template`) or its lines'
-boxes in pixels given as JSON (`layout`); its text is the `text` given, poured into the running-text lines, or, left
-out, the layout's own. Two lines of `run.jsonl`, a template with new text and a layout of boxes with new text (its
-heading keeps its own), each drawn in the look of a sample page:
+boxes in pixels (`layout`); its text is the `text` given, poured into the running-text lines, or, left out, the
+layout's own. `page_pixels` draws the page whole at that size, and `reference` names the sample page. One line of
+`run.jsonl`, a layout of boxes with new text (its heading keeps its own):
 
 ```json
-{"id": "court-0001", "template": "/data/templates/0105.xml", "text": "Anno 1649 den 6 Aprilis Tå laga tingh höltz medh Allmogen ...", "style": {"provenance": {"title": "the court records of Jämtlands domsaga", "years": "1649"}, "look": {"greyscale": false, "paper": "cream", "ink": "black"}}, "reference": {"image": "/data/samples/court.jpg", "caption": "sample"}}
-{"id": "boxes-0001", "layout": {"width": 1400, "height": 2000, "lines": [{"box": [150, 200, 1250, 270], "kind": "heading", "text": "Anno 1650"}, {"box": [150, 320, 1250, 390]}, {"box": [150, 410, 1250, 480]}]}, "text": "Tå laga tingh höltz medh Allmogen ...", "style": {"provenance": {"title": "the court records of Jämtlands domsaga", "years": "1650"}, "look": {"greyscale": false, "paper": "cream", "ink": "black"}}, "reference": {"image": "/data/samples/court.jpg", "caption": "sample"}}
+{"id": "boxes-0001", "layout": {"width": 1184, "height": 1680, "lines": [{"box": [130, 170, 1050, 226], "kind": "heading", "text": "Anno 1650"}, {"box": [130, 270, 1050, 326]}, {"box": [130, 340, 1050, 396]}]}, "text": "Tå laga tingh höltz medh Allmogen ...", "style": {"provenance": {"title": "the court records of Jämtlands domsaga", "years": "1650"}, "look": {"greyscale": false, "paper": "cream", "ink": "black"}}, "reference": {"image": "/data/samples/court.jpg", "caption": "sample"}, "page_pixels": 2000000}
 ```
 
-Then draw and write each page out as an image with its labels (`<id>.jpg`, `<id>.alto.xml`, `<id>.page.xml`):
+Then draw; each page is written as an image with its labels, and `summary.json` lists them:
 
 ```bash
-echo '{"steps": 50, "device": "cuda"}' > draw.json  # Blackwell: add "precision": "mxfp8", "compile_blocks": true
-uv run diffu-run --jobs run.jsonl --draw-settings draw.json --model models/moss-r6b --out out/run1 --gpus 1
-uv run diffu-run-export --out out/run1 --to out/run1/files
+uv run diffu-generate --model models/moss-above --jobs run.jsonl --steps 28 --guidance 2 --out out/run1
 ```
 
-The model takes the paper, ink and look from the sample page, not its handwriting (its model card). With grey
-microfilm samples add `"reference_guidance_scale": 2` to `draw.json`: a third guidance pass toward the sample, about
-1.5 times the drawing time, that makes their pages grey reliably.
+28 steps at guidance 2 are the Space's guided settings (at MOSS-Image's own guidance 3 the ink comes out darker than
+the sample's). On the DGX Spark every GPU command goes through `jobs/spark_guard.sh`. Every field of a page job and
+of the draw settings: [docs/INFERENCE.md](docs/INFERENCE.md), sections 5 and 6; every option of `diffu-generate`, and
+`diffu-reader-set`, which writes pages as fine-tuning sets in the page readers' formats:
+[docs/PIPELINE.md](docs/PIPELINE.md).
 
-Every field of a page job, with a worked example of each combination (template or layout, new text or its own), the
-draw settings, outputs and running on KubeRay: [docs/INFERENCE.md](docs/INFERENCE.md). What the model does well and
-what not yet: its [model card](https://huggingface.co/Gabriel/diffu-moss-r6b). Drawing on one machine without Ray, and
-every option of `diffu-generate`: [docs/PIPELINE.md](docs/PIPELINE.md); `diffu-reader-set` writes pages as fine-tuning
-sets in the page readers' own formats (DeepSeek-OCR 2, PaddleOCR-VL, and Unlimited-OCR 2 and MiniCPM-OCR for ms-swift),
-from a `--reader-labels` run, from `diffu-run-export`'s PAGE files or from the GT, split by its own test lists.
-Drawing in a published hand (`Gabriel/diffu-moss-hand-pahlman`, `-landskapshandlingar`, `-overstathallarambetet-1715`,
-`-eight`: PEFT adapters of MOSS-Image-Base's own DiT, `--lora hand=<folder>`): [docs/MOSS.md](docs/MOSS.md), "Hand
-LoRAs". Drawing with FLUX.3 and its LoRAs: [docs/FLUX3.md](docs/FLUX3.md).
+## History
+
+- **Earlier MOSS-Image models.** [Gabriel/diffu-moss-r6b](https://huggingface.co/Gabriel/diffu-moss-r6b) (run B, 1 MP,
+  the sample laid over the page: the look follows the sample, the hand does not) and the four hand adapters
+  (`Gabriel/diffu-moss-hand-*`, PEFT adapters of MOSS-Image-Base's DiT, `--lora hand=<folder>`:
+  [docs/MOSS.md](docs/MOSS.md), "Hand LoRAs"). Their runs are one line each under "Superseded runs" in
+  [docs/MOSS_RUNS.md](docs/MOSS_RUNS.md).
+- **FLUX.3 Klein.** `packages/flux3`, `jobs/flux3`, `jobs/setup_nemo_env.sh`, `styles.json` and
+  [docs/FLUX3.md](docs/FLUX3.md); the page pipeline can still load a FLUX.3 model directory (`FLUX3_MODEL`).
