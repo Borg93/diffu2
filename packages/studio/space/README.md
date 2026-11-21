@@ -40,7 +40,7 @@ archival handwriting. The page comes back with its labels: ALTO and PAGE XML of 
 
 ## What to expect
 
-Measured on the templates, drawn fast at 2 megapixels from the four sample pages (20 Nov 2026):
+Measured on the templates, drawn fast at 2 megapixels from the sample pages (20 Nov 2026):
 
 - **The text is written as given.** Of each page's lines, 13 of 13 to 26 of 27 read back as written.
 - **The paper and the kind of scan follow the sample**: colour or greyscale, the paper's tone.
@@ -76,7 +76,7 @@ runs on.
 
 The example samples are cut from scans in the Swedish National Archives' (Riksarkivet) public HTR datasets on the Hub:
 
-- `gota-hovratt-1687.jpg`, `gota-hovratt-1701.jpg`: Göta hovrätt, Brottsmålsprotokoll, 1687 and 1701-1706
+- `gota-hovratt-1701.jpg`: Göta hovrätt, Brottsmålsprotokoll, 1701-1706
   ([Riksarkivet/gota_hovratt_seg](https://huggingface.co/datasets/Riksarkivet/gota_hovratt_seg))
 - `standernas-deputation-1765.jpg`: Frihetstidens utskott, Riksens ständers stora deputations handlingar, volume 2,
   1765-1766

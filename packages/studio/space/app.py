@@ -431,7 +431,6 @@ EDITOR_HTML = (HERE / "pagedemo" / "editor.html").read_text(encoding="utf-8")
 EDITOR_CSS = (HERE / "pagedemo" / "editor.css").read_text(encoding="utf-8")
 EDITOR_JS = (HERE / "pagedemo" / "editor.js").read_text(encoding="utf-8")
 SAMPLE_TITLES = {  # an example sample's caption: its years
-    "gota-hovratt-1687": "1687",
     "gota-hovratt-1701": "1701",
     "standernas-deputation-1765": "1765",
     "jonkopings-radhusratt-1584-1595": "1590s",
@@ -447,7 +446,7 @@ def build() -> gr.Blocks:
     """The demo's page: three columns: what the page is drawn from, the settings and the button; the page's boxes as a
     list with the selected box's text; the page itself, where a drawn page takes the boxes' place."""
     start_mode = FAST if HAS_STUDENT else GUIDED
-    start_sample = next((path for path in SAMPLES if "1687" in Path(path).name), None)
+    start_sample = next((path for path in SAMPLES if "1701" in Path(path).name), SAMPLES[0] if SAMPLES else None)
     start_note, start_prompt = page_status(
         editor_value(TEMPLATES[FIRST], None), start_sample, MEGAPIXELS, STEPS, GUIDANCE, start_mode, 1.0
     )
