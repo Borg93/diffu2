@@ -36,6 +36,7 @@ from diffu_moss.sample_caption import with_sample, without_sample
 from diffu_moss.train.cache import (
     CACHE_DTYPE,
     ENTRIES,
+    CachedRegionCrop,
     CachedSample,
     CacheEntry,
     CacheSettings,
@@ -790,6 +791,9 @@ def test_entry_tokens_count_the_drawn_images_the_prompts_and_the_samples() -> No
     # a 4 x 2 latent grid, 5 prompt tokens and the sample's 2 x 2; without a sample, the first two alone
     assert entry_tokens(entry) == 8 + 5 + 4
     assert entry_tokens(entry.model_copy(update={"variant": Variant.GENERIC, "reference_size": None})) == 8 + 5
+    crops = [CachedRegionCrop(source="b", target="a", size=size, offset=(0.0, 0.0)) for size in ((32, 16), (48, 32))]
+    # region crops in place of the sample: 2 x 1 and 3 x 2
+    assert entry_tokens(entry.model_copy(update={"reference_size": None, "region_crops": crops})) == 8 + 5 + 2 + 6
 
 
 def test_size_grouped_order_draws_every_entry_once_a_pass_in_shuffled_rounds_of_like_size() -> None:

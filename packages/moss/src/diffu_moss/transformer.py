@@ -32,6 +32,7 @@ from torch.nn import functional as F
 TIME_PERIOD = 10_000
 NORM_EPS = 1e-6
 ReferencePlace = Literal["over", "above"]  # where a reference lies against the drawn image (token_positions)
+CropPlace = Literal["over", "beside"]  # where a crop lies: over its box, or beside the page in the box's rows
 MODULATIONS = 6  # shift, scale and gate of the attention half, then of the feed-forward half
 
 
@@ -260,7 +261,9 @@ class MossTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, CacheMixin):
     as at timestep 0, and are not predicted. Without references the forward is exactly the released model's.
     ``reference_offsets`` (one for each reference, the same for every sample) puts a reference's centre that many
     latent rows and columns from the drawn image's (:func:`token_positions`); without them each lies by the config's
-    ``reference_place``.
+    ``reference_place``. The config's ``region_crops`` records that a DiT was trained on text regions' crops as its
+    references and where they lay (``diffu_page.draw.line_samples``; None: whole sample pages), for drawing to give it the same; the
+    forward does not read it.
 
     As diffusers' own transformers, it takes PEFT adapters (``add_adapter``, ``fuse_lora``), checkpoints its joint
     blocks' activations while training once ``enable_gradient_checkpointing`` is called, and takes diffusers' step
@@ -268,7 +271,7 @@ class MossTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, CacheMixin):
 
     Raises:
         ValueError: From the constructor, if ``dim`` does not split into heads whose width is a multiple of 8 or
-            ``freq_dim`` is odd; from ``forward``, if a sample has no prompt token, a reference is not a batch of
+            ``freq_dim`` is odd, or ``reference_place`` or ``region_crops`` is none of its places; from ``forward``, if a sample has no prompt token, a reference is not a batch of
             latents like the drawn image's (as many samples, as many channels), or a step cache is given more than one
             sample (it keeps one state per pass), or ``reference_offsets`` are not one for each reference.
     """
@@ -289,10 +292,13 @@ class MossTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, CacheMixin):
         latent_channels: int = 128,
         rope_base: float = 10000.0,
         reference_place: ReferencePlace = "over",
+        region_crops: CropPlace | None = None,
     ) -> None:
         super().__init__()
         if reference_place not in get_args(ReferencePlace):
             raise ValueError(f"reference_place is one of {get_args(ReferencePlace)}, not {reference_place!r}")
+        if region_crops is not None and region_crops not in get_args(CropPlace):
+            raise ValueError(f"region_crops is one of {get_args(CropPlace)} or None, not {region_crops!r}")
         if dim % num_heads or (dim // num_heads) % 8 or freq_dim % 2:
             raise ValueError("dim must divide into heads whose width is a multiple of 8, and freq_dim must be even")
         self.video_embedder = nn.Linear(latent_channels, dim)

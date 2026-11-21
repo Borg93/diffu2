@@ -11,6 +11,7 @@ from typing import Self
 from pydantic import BaseModel, ConfigDict, Field
 
 from diffu_moss.train.pairs import PromptMix, SampleSize
+from diffu_moss.transformer import CropPlace
 
 CACHE_RECORD = "cache.json"
 ADAPTER_RECORD = "adapter.json"
@@ -57,6 +58,21 @@ class AdapterRecord(JsonRecord):
     sample_size: SampleSize = Field(default=SampleSize.HALF, exclude_if=_half)
 
 
+class RegionCropOrigin(BaseModel):
+    """What a cache of region crops was made from (:mod:`diffu_moss.train.region_crops`): the cache whose entries' target
+    latents and prompts it holds (``cache``), the manifest of region crops it encoded (``crops``), where its crops lie
+    (``place``), how many it holds, and how many of the first cache's entries its manifest's builder left out, by
+    reason."""
+
+    model_config = ConfigDict(frozen=True)
+
+    cache: str
+    crops: str
+    place: CropPlace
+    region_crops: int
+    skipped: dict[str, int]
+
+
 class CacheRecord(JsonRecord):
     """How a cache was made: from which pairs and model, how many pairs it holds and how they were drawn into the mix
     of prompt forms (``mix``, ``diffu_moss.train.pairs.Variant``), how many pairs were left out for sharing a line with
@@ -64,8 +80,8 @@ class CacheRecord(JsonRecord):
     samples were sized (``sample_size``), the share of its entries in the sample form asked to take a look change and
     how many took each kind (``diffu_moss.train.restyle``), and the share asked to take a hand change, how many took
     one, how many of those pages left no room for a slant (their changes of stroke and width alone) and why any others
-    were refused. Each is left out of a cache without it (the named mix, the samples shrunk, no change), which is
-    written as before."""
+    were refused; a cache of region crops, what it was made from (``region_crops``). Each is left out of a cache without it
+    (the named mix, the samples shrunk, no change, whole samples), which is written as before."""
 
     pairs: str
     model: str
@@ -82,6 +98,7 @@ class CacheRecord(JsonRecord):
     hand_restyled: int = Field(default=0, exclude_if=lambda count: count == 0)
     hand_no_slant_room: int = Field(default=0, exclude_if=lambda count: count == 0)
     hand_refused: dict[str, int] = Field(default_factory=dict, exclude_if=lambda reasons: not reasons)
+    region_crops: RegionCropOrigin | None = Field(default=None, exclude_if=lambda origin: origin is None)
 
 
 class ExportRecord(JsonRecord):

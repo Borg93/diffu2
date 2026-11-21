@@ -195,6 +195,27 @@ Built on CPU by diffu-page's builders, cached once on the GPU by `diffu-moss-cac
 - **Sibling pairs** (the sample-above model's set): each window with the other window of its own page as its sample,
   cached from `train_siblings.jsonl` beside as many whole pages. Their builders (`sibling_pairs.py`,
   `sibling_cache.py`) are kept with the runs on the cluster, not in this repo yet.
+- **A sample per text region** (an experiment, not yet trained): each handwritten text region of a target (the lines
+  of one PAGE `TextRegion`, a line's `block` in the set's records; a table's lines one region; its box the bounding
+  box of its lines' slots, the boxes the Layout prompt gives) gets a crop of another region of its own page in place of
+  the whole sample: a window's from its sibling window (the window its row names as its sample, else another window of
+  its page sharing none of its lines), a whole page's from its own other regions, never a region's own lines. A crop is
+  the source region scaled so its line pitch is the target region's, at most the target box's size and 512 x 512 px,
+  cut from its top-left corner, each a reference of its own placed over the region's box or beside the page in its rows
+  (`reference_offsets`; `diffu_page.draw.line_samples.plan_region_crops`). `diffu_page.data.region_crop_pairs` plans
+  and cuts them on the CPU from a finished cache of page pairs and its set's `scanned/` records, each source in its
+  entry's look change, and leaves out (counting) the entries drawn without a sample, those with a hand change, windows
+  without a sibling and targets with no region to serve; `diffu-moss-cache-region-crops` encodes only the crops by the
+  VAE (`region_crop_0`, ... beside the first cache's target latents and prompt embeddings, `--shard`/`--shards` as the
+  cache's), and `diffu-moss-train-ref --full --region-crops over|beside` trains on it, the loss unchanged, the place
+  written into the checkpoints' `config.json` as `region_crops`. Every cache, run and model without them is as before.
+
+      python -m diffu_page.data.region_crop_pairs --cache data_pages/cache_above_2mp --out data_pages/crops_over \
+          --place over
+      diffu-moss-cache-region-crops --cache data_pages/cache_above_2mp --crops data_pages/crops_over/region_crops.jsonl \
+          --out data_pages/cache_crops_over
+      diffu-moss-train-ref --full --transformer $RUN/checkpoints/step_010257/transformer \
+          --cache data_pages/cache_crops_over --region-crops over --out runs/pilot_crops/over --steps 480
 
       diffu-moss-cache-pairs --model runs/moss/base --pairs data_pages/style_pairs_v3d/train.jsonl \
           --out data_pages/cache_moss_ref_v3d --limit 4000

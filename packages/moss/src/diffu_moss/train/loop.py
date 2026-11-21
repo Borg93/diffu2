@@ -92,7 +92,7 @@ from diffu_moss.train.records import (
     Progress,
 )
 from diffu_moss.train.sigmas import draw_sigmas
-from diffu_moss.transformer import MossTransformer, ReferencePlace
+from diffu_moss.transformer import CropPlace, MossTransformer, ReferencePlace
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 console = Console()
@@ -138,8 +138,9 @@ class TrainSettings(BaseModel):
     reference: an overfit test); whether each prompt is encoded in the step (``encode_text``) or read from the cache;
     the shift of the drawn noise levels (``sigma_shift``, :mod:`diffu_moss.train.sigmas`; 1: MOSS-Image's own); the
     learning rate's warmup and wind-down (:func:`learning_rate_schedule`); over several ranks, the rounds each pass's
-    samples are sorted by size within (``size_block``, :class:`SizeGroups`; 0: the pass as shuffled); and when it is
-    saved and scored."""
+    samples are sorted by size within (``size_block``, :class:`SizeGroups`; 0: the pass as shuffled); whether its
+    cache gives region crops in place of whole samples, and where they lie (``region_crops``: the place its cache's record
+    gives, recorded in the checkpoints' config); and when it is saved and scored."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -161,6 +162,7 @@ class TrainSettings(BaseModel):
     grad_accumulation: int = Field(default=2, ge=1)
     size_block: int = Field(default=0, ge=0)
     reference_place: ReferencePlace = "over"
+    region_crops: CropPlace | None = None
     stop_at: int | None = Field(default=None, ge=1)
     save_every: int = Field(default=250, ge=1)
     val_every: int = Field(default=250, ge=1)
@@ -264,32 +266,35 @@ def flow_matching_loss(
 ) -> Tensor:
     """The flow-matching loss of one sample at noise level ``sigma``: the drawn image's clean latents noised to it
     (``(1 - sigma) * image + sigma * noise``), the DiT's velocity for them from the prompt and the clean reference (if
-    the sample has one), and its mean squared error from ``noise - image``, over the drawn image's tokens alone. With
-    ``compute_dtype`` the DiT runs in that dtype's autocast (its weight cache off), else in its weights' own dtypes."""
+    the sample has one; its region crops instead, each at its offset, in a cache of region crops), and its mean squared
+    error from ``noise - image``, over the drawn image's tokens alone. With ``compute_dtype`` the DiT runs in that
+    dtype's autocast (its weight cache off), else in its weights' own dtypes."""
     image = sample.target.float()
     noisy = (1 - sigma) * image + sigma * noise
     text = sample.prompt_embeds
     mask = torch.ones(text.shape[:2], dtype=torch.bool, device=text.device)
     timestep = torch.tensor([sigma * 1000], device=noisy.device)
     references = None if sample.reference is None else [sample.reference]
+    offsets = None
+    if sample.region_crops:
+        references = sample.region_crops
+        offsets = [crop.offset for crop in sample.entry.region_crops or ()]
     precision = (
         nullcontext()
         if compute_dtype is None
         else torch.autocast(noisy.device.type, dtype=compute_dtype, cache_enabled=False)
     )
     with precision:
-        velocity = transformer(noisy, timestep, text, mask, references=references)
+        velocity = transformer(noisy, timestep, text, mask, references=references, reference_offsets=offsets)
     return F.mse_loss(velocity.float(), noise - image)
 
 
 def entry_tokens(entry: CacheEntry) -> int:
-    """The tokens the DiT reads for ``entry``: its drawn image's, its prompt's and its sample's (none without one)."""
-    width, height = entry.target_size
-    tokens = (width // PIXELS_PER_LATENT) * (height // PIXELS_PER_LATENT) + entry.tokens
-    if entry.reference_size is not None:
-        sample_width, sample_height = entry.reference_size
-        tokens += (sample_width // PIXELS_PER_LATENT) * (sample_height // PIXELS_PER_LATENT)
-    return tokens
+    """The tokens the DiT reads for ``entry``: its drawn image's, its prompt's, its sample's (none without one) and its
+    region crops'."""
+    sizes = [entry.target_size, *([] if entry.reference_size is None else [entry.reference_size])]
+    sizes += [crop.size for crop in entry.region_crops or ()]
+    return entry.tokens + sum((width // PIXELS_PER_LATENT) * (height // PIXELS_PER_LATENT) for width, height in sizes)
 
 
 class SizeGroups(BaseModel):
@@ -602,6 +607,21 @@ def sample_size_of(cache: Path, val_cache: Path | None) -> SampleSize:
     return rule
 
 
+def region_crops_of(cache: Path, val_cache: Path | None) -> CropPlace | None:
+    """Where the region crops of the training cache ``cache`` lie (None: it gives whole samples).
+
+    Raises:
+        ValueError: If a cache is not finished, or the validation cache ``val_cache`` gives its references otherwise.
+    """
+    origin = read_record(cache).region_crops
+    place = None if origin is None else origin.place
+    if val_cache is not None:
+        scored = read_record(val_cache).region_crops
+        if (None if scored is None else scored.place) != place:
+            raise ValueError(f"{cache} and the validation cache {val_cache} give their references otherwise")
+    return place
+
+
 def prompt_encoder(
     cache: Path, val_cache: Path | None, settings: TrainSettings, model: Path | None
 ) -> PromptEncoder | None:
@@ -665,6 +685,8 @@ def train(
         raise ValueError(
             "a LoRA is drawn on its base DiT, whose samples lie over the page: --reference-place needs --full"
         )
+    if settings.region_crops is not None and settings.full is None:
+        raise ValueError("a LoRA is drawn on its base DiT, which records no region crops: --region-crops needs --full")
     if resume is None and (out / LOG).exists():
         raise ValueError(f"{out} holds a training already ({LOG}); give a new directory")
     entries = read_entries(cache)
@@ -676,6 +698,14 @@ def train(
     if progress is not None and len(progress.order) != len(entries):
         raise ValueError(f"{cache} holds {len(entries)} entries; the run resumed drew from {len(progress.order)}")
     sample_size = sample_size_of(cache, val_cache)
+    place = region_crops_of(cache, val_cache)
+    if place != settings.region_crops:
+        given = (
+            "whole samples: train it without --region-crops"
+            if place is None
+            else f"region crops: --region-crops {place}"
+        )
+        raise ValueError(f"{cache} gives {given}")
     encoder = prompt_encoder(cache, val_cache, settings, model)
     if settings.caption_dropout and negative is None:
         raise ValueError("--caption-dropout replaces a prompt by the negative prompt: give its embeddings (--negative)")
@@ -697,7 +727,9 @@ def train(
             ranks=ranks,
             sample_size=sample_size,
         )
-    training.transformer.register_to_config(reference_place=settings.reference_place)  # saved with every checkpoint
+    training.transformer.register_to_config(  # saved with every checkpoint
+        reference_place=settings.reference_place, region_crops=settings.region_crops
+    )
     generator = torch.Generator().manual_seed(settings.seed)
     groups = None
     if settings.size_block:
@@ -959,6 +991,15 @@ def main(
             "swaps, run B's in 1 of 8)",
         ),
     ] = "over",
+    region_crops: Annotated[
+        CropPlace | None,
+        typer.Option(
+            help="with --full: train on a cache of region crops (diffu-moss-cache-region-crops) whose crops lie there, over "
+            "their regions' boxes or beside the page in their rows (its record gives the place, which must be this); "
+            "written into the checkpoints' config.json as region_crops, so drawing knows the model reads region crops "
+            "(default: whole samples)"
+        ),
+    ] = None,
     stop_at: Annotated[
         int | None,
         typer.Option(
@@ -1024,6 +1065,7 @@ def main(
             "grad_accumulation": samples_per_step,
             "size_block": size_block,
             "reference_place": reference_place,
+            "region_crops": region_crops,
             "stop_at": stop_at,
             "save_every": save_every,
             "val_every": val_every,

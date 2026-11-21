@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 
 from diffu_moss.transformer import token_positions
 from diffu_page.captions.prompt import LineRecord
-from diffu_page.draw.line_samples import CropPlace, cut_line_crops, plan_line_crops
+from diffu_page.draw.line_samples import CropPlace, cut_line_crops, plan_line_crops, plan_region_crops
 
 SOURCE = (600, 1000)  # px: a page of five lines, each a bar of its own colour, at a 60 px pitch
 TARGET = (320, 400)  # px: a window of its first three lines at a 48 px pitch, 25 latent rows and 20 columns
@@ -94,3 +94,40 @@ def test_line_crops_are_none_when_the_source_holds_only_the_targets_lines() -> N
     crops = plan_line_crops(SOURCE, lines[:3], TARGET, _target_lines())
 
     assert crops == []
+
+
+def _two_region_page() -> list[LineRecord]:
+    """A 320 x 640 px page of two text regions, ``a`` and ``b``, of five lines each: line ``k`` a 48 px slot from
+    y 32 + 48k px, x 32-288."""
+    return [
+        LineRecord(
+            id=f"line_{k}",
+            text=f"line {k} of the page",
+            role="",
+            bbox=(round((32 + 48 * k) / 640 * 1000), 100, round((80 + 48 * k) / 640 * 1000), 900),
+            block="a" if k < 5 else "b",
+        )
+        for k in range(10)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("place", "top_left"),
+    [
+        pytest.param("over", (2, 2), id="over-its-box"),  # region a's box from y 32 px, x 32 px
+        pytest.param("beside", (2, -16), id="beside-the-page-in-its-rows"),  # its 16 columns just left of column 0
+    ],
+)
+def test_region_crops_of_a_page_drawn_from_itself_give_each_region_another_region_on_its_box_s_rows(
+    place: CropPlace, top_left: tuple[int, int]
+) -> None:
+    lines = _two_region_page()
+    rows, columns = 640 // 16, 320 // 16
+
+    crops = plan_region_crops((320, 640), lines, (320, 640), lines, place=place)
+
+    positions = token_positions(rows, columns, 1, torch.device("cpu"), references=[(15, 16)], offsets=[crops[0].offset])
+    first = positions[rows * columns + 1]
+    assert [(crop.target, crop.source) for crop in crops] == [("a", "b"), ("b", "a")]  # never a region's own
+    assert [crop.size for crop in crops] == [(256, 240)] * 2  # its box: five 48 px slots, 256 px wide
+    assert first[2:].tolist() == [top_left[0] - (rows - 1) / 2, top_left[1] - (columns - 1) / 2]

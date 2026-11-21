@@ -104,11 +104,31 @@ LATENT_ENCODERS = ("tokenizer", "vae")  # a latents-only cache's: the tokenizer 
 TEXT_ENCODERS = ("text_encoder", "tokenizer")
 
 
+class CachedRegionCrop(BaseModel):
+    """One text region's crop as a cache entry holds it in place of a whole sample (:mod:`diffu_moss.train.region_crops`):
+    the source region it is cut from and the target region whose box it styles (their blocks), its size (px, on the
+    latent grid) and its centre's offset from the drawn image's centre in latent rows and columns (the DiT's
+    ``reference_offsets``)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    source: str
+    target: str
+    size: tuple[int, int]  # (width, height) px
+    offset: tuple[float, float]  # (rows, columns)
+
+
+def region_crop_tensor(index: int) -> str:
+    """The name of an entry's ``index``-th region crop's latents in its file."""
+    return f"region_crop_{index}"
+
+
 class CacheEntry(BaseModel):
     """One cached training sample: a pair in one prompt form, its tensors in ``file``, its target's size and its
-    sample's as encoded, the look change and the hand change its target and sample took (``restyle``, ``hand``), and
-    why a hand change planned for it was refused (``hand_refused``); each of the last three left out of the entry's
-    JSON when there is none, so an entry of images as scanned is written as before."""
+    sample's as encoded, the look change and the hand change its target and sample took (``restyle``, ``hand``), why a
+    hand change planned for it was refused (``hand_refused``) and, in a cache of region crops, the crops it is given in
+    place of its sample, in order (``region_crops``; its ``reference_size`` then None); each of the last four left out of
+    the entry's JSON when there is none, so an entry of images as scanned is written as before."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -122,6 +142,7 @@ class CacheEntry(BaseModel):
     restyle: Restyle | None = Field(default=None, exclude_if=lambda restyle: restyle is None)
     hand: HandRestyle | None = Field(default=None, exclude_if=lambda hand: hand is None)
     hand_refused: str | None = Field(default=None, exclude_if=lambda reason: reason is None)
+    region_crops: list[CachedRegionCrop] | None = Field(default=None, exclude_if=lambda crops: crops is None)
 
 
 class PlannedEntry(BaseModel):
@@ -138,8 +159,8 @@ class PlannedEntry(BaseModel):
 
 class CachedSample(BaseModel):
     """A cache entry's tensors: the prompt's embeddings ``[1, tokens, text_dim]`` (cached, or encoded as it is
-    loaded), the target's latents ``[1, latent_channels, H / 16, W / 16]`` and the reference's (None for a sample drawn
-    without it)."""
+    loaded), the target's latents ``[1, latent_channels, H / 16, W / 16]``, the reference's (None for a sample drawn
+    without it) and its region crops' latents in the entry's order (none outside a cache of region crops)."""
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
@@ -147,6 +168,7 @@ class CachedSample(BaseModel):
     prompt_embeds: Tensor
     target: Tensor
     reference: Tensor | None
+    region_crops: list[Tensor] = Field(default_factory=list)
 
 
 def encoder_pipeline(model: Path, device: str, names: tuple[str, ...] = ENCODERS) -> ModularPipeline:
@@ -470,6 +492,7 @@ def load_sample(
         prompt_embeds=tensors["prompt_embeds"],
         target=tensors["target"],
         reference=tensors.get("reference"),
+        region_crops=[tensors[region_crop_tensor(index)] for index in range(len(entry.region_crops or ()))],
     )
 
 
