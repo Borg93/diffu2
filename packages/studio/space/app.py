@@ -344,7 +344,7 @@ def draw_page(
 # Gradio writes each rule here twice, as it stands and under the app's own container, but a rule inside @media only
 # under the container: the page's side padding, which sits above that container, is set fluid instead
 CSS = """
-.gradio-container .main.fillable { padding: 14px clamp(10px, 2.6vw, 32px) 24px !important; }
+.gradio-container .main.fillable { padding: 14px clamp(10px, 2.6vw, 32px) 24px !important; max-width: 1560px !important; margin: 0 auto !important; }
 #pd-header .html-container, #pd-editor .html-container, .pd-note .html-container { padding: 0 !important; }
 .pd-header { display: flex; align-items: baseline; justify-content: space-between; gap: 6px 18px; flex-wrap: wrap; margin: 0 0 4px; }
 .pd-header h1 { font-size: 1.45rem; font-weight: 600; letter-spacing: -0.01em; margin: 0; white-space: nowrap; }
@@ -451,11 +451,11 @@ def build() -> gr.Blocks:
     start_note, start_prompt = page_status(
         editor_value(TEMPLATES[FIRST], None), start_sample, MEGAPIXELS, STEPS, GUIDANCE, start_mode, 1.0
     )
-    with gr.Blocks(title="diffu · archive pages") as demo:
+    with gr.Blocks(title="diffu · archive pages", fill_width=True) as demo:
         gr.HTML(HEADER, elem_id="pd-header")
         megapixels = gr.Number(value=MEGAPIXELS, visible=False)  # the size the model was trained at; the API's to set
         with gr.Row(equal_height=False):
-            with gr.Column(scale=0, min_width=270, elem_classes="pd-side"):
+            with gr.Column(scale=0, min_width=310, elem_classes="pd-side"):
                 with gr.Row(equal_height=False):
                     sample = gr.Image(
                         label="Sample",

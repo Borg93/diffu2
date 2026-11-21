@@ -206,7 +206,11 @@ function commit(now) {
 
 function layout() {
   stage.style.aspectRatio = String(page.aspect);
-  stage.style.maxWidth = `max(240px, calc((100vh - 190px) * ${page.aspect}))`; // the whole page on the screen, under the bars
+  // the whole page on the screen under its bar, and no more than about two fifths of the window: the boxes' list and
+  // the settings keep the rest
+  const wide = `clamp(240px, min(calc((100vh - 230px) * ${page.aspect}), 40vw), 640px)`;
+  stage.style.width = wide;
+  stage.parentElement.style.width = wide;
   const options = [...shape.options];
   const nearest = options.reduce((best, option) =>
     Math.abs(Number(option.value) - page.aspect) < Math.abs(Number(best.value) - page.aspect) ? option : best,
