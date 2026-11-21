@@ -63,7 +63,7 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
 
 - [ ] **A better student (owner, 21 Nov).** Student e's live pages smear, strike through and misspell words; the Space draws
       guided by default until a student is good. Distribution matching (a fake-score LoRA, DMD/DMD2 in velocities) is
-      being written from the 21 Nov patch, then a Leonardo run from e's settings, judged on whole pages by eye.
+      in (`f774c78`); student i (e's recipe + `--matching 1.0`) waits for a place on Leonardo; judged on whole pages.
 - [ ] Students g and h (`--swap 0.5`, teachers at guidance 2.0 and 1.5; queued 20 Nov 22:55): draw them on the held-out
       pages and on the Space's six template pages beside d and e at step 400 and the first student, which the Space
       keeps until a student's ink is closer to the sample's there.
