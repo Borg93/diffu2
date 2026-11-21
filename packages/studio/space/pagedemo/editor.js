@@ -155,6 +155,7 @@ function load() {
   if ("result" in value) {
     result = value.result || null;
     showResult = true;
+    if (result) showBoxes = false; // a page just drawn is shown clean; Edit boxes brings the boxes back
   }
   page = cleaned(value);
   if (!boxOf(selected)) selected = null;
@@ -205,7 +206,7 @@ function commit(now) {
 
 function layout() {
   stage.style.aspectRatio = String(page.aspect);
-  stage.style.maxWidth = `calc(84vh * ${page.aspect})`;
+  stage.style.maxWidth = `max(240px, calc((100vh - 330px) * ${page.aspect}))`; // the whole page on the screen, under the bars
   const options = [...shape.options];
   const nearest = options.reduce((best, option) =>
     Math.abs(Number(option.value) - page.aspect) < Math.abs(Number(best.value) - page.aspect) ? option : best,
@@ -310,10 +311,10 @@ function render() {
   if (shown && picture.getAttribute("src") !== result) picture.setAttribute("src", result);
   resultButton.hidden = !result;
   resultButton.textContent = showResult ? "Hide page" : "Show page";
-  boxesButton.textContent = showBoxes ? "Hide boxes" : "Show boxes";
+  boxesButton.textContent = showBoxes ? "Hide boxes" : "Edit boxes";
   renderBoxes();
   renderInspector();
-  if (!showBoxes) hint.textContent = "The boxes are hidden. Show them to change the page.";
+  if (!showBoxes) hint.textContent = result ? "The drawn page. Edit boxes brings its boxes back to change it and draw again." : "The boxes are hidden. Edit boxes brings them back.";
   else if (!page.boxes.length) hint.textContent = `${FINGERS ? "Tap + Box to add a box" : "Drag on the page to draw a box"}, or pick a template. A box is a block of lines.`;
   else hint.textContent = `Drag a box to move it, a ${FINGERS ? "corner" : "handle"} to resize it${FINGERS ? "" : "; Delete removes it"}. Every line is drawn at one height: the Lines slider sets it.`;
 }
