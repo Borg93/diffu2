@@ -90,7 +90,8 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
 
 - [ ] The demo Space's blocks compiled ahead of time (1.5x a pass on the Spark, the same pages; MOSS_RUNS 21 Nov): the
       Space builds the package at start-up on its own GPU and runs both DiTs from it (student merged into a copy).
-      To do: confirm the build is accepted on ZeroGPU and measure a live page; then re-set the GPU seconds asked.
+      Live 21 Nov: a fast page drawn in 14-15 s (23 s eager). To do: a guided page live, and re-set the GPU seconds
+      the Space asks for (`SECONDS_PER_PASS_KILOTOKEN`) to the compiled speed.
 - [ ] Choose the attention kernel (`sdpa_kernel`: cuDNN, flash) and measure it with a sample on the page: attention is
       about 35-45 % of a compiled pass at our 10-16k tokens (the diffusers reading, 21 Nov). Exact, no fidelity cost.
 - [ ] The step cache with warm-up steps and a cap on skips in a row (as Cache-DiT's 4 and 3), thresholds 0.05-0.24,
