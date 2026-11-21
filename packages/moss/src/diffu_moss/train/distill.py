@@ -26,21 +26,34 @@ weights (:func:`student_of`), not merged into them: a short distillation's updat
 step for most weights, and a merge into bfloat16 drops it there.
 
     diffu-moss-distill --teacher <DiT folder> --cache <cache> --negative <negative prompt embeds> --out <run>
+
+With ``DistillRun.matching`` (``--matching``) a distribution-matching term is added to the regression: DMD's
+(arXiv 2311.18828, with DMD2's two time-scale updates, arXiv 2405.14867) in this module's velocities. The student's
+page at its step is where its velocity points from the state, ``page = state - sigma * velocity``, with that
+velocity's gradients. The page is noised again to a level ``s`` drawn uniformly in ``matching.levels`` (``x_s = (1 -
+s) * page + s * noise``), and two scores give their velocity there without gradients: the teacher, guided as it
+teaches (the real score), and the fake score, a second LoRA on the teacher's DiT trained beside the student by flow
+matching on the student's pages alone (:func:`fake_score_loss`). Each velocity names a page, ``x_s - s * v``, and the
+student's page is pulled from the fake score's toward the teacher's (:func:`matching_loss`): where the student's
+pages are distributed as the teacher's would be, the two agree and nothing is pulled. After each of the student's
+optimizer steps the fake score takes ``matching.updates`` of its own on that step's pages, each at a new level and
+noise. The sample page goes to both scores as to the student.
 """
 
 from __future__ import annotations
 
 import time
-from collections.abc import Sequence
+from collections.abc import Generator, Sequence
+from contextlib import contextmanager, nullcontext
 from itertools import pairwise
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Self
 
 import torch
 import torch.distributed as dist
 import typer
 from peft import set_peft_model_state_dict
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from safetensors.torch import load_file
 from torch import Tensor
 from torch.nn import functional as F
@@ -73,6 +86,7 @@ from diffu_moss.transformer import MossTransformer
 
 DISTILL_RECORD = "distill.json"  # beside a checkpoint's LoRA: how its student is drawn
 OPTIMIZER_STATE = "optimizer.pt"
+FAKE_SCORE = "fake_score"  # in a matching run's checkpoint: its fake score's LoRA and optimizer state
 RESUMABLE = {"stop_at", "save_every", "device"}  # what a resumed run may change
 # a reference LoRA's modules, and the layers that turn the noise level into the blocks' and the head's modulation
 DISTILL_TARGETS = LORA_TARGETS + r"|time_embedding\.(0|2)|shared_block_modulation|video_head_modulation"
@@ -94,6 +108,30 @@ class DistillSettings(BaseModel):
     guidance_scale: float = Field(default=GUIDANCE_SCALE, ge=1.0)
     uncond_skip_layers: tuple[int, ...] = DEMO_UNCOND_SKIP_LAYERS
     repulsion: float = Field(default=0.0, ge=0.0, lt=1.0)
+
+
+class MatchingSettings(BaseModel):
+    """A run's distribution-matching term (the module's docstring): its weight beside the regression; the teacher's
+    guidance scale as the real score (None: ``DistillSettings.guidance_scale``, the scale it teaches at; 1: its
+    conditional pass alone); the levels a student's page is noised to again, drawn uniformly between the two (DMD's
+    0.02 to 0.98); and the fake score: its LoRA's rank (alpha the same, on the student's modules), its learning rate,
+    and its optimizer steps for each of the student's (DMD2's two time-scale rule: 5)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    weight: float = Field(default=1.0, gt=0)
+    guidance_scale: float | None = Field(default=None, ge=1.0)
+    levels: tuple[float, float] = (0.02, 0.98)
+    rank: int = Field(default=64, ge=1)
+    learning_rate: float = Field(default=2e-5, gt=0)
+    updates: int = Field(default=5, ge=1)
+
+    @model_validator(mode="after")
+    def _levels_in_order(self) -> Self:
+        low, high = self.levels
+        if not 0 < low <= high <= 1:
+            raise ValueError(f"the levels {self.levels} are not two in (0, 1], the lower first")
+        return self
 
 
 def student_levels(settings: DistillSettings) -> list[float]:
@@ -204,6 +242,21 @@ def distillation_loss(
     Raises:
         ValueError: If ``index`` is not one of the student's steps.
     """
+    return _taught(student, teacher, noise, index, text, negative, settings, references)[0]
+
+
+def _taught(
+    student: MossTransformer,
+    teacher: MossTransformer,
+    noise: Tensor,
+    index: int,
+    text: Tensor,
+    negative: Tensor,
+    settings: DistillSettings,
+    references: Sequence[Tensor] | None,
+) -> tuple[Tensor, Tensor]:
+    """:func:`distillation_loss`, and the student's page at that step: where its velocity points from the state it
+    drew itself to (``state - sigma * velocity``), with the velocity's gradients."""
     levels = student_levels(settings)
     if not 0 <= index < len(levels) - 1:
         raise ValueError(f"step {index} is not one of the student's {len(levels) - 1}")
@@ -215,16 +268,84 @@ def distillation_loss(
     loss = F.mse_loss(velocity, guided)
     if settings.repulsion > 0 and unguided is not None:
         loss = loss - settings.repulsion * F.mse_loss(velocity, unguided)
-    return loss
+    return loss, state - levels[index] * velocity
+
+
+def matching_loss(page: Tensor, noised: Tensor, level: float, real: Tensor, fake: Tensor) -> Tensor:
+    """DMD's distribution-matching loss of a student's ``page``, in velocities: ``real`` and ``fake`` are the real
+    and the fake score's velocities at ``noised``, the page noised to ``level``, and each names a page, ``noised -
+    level * velocity``. The loss's gradient to ``page`` is the fake score's page less the real one's, ``level * (real
+    - fake)``, divided by the mean distance of ``page`` from the real one's (DMD's weighting: the same pull at every
+    level) and by the page's size: a descent step moves the page from the fake score's page toward the real one's.
+    Neither velocity takes a gradient."""
+    with torch.no_grad():
+        real_page = noised - level * real
+        distance = (page - real_page).abs().mean().clamp_min(torch.finfo(torch.float32).tiny)
+        pull = level * (real - fake) / distance
+    return 0.5 * F.mse_loss(page, page.detach() - pull)
+
+
+@contextmanager
+def teacher_alone(dit: MossTransformer) -> Generator[MossTransformer]:
+    """``dit``, a teacher carrying the fake score's LoRA, as the teacher itself (its LoRA off) for the block."""
+    dit.disable_adapters()
+    try:
+        yield dit
+    finally:
+        dit.enable_adapters()
+
+
+def distribution_matching_loss(
+    page: Tensor,
+    level: float,
+    noise: Tensor,
+    scores: MossTransformer,
+    text: Tensor,
+    negative: Tensor,
+    settings: DistillSettings,
+    references: Sequence[Tensor] | None = None,
+) -> Tensor:
+    """:func:`matching_loss` of a student's ``page`` noised to ``level`` with ``noise``. ``scores`` is the teacher's
+    DiT carrying the fake score's LoRA: with the LoRA off it is the real score, guided at ``settings.guidance_scale``
+    against ``negative`` as the teacher teaches (its unconditional pass skipping ``settings.uncond_skip_layers``; at
+    scale 1 its conditional pass alone), with it on the fake score, its conditional pass. Both read the prompt and the
+    sample page as the student does; gradients reach ``page`` alone."""
+    with torch.no_grad():
+        noised = (1 - level) * page + level * noise.float()
+        with teacher_alone(scores):
+            real = _velocity(scores, noised, level, text, references)
+            if settings.guidance_scale != 1.0:
+                skipped = frozenset(settings.uncond_skip_layers)
+                unconditional = _velocity(scores, noised, level, negative, references, skipped)
+                real = unconditional + settings.guidance_scale * (real - unconditional)
+        fake = _velocity(scores, noised, level, text, references)
+    return matching_loss(page, noised, level, real, fake)
+
+
+def fake_score_loss(
+    fake: MossTransformer,
+    page: Tensor,
+    level: float,
+    noise: Tensor,
+    text: Tensor,
+    references: Sequence[Tensor] | None = None,
+) -> Tensor:
+    """The fake score's flow-matching loss on a student's ``page`` (held fixed): the page noised to ``level`` with
+    ``noise``, and the mean squared error of ``fake``'s velocity there, from the page's prompt and sample page, to
+    ``noise - page``. Trained on it, the fake score is the velocity field of the student's own pages."""
+    page, noise = page.detach().float(), noise.float()
+    noised = (1 - level) * page + level * noise
+    return F.mse_loss(_velocity(fake, noised, level, text, references), noise - page)
 
 
 class DistillRun(BaseModel):
     """A distillation run: its length, the student LoRA's shape (``targets``: the modules it adapts, a regex matched
     in full against the DiT's module names) and learning rate (warmed up over ``warmup`` steps),
     the samples whose losses one optimizer step averages, the share of them drawn from another page's sample page
-    (``swap``: a page's layout and text with a look that is not its own, as a new page is drawn), how the student is taught (``distill``), and when it is
-    saved; ``stop_at`` ends this run at that step with a checkpoint (a chain of short jobs, each resumed from the
-    last)."""
+    (``swap``: a page's layout and text with a look that is not its own, as a new page is drawn), how the student is
+    taught (``distill``), the distribution-matching term added to that (``matching``; None: none, and the run draws,
+    trains and records its settings as a run did before there was one), and when it is saved; ``stop_at`` ends this
+    run at that step with a checkpoint (a chain of short jobs, each resumed from the last)."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -238,6 +359,7 @@ class DistillRun(BaseModel):
     swap: float = Field(default=0.0, ge=0.0, le=1.0)
     grad_clip: float = 1.0
     distill: DistillSettings = DistillSettings()
+    matching: MatchingSettings | None = Field(default=None, exclude_if=lambda matching: matching is None)
     save_every: int = Field(default=250, ge=1)
     stop_at: int | None = Field(default=None, ge=1)
     seed: int = 0
@@ -256,7 +378,9 @@ class DistillRecord(JsonRecord):
 
 class DistillLog(BaseModel):
     """One optimizer step: the mean loss of its samples, the learning rate it stepped at, the gradients' norm before
-    clipping, each sample's pair and the student step it was taught at, and its time."""
+    clipping, each sample's pair and the student step it was taught at, and its time; in a run that matches
+    distributions, its samples' mean matching loss (unweighted; not in ``loss``) and the fake score's mean
+    flow-matching loss over its updates of the step."""
 
     step: int
     loss: float
@@ -264,7 +388,56 @@ class DistillLog(BaseModel):
     grad_norm: float
     pairs: list[str]
     indices: list[int]
+    matching: float | None = Field(default=None, exclude_if=lambda loss: loss is None)
+    fake_loss: float | None = Field(default=None, exclude_if=lambda loss: loss is None)
     seconds: float
+
+
+class _StudentPage(BaseModel):
+    """A student's page of a step (held fixed), what it was drawn from, and the noise level and noise of each of the
+    fake score's updates on it."""
+
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+
+    page: Tensor
+    text: Tensor
+    references: list[Tensor] | None
+    draws: list[tuple[float, Tensor]]
+
+
+def _sum_gradients(parameters: Sequence[torch.nn.Parameter], ranks: Ranks) -> None:
+    """Over several ranks, each of ``parameters``' gradients summed over them (a rank without one giving zeros)."""
+    if ranks.mesh is None:
+        return
+    for parameter in parameters:
+        if parameter.grad is None:
+            parameter.grad = torch.zeros_like(parameter)
+        dist.all_reduce(parameter.grad)
+
+
+def _train_fake_score(
+    fake: LoraTraining, pages: Sequence[_StudentPage], updates: int, run: DistillRun, ranks: Ranks
+) -> float:
+    """The fake score's ``updates`` optimizer steps for one of the student's, each on the mean
+    :func:`fake_score_loss` of the step's ``pages`` (this rank's; the ranks sum their gradients) at that update's
+    level and noise.
+
+    Returns:
+        The mean loss over the updates and the step's samples.
+    """
+    losses = torch.zeros(updates, dtype=torch.float64, device=run.device)
+    for update in range(updates):
+        for drawn in pages:
+            level, noise = drawn.draws[update]
+            loss = fake_score_loss(fake.transformer, drawn.page, level, noise, drawn.text, drawn.references)
+            (loss / run.samples_per_step).backward()
+            losses[update] += loss.detach().double() / run.samples_per_step
+        _sum_gradients(fake.parameters, ranks)
+        torch.nn.utils.clip_grad_norm_(fake.parameters, run.grad_clip)
+        fake.step()
+    if ranks.mesh is not None:
+        dist.all_reduce(losses)
+    return losses.mean().item()
 
 
 def distill(
@@ -287,6 +460,13 @@ def distill(
     gradients before each takes the same optimizer step: one process's training up to the sum's rounding. The main rank
     writes the log and the checkpoints. From ``resume``, a checkpoint of ``out``, the run goes on at its next step
     with its optimizer's state and its generator's, as the run would have gone on.
+
+    With ``run.matching`` the teacher's DiT also carries the fake score, a second LoRA with its own AdamW (no third
+    copy of the DiT: the teacher's passes run with it off). Each sample's loss takes the matching term of its page
+    (:func:`distribution_matching_loss`), and after the student's step the fake score takes its updates on the step's
+    pages (:func:`_train_fake_score`). Their levels and noise are drawn from the same generator after the sample's own,
+    by such a run alone, and a checkpoint keeps the fake score's LoRA and optimizer state in its ``FAKE_SCORE``
+    folder, which a resumed run goes on from.
 
     Returns:
         The last checkpoint's directory.
@@ -318,6 +498,14 @@ def distill(
     training = LoraTraining(teacher, settings, sample_size_of(cache, None), lora=lora)
     frozen = MossTransformer.from_pretrained(str(teacher), torch_dtype=torch.bfloat16).to(device).eval()
     frozen.requires_grad_(False)
+    matching = run.matching
+    fake, real = None, run.distill
+    if matching is not None:
+        shape = LoraSettings(rank=matching.rank, alpha=matching.rank, target_modules=run.targets)
+        rate = settings.model_copy(update={"learning_rate": matching.learning_rate})
+        fake = LoraTraining(teacher, rate, sample_size_of(cache, None), lora=shape, transformer=frozen)
+        if matching.guidance_scale is not None:
+            real = run.distill.model_copy(update={"guidance_scale": matching.guidance_scale})
     negative_embeds = load_file(str(negative), device=device)["prompt_embeds"]
     record = DistillRecord(
         teacher=str(teacher.resolve()), student_steps=run.distill.student_steps, shift=run.distill.shift
@@ -326,6 +514,8 @@ def distill(
     done = 0
     if resume is not None:
         done = _resumed(training, generator, resume, run, device)
+        if fake is not None:
+            _restore(fake, resume / FAKE_SCORE, device)
         if ranks.main:
             lines = (out / LOG).read_text(encoding="utf-8").splitlines(keepends=True)
             kept = [line for line in lines if DistillLog.model_validate_json(line).step <= done]
@@ -340,6 +530,8 @@ def distill(
     for step in range(done + 1, last + 1):
         started = time.monotonic()
         losses = torch.zeros(run.samples_per_step, dtype=torch.float64, device=device)
+        matched = torch.zeros(run.samples_per_step, dtype=torch.float64, device=device)
+        pages: list[_StudentPage] = []
         pairs, indices = [], []
         for place in range(run.samples_per_step):
             entry = entries[int(torch.randint(len(entries), (1,), generator=generator))]
@@ -354,31 +546,51 @@ def distill(
                 donor = other if swapped and other.pair != entry.pair else None
             pairs.append(entry.pair if donor is None else f"{entry.pair}<-{donor.pair}")
             indices.append(index)
+            draws: list[tuple[float, Tensor]] = []
+            if matching is not None:  # drawn only by a run that matches: the page's own, then each fake update's
+                low, high = matching.levels
+                for _ in range(matching.updates + 1):
+                    level = low + (high - low) * float(torch.rand((), generator=generator))
+                    draws.append((level, torch.randn(noise.shape, generator=generator)))
             if not ranks.owns(place):  # drawn all the same, so every rank's generator goes on alike
                 continue
             sample = load_sample(cache, entry, device)
             reference = sample.reference if donor is None else load_sample(cache, donor, device).reference
             references = None if reference is None else [reference]
-            loss = distillation_loss(
-                training.transformer,
-                frozen,
-                noise.to(device),
-                index,
-                sample.prompt_embeds,
-                negative_embeds,
-                run.distill,
-                references,
-            )
-            (loss / run.samples_per_step).backward()
+            with nullcontext() if fake is None else teacher_alone(frozen):
+                loss, page = _taught(
+                    training.transformer,
+                    frozen,
+                    noise.to(device),
+                    index,
+                    sample.prompt_embeds,
+                    negative_embeds,
+                    run.distill,
+                    references,
+                )
             losses[place] = loss.detach().double()
+            if matching is not None:
+                level, fresh = draws[0]
+                term = distribution_matching_loss(
+                    page, level, fresh.to(device), frozen, sample.prompt_embeds, negative_embeds, real, references
+                )
+                matched[place] = term.detach().double()
+                loss = loss + matching.weight * term
+                later = [(level, fresh.to(device)) for level, fresh in draws[1:]]
+                pages.append(
+                    _StudentPage(page=page.detach(), text=sample.prompt_embeds, references=references, draws=later)
+                )
+            (loss / run.samples_per_step).backward()
         if ranks.mesh is not None:  # each rank's share of the mean's gradient, summed
             dist.all_reduce(losses)
-            for parameter in training.parameters:
-                if parameter.grad is None:
-                    parameter.grad = torch.zeros_like(parameter)
-                dist.all_reduce(parameter.grad)
+            if matching is not None:
+                dist.all_reduce(matched)
+        _sum_gradients(training.parameters, ranks)
         grad_norm = torch.nn.utils.clip_grad_norm_(training.parameters, run.grad_clip).item()
         learning_rate = training.step()
+        fake_loss = None
+        if matching is not None and fake is not None:
+            fake_loss = _train_fake_score(fake, pages, matching.updates, run, ranks)
         if not ranks.main:
             continue
         logged = DistillLog(
@@ -388,6 +600,8 @@ def distill(
             grad_norm=grad_norm,
             pairs=pairs,
             indices=indices,
+            matching=None if matching is None else matched.mean().item(),
+            fake_loss=fake_loss,
             seconds=time.monotonic() - started,
         )
         with (out / LOG).open("a", encoding="utf-8") as log:
@@ -407,6 +621,10 @@ def distill(
             training.save(checkpoint, progress)
             record.write(checkpoint / DISTILL_RECORD)
             torch.save(training.state_dict(), checkpoint / OPTIMIZER_STATE)
+            if fake is not None:
+                (checkpoint / FAKE_SCORE).mkdir(exist_ok=True)
+                fake.save(checkpoint / FAKE_SCORE, progress)
+                torch.save(fake.state_dict(), checkpoint / FAKE_SCORE / OPTIMIZER_STATE)
             progress.write(checkpoint / PROGRESS_RECORD)  # last: a checkpoint with it is whole
     return checkpoint
 
@@ -422,13 +640,24 @@ def _resumed(training: LoraTraining, generator: torch.Generator, checkpoint: Pat
     progress = Progress.read(checkpoint / PROGRESS_RECORD)
     if progress.settings != run.model_dump_json(exclude=RESUMABLE):
         raise ValueError(f"{checkpoint} was trained with other settings: {progress.settings}")
-    weights = load_file(str(checkpoint / ADAPTER_WEIGHTS), device=device)
-    loaded = set_peft_model_state_dict(training.transformer, weights)
-    if loaded.unexpected_keys:
-        raise ValueError(f"{checkpoint}: weights that are not its LoRA's")
-    training.load_state_dict(torch.load(checkpoint / OPTIMIZER_STATE, map_location=device, weights_only=True))
+    _restore(training, checkpoint, device)
     generator.set_state(torch.frombuffer(bytearray(progress.generator), dtype=torch.uint8))
     return progress.step
+
+
+def _restore(training: LoraTraining, folder: Path, device: str) -> None:
+    """``training``'s LoRA and optimizer set to those saved in ``folder``.
+
+    Raises:
+        ValueError: If the folder holds no LoRA and optimizer state, or its weights are not its LoRA's.
+    """
+    if not (folder / ADAPTER_WEIGHTS).is_file() or not (folder / OPTIMIZER_STATE).is_file():
+        raise ValueError(f"{folder} holds no LoRA and optimizer state to resume from")
+    weights = load_file(str(folder / ADAPTER_WEIGHTS), device=device)
+    loaded = set_peft_model_state_dict(training.transformer, weights)
+    if loaded.unexpected_keys:
+        raise ValueError(f"{folder}: weights that are not its LoRA's")
+    training.load_state_dict(torch.load(folder / OPTIMIZER_STATE, map_location=device, weights_only=True))
 
 
 def student_of(teacher: Path, checkpoint: Path, *, device: str = "cuda") -> MossTransformer:
@@ -475,6 +704,33 @@ def main(
         float,
         typer.Option(min=0.0, max=1.0, help="the share of samples drawn from another page's sample page"),
     ] = 0.0,
+    matching: Annotated[
+        float,
+        typer.Option(
+            min=0.0,
+            help="the weight of a distribution-matching term (DMD) beside the regression: the student's pages pulled "
+            "from where a fake score (a second LoRA on the teacher, trained on them) places them toward where the "
+            "teacher does (0: none, as before)",
+        ),
+    ] = 0.0,
+    matching_guidance: Annotated[
+        float | None,
+        typer.Option(
+            min=1.0,
+            help="with --matching: the teacher's guidance scale as the real score (default: --guidance-scale; 1: its "
+            "conditional pass alone)",
+        ),
+    ] = None,
+    fake_rank: Annotated[
+        int | None, typer.Option(min=1, help="with --matching: the fake score's LoRA rank (default: --rank)")
+    ] = None,
+    fake_learning_rate: Annotated[
+        float | None, typer.Option(help="with --matching: the fake score's AdamW's (default: --learning-rate)")
+    ] = None,
+    fake_updates: Annotated[
+        int | None,
+        typer.Option(min=1, help="with --matching: the fake score's optimizer steps for each of the student's (5)"),
+    ] = None,
     student_steps: Annotated[int, typer.Option(min=1, help="the steps the student draws in")] = 8,
     teacher_steps: Annotated[
         int, typer.Option(min=1, help="the steps of the teacher's drawing the student is taught from")
@@ -494,6 +750,22 @@ def main(
     device: Annotated[str, typer.Option(help="where the student and the teacher run")] = "cuda",
 ) -> None:
     """Distil a few-step, unguided LoRA student of a MOSS-Image DiT by on-policy distillation."""
+    fake_options = (matching_guidance, fake_rank, fake_learning_rate, fake_updates)
+    if matching == 0 and any(option is not None for option in fake_options):
+        raise typer.BadParameter("--matching-guidance and the --fake-* options set the matching term: give --matching")
+    matched = None
+    if matching > 0:
+        given = {
+            "weight": matching,
+            "guidance_scale": matching_guidance,
+            "rank": rank if fake_rank is None else fake_rank,
+            "learning_rate": learning_rate if fake_learning_rate is None else fake_learning_rate,
+            **({} if fake_updates is None else {"updates": fake_updates}),
+        }
+        try:  # a ValidationError (a learning rate not above 0) is a ValueError too
+            matched = MatchingSettings.model_validate(given)
+        except ValueError as error:
+            raise typer.BadParameter(str(error)) from error
     run = DistillRun(
         steps=steps,
         rank=rank,
@@ -507,6 +779,7 @@ def main(
             guidance_scale=guidance_scale,
             repulsion=repulsion,
         ),
+        matching=matched,
         save_every=save_every,
         stop_at=stop_at,
         seed=seed,

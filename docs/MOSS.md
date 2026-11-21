@@ -320,6 +320,20 @@ gradients; `--stop-at` and `--resume latest` chain short jobs.
   cast, the same page 18-27 % faster a pass. The demo Space loads its student so and switches it on for a fast page.
 - **`--swap s`**: that share of a run's samples take their sample page from another page of the cache (a layout and
   text with a look that is not its own, as a new page is drawn), logged as page<-donor.
+- **`--matching w`** adds a distribution-matching term (DMD, arXiv 2311.18828; DMD2's 5 fake updates a step, arXiv
+  2405.14867) to the regression, at weight `w` (0, the default: none, and a run draws, trains and checkpoints as
+  before). The student's page at its step, `state - sigma * velocity`, is noised again to a level drawn uniformly in
+  0.02-0.98, and the teacher (guided as it teaches, or at `--matching-guidance`) and a fake score give their
+  velocity there; the page is pulled by `level * (real - fake)`, over its mean distance from the teacher's page
+  (DMD's weighting), from where the fake score puts it toward where the teacher does. The fake score is a second
+  LoRA on the teacher's own DiT (switched off for the teacher's passes, so no third copy of the DiT) with its own
+  AdamW, trained by flow matching on the student's pages: after each student step it takes `--fake-updates` steps
+  (default 5) on that step's pages at new levels and noise. `--fake-rank` and `--fake-learning-rate` default to
+  `--rank` and `--learning-rate`. The sample page goes to both scores as to the student; the log adds `matching`
+  (the unweighted term) and `fake_loss`; a checkpoint keeps the fake score in `fake_score/`, and `--resume` goes on
+  from it. Cost a sample at 8 student steps against about 21 DiT passes today: 3 more without gradients and 5 fake
+  updates of about 4 passes each, so about twice the step; memory about 5 GB more a GPU at rank 128 (the fake LoRA's
+  1.3 GB in float32, its gradients and AdamW's two moments). Not run on the real model yet.
 - **A student copies its teacher's ink**, so the teacher's guidance decides it: the first student (**a**, teacher at
   guidance 3, stopped at step 116) draws its teacher's dark ink (9.5 from the sample's on the held-out pages); **d**
   and **e** (rank 128, learning rate 1e-4, 400 steps of 16, teachers at 2.0 and 1.5) became their teachers by step

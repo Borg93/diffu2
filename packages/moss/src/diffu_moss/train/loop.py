@@ -233,11 +233,18 @@ def lora_transformer(base: Path, lora: LoraSettings, *, device: str, seed: int) 
     """The DiT at ``base`` (a diffusers-format folder) frozen in bfloat16 on ``device``, with a fresh LoRA of shape
     ``lora`` (float32, its A drawn after seeding torch with ``seed``), its joint blocks checkpointed."""
     transformer = MossTransformer.from_pretrained(str(base), torch_dtype=torch.bfloat16)
+    return with_lora(transformer, lora, seed=seed).to(device).train()
+
+
+def with_lora(transformer: MossTransformer, lora: LoraSettings, *, seed: int) -> MossTransformer:
+    """``transformer`` frozen where it is, with a fresh LoRA of shape ``lora`` (float32, its A drawn after seeding
+    torch with ``seed``; its B zero, so it starts as the DiT it is added to), its joint blocks checkpointed in a pass
+    with gradients."""
     transformer.requires_grad_(False)
     torch.manual_seed(seed)
     add_lora(transformer, lora)
     transformer.enable_gradient_checkpointing()
-    return transformer.to(device).train()
+    return transformer
 
 
 def learning_rate_schedule(settings: TrainSettings) -> Callable[[int], float]:
@@ -405,7 +412,9 @@ def validation_losses(
 class LoraTraining:
     """A reference LoRA in training (the module's docstring): the DiT at ``base`` with a fresh LoRA, AdamW over the
     LoRA's weights, and the warmup; its checkpoints record how the samples it trains on were sized (``sample_size``).
-    ``lora`` gives the LoRA another shape than the settings' (other modules).
+    ``lora`` gives the LoRA another shape than the settings' (other modules); ``transformer``, a DiT already loaded
+    (``base``'s, frozen in bfloat16 on the settings' device), takes the LoRA in place of a new copy of it, left in its
+    mode.
 
     Attributes:
         transformer: The DiT, frozen in bfloat16, with its LoRA in float32.
@@ -421,9 +430,14 @@ class LoraTraining:
         sample_size: SampleSize = SampleSize.HALF,
         *,
         lora: LoraSettings | None = None,
+        transformer: MossTransformer | None = None,
     ) -> None:
         lora = settings.lora if lora is None else lora
-        self.transformer = lora_transformer(base, lora, device=settings.device, seed=settings.seed)
+        self.transformer = (
+            lora_transformer(base, lora, device=settings.device, seed=settings.seed)
+            if transformer is None
+            else with_lora(transformer, lora, seed=settings.seed)
+        )
         self.parameters: list[nn.Parameter] = [
             parameter for parameter in self.transformer.parameters() if parameter.requires_grad
         ]

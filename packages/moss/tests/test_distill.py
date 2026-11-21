@@ -4,7 +4,10 @@ a LoRA student whose few-step drawing moves toward its teacher's many-step guide
 a distillation run whose checkpoint merges into the teacher's DiT as a student that steps closer to the teacher's
 guided steps (a used run directory refused); a run stopped and resumed goes on exactly as the run that went
 through, and a run on two processes (torchrun, gloo) trains as one process does up to the rounding of the summed
-gradients."""
+gradients. The distribution-matching term: no pull where the fake score is the real one and DMD's pull where not, a
+toy student moved to its teacher's distribution, a run without it as before it existed, its weight in the student's
+gradients, the teacher teaching with the fake score's LoRA off, and a matching run resumed and on two processes as
+the run without them."""
 
 from __future__ import annotations
 
@@ -17,26 +20,35 @@ from pathlib import Path
 
 import pytest
 import torch
+from peft import set_peft_model_state_dict
 from safetensors.torch import load_file, save_file
 from torch import Tensor
 
 from diffu_moss.modular_pipelines.moss.before_denoise import sampling_sigmas
-from diffu_moss.train.cache import CachedSample, load_sample, read_entries
+from diffu_moss.train.cache import CachedSample, load_sample, read_entries, target_shape
 from diffu_moss.train.distill import (
     DISTILL_RECORD,
+    DISTILL_TARGETS,
+    FAKE_SCORE,
+    DistillLog,
     DistillRun,
     DistillSettings,
+    MatchingSettings,
     distill,
     distillation_loss,
+    distribution_matching_loss,
     latest_checkpoint,
+    matching_loss,
     rolled_out,
     student_levels,
     student_of,
+    teacher_alone,
     teacher_levels,
     teacher_velocities,
     teacher_velocity,
 )
 from diffu_moss.train.loop import LOG, TrainSettings, lora_transformer
+from diffu_moss.train.records import PROGRESS_RECORD, LoraSettings, Progress
 from diffu_moss.transformer import MossTransformer
 
 SETTINGS = DistillSettings(student_steps=2, teacher_steps=8, guidance_scale=3.0, uncond_skip_layers=(1,))
@@ -255,6 +267,10 @@ def test_a_run_that_swaps_teaches_pages_from_other_pages_samples(
     assert swaps and all(page != donor and page in sampled and donor in sampled for page, donor in swaps)
 
 
+def _logged(run: Path) -> list[DistillLog]:
+    return [DistillLog.model_validate_json(line) for line in (run / LOG).read_text(encoding="utf-8").splitlines()]
+
+
 def _rows(run: Path) -> list[dict[str, object]]:
     lines = (run / LOG).read_text(encoding="utf-8").splitlines()
     return [{key: value for key, value in json.loads(line).items() if key != "seconds"} for line in lines]
@@ -315,3 +331,250 @@ def test_a_distillation_on_two_processes_trains_as_one_process_does(
     weights = [load_file(str(out / "checkpoints" / "step_000003" / "adapter.safetensors")) for out in (one, two)]
     far = [name for name in weights[0] if not torch.allclose(weights[0][name], weights[1][name], rtol=1e-3, atol=1e-6)]
     assert far == []
+
+
+MATCHING = MatchingSettings(rank=4, learning_rate=3e-3, updates=2)
+
+
+def _with_fake_score(tiny_moss_dit: Path) -> MossTransformer:
+    """The tiny teacher in float32 carrying a fresh fake-score LoRA (its B zero: the teacher itself)."""
+    lora = LoraSettings(rank=4, alpha=4, target_modules=DISTILL_TARGETS)
+    scores = lora_transformer(tiny_moss_dit, lora, device="cpu", seed=0).float().eval()
+    scores.disable_gradient_checkpointing()
+    return scores
+
+
+def test_the_matching_gradient_is_zero_where_the_fake_score_is_the_real_one_and_else_dmds_pull(
+    tiny_moss_dit: Path, sample: CachedSample, negative: Tensor
+) -> None:
+    scores = _with_fake_score(tiny_moss_dit)
+    conditional = SETTINGS.model_copy(update={"guidance_scale": 1.0})
+    text, references, level, noise = sample.prompt_embeds, [_page(sample)], 0.6, _noise(sample, 7)
+
+    def gradient() -> Tensor:
+        page = _noise(sample, 3).requires_grad_(True)
+        distribution_matching_loss(page, level, noise, scores, text, negative, conditional, references).backward()
+        assert page.grad is not None
+        return page.grad
+
+    equal = gradient()
+    generator = torch.Generator().manual_seed(5)
+    for name, parameter in scores.named_parameters():
+        if ".lora_B" in name:
+            parameter.data = 0.05 * torch.randn(parameter.shape, generator=generator)
+    moved = gradient()
+
+    assert torch.count_nonzero(equal).item() == 0
+    page = _noise(sample, 3)
+    noised = (1 - level) * page + level * noise
+    with teacher_alone(scores):
+        real = _step(scores, noised, level, text, sample)
+    fake = _step(scores, noised, level, text, sample)
+    distance = (page - (noised - level * real)).abs().mean()
+    assert torch.allclose(moved, level * (real - fake) / distance / page.numel(), rtol=1e-4, atol=1e-12)
+    assert moved.abs().max().item() > 0
+
+
+def test_matching_moves_a_students_pages_to_the_teachers_distribution() -> None:
+    """A toy: the teacher's pages are Gaussian about ``target``, the student's about its learnt ``mean``, each score the
+    exact velocity of its distribution; the student's mean, trained on the matching loss alone, reaches the target."""
+    spread, size = 0.5, 64
+    target = torch.linspace(-1.5, 1.5, size)
+    mean = torch.zeros(size, requires_grad=True)
+    generator = torch.Generator().manual_seed(0)
+
+    def velocity(
+        noised: Tensor, level: float, centre: Tensor
+    ) -> Tensor:  # E[noise - page | noised] for N(centre, spread²)
+        expected = centre + (1 - level) * spread**2 / ((1 - level) ** 2 * spread**2 + level**2) * (
+            noised - (1 - level) * centre
+        )
+        return (noised - expected) / level
+
+    optimizer = torch.optim.Adam([mean], lr=0.05)
+    for _ in range(300):
+        page = mean + spread * torch.randn(size, generator=generator)
+        level = 0.02 + 0.96 * torch.rand((), generator=generator).item()
+        noised = ((1 - level) * page + level * torch.randn(size, generator=generator)).detach()
+        loss = matching_loss(
+            page, noised, level, velocity(noised, level, target), velocity(noised, level, mean.detach())
+        )
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+    assert (mean.detach() - target).abs().max().item() < 0.15
+
+
+def test_a_run_without_matching_draws_and_trains_as_before_the_option(
+    tiny_moss_dit: Path, tiny_pair_cache: Path, negative: Tensor, tmp_path: Path
+) -> None:
+    file = tmp_path / "negative.safetensors"
+    save_file({"prompt_embeds": negative}, str(file))
+    run = DistillRun(
+        steps=3,
+        rank=4,
+        alpha=4,
+        learning_rate=3e-3,
+        warmup=2,
+        distill=SETTINGS,
+        samples_per_step=2,
+        swap=0.5,
+        save_every=3,
+        device="cpu",
+    )
+
+    checkpoint = distill(tiny_moss_dit, tiny_pair_cache, file, tmp_path / "run", run)
+
+    before = [  # this run's log as the code before the option wrote it
+        (1, 0.016789900371804833, 0.0015, 0.04360968619585037, ["vol_04<-vol_10", "vol_00"], [1, 0]),
+        (2, 0.01574396132491529, 0.003, 0.05015214905142784, ["vol_04<-vol_10", "vol_05"], [1, 0]),
+        (3, 0.003178988699801266, 0.003, 0.02162192016839981, ["vol_01", "vol_09"], [1, 1]),
+    ]
+    rows = _rows(tmp_path / "run")
+    assert [set(row) for row in rows] == [{"step", "loss", "learning_rate", "grad_norm", "pairs", "indices"}] * 3
+    for row, (step, loss, rate, norm, pairs, indices) in zip(rows, before, strict=True):
+        assert (row["step"], row["learning_rate"], row["pairs"], row["indices"]) == (step, rate, pairs, indices)
+        assert row["loss"] == pytest.approx(loss, rel=1e-5) and row["grad_norm"] == pytest.approx(norm, rel=1e-5)
+    weights = load_file(str(checkpoint / "adapter.safetensors"))
+    assert sum(tensor.double().abs().sum().item() for tensor in weights.values()) == pytest.approx(
+        449.88732852, rel=1e-6
+    )
+    settings = json.loads(Progress.read(checkpoint / PROGRESS_RECORD).settings)
+    assert "matching" not in settings and not (checkpoint / FAKE_SCORE).exists()  # older checkpoints resume
+
+
+def test_the_matching_terms_weight_reaches_the_students_gradients(
+    tiny_moss_dit: Path, tiny_pair_cache: Path, negative: Tensor, tmp_path: Path
+) -> None:
+    file = tmp_path / "negative.safetensors"
+    save_file({"prompt_embeds": negative}, str(file))
+    run = DistillRun(steps=1, rank=4, alpha=4, learning_rate=3e-3, warmup=2, distill=SETTINGS, device="cpu")
+
+    for weight in (1e-3, 30.0):
+        matching = MATCHING.model_copy(update={"weight": weight})
+        distill(
+            tiny_moss_dit, tiny_pair_cache, file, tmp_path / str(weight), run.model_copy(update={"matching": matching})
+        )
+
+    light, heavy = (_logged(tmp_path / str(weight))[0] for weight in (1e-3, 30.0))
+    assert (light.pairs, light.indices) == (heavy.pairs, heavy.indices)
+    assert light.loss == pytest.approx(heavy.loss, rel=1e-6)  # the regression alone is logged as loss
+    assert light.matching is not None and light.matching > 0
+    assert light.matching == pytest.approx(heavy.matching, rel=1e-6)
+    assert heavy.grad_norm > 1.2 * light.grad_norm
+
+
+def test_the_teacher_teaches_without_the_fake_scores_lora(
+    tiny_moss_dit: Path, tiny_pair_cache: Path, negative: Tensor, tmp_path: Path
+) -> None:
+    file = tmp_path / "negative.safetensors"
+    save_file({"prompt_embeds": negative}, str(file))
+    run = DistillRun(
+        steps=2,
+        rank=4,
+        alpha=4,
+        learning_rate=3e-3,
+        warmup=1,
+        distill=SETTINGS,
+        matching=MATCHING,
+        save_every=1,
+        device="cpu",
+    )
+
+    distill(tiny_moss_dit, tiny_pair_cache, file, tmp_path / "run", run)
+
+    first = tmp_path / "run" / "checkpoints" / "step_000001"
+    assert load_file(str(first / FAKE_SCORE / "adapter.safetensors"))  # the fake score had trained by step 2
+    lora = LoraSettings(rank=4, alpha=4, target_modules=DISTILL_TARGETS)
+    student = lora_transformer(tiny_moss_dit, lora, device="cpu", seed=0).eval()
+    set_peft_model_state_dict(student, load_file(str(first / "adapter.safetensors")))
+    plain = MossTransformer.from_pretrained(str(tiny_moss_dit), torch_dtype=torch.bfloat16).eval()
+    generator = torch.Generator()
+    generator.set_state(
+        torch.frombuffer(bytearray(Progress.read(first / PROGRESS_RECORD).generator), dtype=torch.uint8)
+    )
+    entries = read_entries(tiny_pair_cache)
+    entry = entries[int(torch.randint(len(entries), (1,), generator=generator))]
+    index = int(torch.randint(SETTINGS.student_steps, (1,), generator=generator))
+    noise = torch.randn(target_shape(tiny_pair_cache, entry), generator=generator)
+    held = load_sample(tiny_pair_cache, entry, "cpu")
+    references = None if held.reference is None else [held.reference]
+    with torch.no_grad():
+        taught = distillation_loss(student, plain, noise, index, held.prompt_embeds, negative, SETTINGS, references)
+    row = _rows(tmp_path / "run")[1]
+    assert (row["pairs"], row["indices"]) == ([entry.pair], [index])
+    assert row["loss"] == pytest.approx(taught.item(), rel=1e-4)
+
+
+def test_a_matching_run_stopped_and_resumed_goes_on_exactly_as_the_run_that_went_through(
+    tiny_moss_dit: Path, tiny_pair_cache: Path, negative: Tensor, tmp_path: Path
+) -> None:
+    file = tmp_path / "negative.safetensors"
+    save_file({"prompt_embeds": negative}, str(file))
+    run = DistillRun(
+        steps=4,
+        rank=4,
+        alpha=4,
+        learning_rate=3e-3,
+        warmup=2,
+        distill=SETTINGS,
+        matching=MATCHING,
+        save_every=4,
+        device="cpu",
+    )
+    through = distill(tiny_moss_dit, tiny_pair_cache, file, tmp_path / "through", run)
+
+    distill(tiny_moss_dit, tiny_pair_cache, file, tmp_path / "chained", run.model_copy(update={"stop_at": 2}))
+    first = latest_checkpoint(tmp_path / "chained")
+    resumed = distill(tiny_moss_dit, tiny_pair_cache, file, tmp_path / "chained", run, resume=first)
+
+    assert first is not None and resumed.name == "step_000004"
+    rows = _rows(tmp_path / "chained")
+    assert rows == _rows(tmp_path / "through")
+    logged = _logged(tmp_path / "chained")
+    assert all((row.fake_loss or 0) > 0 and (row.matching or 0) > 0 for row in logged)
+    for saved in ("adapter.safetensors", f"{FAKE_SCORE}/adapter.safetensors"):
+        weights = [load_file(str(folder / saved)) for folder in (resumed, through)]
+        assert [name for name in weights[1] if not torch.equal(weights[0][name], weights[1][name])] == []
+    plain = run.model_copy(update={"matching": None})
+    with pytest.raises(ValueError, match="other settings"):
+        distill(tiny_moss_dit, tiny_pair_cache, file, tmp_path / "chained", plain, resume=first)
+
+
+def test_a_matching_distillation_on_two_processes_trains_as_one_process_does(
+    tiny_moss_dit: Path, tiny_pair_cache: Path, negative: Tensor, tmp_path: Path
+) -> None:
+    file = tmp_path / "negative.safetensors"
+    save_file({"prompt_embeds": negative}, str(file))
+
+    def launched(world: int) -> Path:
+        out = tmp_path / f"world_{world}"
+        command = [
+            *(sys.executable, "-m", "torch.distributed.run", "--standalone", f"--nproc-per-node={world}"),
+            *("-m", "diffu_moss.train.distill", "--device", "cpu", "--teacher", str(tiny_moss_dit)),
+            *("--cache", str(tiny_pair_cache), "--negative", str(file), "--out", str(out)),
+            *("--steps", "2", "--samples-per-step", "2", "--rank", "4", "--learning-rate", "3e-3"),
+            *("--student-steps", "2", "--teacher-steps", "8", "--save-every", "2"),
+            *("--matching", "1.0", "--fake-updates", "2"),
+        ]
+        env = {**os.environ, "CUDA_VISIBLE_DEVICES": "", "OMP_NUM_THREADS": "1"}
+        done = subprocess.run(command, env=env, capture_output=True, text=True, check=False)
+        assert done.returncode == 0, done.stderr[-3000:]
+        return out
+
+    one, two = launched(1), launched(2)
+
+    rows = _rows(one), _rows(two)
+    assert [(row["step"], row["pairs"], row["indices"]) for row in rows[0]] == [
+        (row["step"], row["pairs"], row["indices"]) for row in rows[1]
+    ]
+    for ours, theirs in zip(*rows, strict=True):
+        for key in ("loss", "matching", "fake_loss"):
+            assert ours[key] == pytest.approx(theirs[key], rel=1e-4, abs=1e-8)
+    for saved in ("adapter.safetensors", f"{FAKE_SCORE}/adapter.safetensors"):
+        weights = [load_file(str(out / "checkpoints" / "step_000002" / saved)) for out in (one, two)]
+        far = [
+            name for name in weights[0] if not torch.allclose(weights[0][name], weights[1][name], rtol=1e-3, atol=1e-6)
+        ]
+        assert far == []
