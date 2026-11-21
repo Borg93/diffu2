@@ -18,6 +18,18 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
 
 ## The model: the hand and the ink
 
+- [ ] **Experiment to try (owner, 21 Nov): a sample per line box, from the same page.** Today one sample page goes in
+      whole and nothing ties a line of the new page to anything in it; the pairs are pages of one volume, so the hand
+      is shared only where the volume has one scribe. Instead give each line box (or a few) a crop of a real line,
+      placed over its box (`reference_place: over`, one reference index each), and train on real pages whose other
+      lines are the crops: the same page is almost always one hand, so every pair is certainly the same scribe.
+      MS-Diffusion (ICLR 2025, arXiv 2406.07209) binds reference images to layout boxes in the same way. Steps: a
+      pair builder from the existing caches, a pilot fine-tune from step 10,257 (as the 480-step pilots), judged by
+      eye on held-out pages and the Space's templates beside the whole-page sample; then the Space and pipeline taking
+      a sample per box (or a sample page cut into line crops). Line crops cost ~100-300 tokens each.
+- [ ] The Space's path follows the sample less than drawing a real page does (heavy black headings from a thin grey
+      sample, an invented dark border and page stack): check the full model against the student on the same
+      template pages, then the template layouts, then the sample zoom.
 - [ ] Letter forms follow the sample on short-entry pages (the 16th-century accounts) and not on running text, and not
       at all on the demo Space's new pages (the same letter from four samples in one hand). Not tried: writer-ID
       supervision in training, training weighted toward low noise (`--sigma-shift`) on a full run, more scribes.
@@ -26,8 +38,10 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
       the model itself has to learn it.
 - [ ] Caption dropout (`--caption-dropout 0.1`) showed no difference after 480 steps, which may be too few: decide it
       on a longer run or drop it.
-- [ ] Compiled joint blocks in training under FSDP2 (`compile_loop.py`, 30 steps at 2 MP): waiting for a slot on 11
-      Nov, no result recorded.
+- [ ] Compiled joint blocks in training under FSDP2 (`compile_loop.py`, 30 steps at 2 MP from B's step 7,000, the 9 Nov
+      probe's samples): 11 Nov 15.0 s a step against 18.4 eager, the same losses; 21 Nov with the leaner RMSNorm eager
+      17.4 s (losses equal to the 9 Nov probe's to the third place), compiled failed in Inductor's C++ wrapper build on
+      the compute node (`CppCompileError`, job 65020189): find why before a run uses it.
 - [ ] Six of the 30 template jobs (dense registers and tables) are refused: their prompts pass the text encoder's 4,096
       tokens.
 - [ ] On the Space's path lines flagged printed are written by hand and the short ruled lines under them left out.
