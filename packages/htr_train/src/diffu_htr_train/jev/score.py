@@ -4,7 +4,7 @@ beside it, scored for "the text matches the line", and the lines' scores gathere
 Run with ``envs/vllm``'s Python (it holds vLLM, not the project's other packages, so the ALTO file is read here)::
 
     CUDA_VISIBLE_DEVICES=2 packages/htr_train/envs/vllm/.venv/bin/python -m diffu_htr_train.jev.score \
-        PAIRS.tsv OUT_DIR --model runs/htr/jev-all/output/checkpoint-45486 [--limit N]
+        PAIRS.tsv OUT_DIR --model runs/htr/final/hub/diffu-minicpm-ocr-htr-jev [--limit N]
 
 ``PAIRS.tsv`` holds a scan's image and its ALTO file a line, tab-separated. ``OUT_DIR`` gets JSON-lines parts, one
 row a scan (:class:`ScanScore`), and a scan a part holds is skipped, so a stopped run goes on where it was.
@@ -168,7 +168,7 @@ def main(
     out: Annotated[Path, typer.Argument(help="folder for the JSON-lines parts")],
     model: Annotated[
         str, typer.Option(help="Jev's checkpoint or repository")
-    ] = "runs/htr/jev-all/output/checkpoint-45486",
+    ] = "runs/htr/final/hub/diffu-minicpm-ocr-htr-jev",
     limit: Annotated[int | None, typer.Option(help="at most so many scans (a trial)")] = None,
     workers: Annotated[int, typer.Option(help="processes cutting and drawing lines")] = 16,
     memory: Annotated[float, typer.Option(help="the share of the GPU's memory vLLM may take")] = 0.3,
