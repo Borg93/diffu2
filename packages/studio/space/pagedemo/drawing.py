@@ -139,7 +139,20 @@ def build_blocks_package(models: Models, out: Path) -> Path:
     """An AOTInductor package of the DiT's joint block built at ``out`` (a new ``.pt2`` file) on the device the models
     are on: one compiled block for every block of both DiTs, the weights handed in at each call."""
     block = next(layer for layer in models.transformer.layers if isinstance(layer, JointBlock))
-    build_package(block, out, tokens=PACKAGE_TOKENS)
+    timed = torch.cuda.Event.elapsed_time
+
+    def completed_elapsed_time(start: torch.cuda.Event, end: torch.cuda.Event) -> float:
+        start.synchronize()
+        end.synchronize()
+        return timed(start, end)
+
+    # Inductor times its kernels' configs with CUDA events; on ZeroGPU it read them before they completed ("Both
+    # events must be completed", 21 Nov 2026): wait for each before reading it, while the package is built
+    torch.cuda.Event.elapsed_time = completed_elapsed_time  # ty: ignore[invalid-assignment]
+    try:
+        build_package(block, out, tokens=PACKAGE_TOKENS)
+    finally:
+        torch.cuda.Event.elapsed_time = timed
     return out
 
 
