@@ -154,8 +154,14 @@ def test_repair_lines_draws_a_rejected_line_of_a_moss_crop_again_from_the_crops_
     assert repaired.image.tobytes() != crop.image.tobytes()
 
 
-def test_load_pipeline_guides_at_moss_images_own_scale_when_the_settings_name_none(moss_pipe: ModularPipeline) -> None:
-    assert moss_pipe.guider.guidance_scale == 3.0
+def test_load_pipeline_guides_a_page_at_2_over_half_its_steps_and_at_moss_images_own_scale_when_named_none(
+    moss_pipe: ModularPipeline, tiny_moss: Path
+) -> None:
+    assert (moss_pipe.guider.guidance_scale, moss_pipe.guider._stop) == (2.0, 0.5)
+    own = load_pipeline(
+        tiny_moss, crop_blocks, loras={}, settings=MOSS_SETTINGS.model_copy(update={"guidance_scale": None})
+    )
+    assert own.guider.guidance_scale == 3.0
 
 
 @pytest.mark.parametrize(

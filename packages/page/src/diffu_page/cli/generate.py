@@ -476,7 +476,9 @@ def generate(
     whole_page: Annotated[
         bool, typer.Option("--whole-page/--windows", help="draw each page whole instead of as training-scale windows")
     ] = False,
-    page_megapixels: Annotated[float, typer.Option(min=0.25, max=4.0, help="a whole page's size")] = 2.5,
+    page_megapixels: Annotated[
+        float, typer.Option(min=0.25, max=4.0, help="a whole page's size (the model was trained at 2)")
+    ] = 2.0,
     mark_from_scan: Annotated[
         bool,
         typer.Option(

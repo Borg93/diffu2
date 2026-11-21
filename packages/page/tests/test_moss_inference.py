@@ -49,7 +49,9 @@ from diffu_page.draw.pipeline import DrawSettings, crop_blocks, load_pipeline
 from diffu_page.draw.plan import CropPlan, plan_whole_page
 from diffu_page.page.layout import load_xml_layout
 
-SETTINGS = DrawSettings(steps=2, device="cpu")
+# guided at every step at MOSS-Image's own scale, as main drew when these were recorded (the page defaults guide
+# half the steps at 2)
+SETTINGS = DrawSettings(steps=2, device="cpu", guidance_scale=None, guidance_stop=1.0)
 # The tiny MOSS's crop of small_plan from seed 0 as main drew it before these options (27c9fc9, on the CPU): the
 # SHA-256 of its RGB bytes, the same at 1, 2 and 4 threads
 MAIN_DRAWING_SHA256 = "8f19b95b784939f35b2fa415485d23a69e410ec05953c6cdf74f9321a87c8d75"
@@ -127,7 +129,7 @@ def _tensor(pipe: ModularPipeline, plan: CropPlan, output: str, settings: DrawSe
 
 def _cached(cache: StepCache) -> DrawSettings:
     """Settings that draw in :data:`CACHED_STEPS` steps with the step cache ``cache``."""
-    return DrawSettings(steps=CACHED_STEPS, device="cpu", cache=cache)
+    return DrawSettings(steps=CACHED_STEPS, device="cpu", cache=cache, guidance_scale=None, guidance_stop=1.0)
 
 
 def _count_computations(pipe: ModularPipeline) -> list[int]:

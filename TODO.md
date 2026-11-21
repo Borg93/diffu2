@@ -24,8 +24,6 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
 - [ ] A faint sample's ink is beyond the model's range: from the 1687 sample (ink L 48.7) the model itself draws L 17-21
       at every guidance that writes, and at guidance 1 no line is readable. No student of this model can follow it:
       the model itself has to learn it.
-- [ ] The model's default guidance is still MOSS-Image's 3 (`GUIDANCE_SCALE`); the measurements support 2 (20 Nov).
-      Until the default changes, pass `--guidance 2`. Not drawn: the swaps at 1.5.
 - [ ] Caption dropout (`--caption-dropout 0.1`) showed no difference after 480 steps, which may be too few: decide it
       on a longer run or drop it.
 - [ ] Compiled joint blocks in training under FSDP2 (`compile_loop.py`, 30 steps at 2 MP): waiting for a slot on 11
@@ -84,8 +82,6 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
 
 - [ ] Profile on the cluster's Blackwell GPUs (Morgan, `~/diffu_queue/morgan_test.tar.gz`): bf16 against MXFP8 +
       compiled blocks, actors per card; then NVFP4 and fused QKV projections.
-- [ ] `diffu-run` draws at 1.0 MP unless told (`--page-megapixels`), and `deploy/kuberay/stage-models.yaml` still
-      stages `Gabriel/diffu-moss-r6b`: both to the 2 MP sample-above model.
 - [ ] A crop is drawn one per call and one actor does everything in turn: batch same-size crops, and split the work into
       stages with their own resources (encode, denoise, read-back, labels and sink); the line repair as such a stage.
 - [ ] `diffu-run` writes ALTO and PAGE only: the page readers' formats come from `diffu-reader-set --xml` on its export.

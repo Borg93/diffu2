@@ -18,7 +18,9 @@ DEFAULTS = DrawSettings()  # every draw option's default comes from here
 Steps = Annotated[int, typer.Option(min=1, help="denoising steps per crop")]
 Guidance = Annotated[
     float | None,
-    typer.Option(help="how hard guidance pushes toward the caption (default: MOSS-Image's own, 3)"),
+    typer.Option(
+        help="how hard guidance pushes toward the caption (default 2: closer to a sample page's ink than MOSS-Image's own 3)"
+    ),
 ]
 ReferenceGuidanceScale = Annotated[
     float, typer.Option(help="how hard guidance also pushes toward the reference image (1: not at all)")

@@ -449,8 +449,12 @@ def main(
     ] = Attention.AUTO,
     page_megapixels: Annotated[
         float,
-        typer.Option(min=0.25, max=4.0, help="the size a page is drawn whole at, unless its job gives page_pixels"),
-    ] = 1.0,
+        typer.Option(
+            min=0.25,
+            max=4.0,
+            help="the size a page is drawn whole at, unless its job gives page_pixels (the model was trained at 2)",
+        ),
+    ] = 2.0,
     htr_model: Annotated[
         str, typer.Option(help="the HTR model lines are read back with: a directory, or a Hub id in the HF cache")
     ] = settings.htr_model,

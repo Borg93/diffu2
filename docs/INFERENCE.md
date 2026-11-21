@@ -91,9 +91,8 @@ model directory as in "The model directory" below.
 
 **C. A model repository.** The DiT to draw with is `Gabriel/diffu-moss-above` at commit
 `3d5d3d966a0d32d4b9573c3d6a6d2324d19bb5a8`: set the staging Job's `DIT_REPO` and `DIT_REVISION` to them and
-`DIT_NAME` to `diffu-moss-above`, so the model directory is `/models/moss-diffu-moss-above` (the manifest as committed
-still names the earlier 1 MP model, `Gabriel/diffu-moss-r6b`; the Secret's read token is needed only for a repository
-that is not public). A DiT of your own is uploaded once by the person who trained it:
+`DIT_NAME` to `diffu-moss-above`, as the committed manifest does, so the model directory is
+`/models/moss-diffu-moss-above` (the Secret's read token is needed only for a repository that is not public). A DiT of your own is uploaded once by the person who trained it:
 
 ```bash
 hf upload <org>/<dit-repo> <path to the checkpoint>/transformer . --private
@@ -175,7 +174,7 @@ A run file has one page job per line (JSON Lines), the input of `diffu_page.draw
 | `style` | yes | `{"provenance": {"title": ..., "years": ...}, "look": {"greyscale": ..., "paper": ..., "ink": ...}}`: paper is one of grey, light grey, white, off-white, cream, yellowed; ink one of black, dark grey, faded grey, dark brown, brown, faded brown |
 | `reference` | for a model that takes a sample image | `{"image": <a sample page>, "caption": "sample"}`. `caption` must be a form the DiT was trained on; the sample-above model's is `sample`. |
 | `side` | no | `left` or `right` to draw one page of a template's two-page opening; without it an opening is drawn as both its pages, as `<id>_left` and `<id>_right` |
-| `page_pixels` | no | the page's size in pixels (default: the run's `--page-megapixels`, which is 1.0 MP unless the run names another). The sample-above model is trained at 2 MP: give `2000000` here, or run with `--page-megapixels 2`. |
+| `page_pixels` | no | the page's size in pixels (default: the run's `--page-megapixels`, which is 2.0 MP, the model's training size, unless the run names another). The sample-above model is trained at 2 MP: give `2000000` here, or run with `--page-megapixels 2`. |
 | `seed` | no | added to the id's own seed (default 0) |
 
 The layout and the text are two separate choices. Text written into a template, or into a layout whose lines hold text,
@@ -224,9 +223,9 @@ of them, in about a quarter less time.
 | Field | Default | Meaning |
 |---|---|---|
 | `steps` | 50 | denoising steps per page: the main speed and quality knob |
-| `guidance_scale` | MOSS-Image's own, 3 | how hard guidance pushes toward the caption; set 2 (above) |
+| `guidance_scale` | 2 | how hard guidance pushes toward the caption (`null`: MOSS-Image's own 3, whose ink is too dark against sample pages) |
 | `reference_guidance_scale` | 1 | above 1 also pushes toward the sample page (a third pass a step, so slower; it did not move the hand) |
-| `guidance_stop` | 1 | the share of the steps after which guidance stops: one pass a step after it |
+| `guidance_stop` | 0.5 | the share of the steps after which guidance stops: one pass a step after it (half: the same page a quarter sooner) |
 | `sampling_shift` | MOSS-Image's own, 5 | the timestep shift |
 | `max_line_cer` | 0.25 | a line the judge reads with a higher character error rate is tagged `unclear` in the labels |
 | `lora_scale` | 1 | how strongly a hand's adapter (`--lora`, section 3) applies: 1 as trained, 0 not at all |
@@ -283,7 +282,7 @@ diffu-run --jobs /data/runs/pahlman.jsonl --draw-settings /data/runs/draw.json \
 | `--actors-per-gpu` | entry point | pipelines sharing a GPU, each a whole copy of the model (about 35 GB: the DiT 10 GB, the text encoder 17 GB, the VAE, the judge and the activations; to be measured). 1 by default; 2 may fit a 96 GB card, and helps only if one actor leaves the GPU idle (measure, section 11) |
 | `--cpus-per-actor` | entry point | CPUs Ray keeps for each actor (default 1); pages are planned on the rest, so leave some |
 | `--commit-every` | entry point | drawn pages per commit to the table (default 64): what a crash can lose, and how many small files the table gets |
-| `--page-megapixels` | entry point | the size a page is drawn at, unless its job gives `page_pixels` (default 1.0) |
+| `--page-megapixels` | entry point | the size a page is drawn at, unless its job gives `page_pixels` (default 2.0) |
 | `steps` | draw settings | time per page is about proportional to it |
 | `--attention` | entry point | the attention kernel (section 15) |
 

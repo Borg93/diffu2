@@ -150,6 +150,14 @@ class PagePlanBlocks(SequentialPipelineBlocks):
         return [OutputParam("crop_plans", type_hint=list, description="The page's CropPlans, in page order.")]
 
 
+# A page's guidance as measured on the sample-above model against its sample pages (docs/MOSS_RUNS.md, 20-21 Nov
+# 2026): at MOSS-Image's own 3 the ink is too dark and the strokes too thick, at 2 they are close to the sample's and
+# every line is still written; guidance over the first half of the steps draws the same page a quarter sooner. None
+# takes MOSS-Image's own scale.
+PAGE_GUIDANCE_SCALE = 2.0
+PAGE_GUIDANCE_STOP = 0.5
+
+
 class DrawSettings(BaseModel):
     """How every crop is drawn.
 
@@ -198,9 +206,9 @@ class DrawSettings(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     steps: int = Field(default=50, ge=1)
-    guidance_scale: float | None = None
+    guidance_scale: float | None = PAGE_GUIDANCE_SCALE
     reference_guidance_scale: float = 1.0
-    guidance_stop: float = Field(default=1.0, ge=0.0, le=1.0)
+    guidance_stop: float = Field(default=PAGE_GUIDANCE_STOP, ge=0.0, le=1.0)
     label_format: LabelFormat = LabelFormat.ALTO
     max_line_cer: float = MAX_LINE_CER
     device: str = "cuda"

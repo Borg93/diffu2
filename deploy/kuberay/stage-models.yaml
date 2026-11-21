@@ -1,6 +1,6 @@
 # A Job that fills the models volume (docs/INFERENCE.md, section 3): MOSS-Image-Base's text encoder, tokenizer and
 # VAE and the TrOCR judge, each at the revision the code was tested with, the fine-tuned DiT from a model repository
-# (set to the published Gabriel/diffu-moss-r6b), and the model directory diffu-moss-init writes around them. It runs the inference image, needs network
+# (set to the published Gabriel/diffu-moss-above), and the model directory diffu-moss-init writes around them. It runs the inference image, needs network
 # access to huggingface.co (this Job only: a run never downloads), and can be run again (downloads resume; an existing
 # model directory is kept). Every <...> is a value of your site.
 #
@@ -41,11 +41,11 @@ spec:
                   key: token
                   optional: true
             - name: DIT_REPO  # "" when the DiT folder is copied in by hand
-              value: Gabriel/diffu-moss-r6b
+              value: Gabriel/diffu-moss-above
             - name: DIT_REVISION
-              value: 9da723d920d580abc8f462117f05c0b6f865c88b
+              value: 3d5d3d966a0d32d4b9573c3d6a6d2324d19bb5a8
             - name: DIT_NAME
-              value: diffu-moss-r6b
+              value: diffu-moss-above
           command: ["/bin/bash", "-c"]
           args:
             - |
