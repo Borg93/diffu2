@@ -444,8 +444,8 @@ TEMPLATES_JSON = json.dumps(
 
 
 def build() -> gr.Blocks:
-    """The demo's page: the page itself in the middle (the editor; a drawn page takes its place there), what it is
-    drawn from on its left, and the button with what a drawing returns on its right."""
+    """The demo's page: three columns: what the page is drawn from, the settings and the button; the page's boxes as a
+    list with the selected box's text; the page itself, where a drawn page takes the boxes' place."""
     start_mode = FAST if HAS_STUDENT else GUIDED
     start_sample = next((path for path in SAMPLES if "1687" in Path(path).name), None)
     start_note, start_prompt = page_status(
@@ -455,7 +455,7 @@ def build() -> gr.Blocks:
         gr.HTML(HEADER, elem_id="pd-header")
         megapixels = gr.Number(value=MEGAPIXELS, visible=False)  # the size the model was trained at; the API's to set
         with gr.Row(equal_height=False):
-            with gr.Column(scale=0, min_width=280, elem_classes="pd-side"):
+            with gr.Column(scale=0, min_width=270, elem_classes="pd-side"):
                 with gr.Row(equal_height=False):
                     sample = gr.Image(
                         label="Sample",
@@ -465,7 +465,7 @@ def build() -> gr.Blocks:
                         height=150,
                         value=start_sample,
                         scale=1,
-                        min_width=110,
+                        min_width=100,
                     )
                     examples = gr.Gallery(
                         value=[
@@ -491,8 +491,8 @@ def build() -> gr.Blocks:
                     elem_id="pd-mode",
                 )
                 guidance = gr.Slider(
-                    label="Guidance",
-                    info="Guided only. Higher: more exact text, darker ink.",
+                    label="Guidance (guided only)",
+                    info="Higher: more exact text, darker ink.",
                     minimum=1.0,
                     maximum=4.0,
                     step=0.25,
@@ -502,8 +502,7 @@ def build() -> gr.Blocks:
                     elem_id="pd-guidance",
                 )
                 steps = gr.Slider(
-                    label="Steps",
-                    info="Guided only.",
+                    label="Steps (guided only)",
                     minimum=8,
                     maximum=50,
                     step=1,
@@ -513,11 +512,26 @@ def build() -> gr.Blocks:
                     elem_id="pd-steps",
                 )
                 sample_zoom = gr.Slider(
-                    label="Sample zoom", minimum=0.5, maximum=3.0, step=0.25, value=1.0, buttons=[], elem_id="pd-zoom"
+                    label="Sample zoom",
+                    info="Above 1 shows the model the sample's writing larger.",
+                    minimum=0.5,
+                    maximum=3.0,
+                    step=0.25,
+                    value=1.0,
+                    buttons=[],
+                    elem_id="pd-zoom",
                 )
                 with gr.Row():
                     seed = gr.Number(label="Seed", value=0, precision=0, minimum=0, maximum=MAX_SEED, min_width=110)
                     randomize_seed = gr.Checkbox(label="Random", value=True, min_width=90, elem_id="pd-random")
+                run = gr.Button("Draw the page", variant="primary", size="md", elem_id="pd-run")
+                note = gr.HTML(start_note, elem_classes="pd-note")
+                outcome = gr.HTML(chips(), elem_classes="pd-note")
+                with gr.Row(elem_classes="pd-downloads"):
+                    download_image = gr.DownloadButton("Image", size="sm", visible=False)
+                    download_alto = gr.DownloadButton("ALTO", size="sm", visible=False)
+                    download_page = gr.DownloadButton("PAGE", size="sm", visible=False)
+                    download_record = gr.DownloadButton("Prompt + settings", size="sm", visible=False)
             with gr.Column(scale=1, min_width=320):
                 editor = gr.HTML(
                     value=editor_value(TEMPLATES[FIRST], None),
@@ -527,43 +541,34 @@ def build() -> gr.Blocks:
                     js_on_load=EDITOR_JS,
                     elem_id="pd-editor",
                 )
-            with gr.Column(scale=0, min_width=300, elem_classes="pd-side"):
-                run = gr.Button("Draw the page", variant="primary", size="md", elem_id="pd-run")
-                note = gr.HTML(start_note, elem_classes="pd-note")
-                outcome = gr.HTML(chips(), elem_classes="pd-note")
-                with gr.Row(elem_classes="pd-downloads"):
-                    download_image = gr.DownloadButton("Image", size="sm", visible=False)
-                    download_alto = gr.DownloadButton("ALTO", size="sm", visible=False)
-                    download_page = gr.DownloadButton("PAGE", size="sm", visible=False)
-                    download_record = gr.DownloadButton("Prompt + settings", size="sm", visible=False)
-                result = gr.Image(type="pil", format="jpeg", visible=False)  # the API's page; the editor shows it
-                with gr.Tabs():
-                    with gr.Tab("Prompt"):
-                        prompt = gr.Textbox(
-                            label="The prompt the model reads for this page",
-                            value=start_prompt,
-                            lines=10,
-                            max_lines=16,
-                            interactive=False,
-                            buttons=["copy"],
-                        )
-                    with gr.Tab("Read-back"):
-                        readback = gr.Dataframe(
-                            headers=["Line", "Read back", "CER", "Tag"],
-                            datatype=["str", "str", "str", "str"],
-                            column_widths=["38%", "38%", "11%", "13%"],
-                            interactive=False,
-                            wrap=True,
-                            max_height=420,
-                        )
-                    with gr.Tab("Sample seen"):
-                        seen_sample = gr.Image(
-                            label="The sample as the model saw it",
-                            show_label=False,
-                            type="pil",
-                            interactive=False,
-                            elem_id="pd-seen",
-                        )
+        result = gr.Image(type="pil", format="jpeg", visible=False)  # the API's page; the editor shows it
+        with gr.Accordion("The prompt, the read-back and the sample as the model saw it", open=False), gr.Tabs():
+            with gr.Tab("Prompt"):
+                prompt = gr.Textbox(
+                    label="The prompt the model reads for this page",
+                    value=start_prompt,
+                    lines=8,
+                    max_lines=14,
+                    interactive=False,
+                    buttons=["copy"],
+                )
+            with gr.Tab("Read-back"):
+                readback = gr.Dataframe(
+                    headers=["Line", "Read back", "CER", "Tag"],
+                    datatype=["str", "str", "str", "str"],
+                    column_widths=["41%", "41%", "8%", "10%"],
+                    interactive=False,
+                    wrap=True,
+                    max_height=420,
+                )
+            with gr.Tab("Sample seen"):
+                seen_sample = gr.Image(
+                    label="The sample as the model saw it",
+                    show_label=False,
+                    type="pil",
+                    interactive=False,
+                    elem_id="pd-seen",
+                )
 
         examples.select(fn=pick_sample, outputs=sample, api_visibility="private", show_progress="hidden")
         gr.on(
@@ -598,7 +603,7 @@ def build() -> gr.Blocks:
                 readback,
             ],
             api_name="draw_page",
-            show_progress_on=outcome,  # the steps' progress beside the button, the page left free
+            show_progress_on=editor,  # the steps' progress over the page it is drawing
         )
     return demo
 

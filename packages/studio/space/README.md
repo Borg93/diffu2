@@ -27,8 +27,7 @@ archival handwriting. The page comes back with its labels: ALTO and PAGE XML of 
 2. **Lay out the page.** Pick a template (a letter, court minutes, a register, a certificate) or drag boxes onto a
    blank page; `+ Box` adds one too (on a touch screen it is the way to add one: a finger on the bare page scrolls
    it). A box is a block of lines: text, a heading, a margin note or a page number; a ruled line is a box too. Every
-   line of a page is drawn at one height, which the Lines slider sets. Undo steps back (Ctrl+Z on the page), and Save
-   and Open keep a page's boxes and text as a JSON file.
+   line of a page is drawn at one height, which Writing size sets. Undo steps back (Ctrl+Z on the page).
 3. **Write its text.** Select a box and write. The page shows how the text falls into the box's lines, and how much
    has no room. A line break of yours starts a new line.
 4. **Draw.** Fast draws with a distilled student in 8 steps; Guided draws with the model itself, at the steps and the
@@ -37,7 +36,7 @@ archival handwriting. The page comes back with its labels: ALTO and PAGE XML of 
    beside the editor, as an image with its ALTO and PAGE XML.
 5. **Take the prompt with you.** The Prompt tab always shows the prompt the model reads for the page in the editor,
    to copy. A drawn page's `Prompt + settings` file holds that prompt with the model's revision, the mode, steps,
-   guidance, seed and size it was drawn with, and the page itself: Open reads it back into the editor.
+   guidance, seed and size it was drawn with, and the page itself.
 
 ## What to expect
 

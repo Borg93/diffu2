@@ -1,56 +1,57 @@
 <div class="pe">
-  <div class="pe-bar">
-    <select class="pe-template" aria-label="start from a template">
-      <option value="">Template…</option>
-    </select>
-    <label class="pe-field">
-      <select class="pe-shape" aria-label="page shape" title="The page's shape">
-        <option value="0.667">Folio 2:3</option>
-        <option value="0.707">Sheet A</option>
-        <option value="0.8">Quarto 4:5</option>
-        <option value="1">Square</option>
-        <option value="1.333">Oblong 4:3</option>
-        <option value="1.5">Wide 3:2</option>
+  <div class="pe-side">
+    <div class="pe-bar">
+      <select class="pe-template" aria-label="start from a template">
+        <option value="">Template…</option>
       </select>
-    </label>
-    <label class="pe-field">Lines
-      <input class="pe-lines" type="range" min="12" max="50" step="1" aria-label="lines down the page" title="How many lines fit down the page: it sets every line's height" />
-      <span class="pe-lines-value"></span>
-    </label>
-    <span class="pe-gap"></span>
-    <button class="pe-btn pe-add" type="button" title="Add a box of three lines">+ Box</button>
-    <button class="pe-btn pe-undo" type="button" title="Undo (Ctrl+Z on the page)" disabled>Undo</button>
-    <button class="pe-btn pe-clear" type="button">Clear</button>
-  </div>
-  <div class="pe-inspector is-idle">
-    <p class="pe-idle">Select a box to write its text, or drag on the page to draw a new one.</p>
-    <div class="pe-inspector-head">
-      <span class="pe-swatch"></span>
-      <select class="pe-kind" aria-label="what the box holds">
-        <option value="text">Text</option>
-        <option value="heading">Heading</option>
-        <option value="note">Margin note</option>
-        <option value="number">Page number</option>
-        <option value="rule">Ruled line</option>
-      </select>
-      <span class="pe-room"></span>
       <span class="pe-gap"></span>
-      <button class="pe-btn pe-copy" type="button">Duplicate</button>
-      <button class="pe-btn pe-delete" type="button">Delete</button>
+      <button class="pe-btn pe-add" type="button" title="Add a box of three lines">+ Box</button>
+      <button class="pe-btn pe-undo" type="button" title="Undo (Ctrl+Z on the page)" disabled>Undo</button>
+      <button class="pe-btn pe-clear" type="button" title="Remove every box">Clear</button>
     </div>
-    <textarea class="pe-text" rows="3" spellcheck="false" placeholder="The text of this box. A line break starts a new line on the page."></textarea>
+    <div class="pe-list" role="listbox" aria-label="the page's boxes, top to bottom"></div>
+    <div class="pe-inspector is-idle">
+      <p class="pe-idle">Select a box, here or on the page, to write its text. Drag on the page to draw a new one.</p>
+      <div class="pe-inspector-head">
+        <span class="pe-swatch"></span>
+        <select class="pe-kind" aria-label="what the box holds">
+          <option value="text">Text</option>
+          <option value="heading">Heading</option>
+          <option value="note">Margin note</option>
+          <option value="number">Page number</option>
+          <option value="rule">Ruled line</option>
+        </select>
+        <span class="pe-room"></span>
+        <button class="pe-btn pe-copy" type="button">Duplicate</button>
+        <button class="pe-btn pe-delete" type="button">Delete</button>
+      </div>
+      <textarea class="pe-text" rows="4" spellcheck="false" placeholder="The text of this box. A line break starts a new line on the page."></textarea>
+    </div>
   </div>
-  <div class="pe-stage" tabindex="0" aria-label="the page: drag to draw a box">
-    <img class="pe-result" alt="" hidden />
-    <div class="pe-layer"></div>
-  </div>
-  <div class="pe-bar pe-foot">
+  <div class="pe-main">
+    <div class="pe-bar">
+      <label class="pe-field" title="The page's shape">Page
+        <select class="pe-shape" aria-label="page shape">
+          <option value="0.667">Folio 2:3</option>
+          <option value="0.707">Sheet A</option>
+          <option value="0.8">Quarto 4:5</option>
+          <option value="1">Square</option>
+          <option value="1.333">Oblong 4:3</option>
+          <option value="1.5">Wide 3:2</option>
+        </select>
+      </label>
+      <label class="pe-field" title="How many lines of writing fit down the page. It sets the size of the handwriting: more lines, smaller writing.">Writing size
+        <input class="pe-lines" type="range" min="12" max="50" step="1" aria-label="lines of writing down the page" />
+        <span class="pe-lines-value"></span>
+      </label>
+      <span class="pe-gap"></span>
+      <button class="pe-btn pe-toggle-result" type="button" hidden>Hide page</button>
+      <button class="pe-btn pe-toggle-boxes" type="button">Hide boxes</button>
+    </div>
+    <div class="pe-stage" tabindex="0" aria-label="the page: drag to draw a box">
+      <img class="pe-result" alt="" hidden />
+      <div class="pe-layer"></div>
+    </div>
     <span class="pe-hint"></span>
-    <span class="pe-gap"></span>
-    <button class="pe-btn pe-toggle-result" type="button" hidden>Hide page</button>
-    <button class="pe-btn pe-toggle-boxes" type="button">Hide boxes</button>
-    <button class="pe-btn pe-save" type="button" title="Download this page's boxes and text as a JSON file">Save</button>
-    <button class="pe-btn pe-load" type="button" title="Open a page saved here, or the prompt and settings file of a drawn page">Open</button>
-    <input class="pe-file" type="file" accept="application/json,.json" hidden />
   </div>
 </div>

@@ -29,7 +29,7 @@ const picture = q(".pe-result");
 const hint = q(".pe-hint");
 const templateSelect = q(".pe-template");
 const undoButton = q(".pe-undo");
-const fileInput = q(".pe-file");
+const list = q(".pe-list");
 const shape = q(".pe-shape");
 const linesInput = q(".pe-lines");
 const linesValue = q(".pe-lines-value");
@@ -206,14 +206,14 @@ function commit(now) {
 
 function layout() {
   stage.style.aspectRatio = String(page.aspect);
-  stage.style.maxWidth = `max(240px, calc((100vh - 330px) * ${page.aspect}))`; // the whole page on the screen, under the bars
+  stage.style.maxWidth = `max(240px, calc((100vh - 190px) * ${page.aspect}))`; // the whole page on the screen, under the bars
   const options = [...shape.options];
   const nearest = options.reduce((best, option) =>
     Math.abs(Number(option.value) - page.aspect) < Math.abs(Number(best.value) - page.aspect) ? option : best,
   );
   shape.value = nearest.value;
   linesInput.value = String(clamp(page.lines, Number(linesInput.min), Number(linesInput.max)));
-  linesValue.textContent = String(page.lines);
+  linesValue.textContent = `${page.lines} lines`;
 }
 
 function place(node, rect) {
@@ -278,6 +278,44 @@ function renderBoxes() {
   if (ghost) layer.appendChild(ghost);
 }
 
+// The page's boxes as a list, top to bottom: what each holds and how its text begins; a click selects one.
+function renderList() {
+  const rows = [...page.boxes]
+    .sort((a, b) => a.rect[1] - b.rect[1] || a.rect[0] - b.rect[0])
+    .map((box) => {
+      const [name, color] = KINDS[box.kind];
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "pe-row";
+      row.dataset.id = box.id;
+      row.classList.toggle("is-selected", box.id === selected);
+      row.style.setProperty("--c", color);
+      const kind = document.createElement("span");
+      kind.className = "pe-row-kind";
+      kind.textContent = name;
+      const text = document.createElement("span");
+      text.className = "pe-row-text";
+      const over = box.kind === "rule" ? 0 : wrap(box).over;
+      text.textContent = box.kind === "rule" ? "a ruled line" : box.text.trim().replace(/\s+/g, " ") || "no text yet";
+      text.classList.toggle("is-empty", box.kind !== "rule" && !box.text.trim());
+      row.append(kind, text);
+      if (over) {
+        const warn = document.createElement("span");
+        warn.className = "pe-row-over";
+        warn.textContent = `${over} too many`;
+        warn.title = `${over} word${over === 1 ? "" : "s"} do not fit the box`;
+        row.append(warn);
+      }
+      return row;
+    });
+  if (!rows.length) {
+    const empty = document.createElement("p");
+    empty.className = "pe-list-empty";
+    empty.textContent = "No boxes yet. Pick a template, press + Box, or drag on the page.";
+    list.replaceChildren(empty);
+  } else list.replaceChildren(...rows);
+}
+
 function renderInspector() {
   const box = boxOf(selected);
   inspector.classList.toggle("is-idle", !box || !showBoxes);
@@ -313,10 +351,11 @@ function render() {
   resultButton.textContent = showResult ? "Hide page" : "Show page";
   boxesButton.textContent = showBoxes ? "Hide boxes" : "Edit boxes";
   renderBoxes();
+  renderList();
   renderInspector();
   if (!showBoxes) hint.textContent = result ? "The drawn page. Edit boxes brings its boxes back to change it and draw again." : "The boxes are hidden. Edit boxes brings them back.";
   else if (!page.boxes.length) hint.textContent = `${FINGERS ? "Tap + Box to add a box" : "Drag on the page to draw a box"}, or pick a template. A box is a block of lines.`;
-  else hint.textContent = `Drag a box to move it, a ${FINGERS ? "corner" : "handle"} to resize it${FINGERS ? "" : "; Delete removes it"}. Every line is drawn at one height: the Lines slider sets it.`;
+  else hint.textContent = `Drag a box to move it, a ${FINGERS ? "corner" : "handle"} to resize it${FINGERS ? "" : "; Delete removes it"}. All writing on a page is one size: Writing size sets it.`;
 }
 
 function select(id) {
@@ -486,6 +525,7 @@ textArea.addEventListener("input", () => {
   if (!typing) remember();
   typing = true;
   box.text = textArea.value;
+  renderList();
   commit(false);
   renderBoxes();
   renderInspector();
@@ -557,7 +597,7 @@ linesInput.addEventListener("input", () => {
   if (!sliding) remember();
   sliding = true;
   page.lines = Number(linesInput.value);
-  linesValue.textContent = String(page.lines);
+  linesValue.textContent = `${page.lines} lines`;
   commit(false);
   render();
 });
@@ -596,28 +636,6 @@ templateSelect.addEventListener("change", () => {
   if (chosen) replacePage(chosen);
 });
 
-q(".pe-save").addEventListener("click", () => {
-  const link = document.createElement("a");
-  link.href = URL.createObjectURL(new Blob([JSON.stringify(page, null, 1)], { type: "application/json" }));
-  link.download = "page.json";
-  link.click();
-  URL.revokeObjectURL(link.href);
-});
-
-q(".pe-load").addEventListener("click", () => fileInput.click());
-fileInput.addEventListener("change", async () => {
-  const file = fileInput.files[0];
-  fileInput.value = "";
-  if (!file) return;
-  try {
-    const read = JSON.parse(await file.text());
-    const value = read && read.page && Array.isArray(read.page.boxes) ? read.page : read; // a drawn page's record too
-    if (!value || !Array.isArray(value.boxes)) throw new Error("no boxes");
-    replacePage(value);
-  } catch (error) {
-    hint.textContent = "That file is not a page saved here.";
-  }
-});
 
 watch("value", () => {
   if (props.value === committed) return; // an edit of our own coming back
@@ -632,3 +650,10 @@ committed = props.value;
 load();
 layout();
 render();
+
+list.addEventListener("click", (event) => {
+  const row = event.target.closest(".pe-row");
+  if (!row) return;
+  showBoxes = true;
+  select(row.dataset.id);
+});
