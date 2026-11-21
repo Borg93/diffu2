@@ -18,9 +18,12 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
 
 ## The model: the hand and the ink
 
-- [ ] **Experiment to try (owner, 21 Nov): a sample per text-region box, from the same page** (regions, not lines: our
-      windows are text regions; the line-crop slice is committed, the region builder, cache and trainer option are
-      being written). Today one sample page goes in
+- [ ] **Experiment to try (owner, 21 Nov): a sample per text-region box, from the same page** (regions, not lines: a
+      region is a target's lines grouped by their PAGE TextRegion). Code committed (1c679b6): the CPU builder
+      (`python -m diffu_page.data.region_crop_pairs`), the crop cache (`diffu-moss-cache-region-crops`, sharded) and
+      `--region-crops over|beside`. To decide before the pilot: every crop on its own reference index (k+1, up to tens
+      on a whole page; the model was trained with 1) or all on index 1; whole pages in or out (their crops show lines
+      the page also draws). Then build on the cluster, two 480-step arms from step 10,257, judged by eye. Today one sample page goes in
       whole and nothing ties a line of the new page to anything in it; the pairs are pages of one volume, so the hand
       is shared only where the volume has one scribe. Instead give each line box (or a few) a crop of a real line,
       placed over its box (`reference_place: over`, one reference index each), and train on real pages whose other
