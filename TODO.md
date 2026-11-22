@@ -41,9 +41,12 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
 - [ ] A faint sample's ink is beyond the model's range: from the 1687 sample (ink L 48.7) the model itself draws L 17-21
       at every guidance that writes, and at guidance 1 no line is readable. No student of this model can follow it:
       the model itself has to learn it.
-- [ ] Caption dropout to the empty prompt, 2,000 steps (MOSS_RUNS 21-22 Nov): the dropout arm's ink is lighter, thinner
-      and nearer the sample's than the control's on three held-out pages. To do: the arm on the faint 1687 sample
-      and the Space's templates (Spark), more pages and seeds, lines read back; then dropout in the next full run.
+- [ ] Caption dropout to the empty prompt, 2,000 steps (MOSS_RUNS 21-22 Nov): on three held-out pages with their own
+      layouts the dropout arm's ink came nearest the sample's, but on the Space's templates (22 Nov, Spark) it follows
+      the sample least: near-black ink in one neat hand whatever the sample, with cleaner lines. Not for the Space and
+      not for the next full run as it stands. Open: why the two tests differ (the page's own layout and a sample from
+      the same page, against a template and a sample of another document); held-out pages drawn with a sample of
+      another document would tell.
 - [x] Settings that do not fix the ink (21 Nov, MOSS_RUNS): the block-22 skip and the tag negative prompt, projected
       guidance, guidance on a student, the sample's colours as a prompt palette.
 - [ ] Compiled joint blocks in training under FSDP2 (`compile_loop.py`, 30 steps at 2 MP from B's step 7,000, the 9 Nov
