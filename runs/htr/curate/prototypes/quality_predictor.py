@@ -21,6 +21,12 @@ NUM = ["width", "height", "page_confidence", "regions", "lines", "empty_lines", 
 CAT = ["pool", "cut_class", "kind", "layout", "language", "pool_cluster"]
 PCA = [f"pca{k:02d}" for k in range(64)]
 m = pd.read_parquet("/mnt/scratch/gabriel/htr/quality/calibration.parquet"); m["colour"] = m.colour.astype("float"); NUM = NUM + ["colour"]
+import glob, json
+from pathlib import Path
+jev = pd.DataFrame([json.loads(line) for part in glob.glob("/mnt/scratch/gabriel/htr/quality/jev/part-*.jsonl") for line in open(part)])
+jev["scan"] = jev.image.map(lambda i: Path(i).stem); JEV = ["jev_mean", "jev_low", "jev_worst"]
+m = m.merge(jev.rename(columns={"mean": "jev_mean", "low": "jev_low", "worst": "jev_worst"})[["scan"] + JEV], on="scan", how="left")
+print("scans with Jev:", int(m.jev_mean.notna().sum()), "of", len(m), flush=True)
 for c in CAT: m[c] = m[c].astype("string").fillna("none").astype("category")
 folds = list(GroupKFold(5).split(m, groups=m.volume))
 
@@ -46,15 +52,15 @@ def boosted(train, test, columns, target, kind):
 
 
 rows = []
-for name, fn, columns in (("LightGBM, features", boosted, NUM + CAT), ("LightGBM, features + image", boosted, NUM + CAT + PCA), ("KumoTabular, features", kumo, NUM + CAT), ("KumoTabular, features + image", kumo, NUM + CAT + PCA), ("LightGBM, image only", boosted, PCA), ("KumoTabular, image only", kumo, PCA)):
+for name, fn, columns in (("KumoTabular, features", kumo, NUM + CAT), ("KumoTabular, features + Jev", kumo, NUM + CAT + JEV), ("KumoTabular, Jev only", kumo, JEV), ("LightGBM, features + Jev", boosted, NUM + CAT + JEV), ("KumoTabular, features + Jev + image", kumo, NUM + CAT + JEV + PCA)):
     bad, cer = np.zeros(len(m)), np.zeros(len(m))
     for tr, te in folds:
         bad[te] = fn(m.iloc[tr], m.iloc[te], columns, "bad", "categorical"); cer[te] = fn(m.iloc[tr], m.iloc[te], columns, "cer_matched", "numerical")
     per = [roc_auc_score(m.bad.iloc[te], bad[te]) for _, te in folds]
     rows.append((name, roc_auc_score(m.bad, bad), min(per), average_precision_score(m.bad, bad), spearmanr(m.cer_matched, cer).statistic)); m[f"p_{name}"] = bad
     print(f"{name:32} bad: AUC {rows[-1][1]:.3f} (worst fold {rows[-1][2]:.3f}), average precision {rows[-1][3]:.3f} | CER: Spearman {rows[-1][4]:.3f}", flush=True)
-single = sorted(((max(a := roc_auc_score(m.bad, m[c].fillna(m[c].median())), 1 - a), c) for c in NUM), reverse=True)[:6]
+single = sorted(((max(a := roc_auc_score(m.bad, m[c].fillna(m[c].median())), 1 - a), c) for c in NUM + JEV), reverse=True)[:6]
 print("one feature alone (AUC):", ", ".join(f"{c} {a:.3f}" for a, c in single), f"| bad pages: {m.bad.mean():.1%} of {len(m)}")
 best = max(rows, key=lambda r: r[1])[0]; p = m[f"p_{best}"]; order = np.argsort(-p.to_numpy()); found = np.cumsum(m.bad.to_numpy()[order]) / m.bad.sum()
 print(f"{best}: dropping the worst-scored 10 % of scans removes {found[len(m) // 10]:.0%} of the bad ones, 20 % removes {found[len(m) // 5]:.0%}, 30 % removes {found[3 * len(m) // 10]:.0%}")
-m[["scan", "pool", "volume", "bad", "cer_matched", "missed_share", "astray_share"] + [c for c in m if c.startswith("p_")]].to_parquet("/mnt/scratch/gabriel/htr/quality/predictions.parquet")
+m[["scan", "pool", "volume", "bad", "cer_matched", "missed_share", "astray_share"] + [c for c in m if c.startswith("p_")]].to_parquet("/mnt/scratch/gabriel/htr/quality/predictions_jev.parquet")
