@@ -21,8 +21,8 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
 - [ ] **Experiment to try (owner, 21 Nov): a sample per text-region box, from the same page** (regions, not lines: a
       region is a target's lines grouped by their PAGE TextRegion). Code committed (1c679b6): the CPU builder
       (`python -m diffu_page.data.region_crop_pairs`), the crop cache (`diffu-moss-cache-region-crops`, sharded) and
-      `--region-crops over|beside`. Decided (22 Nov): all crops on reference index 1, windows only. Crops built and
-      looked at (9,472 windows, 12,011 crops; MOSS_RUNS), being encoded. Left: time one training step, two 480-step
+      `--region-crops over|beside`. Decided (22 Nov): all crops on reference index 1, windows only. Crops built whole-region (the first
+      build's 512 px corners set aside), looked at (9,472 windows, 12,011 crops; MOSS_RUNS), being encoded. Left: time one training step, two 480-step
       arms from step 10,257 (over, beside), judged by eye on held-out pages, also with samples swapped. Today one sample page goes in
       whole and nothing ties a line of the new page to anything in it; the pairs are pages of one volume, so the hand
       is shared only where the volume has one scribe. Instead give each line box (or a few) a crop of a real line,
