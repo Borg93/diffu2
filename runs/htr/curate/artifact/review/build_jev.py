@@ -27,6 +27,11 @@ if __name__ == "__main__":
         outs = jev.classify([{"prompt": model_prompt(l.text), "multi_modal_data": {"image": [c, render_text(l.text, FONT, c.size)]}} for l, c in zip(lines, crops)], pooling_params=PoolingParams(use_activation=False), use_tqdm=False)
         for l, c, o in zip(lines, crops, outs):
             no, yes = o.outputs.probs[:2]; rows.append((1 / (1 + math.exp(no - yes)), l.text, c, Path(s["image"]).stem))
+    keep = Path("/mnt/scratch/gabriel/htr/jev_lines_check"); keep.mkdir(parents=True, exist_ok=True)
+    with open(keep / "lines.jsonl", "w", encoding="utf-8") as f:
+        for k, (score, text, crop, scan) in enumerate(rows):
+            path = keep / f"{scan}_{k:03d}.png"; crop.save(path)
+            f.write(json.dumps({"id": f"{scan}_{k:03d}", "subset": scan, "image": str(path), "text": text, "jev": score}, ensure_ascii=False) + "\n")
     rows.sort(key=lambda r: r[0]); low = [r for r in rows if r[0] < 0.5]; high = [r for r in rows if r[0] >= 0.9]
     out = {"low": [item(*r) for r in rng.sample(low, min(20, len(low)))], "high": [item(*r) for r in rng.sample(high, min(10, len(high)))], "lines": len(rows), "scans": len(picked)}
     json.dump(out, open(sys.argv[1], "w"), ensure_ascii=False); print(len(rows), "lines scored;", len(low), "under 0.5;", len(high), "over 0.9")
