@@ -1,0 +1,169 @@
+{
+ "schema_version": 1,
+ "diagram_type": "dataflow",
+ "meta": {
+  "title": "How the quality score is made",
+  "quality_profile": "showcase",
+  "viewBox": [
+   1080,
+   600
+  ],
+  "legend": {
+   "mode": "all",
+   "entries": {
+    "emphasis": {
+     "label": "main path"
+    },
+    "dashed": {
+     "label": "left out"
+    },
+    "default": {
+     "label": "kept"
+    },
+    "database": {
+     "label": "table"
+    },
+    "security": {
+     "visible": false
+    }
+   }
+  }
+ },
+ "stages": [
+  {
+   "label": "What we have"
+  },
+  {
+   "label": "Two tables"
+  },
+  {
+   "label": "The model"
+  },
+  {
+   "label": "Result"
+  },
+  {
+   "label": "Use"
+  }
+ ],
+ "nodes": [
+  {
+   "id": "pool",
+   "type": "database",
+   "label": "Pool scans",
+   "sublabel": "3.07 million",
+   "stage": 0,
+   "row": 0,
+   "tag": "old text, unchecked"
+  },
+  {
+   "id": "truth",
+   "type": "security",
+   "label": "Ground truth",
+   "sublabel": "typed by people",
+   "stage": 0,
+   "row": 2,
+   "tag": "49,000 pages"
+  },
+  {
+   "id": "features",
+   "type": "backend",
+   "label": "36 measurements",
+   "sublabel": "for every scan",
+   "stage": 1,
+   "row": 0,
+   "tag": "no human needed"
+  },
+  {
+   "id": "known",
+   "type": "database",
+   "label": "Answer key",
+   "sublabel": "3,651 scans",
+   "stage": 1,
+   "row": 2,
+   "tag": "also in the truth"
+  },
+  {
+   "id": "kumo",
+   "type": "cloud",
+   "label": "KumoTabular",
+   "sublabel": "shown, not trained",
+   "stage": 2,
+   "row": 1,
+   "tag": "2,650 scans a second"
+  },
+  {
+   "id": "score",
+   "type": "database",
+   "label": "Score per scan",
+   "sublabel": "chance text is bad",
+   "stage": 3,
+   "row": 1,
+   "tag": "0 to 1"
+  },
+  {
+   "id": "keep",
+   "type": "frontend",
+   "label": "Train on these",
+   "sublabel": "low score",
+   "stage": 4,
+   "row": 0,
+   "tag": "kept"
+  },
+  {
+   "id": "drop",
+   "type": "external",
+   "label": "Leave out",
+   "sublabel": "or read again",
+   "stage": 4,
+   "row": 2,
+   "tag": "dropped"
+  }
+ ],
+ "flows": [
+  {
+   "from": "pool",
+   "to": "features",
+   "label": "measure",
+   "variant": "emphasis",
+   "route": "straight"
+  },
+  {
+   "from": "truth",
+   "to": "known",
+   "label": "compare texts",
+   "variant": "emphasis",
+   "route": "straight"
+  },
+  {
+   "from": "features",
+   "to": "kumo",
+   "label": "scan to judge",
+   "variant": "emphasis"
+  },
+  {
+   "from": "known",
+   "to": "kumo",
+   "label": "examples",
+   "variant": "emphasis"
+  },
+  {
+   "from": "kumo",
+   "to": "score",
+   "label": "predicts",
+   "variant": "emphasis",
+   "route": "straight"
+  },
+  {
+   "from": "score",
+   "to": "keep",
+   "label": "under limit"
+  },
+  {
+   "from": "score",
+   "to": "drop",
+   "label": "over limit",
+   "variant": "dashed"
+  }
+ ]
+}

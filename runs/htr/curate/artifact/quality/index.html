@@ -1,0 +1,157 @@
+<title>Old-label quality score</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap">
+<style>
+/* Layout: one reading column, each step a plain section with a small picture made of real numbers. */
+:root {
+  --bg: #f6f7f5; --surface: #ffffff; --fg: #1b2420; --muted: #5d6b64; --line: #d9dfda;
+  --good: #1f8a5b; --bad: #c2452f; --warn: #a86a00; --accent: #2b5fb8; --soft: #e9eeea;
+  --head: "Space Grotesk", "Inter", system-ui, sans-serif; --body: "Inter", system-ui, sans-serif; --mono: ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #131816; --surface: #1b221f; --fg: #e6ece8; --muted: #9aa8a0; --line: #2e3833; --good: #4fc08d; --bad: #ee7a63; --warn: #e0a640; --accent: #7fa8f0; --soft: #232c28; color-scheme: dark } }
+:root[data-theme="dark"] { --bg: #131816; --surface: #1b221f; --fg: #e6ece8; --muted: #9aa8a0; --line: #2e3833; --good: #4fc08d; --bad: #ee7a63; --warn: #e0a640; --accent: #7fa8f0; --soft: #232c28; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font: 16px/1.55 var(--body); }
+.wrap { max-width: 860px; margin: 0 auto; padding-block: 28px 56px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 36px; }
+h1 { font: 600 30px/1.15 var(--head); margin: 0; text-wrap: balance; }
+h2 { font: 600 20px/1.25 var(--head); margin: 0; text-wrap: balance; }
+p { margin: 0; max-width: 68ch; }
+section { display: flex; flex-direction: column; gap: 14px; }
+.lede { font-size: 18px; color: var(--muted); }
+.step { font: 600 12px var(--body); letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+.figure { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 8px; }
+.figure img { display: block; width: 100%; height: auto; }
+a { color: var(--accent); }
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 600; color: var(--muted); font-size: 12px; letter-spacing: .04em; text-transform: uppercase; }
+td.n, th.n { text-align: right; }
+code { font: 13px var(--mono); background: var(--soft); padding: 1px 5px; border-radius: 4px; }
+.rules { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.rule { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.rule b { font: 600 15px var(--head); }
+.rule span { color: var(--muted); font-size: 14px; }
+.bars { display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content; gap: 8px 12px; align-items: center; font-size: 14px; font-variant-numeric: tabular-nums; }
+.track { background: var(--soft); border-radius: 4px; height: 16px; overflow: hidden; }
+.fill { height: 100%; border-radius: 4px; background: var(--accent); }
+.fill.bad { background: var(--bad); } .fill.good { background: var(--good); } .fill.grey { background: var(--muted); }
+.note { color: var(--muted); font-size: 14px; }
+.caution { border-left: 3px solid var(--warn); padding: 4px 0 4px 14px; display: flex; flex-direction: column; gap: 8px; }
+.pill { display: inline-block; font: 600 12px var(--body); padding: 2px 8px; border-radius: 999px; background: var(--soft); }
+.pill.bad { color: var(--bad); } .pill.good { color: var(--good); }
+ul { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; max-width: 68ch; }
+@media (max-width: 640px) { .rules { grid-template-columns: minmax(0, 1fr); } h1 { font-size: 25px; } .bars { grid-template-columns: minmax(0, 1fr) max-content; } .bars .track { grid-column: 1 / -1; } }
+</style>
+<div class="wrap">
+  <header style="display:flex;flex-direction:column;gap:10px">
+    <h1>Scoring every old label without a human</h1>
+    <p class="lede">We know how good the old pipeline's text is for 3,651 scans, and we need to know it for 3 million. This page shows how a model called KumoTabular bridges that gap, what it looks at, and how far to trust it. All numbers are from the run of 22 November 2026.</p>
+  </header>
+
+  <section>
+    <h2>The whole idea in one picture</h2>
+    <div class="figure"><img src="flow.png" alt="Pool scans are measured into 36 numbers each. Ground truth is compared with the old text to make an answer key of 3,651 scans. KumoTabular is shown the answer key and predicts a score for every scan. Low scores are trained on, high scores are left out or read again."></div>
+    <p class="note"><a href="flow.html">Open the interactive version of this diagram</a> to zoom, search and follow one path at a time.</p>
+  </section>
+
+  <section>
+    <div class="step">Step 1</div>
+    <h2>What "bad" means</h2>
+    <p>Every pool scan has text from the old pipeline. For 3,651 pool scans a person has also typed the correct text, so we can put the two side by side. A scan is called <span class="pill bad">bad</span> if any one of three things is true:</p>
+    <div class="rules">
+      <div class="rule"><b>Wrong letters</b><span>More than 1 in 10 characters differ from the correct text on the lines it did find.</span></div>
+      <div class="rule"><b>Missed lines</b><span>More than 1 in 10 of the real lines have no label at all.</span></div>
+      <div class="rule"><b>Stray lines</b><span>More than 1 in 10 of its labels sit where there is no real line, such as ink showing through from the back.</span></div>
+    </div>
+    <p>By this rule 474 of the 3,651 scans are bad (13 %) and the rest are <span class="pill good">good</span>. This table of scans with a known answer is the <b>answer key</b>.</p>
+  </section>
+
+  <section>
+    <div class="step">Step 2</div>
+    <h2>What the model looks at: 36 measurements per scan</h2>
+    <p>None of these need a person, so we have them for all 3 million scans. They fall into four groups. The model never sees the page image itself, only these numbers.</p>
+    <div class="panel scroll">
+      <table>
+        <thead><tr><th>Group</th><th>Measurements</th><th>Why it can reveal a bad label</th></tr></thead>
+        <tbody>
+          <tr><td><b>The old pipeline's own output</b><br><span class="note">16 measurements</span></td><td>Its confidence in the page; number of regions, lines, empty lines, characters, words; share of digits; line height and its spread; line width; characters per 100 pixels; lines with odd density; how much of the page its outlines cover; repeated lines; longest run without a space; how repetitive the text is</td><td>Bad reading leaves traces in the text itself: low confidence, lines far too long or short for their width, the same line repeated, text that is unusually repetitive.</td></tr>
+          <tr><td><b>Where the writing is</b><br><span class="note">4 measurements</span></td><td>Share of the scan that is writing; share under labels; share of the writing that has a label; share of the labels that hold writing</td><td>Catches missed pages and columns (writing with no label) and labels on show-through (label with no writing).</td></tr>
+          <tr><td><b>What kind of page it is</b><br><span class="note">11 measurements</span></td><td>Page-cut class and its certainty; table or not; kind of page; layout; language and its certainty; which of 64 groups of similar-looking scans; which pool</td><td>The old pipeline does much worse on some kinds: tables, pages that are not Swedish, unusual layouts.</td></tr>
+          <tr><td><b>The image itself</b><br><span class="note">5 measurements</span></td><td>Width, height, colour or grey, colour saturation, how clear the fold between the two pages is</td><td>Microfilm, small or oddly shaped scans and unclear folds go together with worse labels.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>How well one measurement alone separates bad from good (0.5 is a coin toss, 1.0 is perfect):</p>
+    <div class="panel"><div class="bars">
+      <span>Old pipeline's confidence</span><div class="track"><div class="fill grey" style="width:68.2%"></div></div><span>0.84</span>
+      <span>Clearness of the fold</span><div class="track"><div class="fill grey" style="width:49%"></div></div><span>0.75</span>
+      <span>Share under labels</span><div class="track"><div class="fill grey" style="width:48.4%"></div></div><span>0.74</span>
+      <span>Share that is writing</span><div class="track"><div class="fill grey" style="width:44.4%"></div></div><span>0.72</span>
+      <span>Spread of line height</span><div class="track"><div class="fill grey" style="width:43.6%"></div></div><span>0.72</span>
+      <span>Writing that has a label</span><div class="track"><div class="fill grey" style="width:42.2%"></div></div><span>0.71</span>
+      <span><b>All 36 together, Kumo</b></span><div class="track"><div class="fill" style="width:80.8%"></div></div><span><b>0.90</b></span>
+    </div><p class="note" style="margin-top:10px">Bars start at 0.5. No single measurement is enough; the combination is clearly better.</p></div>
+  </section>
+
+  <section>
+    <div class="step">Step 3</div>
+    <h2>How Kumo "learns": it is shown, not trained</h2>
+    <p>An ordinary model would be trained on the answer key for a while and then used. KumoTabular works differently. It was trained once, by NVIDIA, on millions of made-up tables, to become good at one skill: looking at a table of examples and guessing the missing column for new rows.</p>
+    <p>So for us nothing is trained. Each time, we hand it two things together:</p>
+    <ul>
+      <li>the answer key: 3,651 rows of 36 measurements <b>with</b> the answer (good or bad);</li>
+      <li>a batch of new scans: the same 36 measurements <b>without</b> the answer.</li>
+    </ul>
+    <p>It compares each new scan with the examples and returns the chance that its old label is bad, a number from 0 to 1. This takes 2,650 scans a second on one GPU, so all 3 million take about 20 minutes. If we add rows to the answer key tomorrow, it uses them at once, with no retraining.</p>
+  </section>
+
+  <section>
+    <div class="step">Step 4</div>
+    <h2>Does it work? The test</h2>
+    <p>We hid the answers for a fifth of the answer key at a time, always whole volumes so the model could not recognise a book it had seen, and asked for predictions. Three ways of scoring were compared.</p>
+    <div class="panel scroll">
+      <table>
+        <thead><tr><th>Method</th><th class="n">Tells bad from good</th><th class="n">Bad scans ranked first</th><th class="n">Guesses the error rate</th></tr></thead>
+        <tbody>
+          <tr><td><b>Kumo, 36 measurements</b></td><td class="n"><b>0.904</b></td><td class="n"><b>0.776</b></td><td class="n"><b>0.637</b></td></tr>
+          <tr><td>Tree model (LightGBM), same measurements</td><td class="n">0.882</td><td class="n">0.662</td><td class="n">0.513</td></tr>
+          <tr><td>Old pipeline's confidence alone</td><td class="n">0.841</td><td class="n">–</td><td class="n">–</td></tr>
+          <tr><td>Image vector alone, no measurements</td><td class="n">0.75</td><td class="n">0.34</td><td class="n">0.50</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">Columns: AUC, average precision, and Spearman correlation with the true character error rate. Higher is better in all three; 1.0 is perfect.</p>
+    <p>The score also means what it says. Among held-out scans, this share was truly bad in each score band:</p>
+    <div class="panel"><div class="bars">
+      <span>Score 0 – 0.05</span><div class="track"><div class="fill good" style="width:2%"></div></div><span>2 % bad · 1,687 scans</span>
+      <span>Score 0.05 – 0.1</span><div class="track"><div class="fill good" style="width:4%"></div></div><span>4 % bad · 559</span>
+      <span>Score 0.1 – 0.2</span><div class="track"><div class="fill good" style="width:6%"></div></div><span>6 % bad · 644</span>
+      <span>Score 0.2 – 0.4</span><div class="track"><div class="fill bad" style="width:19%"></div></div><span>19 % bad · 333</span>
+      <span>Score 0.4 – 0.7</span><div class="track"><div class="fill bad" style="width:54%"></div></div><span>54 % bad · 175</span>
+      <span>Score 0.7 – 1</span><div class="track"><div class="fill bad" style="width:89%"></div></div><span>89 % bad · 253</span>
+    </div></div>
+    <p>In practice: leaving out the 10 % of scans with the highest score removes 62 % of the bad ones. Leaving out 20 % removes 81 %.</p>
+  </section>
+
+  <section>
+    <div class="step">Step 5</div>
+    <h2>How we would use it</h2>
+    <ul>
+      <li><b>Choose training data.</b> Keep scans under a score limit, instead of one crude rule per check.</li>
+      <li><b>Decide what to read again.</b> High-score scans are the ones where our own reader's text should replace the old text first.</li>
+      <li><b>Pick what you look at.</b> Scans near the limit are where your judgement adds most; clear cases need no review.</li>
+    </ul>
+    <p>The score becomes two columns on the scan table, <code>quality_bad</code> and <code>quality_cer</code>, so a training set is still just a filter.</p>
+  </section>
+
+  <section>
+    <h2>What we do not know yet</h2>
+    <div class="caution">
+      <p><b>The pools score much worse than the answer key.</b> In the answer key 13 % of scans are bad. Across the 2 million pool scans scored so far, 45 % get a score over 0.5. Either the pools really are that much worse, or the model is being too harsh on pages unlike its examples. We cannot tell from numbers alone; it needs a look at samples.</p>
+      <p><b>The answer key is flattering.</b> Its scans are ones the ground truth covers, and the old pipeline's reader may have been trained on those very pages. Old labels there are unusually good (typical error 3.8 %), so the model has seen few truly bad scans.</p>
+      <p><b>One strong signal is missing.</b> How much our own reader disagrees with the old text is not among the 36, because our reader has not read the answer-key scans. Adding it should help.</p>
+      <p><b>It is less even than the tree model.</b> On its weakest held-out group of volumes Kumo scored 0.73 and the tree model 0.80.</p>
+    </div>
+  </section>
+</div>
