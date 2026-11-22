@@ -78,6 +78,7 @@ replace-imports-with-any = [
     "sglang.**", "sglang",
     "swift.**", "swift",  # ms-swift: only in packages/htr_train/envs (its training plugin imports it)
     "vllm.**", "vllm",  # vLLM: only in packages/htr_train/envs/vllm (diffu_htr_train.jev.score runs there)
+    "trackio.**", "trackio",  # trackio: only in the training environments (nemotron_parse.checkpoint_cer runs there)
 ]
 
 [tool.ty.terminal]
