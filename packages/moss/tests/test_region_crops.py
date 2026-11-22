@@ -150,6 +150,25 @@ def test_a_full_fine_tune_on_region_crops_records_their_place_in_its_checkpoints
     assert MossTransformer.from_pretrained(str(checkpoint / "transformer")).config.region_crops == "over"
 
 
+def test_a_full_fine_tune_on_region_crops_reads_them_all_at_reference_index_1_and_records_it(
+    tiny_moss_dit: Path, crop_cache: Path, tmp_path: Path
+) -> None:
+    settings = TrainSettings(steps=1, full=FullSettings(learning_rate=0.0), region_crops="over", device="cpu")
+    sample = load_sample(crop_cache, read_entries(crop_cache)[0], "cpu")
+    noise = torch.randn(sample.target.shape, generator=torch.Generator().manual_seed(0))
+    base = MossTransformer.from_pretrained(str(tiny_moss_dit), torch_dtype=torch.float32).eval()
+
+    checkpoint = train(tiny_moss_dit, crop_cache, tmp_path / "run", settings)
+
+    trained = MossTransformer.from_pretrained(str(checkpoint / "transformer"), torch_dtype=torch.float32).eval()
+    assert (base.config.region_crop_index, trained.config.region_crop_index) == ("own", "shared")
+    with torch.no_grad():  # the weights unmoved (a learning rate of 0): the index alone changes what the crops give
+        assert (
+            flow_matching_loss(trained, sample, 0.5, noise).item()
+            != flow_matching_loss(base, sample, 0.5, noise).item()
+        )
+
+
 @pytest.mark.parametrize(
     ("given", "refusal"),
     [

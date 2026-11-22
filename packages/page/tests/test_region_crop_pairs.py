@@ -167,6 +167,23 @@ def test_region_crops_leave_out_entries_drawn_without_a_sample_or_in_a_changed_h
     }
 
 
+def test_region_crops_for_windows_only_leave_out_whole_page_targets_counting_them(
+    page_cache: Path, built: Path, tmp_path: Path
+) -> None:
+    entries = {entry.file: entry for entry in read_entries(page_cache)}
+    served = read_region_crops(built / REGION_CROPS)
+    whole = [row for row in served if "_w" not in row.pair]
+    both = RegionCropBuild.read(built / "region_crops.json")
+
+    record = build_region_crops(page_cache, tmp_path / "windows", RegionCropSettings(windows_only=True))
+
+    assert whole and len(whole) < len(served)
+    assert read_region_crops(tmp_path / "windows" / REGION_CROPS) == [row for row in served if row not in whole]
+    assert (record.windows_only, record.entries_read, record.served) == (True, len(entries), both.served - len(whole))
+    assert record.skipped == {**both.skipped, Skipped.WHOLE_PAGE.value: len(whole)}
+    assert "windows_only" not in both.model_dump()  # a build of whole pages and windows records itself as before
+
+
 def test_region_crops_take_the_look_change_their_entry_took(page_cache: Path, built: Path) -> None:
     entries = {entry.file: entry for entry in read_entries(page_cache)}
     by_pair: dict[str, list[CacheEntry]] = {}

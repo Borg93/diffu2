@@ -205,13 +205,19 @@ Built on CPU by diffu-page's builders, cached once on the GPU by `diffu-moss-cac
   (`reference_offsets`; `diffu_page.draw.line_samples.plan_region_crops`). `diffu_page.data.region_crop_pairs` plans
   and cuts them on the CPU from a finished cache of page pairs and its set's `scanned/` records, each source in its
   entry's look change, and leaves out (counting) the entries drawn without a sample, those with a hand change, windows
-  without a sibling and targets with no region to serve; `diffu-moss-cache-region-crops` encodes only the crops by the
+  without a sibling and targets with no region to serve, and with `--windows-only` (the pilot's; off by default) the
+  whole-page targets too, counted as `whole page`; `diffu-moss-cache-region-crops` encodes only the crops by the
   VAE (`region_crop_0`, ... beside the first cache's target latents and prompt embeddings, `--shard`/`--shards` as the
   cache's), and `diffu-moss-train-ref --full --region-crops over|beside` trains on it, the loss unchanged, the place
-  written into the checkpoints' `config.json` as `region_crops`. Every cache, run and model without them is as before.
+  written into the checkpoints' `config.json` as `region_crops`. Such a training puts every crop at reference index 1,
+  told apart by its offset alone (the sample-above model knows index 1 only, and a page has tens of crops), and
+  records it in the same `config.json` as `region_crop_index: shared`, which the DiT's forward reads, so drawing with
+  the checkpoint places offset references the same way with nothing more to pass; `own`, the default and what every
+  other config loads as, keeps reference `k` at `k + 1`, as does a reference without an offset under either. Every
+  cache, run and model without them is as before.
 
       python -m diffu_page.data.region_crop_pairs --cache data_pages/cache_above_2mp --out data_pages/crops_over \
-          --place over
+          --place over --windows-only
       diffu-moss-cache-region-crops --cache data_pages/cache_above_2mp --crops data_pages/crops_over/region_crops.jsonl \
           --out data_pages/cache_crops_over
       diffu-moss-train-ref --full --transformer $RUN/checkpoints/step_010257/transformer \

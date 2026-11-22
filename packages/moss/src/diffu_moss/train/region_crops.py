@@ -96,8 +96,9 @@ class RegionCropRow(BaseModel):
 
 class RegionCropBuild(JsonRecord):
     """``region_crops.json``: what a manifest of region crops was built from and how (the cache and the page-pair manifest
-    it read, where its crops lie, at most how wide and tall, the seed that orders a source's regions), how
-    many of the cache's entries it read and served, and the rest by why each was left out."""
+    it read, where its crops lie, at most how wide and tall, the seed that orders a source's regions, whether it
+    served windows alone: left out of a build that served whole pages too), how many of the cache's entries it read and
+    served, and the rest by why each was left out."""
 
     cache: str
     pairs: str
@@ -105,6 +106,7 @@ class RegionCropBuild(JsonRecord):
     max_width: int
     max_height: int
     seed: int
+    windows_only: bool = Field(default=False, exclude_if=lambda windows_only: not windows_only)
     entries_read: int
     served: int
     skipped: dict[str, int]

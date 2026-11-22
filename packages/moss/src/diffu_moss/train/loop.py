@@ -140,7 +140,8 @@ class TrainSettings(BaseModel):
     learning rate's warmup and wind-down (:func:`learning_rate_schedule`); over several ranks, the rounds each pass's
     samples are sorted by size within (``size_block``, :class:`SizeGroups`; 0: the pass as shuffled); whether its
     cache gives region crops in place of whole samples, and where they lie (``region_crops``: the place its cache's record
-    gives, recorded in the checkpoints' config); and when it is saved and scored."""
+    gives, recorded in the checkpoints' config; the crops then all sit at reference index 1, recorded there as
+    ``region_crop_index`` ``shared``); and when it is saved and scored."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -273,7 +274,8 @@ def flow_matching_loss(
 ) -> Tensor:
     """The flow-matching loss of one sample at noise level ``sigma``: the drawn image's clean latents noised to it
     (``(1 - sigma) * image + sigma * noise``), the DiT's velocity for them from the prompt and the clean reference (if
-    the sample has one; its region crops instead, each at its offset, in a cache of region crops), and its mean squared
+    the sample has one; its region crops instead, each at its offset, in a cache of region crops, on the reference
+    axis by the DiT's ``region_crop_index``, which :func:`train` sets to ``shared`` for them), and its mean squared
     error from ``noise - image``, over the drawn image's tokens alone. With ``compute_dtype`` the DiT runs in that
     dtype's autocast (its weight cache off), else in its weights' own dtypes."""
     image = sample.target.float()
@@ -741,8 +743,10 @@ def train(
             ranks=ranks,
             sample_size=sample_size,
         )
-    training.transformer.register_to_config(  # saved with every checkpoint
-        reference_place=settings.reference_place, region_crops=settings.region_crops
+    training.transformer.register_to_config(  # saved with every checkpoint; the forward reads the place and the index
+        reference_place=settings.reference_place,
+        region_crops=settings.region_crops,
+        region_crop_index="own" if settings.region_crops is None else "shared",
     )
     generator = torch.Generator().manual_seed(settings.seed)
     groups = None
@@ -1010,7 +1014,8 @@ def main(
         typer.Option(
             help="with --full: train on a cache of region crops (diffu-moss-cache-region-crops) whose crops lie there, over "
             "their regions' boxes or beside the page in their rows (its record gives the place, which must be this); "
-            "written into the checkpoints' config.json as region_crops, so drawing knows the model reads region crops "
+            "written into the checkpoints' config.json as region_crops, so drawing knows the model reads region crops, "
+            "with region_crop_index shared: every crop at reference index 1, told apart by its offset alone "
             "(default: whole samples)"
         ),
     ] = None,

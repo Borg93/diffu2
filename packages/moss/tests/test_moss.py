@@ -231,6 +231,43 @@ def test_moss_transformer_places_a_reference_at_its_offset_centred_by_default() 
     assert not torch.allclose(moved, centred, rtol=0, atol=1e-4)
 
 
+def test_token_positions_with_a_shared_crop_index_put_every_offset_reference_at_1_and_leave_the_others_at_k_plus_1() -> (
+    None
+):
+    positions = token_positions(
+        2,
+        2,
+        3,
+        torch.device("cpu"),
+        references=[(1, 2), (2, 1), (1, 1)],
+        offsets=[(1.0, -0.5), None, (0.0, 2.0)],
+        crop_index="shared",
+    )
+
+    # the two with an offset both at 1, each at its offset; the one without at its own 2, centred
+    references = [[1, 3, 1, -1], [1, 3, 1, 0], [2, 3, -0.5, 0], [2, 3, 0.5, 0], [1, 3, 0, 2]]
+    assert positions[-5:].tolist() == references
+
+
+def test_moss_transformer_with_a_shared_crop_index_tells_offset_references_apart_by_their_offsets_alone() -> None:
+    own, shared = _seeded_dit(), _seeded_dit()
+    shared.register_to_config(region_crop_index="shared")
+    latents, text, mask = _inputs()
+    generator = torch.Generator().manual_seed(3)
+    crops = [torch.randn(2, 4, 1, 2, generator=generator), torch.randn(2, 4, 2, 1, generator=generator)]
+    offsets: list[ReferenceOffset] = [(-1.0, 1.5), (1.0, -2.0)]
+    timesteps = torch.tensor([700.0, 300.0])
+    with torch.no_grad():
+        in_order = shared(latents, timesteps, text, mask, references=crops, reference_offsets=offsets)
+        own_in_order = own(latents, timesteps, text, mask, references=crops, reference_offsets=offsets)
+
+        swapped = shared(latents, timesteps, text, mask, references=crops[::-1], reference_offsets=offsets[::-1])
+        own_swapped = own(latents, timesteps, text, mask, references=crops[::-1], reference_offsets=offsets[::-1])
+
+    assert torch.allclose(swapped, in_order, rtol=0, atol=1e-5)  # no crop is the first or the second
+    assert not torch.allclose(own_swapped, own_in_order, rtol=0, atol=1e-4)  # each at its own index: their order read
+
+
 @pytest.fixture(scope="module")
 def text_encoder_pipe(tiny_moss: Path) -> ModularPipeline:
     """The tiny MOSS's text encoder step alone, its text encoder and tokenizer loaded; no guider, so no negative."""

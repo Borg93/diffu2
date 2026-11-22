@@ -33,6 +33,7 @@ TIME_PERIOD = 10_000
 NORM_EPS = 1e-6
 ReferencePlace = Literal["over", "above"]  # where a reference lies against the drawn image (token_positions)
 CropPlace = Literal["over", "beside"]  # where a crop lies: over its box, or beside the page in the box's rows
+CropIndex = Literal["own", "shared"]  # a reference with an offset on the reference axis: at k + 1, or all at 1
 MODULATIONS = 6  # shift, scale and gate of the attention half, then of the feed-forward half
 
 
@@ -104,6 +105,7 @@ def token_positions(
     references: Sequence[tuple[int, int]] = (),
     place: ReferencePlace = "over",
     offsets: Sequence[ReferenceOffset] = (),
+    crop_index: CropIndex = "own",
 ) -> Tensor:
     """The 4-axis position of every token in the order the DiT holds them: the drawn image's (:func:`grid_positions`
     on the reference axis at 0), the prompt's at (0, their index, 0, 0), then each reference's, of grid ``references[k]``
@@ -120,6 +122,10 @@ def token_positions(
     ``diffu_page.draw.line_samples``); a reference whose offset is None lies by ``place``, and ``above`` stacks those
     alone.
 
+    ``crop_index`` is where a reference with an offset sits on the reference axis. ``own``: at ``k + 1`` as every
+    reference. ``shared``: at 1 whatever its ``k``, so a page's many crops are told apart by their offsets alone and
+    none sits past the one index a DiT trained on a single sample knows; a reference without an offset keeps ``k + 1``.
+
     Raises:
         ValueError: If ``offsets`` are given and are not one for each reference.
     """
@@ -127,7 +133,10 @@ def token_positions(
         raise ValueError(f"{len(offsets)} reference offsets for {len(references)} references: give one each, or none")
     text = torch.zeros(text_length, 4, device=device)
     text[:, 1] = torch.arange(text_length, device=device)
-    images = [grid_positions(h, w, text_length, k + 1, device) for k, (h, w) in enumerate(references)]
+    shared = [crop_index == "shared" and bool(offsets) and offsets[k] is not None for k in range(len(references))]
+    images = [
+        grid_positions(h, w, text_length, 1 if shared[k] else k + 1, device) for k, (h, w) in enumerate(references)
+    ]
     lifted = 0
     for k, (image, (rows, _)) in enumerate(zip(images, references, strict=True)):
         offset = offsets[k] if offsets else None
@@ -261,9 +270,11 @@ class MossTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, CacheMixin):
     as at timestep 0, and are not predicted. Without references the forward is exactly the released model's.
     ``reference_offsets`` (one for each reference, the same for every sample) puts a reference's centre that many
     latent rows and columns from the drawn image's (:func:`token_positions`); without them each lies by the config's
-    ``reference_place``. The config's ``region_crops`` records that a DiT was trained on text regions' crops as its
-    references and where they lay (``diffu_page.draw.line_samples``; None: whole sample pages), for drawing to give it the same; the
-    forward does not read it.
+    ``reference_place``, and a reference with an offset sits on the reference axis by the config's ``region_crop_index``
+    (``shared``: every one at 1, as a DiT trained on region crops read them; ``own``, the default: at ``k + 1``). The
+    config's ``region_crops`` records that a DiT was trained on text regions' crops as its references and where they
+    lay (``diffu_page.draw.line_samples``; None: whole sample pages), for drawing to give it the same; the forward
+    does not read it.
 
     As diffusers' own transformers, it takes PEFT adapters (``add_adapter``, ``fuse_lora``), checkpoints its joint
     blocks' activations while training once ``enable_gradient_checkpointing`` is called, and takes diffusers' step
@@ -271,7 +282,7 @@ class MossTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, CacheMixin):
 
     Raises:
         ValueError: From the constructor, if ``dim`` does not split into heads whose width is a multiple of 8 or
-            ``freq_dim`` is odd, or ``reference_place`` or ``region_crops`` is none of its places; from ``forward``, if a sample has no prompt token, a reference is not a batch of
+            ``freq_dim`` is odd, or ``reference_place``, ``region_crops`` or ``region_crop_index`` is none of its values; from ``forward``, if a sample has no prompt token, a reference is not a batch of
             latents like the drawn image's (as many samples, as many channels), or a step cache is given more than one
             sample (it keeps one state per pass), or ``reference_offsets`` are not one for each reference.
     """
@@ -293,12 +304,15 @@ class MossTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, CacheMixin):
         rope_base: float = 10000.0,
         reference_place: ReferencePlace = "over",
         region_crops: CropPlace | None = None,
+        region_crop_index: CropIndex = "own",
     ) -> None:
         super().__init__()
         if reference_place not in get_args(ReferencePlace):
             raise ValueError(f"reference_place is one of {get_args(ReferencePlace)}, not {reference_place!r}")
         if region_crops is not None and region_crops not in get_args(CropPlace):
             raise ValueError(f"region_crops is one of {get_args(CropPlace)} or None, not {region_crops!r}")
+        if region_crop_index not in get_args(CropIndex):
+            raise ValueError(f"region_crop_index is one of {get_args(CropIndex)}, not {region_crop_index!r}")
         if dim % num_heads or (dim // num_heads) % 8 or freq_dim % 2:
             raise ValueError("dim must divide into heads whose width is a multiple of 8, and freq_dim must be even")
         self.video_embedder = nn.Linear(latent_channels, dim)
@@ -387,7 +401,14 @@ class MossTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, CacheMixin):
         video = self._embedded(latents)
         grids = [(reference.shape[2], reference.shape[3]) for reference in references]
         positions = token_positions(
-            height, width, text_tokens, latents.device, grids, self.config.reference_place, offsets
+            height,
+            width,
+            text_tokens,
+            latents.device,
+            grids,
+            self.config.reference_place,
+            offsets,
+            self.config.region_crop_index,
         )
         rope = rope_table(positions, self.config.dim // self.config.num_heads, self.config.rope_base).to(video.dtype)
         prompt = self.text_embedder(text, rope[:, image_tokens : image_tokens + text_tokens])

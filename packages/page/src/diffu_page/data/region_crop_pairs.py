@@ -3,7 +3,7 @@ each of its handwritten text regions (:func:`diffu_page.draw.line_samples.plan_r
 ``diffu-moss-cache-region-crops`` encodes in place of the entries' whole samples. CPU only.
 
     python -m diffu_page.data.region_crop_pairs --cache data_pages/cache_above_2mp \\
-        --out data_pages/region_crops_over --place over
+        --out data_pages/region_crops_over --place over [--windows-only]
 
 The cache is a finished ``diffu-moss-cache-pairs`` cache of a page-pair set (``diffu_page.data.page_pairs``) and the
 manifest it was made from (its record's, or ``--pairs``: a set's ``train.jsonl``, or the sibling rows of
@@ -15,8 +15,9 @@ from its own other regions, never a region's own. Each source is changed by the 
 (``diffu_moss.train.cache.styled``) before its crops are cut, and the crops are written as PNG files.
 
 An entry is left out, and counted by its reason, when its form takes no sample, it took a hand change (its target's
-lines moved off their recorded boxes), its window has no sibling sharing none of its lines, its target has no
-handwritten line, or no region of it has another region to be given. Written under ``--out``: ``crops/<entry>_<k>.png``,
+lines moved off their recorded boxes), its target is a whole page and the build serves windows alone
+(``--windows-only``), its window has no sibling sharing none of its lines, its target has no handwritten line, or no
+region of it has another region to be given. Written under ``--out``: ``crops/<entry>_<k>.png``,
 ``region_crops.jsonl`` (a row an entry served: :class:`diffu_moss.train.region_crops.RegionCropRow`) and, last,
 ``region_crops.json`` (:class:`diffu_moss.train.region_crops.RegionCropBuild`).
 """
@@ -59,14 +60,16 @@ class Skipped(StrEnum):
 
     NO_SAMPLE = "no sample"  # its form is drawn without one
     HAND_CHANGE = "hand change"  # its target's lines no longer lie in their recorded boxes
+    WHOLE_PAGE = "whole page"  # its target is a whole page and the build serves windows alone
     NO_SIBLING = "no sibling"  # its window's page has no other window sharing none of its lines
     NO_HANDWRITING = "no handwriting"  # its target has no handwritten line
     NO_OTHER_REGION = "no other region"  # none of its regions has a source region holding none of its lines
 
 
 class RegionCropSettings(BaseModel):
-    """Where the crops lie (over their region's box, or beside the page in its rows), their largest size (px) and the
-    seed that orders a source's regions and picks a window's sibling where its row names none."""
+    """Where the crops lie (over their region's box, or beside the page in its rows), their largest size (px), the
+    seed that orders a source's regions and picks a window's sibling where its row names none, and whether whole-page
+    targets are left out (``windows_only``)."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -74,6 +77,7 @@ class RegionCropSettings(BaseModel):
     max_width: int = Field(default=512, ge=16)
     max_height: int = Field(default=512, ge=16)
     seed: int = 0
+    windows_only: bool = False
 
 
 class Source(BaseModel):
@@ -132,6 +136,8 @@ def entry_crops(
         return Skipped.HAND_CHANGE
     if entry.pair not in rows:
         raise ValueError(f"the cache's pair {entry.pair} has no row in the manifest: give the one it was made from")
+    if settings.windows_only and rows[entry.pair].window is None:
+        return Skipped.WHOLE_PAGE
     target, source = row_source(rows[entry.pair], page_of, pairs_dir, settings.seed)
     if entry.target_size != target.size:
         raise ValueError(f"{entry.pair} was cached at {entry.target_size} px, its set's record gives {target.size}")
@@ -203,6 +209,7 @@ def build_region_crops(
         max_width=settings.max_width,
         max_height=settings.max_height,
         seed=settings.seed,
+        windows_only=settings.windows_only,
         entries_read=len(entries),
         served=served,
         skipped=dict(sorted(skipped.items())),
@@ -227,10 +234,15 @@ def main(
     max_width: Annotated[int, typer.Option(min=16, help="a crop's widest, px (cut, never shrunk)")] = 512,
     max_height: Annotated[int, typer.Option(min=16, help="a crop's tallest, px (cut, never shrunk)")] = 512,
     seed: Annotated[int, typer.Option(help="orders a source's regions; picks a sibling where a row names none")] = 0,
+    windows_only: Annotated[
+        bool, typer.Option("--windows-only", help="serve window targets alone: whole pages are left out and counted")
+    ] = False,
 ) -> None:
     """Give each entry of a page-pair cache a crop of another text region of its page for each of its regions."""
     try:
-        settings = RegionCropSettings(place=place, max_width=max_width, max_height=max_height, seed=seed)
+        settings = RegionCropSettings(
+            place=place, max_width=max_width, max_height=max_height, seed=seed, windows_only=windows_only
+        )
         record = build_region_crops(cache, out, settings, pairs=pairs)
     except ValueError as error:  # a used dir, another cache's manifest: the arguments' fault
         raise typer.BadParameter(str(error)) from error
