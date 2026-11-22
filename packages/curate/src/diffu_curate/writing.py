@@ -89,21 +89,33 @@ def closed(masks: torch.Tensor) -> torch.Tensor:
     return (-F.max_pool2d(-grown, CLOSE, 1, CLOSE // 2))[:, 0] > 0.5
 
 
-def _compared(writing: torch.Tensor, region: torch.Tensor) -> Coverage:
-    """One writing map set against one closed label map (both boolean, height x width)."""
-    pixels = writing.numel()
-    written, labelled, both = int(writing.sum()), int(region.sum()), int((writing & region).sum())
-    return Coverage(
-        written=written / pixels if pixels else 0.0,
-        labelled=labelled / pixels if pixels else 0.0,
-        covered=both / written if written else 1.0,
-        filled=both / labelled if labelled else 1.0,
-    )
+def _shares(writing: torch.Tensor, region: torch.Tensor, part: torch.Tensor | None = None) -> list[Coverage]:
+    """Each scan's writing map set against its closed label map, within ``part`` of the scan where one is given (all
+    boolean, batch x height x width). Counted for the whole batch at once: one transfer from the GPU a batch."""
+    inside = torch.ones_like(writing) if part is None else part
+    counts = torch.stack(
+        [
+            inside.flatten(1).sum(1),
+            (writing & inside).flatten(1).sum(1),
+            (region & inside).flatten(1).sum(1),
+            (writing & region & inside).flatten(1).sum(1),
+        ],
+        dim=1,
+    ).tolist()
+    return [
+        Coverage(
+            written=written / pixels if pixels else 0.0,
+            labelled=labelled / pixels if pixels else 0.0,
+            covered=both / written if written else 1.0,
+            filled=both / labelled if labelled else 1.0,
+        )
+        for pixels, written, labelled, both in counts
+    ]
 
 
 def coverage(writing: torch.Tensor, labels: torch.Tensor) -> list[Coverage]:
     """Each scan's writing map set against its label map (both boolean, batch x height x width)."""
-    return [_compared(written, region) for written, region in zip(writing, closed(labels), strict=True)]
+    return _shares(writing, closed(labels))
 
 
 def side_coverage(
@@ -114,16 +126,14 @@ def side_coverage(
     The labels are closed over the whole scan first, as :func:`coverage` does, so a page's numbers add up to its
     scan's. None for a scan with no fold.
     """
-    sides: list[tuple[Coverage, Coverage] | None] = []
-    for written, region, fold in zip(writing, closed(labels), folds, strict=True):
-        if fold is None:
-            sides.append(None)
-            continue
-        column = min(written.shape[1], max(0, round(fold * written.shape[1])))
-        sides.append(
-            (_compared(written[:, :column], region[:, :column]), _compared(written[:, column:], region[:, column:]))
-        )
-    return sides
+    width = writing.shape[2]
+    columns = torch.tensor(
+        [0 if fold is None else min(width, max(0, round(fold * width))) for fold in folds], device=writing.device
+    )
+    left = (torch.arange(width, device=writing.device)[None] < columns[:, None])[:, None, :].expand_as(writing)
+    region = closed(labels)
+    lefts, rights = _shares(writing, region, left), _shares(writing, region, ~left)
+    return [None if fold is None else (one, other) for fold, one, other in zip(folds, lefts, rights, strict=True)]
 
 
 class WritingLayer:

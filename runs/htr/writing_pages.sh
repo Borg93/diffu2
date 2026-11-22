@@ -6,5 +6,5 @@ cd /home/gabriel/Desktop/diffu2 || exit 1
 log() { echo "[$(date '+%F %T')] $*"; }
 while tmux list-windows -t htr -F '#W' | grep -q -x afterwriting; do sleep 120; done
 log "E60 has ended: start"
-CUDA_VISIBLE_DEVICES=2 uv run diffu-curate writing --out /mnt/scratch/gabriel/htr/writing_pages --pages runs/htr/curate/train_pages.lance --workers 24 2>&1 | grep --line-buffered -v -i 'warn\|deprecat'
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 CUDA_VISIBLE_DEVICES=2 uv run diffu-curate writing --out /mnt/scratch/gabriel/htr/writing_pages --pages runs/htr/curate/train_pages.lance --workers 24 2>&1 | grep --line-buffered -v -i 'warn\|deprecat'
 log "done: $(ls /mnt/scratch/gabriel/htr/writing_pages | wc -l) parts"
