@@ -5,7 +5,7 @@ from __future__ import annotations
 import torch
 
 from diffu_curate.alto import AltoLine
-from diffu_curate.writing import coverage, fitted_size, label_mask
+from diffu_curate.writing import coverage, fitted_size, label_mask, side_coverage
 
 
 def line(top: float, bottom: float) -> AltoLine:
@@ -51,3 +51,17 @@ def test_coverage_takes_the_gap_between_two_labelled_lines_as_labelled() -> None
 def test_fitted_size_keeps_the_longer_side_at_1024_and_both_sides_on_the_patch_grid() -> None:
     assert fitted_size(6000, 4000) == (1024, 688)
     assert fitted_size(3000, 4500) == (688, 1024)
+
+
+def test_side_coverage_tells_the_page_whose_writing_has_no_label_from_the_one_that_is_labelled() -> None:
+    # writing across both pages of an opening, the labels only on the left page (the line ends at the fold)
+    left_only = AltoLine(text="x", box=(40, 40, 200, 80), outline=((40, 40), (200, 40), (200, 80), (40, 80)))
+    labelled = torch.from_numpy(label_mask([left_only], (400, 400), (100, 100)))[None]
+
+    sides = side_coverage(bands((10, 20)), labelled, [0.5])[0]
+
+    assert sides is not None
+    left, right = sides
+    assert left.covered > 0.95
+    assert right.covered < 0.05
+    assert side_coverage(bands((10, 20)), labelled, [None]) == [None]

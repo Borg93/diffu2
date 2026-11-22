@@ -178,6 +178,10 @@ def writing(
     limit: Annotated[int | None, typer.Option(help="at most so many scans (a trial)")] = None,
     workers: Annotated[int, typer.Option(help="processes that read and fit the scans")] = 20,
     device: Annotated[str, typer.Option(help="cuda, or cpu for a check")] = "cuda",
+    pages: Annotated[
+        Path | None,
+        typer.Option(help="a pages table (image, fold): only its scans, and each page's numbers beside the scan's"),
+    ] = None,
 ) -> None:
     """Where each scan holds writing against where its labels say lines are, as Parquet parts (resumable).
 
@@ -192,9 +196,16 @@ def writing(
 
     settings = CurateSettings()
     rows = lance.dataset(str(scans)).to_table(columns=["image", "pool", "scan"], filter=where).to_pylist()
+    folds: dict[str, float] = {}
+    if pages is not None:
+        held = lance.dataset(str(pages)).to_table(columns=["image", "fold"], filter="fold IS NOT NULL")
+        folds = dict(zip(held["image"].to_pylist(), held["fold"].to_pylist(), strict=True))
+        rows = [row for row in rows if row["image"] in folds]
     random.Random(0).shuffle(rows)
     pairs = [
         (row["image"], str(_pool(settings, row["pool"]).label_file(row["scan"]))) for row in rows[shard::shards][:limit]
     ]
-    scored, lost = write_coverage(pairs, out, WritingLayer(heads, device), workers=workers, label=str(shard))
+    scored, lost = write_coverage(
+        pairs, out, WritingLayer(heads, device), workers=workers, label=str(shard), folds=folds
+    )
     console.print(f"{scored:,} scans scored, {lost:,} unreadable, in {out}")

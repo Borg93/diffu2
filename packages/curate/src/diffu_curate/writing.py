@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 
 import numpy as np
@@ -33,6 +33,7 @@ THRESHOLD = 0.5
 MODEL = "facebook/dinov3-vitl16-pretrain-lvd1689m"
 HEAD = "1024_dino_linear"  # the head of writing_eval.py's heads.pt that E10 chose
 PART = 20_000  # scans a Parquet part
+SHARES = ("written", "labelled", "covered", "filled")
 ROWS = pa.schema(
     [
         ("image", pa.utf8()),
@@ -40,6 +41,7 @@ ROWS = pa.schema(
         ("labelled", pa.float32()),
         ("covered", pa.float32()),
         ("filled", pa.float32()),
+        *((f"{name}_{side}", pa.float32()) for side in ("left", "right") for name in SHARES),
     ]
 )
 
@@ -87,21 +89,41 @@ def closed(masks: torch.Tensor) -> torch.Tensor:
     return (-F.max_pool2d(-grown, CLOSE, 1, CLOSE // 2))[:, 0] > 0.5
 
 
+def _compared(writing: torch.Tensor, region: torch.Tensor) -> Coverage:
+    """One writing map set against one closed label map (both boolean, height x width)."""
+    pixels = writing.numel()
+    written, labelled, both = int(writing.sum()), int(region.sum()), int((writing & region).sum())
+    return Coverage(
+        written=written / pixels if pixels else 0.0,
+        labelled=labelled / pixels if pixels else 0.0,
+        covered=both / written if written else 1.0,
+        filled=both / labelled if labelled else 1.0,
+    )
+
+
 def coverage(writing: torch.Tensor, labels: torch.Tensor) -> list[Coverage]:
     """Each scan's writing map set against its label map (both boolean, batch x height x width)."""
-    region = closed(labels)
-    pixels = writing[0].numel()
-    written, labelled = writing.flatten(1).sum(1), region.flatten(1).sum(1)
-    both = (writing & region).flatten(1).sum(1)
-    return [
-        Coverage(
-            written=w / pixels,
-            labelled=r / pixels,
-            covered=b / w if w else 1.0,
-            filled=b / r if r else 1.0,
+    return [_compared(written, region) for written, region in zip(writing, closed(labels), strict=True)]
+
+
+def side_coverage(
+    writing: torch.Tensor, labels: torch.Tensor, folds: Sequence[float | None]
+) -> list[tuple[Coverage, Coverage] | None]:
+    """Each scan's two pages compared apart: the maps split at the scan's fold (a share of its width), left then right.
+
+    The labels are closed over the whole scan first, as :func:`coverage` does, so a page's numbers add up to its
+    scan's. None for a scan with no fold.
+    """
+    sides: list[tuple[Coverage, Coverage] | None] = []
+    for written, region, fold in zip(writing, closed(labels), folds, strict=True):
+        if fold is None:
+            sides.append(None)
+            continue
+        column = min(written.shape[1], max(0, round(fold * written.shape[1])))
+        sides.append(
+            (_compared(written[:, :column], region[:, :column]), _compared(written[:, column:], region[:, column:]))
         )
-        for w, r, b in zip(written.tolist(), labelled.tolist(), both.tolist(), strict=True)
-    ]
+    return sides
 
 
 class WritingLayer:
@@ -180,10 +202,12 @@ def write_coverage(
     workers: int = 20,
     batch: int = 16,
     label: str = "0",
+    folds: Mapping[str, float] | None = None,
 ) -> tuple[int, int]:
     """Score ``pairs`` of (scan image, its ALTO file) and write Parquet parts (:data:`ROWS`) in ``out``.
 
-    A scan a part of ``out`` holds already is skipped, so a stopped run goes on where it was.
+    A scan a part of ``out`` holds already is skipped, so a stopped run goes on where it was. A scan ``folds`` holds
+    (its image, the fold's place as a share of its width) also gets its two pages' numbers (``covered_left`` ...).
 
     Returns:
         How many scans were scored, and how many could not be read.
@@ -198,15 +222,21 @@ def write_coverage(
     loader = DataLoader(
         _Scans(todo), batch_size=1, num_workers=workers, collate_fn=lambda rows: rows[0], prefetch_factor=4
     )
-    rows: list[tuple[str, Coverage]] = []
+    folds = folds or {}
+    rows: list[tuple[str, Coverage, tuple[Coverage, Coverage] | None]] = []
     scored = lost = 0
     start = time.time()
 
     def flush() -> None:
         table = pa.table(
             {
-                "image": [image for image, _ in rows],
-                **{name: [getattr(c, name) for _, c in rows] for name in ROWS.names[1:]},
+                "image": [image for image, _, _ in rows],
+                **{name: [getattr(whole, name) for _, whole, _ in rows] for name in SHARES},
+                **{
+                    f"{name}_{side}": [None if sides is None else getattr(sides[k], name) for _, _, sides in rows]
+                    for k, side in enumerate(("left", "right"))
+                    for name in SHARES
+                },
             },
             schema=ROWS,
         )
@@ -221,9 +251,9 @@ def write_coverage(
             continue
         writing = layer.writing(torch.stack([pixels for _, pixels, _ in group]))
         labels = torch.stack([mask for _, _, mask in group]).to(writing.device)
-        rows.extend(
-            (todo[index][0], found) for (index, _, _), found in zip(group, coverage(writing, labels), strict=True)
-        )
+        images = [todo[index][0] for index, _, _ in group]
+        sides = side_coverage(writing, labels, [folds.get(image) for image in images])
+        rows.extend(zip(images, coverage(writing, labels), sides, strict=True))
         before, scored = scored, scored + len(group)
         if len(rows) >= PART:
             flush()
