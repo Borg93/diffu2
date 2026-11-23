@@ -24,10 +24,11 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
       `--region-crops over|beside`. Decided (22 Nov): all crops on reference index 1, windows only. Crops built whole-region (the first
       build's 512 px corners set aside), looked at (9,472 windows, 12,011 crops; MOSS_RUNS), encoded; both arms trained and drawn
       (23 Nov): on four held-out single-region windows they write as the whole-sample model does (over the box the
-      cleaner arm), so the DiT takes crops at no loss, but that test gives both models the same information. Left,
-      to see what a sample per box is for: the drawing path (pipeline, then the Space) taking a crop per box; the
-      over arm on templates with crops cut from a sample of another document, and on a page whose regions are given
-      different hands, beside the whole-sample model. Today one sample page goes in
+      cleaner arm), so the DiT takes crops at no loss, but that test gives both models the same information. On the Space's
+      templates with a sample of another document (23 Nov, Spark) a crop per box gives no gain: the letter the same
+      page as with the whole sample, the register's names garbled, the faint sample not followed. The idea is not
+      shown to help after 480 steps; to decide with the owner: stop here, or a longer run on pages with several
+      regions and crops of another page of the volume (what a template with a foreign sample asks for). Today one sample page goes in
       whole and nothing ties a line of the new page to anything in it; the pairs are pages of one volume, so the hand
       is shared only where the volume has one scribe. Instead give each line box (or a few) a crop of a real line,
       placed over its box (`reference_place: over`, one reference index each), and train on real pages whose other
