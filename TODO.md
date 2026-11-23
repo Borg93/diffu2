@@ -26,9 +26,11 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
       (23 Nov): on four held-out single-region windows they write as the whole-sample model does (over the box the
       cleaner arm), so the DiT takes crops at no loss, but that test gives both models the same information. On the Space's
       templates with a sample of another document (23 Nov, Spark) a crop per box gives no gain: the letter the same
-      page as with the whole sample, the register's names garbled, the faint sample not followed. The idea is not
-      shown to help after 480 steps; to decide with the owner: stop here, or a longer run on pages with several
-      regions and crops of another page of the volume (what a template with a foreign sample asks for). Today one sample page goes in
+      page as with the whole sample, the register's names garbled, the faint sample not followed. Not shown to help
+      after 480 steps; the owner asked for longer: the over arm for 2,000 steps is queued (`region_long`, held by
+      Leonardo's maintenance until 25 Nov 08:00). Left: its pages on the four held-out windows and on the templates
+      beside the pilot's; a held-out set of windows with several regions (only 4 of 18 validation windows have a
+      sibling sharing no line); crops cut from the sample's own regions when drawing a template. Today one sample page goes in
       whole and nothing ties a line of the new page to anything in it; the pairs are pages of one volume, so the hand
       is shared only where the volume has one scribe. Instead give each line box (or a few) a crop of a real line,
       placed over its box (`reference_place: over`, one reference index each), and train on real pages whose other
