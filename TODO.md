@@ -74,8 +74,9 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
 - [ ] **A better student (owner, 21 Nov).** Student e's live pages smear, strike through and misspell words; the Space draws
       guided by default until a student is good. Student i (e's recipe + `--matching 1.0`, DMD in velocities, 23 Nov)
       writes clean pages: no struck-through words or scribble, 98 of 106 lines read (e: 94); it follows the sample as
-      little as e. Left: i merged into bfloat16 checked against i beside the weights, then i as the Space's fast
-      student, looked at live; a stronger matching weight (4, 16) only if live pages still show unreadable lines.
+      little as e. In the Space as the fast student (23 Nov). A live page at
+      another seed still strikes a line through: left, a stronger matching weight (4, 16), judged over several seeds a
+      page.
 - [ ] Students g and h (`--swap 0.5`, teachers at guidance 2.0 and 1.5; queued 20 Nov 22:55): draw them on the held-out
       pages and on the Space's six template pages beside d and e at step 400 and the first student, which the Space
       keeps until a student's ink is closer to the sample's there.
