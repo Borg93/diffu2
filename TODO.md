@@ -69,8 +69,10 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
 ## Distillation
 
 - [ ] **A better student (owner, 21 Nov).** Student e's live pages smear, strike through and misspell words; the Space draws
-      guided by default until a student is good. Distribution matching (a fake-score LoRA, DMD/DMD2 in velocities) is
-      in (`f774c78`); student i (e's recipe + `--matching 1.0`) waits for a place on Leonardo; judged on whole pages.
+      guided by default until a student is good. Student i (e's recipe + `--matching 1.0`, DMD in velocities, 23 Nov)
+      writes clean pages: no struck-through words or scribble, 98 of 106 lines read (e: 94); it follows the sample as
+      little as e. Left: i merged into bfloat16 checked against i beside the weights, then i as the Space's fast
+      student, looked at live; a stronger matching weight (4, 16) only if live pages still show unreadable lines.
 - [ ] Students g and h (`--swap 0.5`, teachers at guidance 2.0 and 1.5; queued 20 Nov 22:55): draw them on the held-out
       pages and on the Space's six template pages beside d and e at step 400 and the first student, which the Space
       keeps until a student's ink is closer to the sample's there.
