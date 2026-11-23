@@ -764,3 +764,5 @@ here.
 ## 22 Nov: the dev error rate of every checkpoint (Nemotron Parse)
 
 The trainer's only number at a checkpoint was the dev loss, which has not followed the error rate. `python -m diffu_htr_train.nemotron_parse.checkpoint_cer runs/htr/RUN` (with `envs/nemotron_parse`'s Python, about 12 GB of a GPU) reads 115 dev pages with each checkpoint as it appears and writes the CER, whole and a volume, to `RUN/dev_cer.jsonl` and to trackio as the run `RUN-cer` (a run of its own, so the trainer's run has one writer). The dev pages are whole volumes no training set holds, so the number is for unseen books; the test list is pages of volumes the training holds. 20 minutes a checkpoint beside another job. Start it with a run (`runs/htr/checkpoint_cer.sh` is the pattern) and choose the best checkpoint by it, not by the dev loss.
+
+**23 Nov, the lesson in numbers.** E60's pretraining kept and exported its best checkpoint by dev loss: step 1,000, dev CER 9.95 %. Its last step read 6.75 %. The fine-tune loaded the exported one. Do not chain a run on `output/` of a run with `best_by_eval_loss: true` without looking at `dev_cer.jsonl`: name the checkpoint.
