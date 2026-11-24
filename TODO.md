@@ -82,6 +82,7 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
       (MOSS_RUNS). Left: a student of ours warm-started from it, trained against our teacher with its recipe's
       settings (matching alone or beside the regression, learning rate 5e-6, beta1 0, one fake update a step), at 4
       steps; and several seeds a page for it as it is.
+      Student i's own checkpoints (24 Nov) are level from step 200 to 400, the same lines struck: not longer, another recipe.
 - [ ] Students g and h (`--swap 0.5`, teachers at guidance 2.0 and 1.5; queued 20 Nov 22:55): draw them on the held-out
       pages and on the Space's six template pages beside d and e at step 400 and the first student, which the Space
       keeps until a student's ink is closer to the sample's there.
