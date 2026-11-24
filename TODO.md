@@ -27,8 +27,8 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
       cleaner arm), so the DiT takes crops at no loss, but that test gives both models the same information. On the Space's
       templates with a sample of another document (23 Nov, Spark) a crop per box gives no gain: the letter the same
       page as with the whole sample, the register's names garbled, the faint sample not followed. Not shown to help
-      after 480 steps; the owner asked for longer: the over arm for 2,000 steps is queued (`region_long`, held by
-      Leonardo's maintenance until 25 Nov 08:00). Left: its pages on the four held-out windows and on the templates
+      after 480 steps; the owner asked for longer: the over arm for 2,000 steps (`region_long`) is submitted by a
+      small serial job once Leonardo's maintenance ends (25 Nov 08:00; the first queued job was cancelled by the cluster). Left: its pages on the four held-out windows and on the templates
       beside the pilot's; a held-out set of windows with several regions (only 4 of 18 validation windows have a
       sibling sharing no line); crops cut from the sample's own regions when drawing a template. Today one sample page goes in
       whole and nothing ties a line of the new page to anything in it; the pairs are pages of one volume, so the hand
