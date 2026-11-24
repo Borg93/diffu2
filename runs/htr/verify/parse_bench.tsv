@@ -7,3 +7,5 @@ draft	seqs	pages	seconds	pages_per_s	tokens	length_stops
 4	256	2000	253	7.92	1042413	0
 0	128	2000	213	9.4	2000	2000	image_only
 0	128	2000	362	5.52	1042538	0	flashinfer_d0
+16	128	2000	231	8.65	1042430	0	draft_v1
+8	128	2000	297	6.72	1042480	0	draft_v1

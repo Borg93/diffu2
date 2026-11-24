@@ -18,8 +18,10 @@ def text(answer: str) -> str: return " ".join(TABLE.sub(" ", LAYOUT.sub("\n", an
 
 out = sys.argv[1]; concurrency = int(sys.argv[2]) if len(sys.argv) > 2 else 64; limit = int(sys.argv[3]) if len(sys.argv) > 3 else None
 SET = os.environ["SET"]; urls = os.environ.get("URLS", "http://127.0.0.1:8011/v1").split(",")
-rows = open(f"{SET}.jsonl", encoding="utf-8").read().splitlines()
+rows = open(f"{SET}.jsonl", encoding="utf-8").read().split("\n")  # not splitlines: a label may hold U+0085, which it splits at (24 Nov: pool_v3 read under the next page's id)
+rows = rows[:-1] if rows and rows[-1] == "" else rows
 metas = [json.loads(l) for l in open(f"{SET}.meta.jsonl", encoding="utf-8")]
+assert len(rows) == len(metas), f"{len(rows)} pages, {len(metas)} lines of meta"
 done = {json.loads(l)["id"] for l in open(out, encoding="utf-8")} if os.path.exists(out) else set()
 order = list(range(len(metas))); random.Random(0).shuffle(order)
 picked = [i for i in order if metas[i]["id"] not in done][:limit]

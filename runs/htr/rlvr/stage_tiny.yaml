@@ -1,0 +1,22 @@
+# Execution smoke only (the recipe's stage2_rlvr/config/tiny.yaml with our task): 2 updates, 16 pages.
+task: htr_task.HtrTask
+data_dir: /mnt/scratch/gabriel/htr/rlvr/data
+sft_output: /mnt/scratch/gabriel/htr/rlvr/sft
+output_dir: /mnt/scratch/gabriel/htr/rlvr/runs/unnamed-tiny
+model: null
+processor_source: null
+candidate_seed: 31415
+candidate_contexts: 16
+selection_seed: 42
+selection_pages: 16
+mining_samples: 4
+evaluation_samples: 1
+training:
+  grpo:
+    max_num_steps: 2
+    max_num_epochs: 2
+    val_period: 2
+    max_val_samples: 4
+    val_batch_size: 4
+  checkpointing:
+    save_period: 2

@@ -1,0 +1,15 @@
+# The RLVR stage for our pages (the recipe's RLVRConfig fields; its stage2_rlvr/config/default.yaml with our task).
+# run_rlvr.sh passes output_dir and training_config on the command line.
+task: htr_task.HtrTask
+data_dir: /mnt/scratch/gabriel/htr/rlvr/data
+sft_output: /mnt/scratch/gabriel/htr/rlvr/sft
+output_dir: /mnt/scratch/gabriel/htr/rlvr/runs/unnamed
+model: null
+processor_source: null
+candidate_seed: 31415
+candidate_contexts: 1024   # THEIRS: 512 generated contexts. Ours: 1,024 train pages drawn by candidate_seed.
+selection_seed: 42
+selection_pages: 256
+mining_samples: 4
+evaluation_samples: 8
+training: {}

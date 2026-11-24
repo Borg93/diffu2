@@ -1,0 +1,63 @@
+# GRPO on our handwritten pages: NVIDIA's Parse recipe settings (stage2_rlvr/config/grpo.yaml), with only what our
+# pages and our reward need changed. Every change has its reason beside it; everything not named here is theirs
+# (128 updates, 16 prompts x 4 generations, lr 1e-6, KL 0.1 (k3), clip 0.2, decoder-only, colocated vLLM).
+defaults: /mnt/scratch/gabriel/src/Nemotron/src/nemotron/recipes/parse/stage2_rlvr/config/grpo.yaml
+
+# Read by our task's hooks and reward environment (htr_settings.py); NeMo RL keeps unknown top-level keys.
+htr:
+  weights:            # reward = (text*w_text + boxes*w_boxes) / (w_text + w_boxes) * completion gate
+    text: 0.8         # max(0, 1 - CER) on the transcription
+    boxes: 0.2        # IoU-matched block boxes, so the layout does not rot while the text improves
+  loop:               # NVIDIA's completion_quality; an answer that loops scores 0 (theirs: 24 words, 4 times)
+    ngram_size: 6     # words; 6 x 4 catches our short loops and flagged no page under 10 % CER on the test readings
+    min_repeats: 4    # times, and more often than in the page's truth
+    token_run_limit: 32   # one token this many times in a row (only where token ids are known: the evaluation)
+  greedy_repetition_penalties: [1.0, 1.1]   # the greedy readings the before/after evaluation adds (we serve at 1.1)
+  failing_share: 0.25     # of the selected pages: at least one sampled answer looped or hit the cap
+  informed_share: 0.75    # failing + largest spread of reward; the rest at random (their 75 / 25)
+
+grpo:
+  # THEIRS: true. It sets loss_multiplier to 0 for answers that hit the token cap (nemo_rl/algorithms/grpo.py
+  # 4108-4116), so a runaway answer is never learned from. Loops are what we want removed: keep them in the loss.
+  overlong_filtering: false
+  reward_shaping:
+    # THEIRS: disabled. The environment sees only the answer's text (no EOS, no finish reason), so it cannot know an
+    # answer was cut at the cap. The trainer can: with a coefficient set, a truncated answer's reward is multiplied
+    # by it (nemo_rl/algorithms/reward_functions.py 132-180). 0 = a capped answer scores 0, and is trained on.
+    enabled: true
+    stop_properly_penalty_coef: 0.0
+
+policy:
+  # THEIRS: 4096. Ours: image prefix up to 3,329 + 6 prompt tokens + max_new_tokens + the environment's short
+  # observation; NeMo RL marks an answer truncated when these reach the limit (rollouts.py 1179-1194).
+  max_total_sequence_length: 5504
+  # THEIRS: 8 and 16. Our sequences are up to 1.35x theirs and the text part up to 2,048 tokens of 72,512-way
+  # logits; halved to stay well inside one 98 GB card. The global batch (64 = 16 x 4) is unchanged.
+  train_micro_batch_size: 4
+  logprob_batch_size: 8
+  generation:
+    # THEIRS: 1536. Our longest true page is 1,878 tokens (99 % under 1,070); 2,048 covers every page, and an
+    # answer that reaches it is a runaway.
+    max_new_tokens: 2048
+    # THEIRS: 1.0. An option here: we deploy greedy, so 0.5 to 0.7 is worth a run. NeMo RL divides the trainer's
+    # logits by the same temperature (nemo_rl/models/automodel/train.py 247-263) and vLLM returns log-probabilities
+    # after temperature (logprobs_mode: processed_logprobs), so the ratio stays consistent.
+    temperature: 1.0
+    # NeMo RL refuses a validation temperature that differs from training outside NeMo-Gym; keep them tied.
+    val_temperature: ${policy.generation.temperature}
+    val_top_p: ${policy.generation.top_p}
+    val_top_k: ${policy.generation.top_k}
+    vllm_kwargs:
+      # THEIRS: 4 GiB. A token's keys and values are about 20 KB (10 layers, 8 KV heads of 64, bf16); 64 answers of
+      # up to 5.4k tokens with the image prefix shared per page are about 184k tokens = 3.8 GB at worst.
+      kv_cache_memory_bytes: 8589934592
+      # THEIRS: 4096 (their whole sequence limit). One of our prompts is up to 3,335 tokens; two fit a step.
+      max_num_batched_tokens: 8192
+
+env:
+  parse-page:
+    weights: ${htr.weights}
+    loop: ${htr.loop}
+  parse-page-validation:
+    weights: ${htr.weights}
+    loop: ${htr.loop}

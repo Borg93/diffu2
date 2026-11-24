@@ -5,7 +5,7 @@
 cd /home/gabriel/Desktop/diffu2 || exit 1
 S=/mnt/scratch/gabriel/htr; O=runs/htr/curate/pool_read
 log() { echo "[$(date '+%F %T')] $*"; }
-tmux new-window -d -t htr -n parse2 "GPU=2 PORT=8012 FRACTION=0.85 SEQS=${SEQS:-128} DRAFT=${DRAFT:-16} bash runs/htr/parse_serve.sh $S/serve/parse-selftrain2 2>&1 | tee runs/htr/verify/parse_serve_selftrain2.log"
+tmux new-window -d -t htr -n parse2 "GPU=2 PORT=8012 FRACTION=0.85 SEQS=${SEQS:-128} DRAFT=${DRAFT:-16} bash runs/htr/parse_serve.sh ${SERVE:-$S/serve/parse-selftrain2} 2>&1 | tee runs/htr/verify/parse_serve_selftrain2.log"
 until curl -s -m 2 http://127.0.0.1:8012/v1/models > /dev/null 2>&1; do sleep 10; tmux list-windows -t htr -F '#W' | grep -q -x parse2 || { log "FAILED server"; exit 1; }; done
 for v in 3 4 5; do
   log "server up: reading pool_v$v"
