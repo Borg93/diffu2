@@ -83,6 +83,11 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
       settings (matching alone or beside the regression, learning rate 5e-6, beta1 0, one fake update a step), at 4
       steps; and several seeds a page for it as it is.
       Student i's own checkpoints (24 Nov) are level from step 200 to 400, the same lines struck: not longer, another recipe.
+- [ ] **A 4-step fast mode in the Space (owner, 24 Nov: keep it in the backlog).** Not uploaded yet: the published 4-step
+      LoRA on our DiT draws flat paper and was drawn at one seed a page. Steps: (1) several seeds a page beside student
+      i on the Spark; (2) the student warm-started from it, trained against our teacher on Leonardo; (3) the better of
+      the two in the Space as the fast mode, or as a third choice beside the 8-step student if the Space's 1 GB of
+      storage holds both.
 - [ ] Students g and h (`--swap 0.5`, teachers at guidance 2.0 and 1.5; queued 20 Nov 22:55): draw them on the held-out
       pages and on the Space's six template pages beside d and e at step 400 and the first student, which the Space
       keeps until a student's ink is closer to the sample's there.
