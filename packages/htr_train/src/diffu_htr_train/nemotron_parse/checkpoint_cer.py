@@ -9,8 +9,9 @@ for the draw and for each volume. Run with ``envs/nemotron_parse``'s Python, on 
         -m diffu_htr_train.nemotron_parse.checkpoint_cer runs/htr/RUN --dev data/htr/nemotron_parse_pages.dev.jsonl
 
 It waits for the run's folder and for new checkpoints until ``--until`` (or the run's ``BUILT``-like end: no new
-checkpoint for ``--idle`` minutes). ``RUN/dev_cer.jsonl`` gets a row a checkpoint; trackio gets the run ``RUN-cer`` in
-the same project (a run of its own, so the trainer's run is not written to by two processes).
+checkpoint for ``--idle`` minutes). ``RUN/dev_cer.jsonl`` gets a row a checkpoint, ``RUN/dev_reads/step-N.jsonl`` what
+the checkpoint read on each page (so a number that jumps can be traced to its pages); trackio gets the run ``RUN-cer``
+in the same project (a run of its own, so the trainer's run is not written to by two processes).
 """
 
 from __future__ import annotations
@@ -67,6 +68,18 @@ class Score(BaseModel):
     seconds: float
 
 
+class PageRead(BaseModel):
+    """What a checkpoint read on one dev page, and how far that is from the truth."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    volume: str
+    chars: int
+    edits: int
+    reading: str
+
+
 def page_text(answer: str) -> str:
     """A target or a reading as plain text: boxes, classes and table markup out, white space as one space."""
     return " ".join(TABLE.sub(" ", LAYOUT.sub("\n", answer)).replace("#", " ").split())
@@ -98,18 +111,28 @@ def drawn(pages: Sequence[DevPage], per_volume: int, seed: int) -> list[DevPage]
     return picked
 
 
-def scored(step: int, pages: Sequence[DevPage], readings: Sequence[str], seconds: float) -> Score:
-    """The readings of ``pages`` set against their truth."""
+def page_reads(pages: Sequence[DevPage], readings: Sequence[str]) -> list[PageRead]:
+    """The readings of ``pages`` set against their truth, a page at a time."""
+    return [
+        PageRead(
+            id=page.id, volume=page.volume, chars=len(page.truth), edits=edits(page.truth, reading), reading=reading
+        )
+        for page, reading in zip(pages, readings, strict=True)
+    ]
+
+
+def scored(step: int, reads: Sequence[PageRead], seconds: float) -> Score:
+    """The error rate of the pages together and of each volume."""
     wrong: dict[str, int] = defaultdict(int)
     chars: dict[str, int] = defaultdict(int)
-    for page, reading in zip(pages, readings, strict=True):
-        wrong[page.volume] += edits(page.truth, reading)
-        chars[page.volume] += len(page.truth)
+    for page in reads:
+        wrong[page.volume] += page.edits
+        chars[page.volume] += page.chars
     return Score(
         step=step,
         cer=sum(wrong.values()) / max(1, sum(chars.values())),
         volumes={volume: wrong[volume] / max(1, chars[volume]) for volume in sorted(chars)},
-        pages=len(pages),
+        pages=len(reads),
         seconds=seconds,
     )
 
@@ -156,7 +179,7 @@ def read(checkpoint: Path, pages: Sequence[DevPage]) -> list[str]:
 
 
 def unscored(run: Path, done: set[int]) -> list[tuple[int, Path]]:
-    """The run's finished checkpoints (their trainer state is written last) that have no score, oldest first."""
+    """The run's finished checkpoints (their trainer state is written last) that are not ``done``, oldest first."""
     found = [
         (int(state.parent.name.removeprefix("checkpoint-")), state.parent)
         for state in (run / "output").glob("checkpoint-*/trainer_state.json")
@@ -181,7 +204,8 @@ def main(
     last = time.time()
     typer.echo(f"{len(pages)} dev pages of {len({page.volume for page in pages})} volumes; scores in {out}")
     while (end is None or time.time() < end) and time.time() - last < idle * 60:
-        done = {json.loads(line)["step"] for line in out.read_text("utf-8").splitlines()} if out.exists() else set()
+        rows = {json.loads(line)["step"] for line in out.read_text("utf-8").splitlines()} if out.exists() else set()
+        done = {int(file.stem.removeprefix("step-")) for file in (run / "dev_reads").glob("step-*.jsonl")}
         waiting = unscored(run, done)
         if not waiting:
             time.sleep(60)
@@ -189,11 +213,17 @@ def main(
         step, folder = waiting[-1] if not done else waiting[0]  # the newest first on a start, then in order
         started = time.time()
         try:
-            score = scored(step, pages, read(folder, pages), 0.0).model_copy(
-                update={"seconds": round(time.time() - started, 1)}
-            )
+            reads = page_reads(pages, read(folder, pages))
         except OSError as error:  # the trainer removed the checkpoint while it was being read
             typer.echo(f"checkpoint {step} went away: {error}")
+            continue
+        score = scored(step, reads, round(time.time() - started, 1))
+        (run / "dev_reads").mkdir(exist_ok=True)
+        (run / "dev_reads" / f"step-{step}.jsonl").write_text(
+            "".join(page.model_dump_json() + "\n" for page in reads), "utf-8"
+        )
+        if step in rows:  # scored before its readings were kept: read again for the pages, the row stays
+            last = time.time()
             continue
         with out.open("a", encoding="utf-8") as file:
             file.write(score.model_dump_json() + "\n")

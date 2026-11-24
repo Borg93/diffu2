@@ -4,7 +4,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from diffu_htr_train.nemotron_parse.checkpoint_cer import DevPage, drawn, edits, page_text, scored, unscored
+from diffu_htr_train.nemotron_parse.checkpoint_cer import (
+    DevPage,
+    drawn,
+    edits,
+    page_reads,
+    page_text,
+    scored,
+    unscored,
+)
 
 
 def page(name: str, volume: str, truth: str = "abcd") -> DevPage:
@@ -35,8 +43,10 @@ def test_drawn_keeps_a_small_volume_whole_and_caps_a_large_one() -> None:
 def test_scored_gives_the_draw_and_each_volume_their_own_error_rate() -> None:
     pages = [page("a", "one", "abcd"), page("b", "two", "abcdefgh")]
 
-    score = scored(250, pages, ["abcd", "abcdxxxx"], seconds=1.0)
+    reads = page_reads(pages, ["abcd", "abcdxxxx"])
+    score = scored(250, reads, seconds=1.0)
 
+    assert [(read.id, read.edits, read.chars) for read in reads] == [("a", 0, 4), ("b", 4, 8)]
     assert score.volumes == {"one": 0.0, "two": 0.5}
     assert abs(score.cer - 4 / 12) < 1e-9  # the pages together, not the mean of the volumes
 
