@@ -12,6 +12,6 @@ E=$PWD/packages/htr_train/envs/vllm/.venv; export CUDA_HOME=$E/lib/python3.12/si
 exec packages/htr_train/envs/vllm/.venv/bin/vllm serve $D --served-model-name nemotron-parse --trust-remote-code --host 127.0.0.1 --port ${PORT:-8011} --dtype bfloat16 \
   --max-model-len 16384 --max-num-seqs ${SEQS:-64} --max-num-batched-tokens 32768 --gpu-memory-utilization ${FRACTION:-0.45} \
   --no-enable-prefix-caching --mm-processor-cache-gb 4 --enable-chunked-prefill --async-scheduling \
-  --attention-config '{"backend": "FLASH_ATTN", "flash_attn_version": 3}' \
+  --attention-config "${ATTN:-{\"backend\": \"FLASH_ATTN\", \"flash_attn_version\": 3\}}" \
   --compilation-config '{"mode": 0, "cudagraph_mode": "FULL_DECODE_ONLY", "cudagraph_capture_sizes": [1, 2, 4, 8, 16, 17, 32, 34, 64, 68, 128, 136, 256, 272, 512, 544, 1024, 1088]}' \
   "${SPEC[@]}"  # the repository's repetition-stop processor is written for the older runner: this vLLM refuses it (E51)

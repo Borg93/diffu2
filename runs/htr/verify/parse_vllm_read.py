@@ -22,7 +22,13 @@ rows = open("data/htr/nemotron_parse_pages.test.jsonl", encoding="utf-8").read()
 metas = [json.loads(l) for l in open("data/htr/nemotron_parse_pages.test.meta.jsonl", encoding="utf-8")]
 index = {m["id"]: i for i, m in enumerate(metas)}
 pages = [(p, json.loads(rows[index[p]]), metas[index[p]]) for p in wanted]
-images = {p: base64.b64encode(open(row["images"][0], "rb").read()).decode() for p, row, _ in pages}  # read before the clock
+SCALE = float(os.environ.get("SCALE", "1"))  # 24 Nov: the page sent smaller (each side times SCALE), to see what the image stage's cost buys
+def sent(path: str) -> bytes:
+    if SCALE == 1: return open(path, "rb").read()
+    import io; from PIL import Image
+    image = Image.open(path).convert("RGB"); image = image.resize((round(image.width * SCALE), round(image.height * SCALE)), Image.Resampling.BILINEAR)
+    buffer = io.BytesIO(); image.save(buffer, "JPEG", quality=92); return buffer.getvalue()
+images = {p: base64.b64encode(sent(row["images"][0])).decode() for p, row, _ in pages}  # read before the clock
 client = httpx.Client(timeout=1800, limits=httpx.Limits(max_connections=max(64, concurrency)))
 
 def read(item):

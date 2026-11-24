@@ -1,0 +1,62 @@
+# A DFlash2 draft for a Nemotron Parse reader, trained from a cache (make_cache.py) by train_draft.py.
+# The draft's shape is NVIDIA's dflash2/config.json, value for value: 3 layers, 16 heads, 8 KV heads, head 64,
+# MLP 4096, block 33, the reader's layers [1, 4, 8], mask token 3, conv 2/16, selector 256/16.
+# The paths are the smoke run's: give others with --recipe_args.NAME VALUE.
+recipe: ParseDFlash2Recipe
+
+dist_env:
+  backend: nccl
+  timeout_minutes: 30
+
+recipe_args:
+  # the "target" is the tables folder make_cache.py writes: a Qwen3-shaped config, the tokenizer and two tensors
+  target_model_name_or_path: /mnt/scratch/gabriel/htr/draft/tables/selftrain2-3000
+  target_embedding_key: draft_input_embedding.weight   # the tied table times sqrt(1024) = 32, as vLLM hands it over
+  target_lm_head_key: lm_head.weight                    # the tied table itself
+  train_cache_path: /mnt/scratch/gabriel/htr/draft/cache/ours_train200
+  val_cache_path: /mnt/scratch/gabriel/htr/draft/cache/ours_val50
+  output_dir: /mnt/scratch/gabriel/htr/draft/runs/smoke
+  init_draft_path: /mnt/scratch/gabriel/models/nemotron-3.5-parse-repo/dflash2/model.safetensors  # null: from scratch
+
+  seq_length: 16384            # the longest cached row let in: image prefix (3,329 at most) + prompt + answer
+  micro_batch_size: 1
+  grad_accumulation_steps: 1
+  num_workers: 0
+  num_epochs: 1
+
+  # --- the draft: NVIDIA's dflash2/config.json ---
+  draft_num_hidden_layers: 3
+  draft_num_attention_heads: 16
+  draft_num_key_value_heads: 8
+  draft_head_dim: 64
+  draft_intermediate_size: 4096
+  block_size: 33               # the anchor and 32 drafted tokens (vLLM: num_speculative_tokens up to 32)
+  target_layer_ids: [1, 4, 8]  # zero-based decoder layers, their output; vLLM asks Parse for aux states 2, 5, 9
+  mask_token_id: 3
+  conv_kernel_size: 2
+  conv_group_size: 16
+  selector_rank: 256
+  selector_top_k: 16
+  selector_loss_weight: 1.0
+  input_embedding_scale: 1.0   # must stay 1.0: vLLM would apply it on top of Parse's own scaled embedding
+
+  # --- the objective: AutoModel's defaults; what NVIDIA trained their draft with is not published ---
+  num_anchors: 64              # blocks drawn a page a step (each is 33 queries over the whole page)
+  loss_decay_gamma: 7.0
+  attention_backend: sdpa
+  shuffle_seed: 42
+  log_every_steps: 10
+  max_grad_norm: 1.0
+
+optimizer:
+  lr: 1.0e-4                   # a warm start; the recipe's from-scratch example uses 6.0e-4
+  betas: [0.9, 0.95]
+  weight_decay: 0.0
+  warmup_ratio: 0.04
+  min_lr_ratio: 0.1
+
+checkpoint:
+  enabled: true
+  checkpoint_dir: /mnt/scratch/gabriel/htr/draft/runs/smoke/checkpoints
+  model_save_format: safetensors
+  save_consolidated: true
