@@ -84,8 +84,9 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
       steps; and several seeds a page for it as it is.
       Student i's own checkpoints (24 Nov) are level from step 200 to 400, the same lines struck: not longer, another recipe.
 - [ ] **A 4-step fast mode in the Space (owner, 24 Nov: keep it in the backlog).** Not uploaded yet: the published 4-step
-      LoRA on our DiT draws flat paper and was drawn at one seed a page. Steps: (1) several seeds a page beside student
-      i on the Spark; (2) the student warm-started from it, trained against our teacher on Leonardo; (3) the better of
+      LoRA on our DiT draws flat paper. Steps: (1) done 24 Nov: at three more seeds it stays cleaner than student i
+      (215 against 205 of 219 lines, no struck line) but its seeds of a template are nearly one page; (2) a 4-step student of our own (owner, 24 Nov: our LoRA, not theirs): student i shortened to 4 steps against our teacher with the matching-only recipe
+      (the whole rollout corrected, learning rate 5e-6, beta1 0, one fake update a step), checked for pages that vary; (3) the better of
       the two in the Space as the fast mode, or as a third choice beside the 8-step student if the Space's 1 GB of
       storage holds both.
 - [ ] Students g and h (`--swap 0.5`, teachers at guidance 2.0 and 1.5; queued 20 Nov 22:55): draw them on the held-out
