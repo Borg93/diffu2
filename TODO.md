@@ -77,6 +77,11 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
       little as e. In the Space as the fast student (23 Nov). A live page at
       another seed still strikes a line through: left, a stronger matching weight (4, 16), judged over several seeds a
       page.
+      A published 4-step LoRA of MOSS-Image-SFT merged into our DiT (24 Nov, Spark) draws our pages at 4 steps: 103 of
+      106 lines read, no struck minutes lines, lighter ink, but flat clean paper, soft strokes and garbled small words
+      (MOSS_RUNS). Left: a student of ours warm-started from it, trained against our teacher with its recipe's
+      settings (matching alone or beside the regression, learning rate 5e-6, beta1 0, one fake update a step), at 4
+      steps; and several seeds a page for it as it is.
 - [ ] Students g and h (`--swap 0.5`, teachers at guidance 2.0 and 1.5; queued 20 Nov 22:55): draw them on the held-out
       pages and on the Space's six template pages beside d and e at step 400 and the first student, which the Space
       keeps until a student's ink is closer to the sample's there.
