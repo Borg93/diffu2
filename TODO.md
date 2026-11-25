@@ -27,8 +27,8 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
       cleaner arm), so the DiT takes crops at no loss, but that test gives both models the same information. On the Space's
       templates with a sample of another document (23 Nov, Spark) a crop per box gives no gain: the letter the same
       page as with the whole sample, the register's names garbled, the faint sample not followed. Not shown to help
-      after 480 steps; the owner asked for longer: the over arm for 2,000 steps (`region_long`) is submitted by a
-      small serial job once Leonardo's maintenance ends (25 Nov 08:00; the first queued job was cancelled by the cluster). Left: its pages on the four held-out windows and on the templates
+      after 480 steps; the owner asked for longer: the over arm for 2,000 steps (`region_long`) runs on Leonardo
+      from 25 Nov 07:40 (the first queued job was cancelled by the cluster during the maintenance). Left: its pages on the four held-out windows and on the templates
       beside the pilot's; a held-out set of windows with several regions (only 4 of 18 validation windows have a
       sibling sharing no line); crops cut from the sample's own regions when drawing a template. Today one sample page goes in
       whole and nothing ties a line of the new page to anything in it; the pairs are pages of one volume, so the hand
@@ -88,8 +88,8 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
       (215 against 205 of 219 lines, no struck line) but its seeds of a template are nearly one page; (2) a 4-step student of our own (owner, 24 Nov: our LoRA, not theirs): student i shortened to 4 steps against our teacher with the matching-only recipe
       (the whole rollout corrected, learning rate 5e-6, beta1 0, one fake update a step), checked for pages that vary;
       the code is in (`--matching-whole --matching-pull velocity --matching-level-beta 2.5 --beta1 0 --start`, 24 Nov), and a
-      Spark trial ran 3 steps (about 3.5 min a page); student j is queued on Leonardo (a start job at 25 Nov 08:20,
-      after the region run's); left: check its first job fits in a GPU's memory, then its pages beside student i and
+      Spark trial ran 3 steps (about 3.5 min a page); student j runs on Leonardo from 25 Nov 07:40 (about 70 s a
+      step, fits in memory, 20 steps a job: about 30 jobs); left: its pages beside student i and
       the published LoRA; (3) the better of
       the two in the Space as the fast mode, or as a third choice beside the 8-step student if the Space's 1 GB of
       storage holds both.
