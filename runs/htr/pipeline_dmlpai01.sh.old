@@ -1,0 +1,51 @@
+#!/bin/bash
+# dmlpai01: build every GT-Lejonet HTR set, then train MiniCPM-OCR (lines + regions, GPU 1) and Jev (line pairs, GPU 2)
+# in parallel. Each step leaves a .done marker, so running this again resumes after the last finished step.
+# Packed specs when flash-attn imports in envs/minicpm at launch time, unpacked ones otherwise.
+set -uo pipefail
+cd /home/gabriel/Desktop/diffu2
+GT=/mnt/work/GT-Lejonet_HTR_202602
+D=data/htr
+M=runs/htr/pipeline_markers
+SPECS=packages/htr_train/configs/dmlpai01
+mkdir -p $M
+log() { echo "[$(date '+%F %T')] $*"; }
+step() {  # step NAME CMD...: run once, stop the branch on failure
+  local name=$1; shift
+  [ -f $M/$name.done ] && { log "skip $name (done)"; return 0; }
+  log "start $name"
+  if "$@"; then touch $M/$name.done; log "done $name"; else log "FAILED $name"; return 1; fi
+}
+train() {  # train SPEC_BASE GPU
+  local base=$1 gpu=$2 spec name
+  if packages/htr_train/envs/minicpm/.venv/bin/python -c "import flash_attn, causal_conv1d" 2>/dev/null; then
+    spec=$SPECS/${base}_packed.yaml; else spec=$SPECS/$base.yaml; fi
+  name=$(awk '/^name:/{print $2; exit}' $spec)
+  log "launch $name on GPU $gpu from $spec"
+  uv run htr-train launch $spec --queue || return 1
+  rm -f ~/diffu_queue/htr_$name.sh
+  sed -i "s/^export CUDA_VISIBLE_DEVICES=0\$/export CUDA_VISIBLE_DEVICES=$gpu/" runs/htr/$name/steps.sh
+  grep -q "CUDA_VISIBLE_DEVICES=$gpu\$" runs/htr/$name/steps.sh || { log "GPU pin failed for $name"; return 1; }
+  bash runs/htr/$name/steps.sh > runs/htr/$name/train.log 2>&1
+}
+
+step lines uv run diffu-reader-set --xml $GT --model minicpm-ocr --task lines --max-crop-pixels 200704 \
+    --split-from-gt-test-lists --out $D/minicpm_lines_scaled.jsonl || exit 1
+step lines_dev uv run htr-train split-dev $D/minicpm_lines_scaled.jsonl --share 0.02 || exit 1
+
+(   # Jev: pairs from the training lines, its dev split, then training on GPU 2; test pairs for scoring after
+  step jev_pairs uv run htr-train jev-set --lines $D/minicpm_lines_scaled.train.jsonl --out $D/jev_lines.jsonl &&
+  step jev_dev uv run htr-train split-dev $D/jev_lines.jsonl --share 0.02 &&
+  { step jev_test_pairs uv run htr-train jev-set --side test --lines $D/minicpm_lines_scaled.test.jsonl \
+        --out $D/jev_lines.test.jsonl & step jev_train train jev_all 2; wait; }
+) > runs/htr/pipeline_jev.log 2>&1 &
+
+(   # MiniCPM-OCR: regions (paragraphs) with the lines' dev volumes held out, then training on GPU 1
+  step regions uv run diffu-reader-set --xml $GT --model minicpm-ocr --task elements --split-from-gt-test-lists \
+      --out $D/minicpm_regions.jsonl &&
+  step regions_dev uv run htr-train split-dev $D/minicpm_regions.jsonl --like $D/minicpm_lines_scaled.dev.jsonl &&
+  step minicpm_train train minicpm_all 1
+) > runs/htr/pipeline_minicpm.log 2>&1 &
+
+wait
+log "pipeline finished"
