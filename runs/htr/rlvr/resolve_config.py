@@ -39,6 +39,15 @@ def main() -> None:
     print("stage:", json.dumps(cfg.model_dump(mode="json"), indent=2))
     task = load_task(cfg.task, stage="rlvr")
     print("task:", cfg.task, "| environment:", task.environment_class, "| reward metric:", task.reward_metric)
+    from htr_settings import data_dir, settings
+
+    if data_dir() != Path(cfg.data_dir).resolve():
+        raise ValueError(f"The task's hooks would draw from {data_dir()}, the stage validates {cfg.data_dir}")
+    hooks = settings()
+    print("task hooks read:", hooks["config"], "| data:", data_dir())
+    print("  candidates:", json.dumps(hooks["candidates"]))
+    print("  selection shares: failing", hooks["failing_share"], "informed", hooks["informed_share"],
+          "| rollout temperature", hooks["temperature"], "| greedy penalties", hooks["greedy_repetition_penalties"])
     if not args.skip_identity:
         identity = validate_dataset(cfg.data_dir)
         print("dataset identity holds:", identity["pages"], identity["contexts"])

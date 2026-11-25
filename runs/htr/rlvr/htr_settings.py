@@ -14,6 +14,8 @@ from functools import cache
 from pathlib import Path
 from typing import Any
 
+from htr_candidates import rules
+
 HERE = Path(__file__).resolve().parent
 DATA = Path("/mnt/scratch/gabriel/htr/rlvr/data")
 
@@ -55,8 +57,10 @@ def settings() -> dict[str, Any]:
             raise KeyError(f"{key} is not set in {config_path()}")
         return OmegaConf.to_container(value, resolve=True) if OmegaConf.is_config(value) else value
 
+    candidates = OmegaConf.select(config, "htr.candidates", default=None)  # unset in grpo_htr.yaml: pilot 1's draw
     return {
         "config": str(config_path()),
+        "candidates": rules(OmegaConf.to_container(candidates, resolve=True) if candidates is not None else None),
         "weights": {name: float(weight) for name, weight in get("htr.weights").items()},
         "loop": {name: int(value) for name, value in get("htr.loop").items()},
         "greedy_repetition_penalties": [float(value) for value in get("htr.greedy_repetition_penalties")],

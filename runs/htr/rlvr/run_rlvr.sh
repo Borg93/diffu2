@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # RLVR (GRPO) on our handwritten pages with NVIDIA's Parse recipe, unchanged, on GPU 2 only.
 #
-#   runs/htr/rlvr/run_rlvr.sh NAME                       the pilot: 128 updates, 256 pages of 1,024 candidates
+#   runs/htr/rlvr/run_rlvr.sh NAME                       pilot 1: 128 updates, 256 pages of 1,024 candidates (data)
 #   PROFILE=tiny runs/htr/rlvr/run_rlvr.sh NAME          the smoke: 2 updates, 16 pages
+#   PROFILE=pilot2 CONFIG=runs/htr/rlvr/grpo_htr_v2.yaml runs/htr/rlvr/run_rlvr.sh NAME
+#                                                        pilot 2: 256 updates, 512 pages of 2,048 targeted (data_v2)
 #   CONFIG=/path/other.yaml runs/htr/rlvr/run_rlvr.sh NAME   another training YAML (defaults: grpo_htr.yaml)
 #   DRY=1 runs/htr/rlvr/run_rlvr.sh NAME                 print the resolved stage and training configuration, no GPU
 #
@@ -21,22 +23,27 @@ ROOT=/mnt/scratch/gabriel/htr/rlvr
 CONFIG=$(realpath "${CONFIG:-$HERE/grpo_htr.yaml}")
 STAGE=$HERE/stage_$PROFILE.yaml
 OUT=$ROOT/runs/$NAME
+[[ -f $STAGE ]] || { echo "No stage file $STAGE" >&2; exit 1; }
+# The dataset bundle and the SFT record are the stage's (data_dir, sft_output): data and sft for pilot 1 and tiny,
+# data_v2 and sft_v2 for pilot 2. The task's hooks are told the same bundle.
+read -r DATA SFT < <("$PYTHON" -c 'import sys; from omegaconf import OmegaConf as O; c = O.load(sys.argv[1]); print(c.data_dir, c.sft_output)' "$STAGE")
 
 export CUDA_VISIBLE_DEVICES=2            # the only GPU that is ours
 export PYTHONPATH=$NEMOTRON/src:$HERE    # the recipe, and our task and reward environment (Ray workers get it too)
 export HTR_RLVR_CONFIG=$CONFIG           # the task's hooks read the same training YAML (htr_settings.py)
-export HTR_RLVR_DATA=$ROOT/data
+export HTR_RLVR_DATA=$DATA
 export VLLM_USE_FLASHINFER_SAMPLER=0     # as the recipe's CLI sets for this stage
 export RAY_ENABLE_UV_RUN_RUNTIME_ENV=0   # as the recipe's CLI sets for this stage
 export OMP_NUM_THREADS=1                 # dmlpai01: more threads stall GPU-feeding jobs
 unset VIRTUAL_ENV UV_PROJECT_ENVIRONMENT
 
 if [[ ${DRY:-0} == 1 ]]; then
+  [[ -f $SFT/artifact.json ]] || { echo "No SFT record $SFT/artifact.json; a real run writes it (record_sft_lineage.py)" >&2; exit 1; }
   exec "$PYTHON" "$HERE/resolve_config.py" --stage "$STAGE" --training "$CONFIG" --out "$OUT"
 fi
 
-[[ -f $ROOT/data/artifact.json ]] || { echo "No dataset bundle; run build_dataset.py first" >&2; exit 1; }
-[[ -f $ROOT/sft/artifact.json ]] || "$PYTHON" "$HERE/record_sft_lineage.py" --out "$ROOT/sft"
+[[ -f $DATA/artifact.json ]] || { echo "No dataset bundle $DATA; run build_dataset.py (v1) or build_dataset_v2.py first" >&2; exit 1; }
+[[ -f $SFT/artifact.json ]] || "$PYTHON" "$HERE/record_sft_lineage.py" --data "$DATA" --out "$SFT"
 [[ ! -e $OUT ]] || { echo "$OUT exists; a run is never appended to, choose another NAME" >&2; exit 1; }
 mkdir -p "$ROOT/runs"
 

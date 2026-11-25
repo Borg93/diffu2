@@ -31,8 +31,13 @@ TRUTH = (
 )
 
 
-def rows(split: str) -> dict[str, dict]:
-    return {row["id"]: row for row in map(json.loads, (DATA / f"{split}.jsonl").read_text().splitlines())}
+def lines(path: Path) -> list[str]:
+    """A JSON-lines file's lines, split on "\\n" only (``str.splitlines`` splits at U+0085 inside a label)."""
+    return [line for line in path.read_text("utf-8").split("\n") if line.strip()]
+
+
+def rows(split: str, data: Path = DATA) -> dict[str, dict]:
+    return {row["id"]: row for row in map(json.loads, lines(data / f"{split}.jsonl"))}
 
 
 # ---- reward ---------------------------------------------------------------------------------------------------------
@@ -89,7 +94,7 @@ def test_repeats_the_truth_has_are_not_a_loop():
 @pytest.mark.skipif(not (READS / "step-3000.jsonl").exists() or not DATA.exists(), reason="needs our dev readings")
 def test_text_part_is_our_dev_cer():
     monitor = rows("monitor")
-    reads = [json.loads(line) for line in (READS / "step-3000.jsonl").read_text().splitlines()]
+    reads = [json.loads(line) for line in lines(READS / "step-3000.jsonl")]
     assert [read["id"] for read in reads] == list(monitor)  # the monitor split is the dev draw, in its order
     edits = chars = 0.0
     for read in reads:
@@ -101,7 +106,7 @@ def test_text_part_is_our_dev_cer():
 
 @pytest.mark.skipif(not (READS / "step-250.jsonl").exists() or not DATA.exists(), reason="needs our dev readings")
 def test_known_loop_is_gated():
-    reads = {r["id"]: r for r in map(json.loads, (READS / "step-250.jsonl").read_text().splitlines())}
+    reads = {r["id"]: r for r in map(json.loads, lines(READS / "step-250.jsonl"))}
     reading = reads["483ab0a6287c"]["reading"]
     assert reading.endswith("Moni Moni Moni")
     parts = components(reading, rows("monitor")["483ab0a6287c"]["target"])
@@ -344,3 +349,248 @@ def test_temperature_is_one_option_for_trainer_and_hooks(tmp_path, monkeypatch):
     finally:
         monkeypatch.delenv("HTR_RLVR_CONFIG")
         settings.cache_clear()
+
+
+# ---- pilot 2: targeted candidates, the 50 % failing quota, bundle v2, configurations, evaluation helpers -----------
+
+import htr_candidates  # noqa: E402
+
+DATA_V2 = Path("/mnt/scratch/gabriel/htr/rlvr/data_v2")
+HERE = Path(__file__).resolve().parents[1]
+LIVESTOCK = (
+    "<x_0.18><y_0.12>Börie Hefnarßon i Bäresta\nHäst — 1.\nStodh — 1.\nFola — 1.\nOxar — 2.\nkoor — 5.\n"
+    "Quigor — 2.\ng: fåår — 12.\ng: swijnn — 4.\nVtsede — 4 tnor<x_0.54><y_0.33><class_Text>"
+)
+LEDGER = "<x_0.1><y_0.1>" + "\n".join(f"{n} st kort för {n} öre . . . . . . . . D . . 8 öre wid {n} tunnor" for n in range(10)) + (
+    "<x_0.9><y_0.9><class_Text>"
+)
+TABLE_PAGE = "<x_0.1><y_0.1>\\begin{tabular}{ll}Anno & 1642\\\\Summa & 13\\end{tabular}<x_0.9><y_0.5><class_Table>"
+
+
+def test_page_features_and_kinds():
+    rule = htr_candidates.rules({"rule": "targeted"})
+    features = htr_candidates.page_features(LIVESTOCK)
+    assert features["lines"] == 10 and features["line_median"] < 15 and not features["has_table"]
+    assert htr_candidates.kinds_of({"target": LIVESTOCK, "target_tokens": 90, **features}, rule, 1000) == ["list"]
+    ledger = htr_candidates.page_features(LEDGER)
+    assert ledger["line_median"] > 15 and ledger["leader_lines"] == 10  # long lines, but dot leaders: a ledger
+    assert "list" in htr_candidates.kinds_of({"target": LEDGER, "target_tokens": 400}, rule, 1000)
+    assert htr_candidates.kinds_of({"target": TRUTH, "target_tokens": 60}, rule, 1000) == []  # running text
+    table = {"target": TABLE_PAGE, "target_tokens": 1200, "brightness": 80.0}
+    assert htr_candidates.kinds_of(table, rule, 1000) == ["table", "dark", "long"]
+    assert htr_candidates.visible_lines(TABLE_PAGE) == ["Anno & 1642", "Summa & 13"]
+
+
+def synthetic_pool() -> list[dict]:
+    """300 pages: 10 tables, 20 dark, 60 lists, the rest running text of rising length."""
+    pool = []
+    for i in range(300):
+        target = TABLE_PAGE if i < 10 else LIVESTOCK if 30 <= i < 90 else TRUTH
+        pool.append({"id": f"p{i:03d}", "target": target, "target_tokens": 50 + i, "brightness": 60.0 if 10 <= i < 30 else 180.0})
+    return pool
+
+
+def test_targeted_draw_takes_every_table_and_keeps_quotas():
+    rule = htr_candidates.rules({"rule": "targeted", "quota": {"dark": 0.1, "list": 0.25, "long": 0.1}})
+    rows, report = htr_candidates.draw(synthetic_pool(), 100, 5, rule)
+    reasons = [row["candidate_reason"] for row in rows]
+    assert len(rows) == len({row["id"] for row in rows}) == 100
+    assert {row["id"] for row in rows if row["candidate_reason"] == "table"} == {f"p{i:03d}" for i in range(10)}
+    assert reasons.count("dark") == 10 and reasons.count("list") == 25 and reasons.count("long") == 10
+    assert reasons.count("random") == 45 and report["taken_for"]["random"] == 45
+    assert report["eligible_by_kind"]["table"] == 10 and report["eligible_by_kind"]["dark"] == 20
+    assert report["eligible_by_kind"]["list"] == 60 and report["long_from_target_tokens"] == 50 + 270
+    assert all(row["candidate_kinds"] for row in rows if row["candidate_reason"] != "random")
+    again, _ = htr_candidates.draw(list(reversed(synthetic_pool())), 100, 5, rule)  # pool order does not matter
+    other, _ = htr_candidates.draw(synthetic_pool(), 100, 6, rule)
+    assert [r["id"] for r in again] == [r["id"] for r in rows] and [r["id"] for r in other] != [r["id"] for r in rows]
+
+
+def test_targeted_draw_when_kinds_overflow_and_random_rule_is_pilot_ones():
+    rule = htr_candidates.rules({"rule": "targeted", "quota": {"table": 1.0, "dark": 1.0, "list": 1.0, "long": 1.0}})
+    rows, report = htr_candidates.draw(synthetic_pool(), 40, 1, rule)
+    assert len(rows) == 40 and report["taken_for"]["random"] == 0  # the kinds fill every place, in order
+    assert report["taken_for"]["table"] == 10 and report["taken_for"]["dark"] == 20 and report["taken_for"]["list"] == 10
+    pool = synthetic_pool()
+    rows, report = htr_candidates.draw(pool, 50, 31415, htr_candidates.rules(None))
+    assert [r["id"] for r in rows] == [r["id"] for r in random.Random(31415).sample(sorted(pool, key=lambda r: r["id"]), 50)]
+    assert report == {"rule": "random", "candidates": 50, "eligible": 300}
+    with pytest.raises(ValueError, match="Unknown candidate rule"):
+        htr_candidates.rules({"rule": "hardest"})
+    with pytest.raises(ValueError, match="eligible"):
+        htr_candidates.draw(pool, 301, 1, rule)
+
+
+def failing_pool(failing: int) -> tuple[list[dict], list[dict], list[dict]]:
+    """100 candidates: ``failing`` with 3 looped answers (small spread, rising with i), 40 with a larger spread and
+    no failure, the rest flat. The spread rule prefers the 40, so the failing pages taken are the quota's."""
+    candidates = [{"id": f"p{i}", "context_id": f"s{i}", "split": "train"} for i in range(100)]
+    groups = []
+    for i, row in enumerate(candidates):
+        if i < failing:
+            sampled = [answer(0.0, looped=True)] * 3 + [answer(0.1 + i / 1000)]
+        elif i < failing + 40:
+            sampled = [answer(0.2), answer(0.8 - i / 1000), answer(0.5), answer(0.6)]
+        else:
+            sampled = [answer(0.95)] * 4
+        groups.append({"id": row["id"], "answers": sampled})
+    return candidates, groups, [dict(row) for row in candidates]
+
+
+def test_failing_quota_of_one_half():
+    candidates, groups, excluded = failing_pool(30)
+    selected = htr_select.select_training_pages(
+        candidates, groups, pages=40, seed=2, excluded=excluded, failing=0.5, informed=0.75
+    )
+    report = htr_select.selection_report(candidates, groups, selected)
+    picked = {row["id"] for row in selected}
+    assert {f"p{i}" for i in range(10, 30)} <= picked  # half of 40: the 20 failing pages with the largest spread
+    assert 20 <= report["selected_with_a_failed_answer"] <= 30  # the random quarter may add more of the other 10
+    assert sum(30 <= int(r["id"][1:]) < 70 for r in selected) >= 10  # 30 by a rule: 20 failing + 10 by spread
+    quarter = htr_select.select_training_pages(candidates, groups, pages=40, seed=2, excluded=excluded)
+    taken = {row["id"] for row in quarter}
+    assert {f"p{i}" for i in range(20, 30)} <= taken and sum(30 <= int(r["id"][1:]) < 70 for r in quarter) >= 20
+    assert htr_select.selection_report(candidates, groups, quarter)["selected_with_a_failed_answer"] < 20
+
+
+def test_failing_quota_is_an_upper_bound():
+    candidates, groups, excluded = failing_pool(6)  # fewer failing pages than half of 40
+    selected = htr_select.select_training_pages(
+        candidates, groups, pages=40, seed=2, excluded=excluded, failing=0.5, informed=0.75
+    )
+    report = htr_select.selection_report(candidates, groups, selected)
+    assert report["selected_with_a_failed_answer"] == 6 and report["selected"] == 40
+    assert sum(htr_select.spread(g["answers"]) > 0 for g in groups if g["id"] in {r["id"] for r in selected}) >= 30
+    for row in candidates:
+        row["candidate_reason"] = "list" if int(row["id"][1:]) < 3 else "random"
+    report = htr_select.selection_report(candidates, groups, selected)
+    assert report["selected_with_a_failed_answer_by_reason"] == {"list": 3, "random": 3}
+    assert report["candidates_by_reason"] == {"list": 3, "random": 97}
+    assert report["selected_with_a_failed_answer_and_no_spread"] == 0
+
+
+def test_yaml_files_set_the_hooks(monkeypatch):
+    expected = {
+        "grpo_htr.yaml": ("random", 0.25, 1.0),
+        "grpo_htr_v2.yaml": ("targeted", 0.5, 1.0),
+        "grpo_htr_t06.yaml": ("random", 0.25, 0.6),
+    }
+    try:
+        for name, (rule, failing, temperature) in expected.items():
+            monkeypatch.setenv("HTR_RLVR_CONFIG", str(HERE / name))
+            settings.cache_clear()
+            values = settings()
+            assert values["candidates"]["rule"] == rule and values["failing_share"] == failing
+            assert values["temperature"] == temperature and values["informed_share"] == 0.75
+        assert values["max_new_tokens"] == 2048 and values["weights"] == {"text": 0.8, "boxes": 0.2}
+        monkeypatch.setenv("HTR_RLVR_CONFIG", str(HERE / "grpo_htr_v2.yaml"))
+        settings.cache_clear()
+        assert settings()["candidates"]["quota"] == {"table": 1.0, "dark": 0.125, "list": 0.375, "long": 0.1875}
+    finally:
+        monkeypatch.delenv("HTR_RLVR_CONFIG")
+        settings.cache_clear()
+
+
+def test_pilot2_configuration_resolves(tmp_path):
+    from nemo_rl.algorithms.grpo import MasterConfig
+    from nemotron.recipes.parse.config import load_config
+    from nemotron.recipes.parse.training.config import rlvr_config
+
+    v2 = rlvr_config(HERE / "grpo_htr_v2.yaml", tmp_path / "m", tmp_path / "c", tmp_path, prompt_file=HERE / "prompt.txt")
+    MasterConfig(**v2)
+    pilot1 = rlvr_config(HERE / "grpo_htr.yaml", tmp_path / "m", tmp_path / "c", tmp_path, prompt_file=HERE / "prompt.txt")
+    assert v2["grpo"]["max_num_steps"] == 256 and v2["grpo"]["val_period"] == 64
+    assert v2["checkpointing"]["save_period"] == 64 and v2["checkpointing"]["keep_top_k"] is None
+    assert v2["grpo"]["max_num_epochs"] == 8 and v2["grpo"]["num_prompts_per_step"] == 16
+    for key in ("policy", "loss_fn", "env"):  # everything else is pilot 1's
+        assert v2[key] == pilot1[key]
+    assert {k: v for k, v in v2["grpo"].items() if k not in ("max_num_steps", "val_period")} == {
+        k: v for k, v in pilot1["grpo"].items() if k not in ("max_num_steps", "val_period")
+    }
+    t06 = rlvr_config(HERE / "grpo_htr_t06.yaml", tmp_path / "m", tmp_path / "c", tmp_path, prompt_file=HERE / "prompt.txt")
+    MasterConfig(**t06)
+    assert t06["policy"]["generation"]["temperature"] == t06["policy"]["generation"]["val_temperature"] == 0.6
+    assert t06["grpo"] == pilot1["grpo"]
+    stage = load_config("rlvr", HERE / "stage_pilot2.yaml", [f"output_dir={tmp_path / 'run'}"])
+    assert stage.candidate_contexts == 2048 and stage.selection_pages == 512
+    assert str(stage.data_dir).endswith("data_v2") and str(stage.sft_output).endswith("sft_v2")
+    # 256 updates of 16 pages are max_num_epochs (8) passes over the selected pages
+    assert v2["grpo"]["max_num_steps"] * v2["grpo"]["num_prompts_per_step"] == 8 * stage.selection_pages
+    assert load_config("rlvr", HERE / "stage_pilot.yaml", []).data_dir == DATA  # pilot 1 untouched
+
+
+@pytest.mark.skipif(not (DATA_V2 / "artifact.json").exists(), reason="needs dataset bundle v2")
+def test_bundle_v2_contexts_are_scans_and_dev_volumes_stay_out():
+    from nemotron.recipes.parse.training.data import load_pages
+
+    train, monitor, test = (load_pages(DATA_V2 / f"{split}.jsonl") for split in ("train", "monitor", "test"))
+    assert [row["id"] for row in monitor] == list(rows("monitor")) and [row["id"] for row in test] == list(rows("test"))
+    for row in train + monitor + test:
+        assert row["context_id"] == f"{row['collection']}/{row['volume']}/{row['scan']}"
+    dev_volumes = {(row["collection"], row["volume"]) for row in monitor}
+    assert len(dev_volumes) == 5 and not any((row["collection"], row["volume"]) in dev_volumes for row in train)
+    held = {row["context_id"] for row in monitor + test}
+    assert not any(row["context_id"] in held for row in train)
+    assert not {row["id"].split("_")[0] for row in train} & {row["id"].split("_")[0] for row in monitor + test}
+    for split in ("train", "monitor", "test"):  # escaped JSON: the recipe's splitlines() cannot split a row
+        assert (DATA_V2 / f"{split}.jsonl").read_bytes().isascii()
+    assert {"brightness", "lines", "line_median", "marked_lines", "leader_lines", "target_tokens"} <= set(train[0])
+
+
+@pytest.mark.skipif(not (DATA_V2 / "artifact.json").exists(), reason="needs dataset bundle v2")
+def test_task_draws_targeted_candidates_from_v2(tmp_path, monkeypatch):
+    from nemotron.recipes.parse.training.task import load_task
+
+    monkeypatch.setenv("HTR_RLVR_CONFIG", str(HERE / "grpo_htr_v2.yaml"))
+    monkeypatch.setenv("HTR_RLVR_DATA", str(DATA_V2))
+    settings.cache_clear()
+    try:
+        task = load_task("htr_task.HtrTask", stage="rlvr")
+        candidates = task.create_candidates(tmp_path / "curriculum", seed=31415, contexts=256)
+        report = json.loads((tmp_path / "curriculum" / "rl_candidates_report.json").read_text())
+        assert len(candidates) == 256 and report["rule"] == "targeted" and report["data_dir"] == str(DATA_V2)
+        assert report["taken_for"]["table"] == min(256, report["eligible_by_kind"]["table"])
+        assert all(Path(row["image"]).is_file() and row["split"] == "train" for row in candidates)
+        stored = [json.loads(line) for line in lines(tmp_path / "curriculum" / "rl_candidates.jsonl")]
+        assert [row["candidate_reason"] for row in stored] == [row["candidate_reason"] for row in candidates]
+    finally:
+        settings.cache_clear()
+
+
+def test_scoring_and_paired_comparison(tmp_path):
+    import compare_eval
+    import eval_score
+
+    row = {"id": "a", "split": "test", "collection": "c", "volume": "v", "target": TRUTH, "target_tokens": 60}
+    values = settings()
+    good = eval_score.score({"raw": TRUTH, "finish": "stop", "ended": True, "tokens": 50}, row, values["weights"], values["loop"])
+    assert good["edits"] == 0 and good["cer"] == 0 and good["reward"] == 1.0 and good["capped"] == 0
+    loop = eval_score.score(
+        {"raw": TRUTH + " Moni" * 12, "finish": "length", "ended": False, "tokens": 2048}, row, values["weights"], values["loop"]
+    )
+    assert loop["capped"] == 1 and loop["looped"] == 1 and loop["edits"] == 60 and loop["reward"] == 0.0
+    assert eval_score.page_text("<x_0.1><y_0.1>a\nb<x_0.2><y_0.2><class_Text>") == "a b"
+    base = {f"p{i}": {"edits": 10, "chars": 100, "raw_sha1": "x", "capped": 0, "looped": 0, "kinds": "-"} for i in range(20)}
+    new = {key: dict(value, edits=8 if i < 10 else 10, raw_sha1="y" if i < 10 else "x") for i, (key, value) in enumerate(base.items())}
+    result = compare_eval.paired(base, new, sorted(base))
+    assert result["cer_base"] == 10.0 and result["cer_new"] == 9.0 and result["gain_points"] == 1.0
+    assert result["better"] == 10 and result["worse"] == 0 and result["identical_readings"] == 10
+    assert result["gain_95"][0] > 0 and result["share_of_draws_with_a_gain"] == 1.0
+
+
+@pytest.mark.skipif(not DATA.exists(), reason="needs the checkpoints")
+def test_eval_view_of_the_pilot1_checkpoint(tmp_path):
+    import eval_view
+
+    checkpoint = Path("/mnt/scratch/gabriel/htr/rlvr/runs/pilot_1124_2254/checkpoints/step_128/policy/weights/model/consolidated")
+    if not checkpoint.is_dir():
+        pytest.skip("pilot 1's checkpoint is gone")
+    record = eval_view.build(checkpoint, tmp_path / "view")
+    assert record["tensors_match_sft"] and record["tensors"] == 510
+    view = tmp_path / "view"
+    assert (view / "model.safetensors").resolve() == (checkpoint / "model-00001-of-00001.safetensors").resolve()
+    assert (view / "config.json").resolve() == (eval_view.SFT / "config.json").resolve()
+    assert (view / "chat_template.jinja").is_file() and not (view / "optimizer.pt").exists()
+    assert eval_view.build(checkpoint, view)["checkpoint"] == record["checkpoint"]  # an existing view is reused
+    with pytest.raises(FileExistsError):
+        eval_view.build(eval_view.SFT, view)

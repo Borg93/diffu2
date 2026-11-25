@@ -7,7 +7,7 @@ its page's answers, so a page whose answers all score the same teaches nothing, 
 
 Of the ``pages`` asked for:
 
-* ``FAILING`` (a quarter) are pages where at least one sampled answer looped or ran to the token cap, those with the
+* ``FAILING`` (a quarter; the training YAML's ``htr.failing_share``, 0.5 in grpo_htr_v2.yaml) are pages where at least one sampled answer looped or ran to the token cap, those with the
   largest spread first (a page where every answer loops has no spread; it comes after the mixed ones). Fewer are
   taken if fewer exist; the spread rule takes the places left.
 * up to ``INFORMED`` (three quarters, the failing ones counted in) are the remaining pages with the largest spread
@@ -106,12 +106,28 @@ def selection_report(candidates: list[dict], answers: list[dict], selected: list
     def mean(values: list[float]) -> float:
         return sum(values) / max(1, len(values))
 
+    reasons = sorted({row.get("candidate_reason", "random") for row in candidates})
+
+    def by_reason(rows: list[dict], *, failing: bool = False) -> dict[str, int]:
+        return {
+            reason: sum(
+                row.get("candidate_reason", "random") == reason and (not failing or failed(groups[row["id"]]))
+                for row in rows
+            )
+            for reason in reasons
+        }
+
     return {
         "candidates": len(candidates),
         "candidates_with_a_failed_answer": sum(failed(group) for group in groups.values()),
         "candidates_with_spread": sum(spread(group) > 0 for group in groups.values()),
         "selected": len(selected),
         "selected_with_a_failed_answer": sum(failed(group) for group in chosen),
+        "selected_with_a_failed_answer_and_no_spread": sum(failed(group) and spread(group) == 0 for group in chosen),
+        "candidates_by_reason": by_reason(candidates),
+        "candidates_with_a_failed_answer_by_reason": by_reason(candidates, failing=True),
+        "selected_by_reason": by_reason(selected),
+        "selected_with_a_failed_answer_by_reason": by_reason(selected, failing=True),
         "selected_volumes": len({row["context_id"] for row in selected}),
         "mean_spread_candidates": mean([spread(group) for group in groups.values()]),
         "mean_spread_selected": mean([spread(group) for group in chosen]),

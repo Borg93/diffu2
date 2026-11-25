@@ -1,0 +1,36 @@
+# Pilot 2: pilot 1's settings (grpo_htr.yaml, itself NVIDIA's grpo.yaml with our changes), run twice as long, on
+# candidates aimed at the pages where the reader fails, with half of the selected pages taken from failing pages when
+# mining finds them. Use it with stage_pilot2.yaml (dataset bundle v2, 2,048 candidates, 512 selected pages):
+#   PROFILE=pilot2 CONFIG=runs/htr/rlvr/grpo_htr_v2.yaml runs/htr/rlvr/run_rlvr.sh NAME
+defaults: grpo_htr.yaml
+
+htr:
+  # Pilot 1: 25 %. It found 13 failing pages among 1,024 random candidates, so the quota was never full. Up to half
+  # now (fewer if fewer fail: the spread rule takes the places left); informed_share stays 0.75.
+  failing_share: 0.5
+  candidates:           # htr_candidates.py; unset (grpo_htr.yaml) = pilot 1's random draw
+    rule: targeted
+    order: [table, dark, list, long]   # each kind drawn at random from its pages not yet taken, up to its quota
+    quota:              # the most a kind may take, as a share of candidate_contexts (2,048)
+      table: 1.0        # every eligible page whose truth has a table (about 200 in the train split)
+      dark: 0.125       # thumbnail mean grey level below dark_brightness: up to 256
+      list: 0.375       # lists and ledgers: up to 768
+      long: 0.1875      # truth's tokens in the top 10 %: up to 384; the rest (at least 439) at random
+    list_min_lines: 8
+    list_median_chars: 15     # median visible line length below this (the livestock lists: "Häst — 1.")
+    list_marked_share: 0.3    # or this share of lines start with — – - „ " or hold a dot leader ". . ."
+    long_quantile: 0.9
+    dark_brightness: 100
+
+grpo:
+  # Pilot 1: 128 (the recipe's). 256 updates of 16 pages x 4 answers = 4,096 page readings: with 512 selected pages
+  # (stage_pilot2.yaml) that is the recipe's max_num_epochs (8) passes over them, as pilot 1 made over its 256.
+  max_num_steps: 256
+  # Pilot 1: 128 (the recipe's). Each saved checkpoint gets its validation on the monitor pages (32 of them, one
+  # sampled answer each), so a checkpoint's val:accuracy is its own and not an earlier one's.
+  val_period: 64
+
+checkpointing:
+  # Pilot 1: 128 (one checkpoint, at the end). Four checkpoints (64, 128, 192, 256), all kept (keep_top_k: null, the
+  # recipe's): about 5.4 GB each with the optimizer state, 22 GB together.
+  save_period: 64

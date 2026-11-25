@@ -3,10 +3,12 @@
 Select it with ``task=htr_task.HtrTask`` and this folder on ``PYTHONPATH`` (``run_rlvr.sh`` does both).
 
 * ``monitor`` (SFT): greedy readings of the monitor pages with the recipe's ``predict``, scored with the reward.
-* ``create_candidates``: a seeded random draw of ground-truth pages from the dataset's train split (pages of volumes
-  that are in neither monitor nor test), linked below the run's curriculum folder. The recipe renders fresh pages
-  here; a handwriting reward needs a true text, so ours are pages the reader was trained on.
-* ``select_candidates``: ``htr_select`` (pages with a looped or capped answer, then the largest spread, then random).
+* ``create_candidates``: a seeded draw of ground-truth pages from the dataset's train split (pages of contexts that
+  are in neither monitor nor test), linked below the run's curriculum folder: at random (pilot 1, and whenever the
+  YAML has no ``htr.candidates``) or targeted at tables, dark scans, lists and long pages (``htr_candidates``). The
+  recipe renders fresh pages here; a handwriting reward needs a true text, so ours are pages the reader was trained on.
+* ``select_candidates``: ``htr_select`` (pages with a looped or capped answer, then the largest spread, then random;
+  the shares are the YAML's ``htr.failing_share`` and ``htr.informed_share``).
 * ``evaluate`` / ``summarize``: ``htr_evaluate`` (sampled answers, and greedy readings except while mining).
 * ``environment_class``: ``htr_environment.HtrEnvironment``; ``reward_metric``: its ``reward`` component.
 """
@@ -15,9 +17,9 @@ from __future__ import annotations
 
 import json
 import os
-import random
 from pathlib import Path
 
+import htr_candidates
 import htr_evaluate
 import htr_select
 from htr_reward import components
@@ -67,12 +69,15 @@ class HtrTask:
         return rows
 
     def create_candidates(self, output, *, seed, contexts):
-        """``contexts`` pages (the stage's ``candidate_contexts``) drawn by ``seed``, images linked below ``output``."""
+        """``contexts`` pages (the stage's ``candidate_contexts``) drawn by ``seed`` with the YAML's candidate rule
+        (``htr.candidates``: random when unset, as pilot 1; ``htr_candidates``), images linked below ``output``.
+        Writes ``rl_candidates_report.json`` (counts by kind) beside the manifest."""
         output = Path(output)
-        pool = sorted(self.eligible(), key=lambda row: row["id"])
-        if contexts > len(pool):
-            raise ValueError(f"Asked for {contexts} candidates; the train split has {len(pool)} eligible pages")
-        rows = random.Random(seed).sample(pool, contexts)
+        rows, report = htr_candidates.draw(self.eligible(), contexts, seed, settings()["candidates"])
+        report = dict(report, data_dir=str(data_dir()), seed=seed)
+        print("RL candidates:", json.dumps(report), flush=True)
+        output.mkdir(parents=True, exist_ok=True)
+        (output / "rl_candidates_report.json").write_text(json.dumps(report, indent=1) + "\n")
         images = output / "rl_candidates"
         images.mkdir(parents=True, exist_ok=True)
         for row in rows:
@@ -96,7 +101,12 @@ class HtrTask:
             failing=shares["failing_share"],
             informed=shares["informed_share"],
         )
-        print("RL pages:", json.dumps(htr_select.selection_report(candidates, answers, selected)), flush=True)
+        report = htr_select.selection_report(candidates, answers, selected)
+        print("RL pages:", json.dumps(report), flush=True)
+        images = {Path(row["image"]).parent for row in candidates}
+        if len(images) == 1:  # the candidates' folder is below the run's curriculum: keep the report with the run
+            folder = images.pop().parent
+            (folder / "rl_selection_report.json").write_text(json.dumps(report, indent=1) + "\n")
         return selected
 
     def evaluate(self, model, rows, output, *, samples, processor_source):

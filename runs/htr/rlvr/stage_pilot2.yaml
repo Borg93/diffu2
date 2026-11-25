@@ -1,0 +1,18 @@
+# Pilot 2's stage (the recipe's RLVRConfig fields): dataset bundle v2 (build_dataset_v2.py: contexts are scans, train
+# = every SFT training volume except the 5 dev volumes), its own SFT lineage record (the record names the dataset it
+# was made for; record_sft_lineage.py --data .../data_v2 --out .../sft_v2, which run_rlvr.sh runs when missing).
+# Use with grpo_htr_v2.yaml (targeted candidates, failing share 0.5, 256 updates):
+#   PROFILE=pilot2 CONFIG=runs/htr/rlvr/grpo_htr_v2.yaml runs/htr/rlvr/run_rlvr.sh NAME
+task: htr_task.HtrTask
+data_dir: /mnt/scratch/gabriel/htr/rlvr/data_v2
+sft_output: /mnt/scratch/gabriel/htr/rlvr/sft_v2
+output_dir: /mnt/scratch/gabriel/htr/rlvr/runs/unnamed-v2
+model: null
+processor_source: null
+candidate_seed: 31415
+candidate_contexts: 2048   # pilot 1: 1,024 at random. Targeted: tables, dark scans, lists, long pages, then random.
+selection_seed: 42
+selection_pages: 512       # pilot 1: 256 (the recipe's). 256 updates x 16 pages = 8 passes over 512 (max_num_epochs 8)
+mining_samples: 4
+evaluation_samples: 8
+training: {}

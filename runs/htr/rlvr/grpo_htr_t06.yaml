@@ -1,0 +1,13 @@
+# Prepared, not run: pilot 1's settings (grpo_htr.yaml) with the rollout temperature at 0.6 instead of 1.0.
+# Why: we read greedily, and greedy readings loop on pages where sampled answers at 1.0 do not (pilot 1, test pages:
+# greedy looped on 4 of 197, sampled answers at 1.0 on 2 pages in 1,576 answers; mining at 1.0 found 13 failing pages
+# of 1,024). Cooler rollouts are closer to the reading we deploy, so the loops show up where GRPO can score them.
+# The trainer divides its logits by the same temperature, and the task's hooks (mining, before/after sampled answers)
+# read it from this file through HTR_RLVR_CONFIG, so all three agree; val_temperature follows it (grpo_htr.yaml).
+#   CONFIG=runs/htr/rlvr/grpo_htr_t06.yaml runs/htr/rlvr/run_rlvr.sh NAME                  (pilot 1's data and stage)
+# For pilot 2's candidates and length with this temperature, copy grpo_htr_v2.yaml's settings instead of these.
+defaults: grpo_htr.yaml
+
+policy:
+  generation:
+    temperature: 0.6
