@@ -1,7 +1,7 @@
 #!/bin/bash
 # 23 Nov: E60's fine-tune again from the pretraining's last checkpoint (the first one began from the checkpoint the dev
 # loss kept, the worst by dev CER). Then the 200 test pages read with the checkpoint that is best by dev CER
-# (RUN/dev_cer.jsonl, written by tmux cerwatch), scored and compared as after_writing.sh did. GPU 2 only.
+# (RUN/dev_cer.jsonl, written by tmux cerwatch), scored and compared as the first self-training launcher did. GPU 2 only.
 cd /home/gabriel/Desktop/diffu2 || exit 1
 log() { echo "[$(date '+%F %T')] $*"; }
 L=packages/htr_train/lion_data_prep; R=runs/htr/nemotron-parse-selftrain-finetune2

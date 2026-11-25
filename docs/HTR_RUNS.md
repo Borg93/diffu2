@@ -6,12 +6,13 @@ why each choice: [lion_data_prep/README.md](../packages/htr_train/lion_data_prep
 `htr-train`: [HTR_TRAIN.md](HTR_TRAIN.md). This page holds what is running, what is queued after it, what has been
 measured, and what comes next. Update it when any of those changes.
 
-Paths are relative to the checkout on dmlpai01 (`~/Desktop/diffu2`). `runs/` is not in git: the scripts named there
-live only on that disk.
+Paths are relative to the checkout on dmlpai01 (`~/Desktop/diffu2`). `runs/` is git-ignored (its outputs stay on that
+disk); the scripts in it that matter are force-added. Scripts of finished experiments named below were removed in the
+cleanup of 25 Nov (CURATION E73) and are in git before commit `a6434ba` (untracked ones) or its parent (tracked ones).
 
 ## Rules of the machine
 
-- GPUs 1 and 2 only. **GPU 0 is another user's (marerle): never use it.**
+- **GPU 2 only since 20 Nov** (GPU 1 is another person's; GPU 0 is another user's): before 20 Nov the runs here used GPUs 1 and 2, and every run folder from then names GPU 1 in its `steps.sh`, so none of them is resumed as it stands.
 - Every job runs in the tmux session `htr`, so it outlives a lost login or a new Claude session.
 - Packing is off for MiniCPM-OCR and Jev: Qwen3.5's linear attention carries state from one packed sample into the
   next.
@@ -763,7 +764,7 @@ here.
 
 ## 22 Nov: the dev error rate of every checkpoint (Nemotron Parse)
 
-The trainer's only number at a checkpoint was the dev loss, which has not followed the error rate. `python -m diffu_htr_train.nemotron_parse.checkpoint_cer runs/htr/RUN` (with `envs/nemotron_parse`'s Python, about 12 GB of a GPU) reads 115 dev pages with each checkpoint as it appears and writes the CER, whole and a volume, to `RUN/dev_cer.jsonl` and to trackio as the run `RUN-cer` (a run of its own, so the trainer's run has one writer). The dev pages are whole volumes no training set holds, so the number is for unseen books; the test list is pages of volumes the training holds. 20 minutes a checkpoint beside another job. Start it with a run (`runs/htr/checkpoint_cer.sh` is the pattern) and choose the best checkpoint by it, not by the dev loss.
+The trainer's only number at a checkpoint was the dev loss, which has not followed the error rate. `python -m diffu_htr_train.nemotron_parse.checkpoint_cer runs/htr/RUN` (with `envs/nemotron_parse`'s Python, about 12 GB of a GPU) reads 115 dev pages with each checkpoint as it appears and writes the CER, whole and a volume, to `RUN/dev_cer.jsonl` and to trackio as the run `RUN-cer` (a run of its own, so the trainer's run has one writer). The dev pages are whole volumes no training set holds, so the number is for unseen books; the test list is pages of volumes the training holds. 20 minutes a checkpoint beside another job. Start it with a run (`runs/htr/checkpoint_cer2.sh` is the pattern) and choose the best checkpoint by it, not by the dev loss.
 
 **23 Nov, the lesson in numbers.** E60's pretraining kept and exported its best checkpoint by dev loss: step 1,000, dev CER 9.95 %. Its last step read 6.75 %. The fine-tune loaded the exported one. Do not chain a run on `output/` of a run with `best_by_eval_loss: true` without looking at `dev_cer.jsonl`: name the checkpoint.
 

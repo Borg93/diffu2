@@ -13,7 +13,6 @@ import os
 import re
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
@@ -86,9 +85,3 @@ def write_readings(path: Path, lines: Sequence[EvalLine], readings: Sequence[Rea
         for line, reading in zip(lines, readings, strict=True):
             row = {**line.model_dump(), "prediction": reading.prediction, "finished": reading.finished}
             out.write(json.dumps(row, ensure_ascii=False) + "\n")
-
-
-class Recogniser(Protocol):
-    """What reads a batch of lines: ms-swift's engine over the model in training, or one loaded from a checkpoint."""
-
-    def __call__(self, lines: Sequence[EvalLine], cer_set: CerSet) -> list[Reading]: ...
