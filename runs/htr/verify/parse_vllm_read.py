@@ -17,8 +17,8 @@ URL = os.environ.get("URL", "http://127.0.0.1:8011/v1"); MODEL = os.environ.get(
 def text(answer: str) -> str: return " ".join(TABLE.sub(" ", LAYOUT.sub("\n", answer)).replace("#", " ").split())
 
 out = sys.argv[1]; concurrency = int(sys.argv[2]) if len(sys.argv) > 2 else 32; limit = int(sys.argv[3]) if len(sys.argv) > 3 else None
-wanted = sorted(json.loads(l)["id"] for s in (0, 1) for l in open(f"runs/htr/uocr2/test_read/shard{s}.jsonl", encoding="utf-8"))[:limit]
-rows = open("data/htr/nemotron_parse_pages.test.jsonl", encoding="utf-8").read().splitlines()
+wanted = sorted([l.strip() for l in open("runs/htr/verify/test_pages_200.txt", encoding="utf-8") if l.strip() and not l.startswith("#")])[:limit]  # the 200 scored test pages
+rows = [l for l in open("data/htr/nemotron_parse_pages.test.jsonl", encoding="utf-8").read().split("\n") if l]  # not splitlines: U+0085
 metas = [json.loads(l) for l in open("data/htr/nemotron_parse_pages.test.meta.jsonl", encoding="utf-8")]
 index = {m["id"]: i for i, m in enumerate(metas)}
 pages = [(p, json.loads(rows[index[p]]), metas[index[p]]) for p in wanted]
