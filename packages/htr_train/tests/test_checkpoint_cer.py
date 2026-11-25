@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from diffu_htr_train.nemotron_parse.checkpoint_cer import (
     DevPage,
+    dev_pages,
     drawn,
     edits,
     page_reads,
@@ -58,3 +60,26 @@ def test_unscored_lists_finished_checkpoints_without_a_score_oldest_first(tmp_pa
         (tmp_path / "output" / f"checkpoint-{step}" / "trainer_state.json").write_text("{}")
 
     assert [step for step, _ in unscored(tmp_path, done={250})] == [500]
+
+
+def test_dev_pages_keeps_a_label_whose_text_holds_unicode_line_breaks(tmp_path: Path) -> None:
+    label = "Anno 1689\u0085den 3 maj Per Olsson"
+    rows = [
+        {
+            "messages": [{"role": "user", "content": "<image>P"}, {"role": "assistant", "content": label}],
+            "images": ["a.jpg"],
+        },
+        {
+            "messages": [{"role": "user", "content": "<image>P"}, {"role": "assistant", "content": "två"}],
+            "images": ["b.jpg"],
+        },
+    ]
+    metas = [{"id": "a", "volume": "v1"}, {"id": "b", "volume": "v2"}]
+    samples = tmp_path / "set.jsonl"
+    samples.write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows), "utf-8")
+    samples.with_name("set.meta.jsonl").write_text("".join(json.dumps(m) + "\n" for m in metas), "utf-8")
+
+    pages = dev_pages(samples)
+
+    assert [(p.id, p.volume) for p in pages] == [("a", "v1"), ("b", "v2")]
+    assert pages[0].truth == page_text(label)

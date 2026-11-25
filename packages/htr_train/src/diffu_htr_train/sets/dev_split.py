@@ -10,7 +10,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, JsonValue
 
-from diffu_htr_train.records import SampleMeta, meta_path, options_path, read_meta
+from diffu_htr_train.records import SampleMeta, meta_path, options_path, read_meta, text_lines
 from diffu_htr_train.sets import SetRefused, read_options
 
 MIN_VOLUMES = 3  # fewer, and a dev split of whole volumes leaves too little on one side
@@ -71,8 +71,8 @@ def _read_rows(path: Path) -> list[Row]:
     """
     beside = meta_path(path)
     try:
-        lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-        meta_lines = [line for line in beside.read_text(encoding="utf-8").splitlines() if line.strip()]
+        lines = [line for line in text_lines(path) if line.strip()]
+        meta_lines = [line for line in text_lines(beside) if line.strip()]
         metas = read_meta(beside)
     except (OSError, ValueError) as error:
         raise SetRefused(f"{path} and its meta {beside.name} cannot be read: {error}") from error

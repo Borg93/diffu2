@@ -55,6 +55,16 @@ class Sample(BaseModel):
     label: int | None = None
 
 
+def text_lines(path: Path) -> list[str]:
+    """The lines of the UTF-8 file at ``path``, split at ``\\n`` alone (a final newline ends the last line).
+
+    ``str.splitlines`` also splits at U+0085, U+2028 and other line breaks a transcription may hold inside a JSON
+    string; a set written with them raw would be cut mid-sample.
+    """
+    lines = path.read_text(encoding="utf-8").split("\n")
+    return lines[:-1] if lines and not lines[-1] else lines
+
+
 def read_jsonl[ModelT: BaseModel](path: Path, model: type[ModelT]) -> list[ModelT]:
     """Each non-blank line of the JSON-lines file at ``path`` as ``model``.
 
@@ -62,7 +72,7 @@ def read_jsonl[ModelT: BaseModel](path: Path, model: type[ModelT]) -> list[Model
         ValueError: If a line is not one, naming the file and line.
     """
     rows: list[ModelT] = []
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    for number, line in enumerate(text_lines(path), start=1):
         if not line.strip():
             continue
         try:

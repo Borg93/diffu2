@@ -30,6 +30,8 @@ import numpy as np
 import typer
 from pydantic import BaseModel, ConfigDict
 
+from diffu_htr_train.records import text_lines
+
 LAYOUT = re.compile(r"<(?:x|y)_[0-9.]+>|<class_[A-Za-z-]+>")
 TABLE = re.compile(r"\\begin\{tabular\}\{[^}]*\}|\\end\{tabular\}|\\linebreak\{\}|\\\\| & ")
 MAX_NEW = 4000  # as the test read (runs/htr/verify/nemotron_parse_test_read.py)
@@ -139,9 +141,9 @@ def scored(step: int, reads: Sequence[PageRead], seconds: float) -> Score:
 
 def dev_pages(samples: Path) -> list[DevPage]:
     """The pages of a page set (``diffu-reader-set``: a chat sample a page, its meta file beside it)."""
-    metas = samples.with_name(samples.name.replace(".jsonl", ".meta.jsonl")).read_text("utf-8").splitlines()
+    metas = text_lines(samples.with_name(samples.name.replace(".jsonl", ".meta.jsonl")))
     pages: list[DevPage] = []
-    for line, meta_line in zip(samples.read_text("utf-8").splitlines(), metas, strict=True):
+    for line, meta_line in zip(text_lines(samples), metas, strict=True):
         row, meta = json.loads(line), json.loads(meta_line)
         pages.append(
             DevPage(
@@ -204,7 +206,7 @@ def main(
     last = time.time()
     typer.echo(f"{len(pages)} dev pages of {len({page.volume for page in pages})} volumes; scores in {out}")
     while (end is None or time.time() < end) and time.time() - last < idle * 60:
-        rows = {json.loads(line)["step"] for line in out.read_text("utf-8").splitlines()} if out.exists() else set()
+        rows = {json.loads(line)["step"] for line in text_lines(out)} if out.exists() else set()
         done = {int(file.stem.removeprefix("step-")) for file in (run / "dev_reads").glob("step-*.jsonl")}
         waiting = unscored(run, done)
         if not waiting:

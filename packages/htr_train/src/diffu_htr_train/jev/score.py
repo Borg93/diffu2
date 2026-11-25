@@ -31,6 +31,7 @@ from pydantic import BaseModel, ConfigDict
 
 from diffu_htr_train.jev.prompt import model_prompt
 from diffu_htr_train.jev.render import render_text
+from diffu_htr_train.records import text_lines
 
 ALTO = "{http://www.loc.gov/standards/alto/ns-v4#}"
 HEIGHT = 48  # the height Jev's training crops were scaled to (jev_lines' options)
@@ -158,9 +159,7 @@ def _chunks(pairs: Sequence[tuple[str, str]], size: int) -> Iterator[Sequence[tu
 
 def held(out: Path) -> set[str]:
     """The scans the parts of ``out`` hold."""
-    return {
-        json.loads(line)["image"] for part in out.glob("part-*.jsonl") for line in part.read_text("utf-8").splitlines()
-    }
+    return {json.loads(line)["image"] for part in out.glob("part-*.jsonl") for line in text_lines(part) if line.strip()}
 
 
 def main(
@@ -177,7 +176,7 @@ def main(
     from vllm import LLM, PoolingParams  # heavy, and only this entry point needs it
 
     out.mkdir(parents=True, exist_ok=True)
-    pairs = [tuple(line.split("\t")) for line in pairs_file.read_text("utf-8").splitlines() if line.strip()]
+    pairs = [tuple(line.split("\t")) for line in text_lines(pairs_file) if line.strip()]
     done = held(out)
     todo = [(image, labels) for image, labels in pairs if image not in done][:limit]
     print(f"{len(pairs)} scans; {len(done)} scored before; {len(todo)} to score", flush=True)

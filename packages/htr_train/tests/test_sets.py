@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 
 
 def _rows(path: Path) -> list[dict[str, Any]]:
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").split("\n") if line]
 
 
 def _size(path: Path) -> tuple[int, int]:
@@ -80,6 +80,22 @@ def test_split_dev_holds_out_whole_volumes_and_records_each_sides_options(make_s
         0.25,
         held,
     )
+
+
+def test_split_dev_keeps_a_label_whose_text_holds_unicode_line_breaks(make_set: MakeSet) -> None:
+    label = "Anno 1689\u0085den 3 maj\u2028Per Olsson"
+    lines = make_set(
+        "lines",
+        [
+            (f"{volume}_0", label if volume == "V1" else f"line of {volume}", collection, volume, "train")
+            for collection, volume in VOLUMES
+        ],
+    )
+
+    split = split_dev(lines, share=0.25, seed=0)
+
+    texts = [row["messages"][1]["content"] for side in (split.train, split.dev) for row in _rows(side)]
+    assert sorted(texts) == sorted([label, "line of V2", "line of V3", "line of V4"])
 
 
 def test_split_dev_holds_out_another_splits_volumes_for_a_set_mixed_with_it(make_set: MakeSet) -> None:
