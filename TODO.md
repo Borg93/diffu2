@@ -68,6 +68,20 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
       decides what to train next.
 - [ ] Drawn ink on the real page's paper (scratchpad `paper/paper_composite.py`), and writing no label asks for
       (scratchpad `hand/unlabelled_words.py`): each as a stage after drawing, checked in a blind test.
+- [ ] **Idea from the HTR side (25 Nov; not started, for the MOSS session to judge): RL on the generator with our page
+      reader as the reward.** Neither MOSS-Image (its technical report, arXiv 2610.23374: pretraining, then Base and
+      SFT; no RL) nor, as far as published, FLUX.3 used RL. A drawn page is asked to say a text; the HTR reader
+      (Nemotron Parse, `runs/htr/nemotron-parse-selftrain-finetune2/output/checkpoint-3000`, 6.63 % CER on the GT
+      test) reads it back, and the reward is its character accuracy against the asked text, with the block boxes, and
+      a realism term against reward hacking (DINO or TIPS distance to real pages, or a writer network: MOSS_AUDIT's
+      point 5). Several seeds a prompt give the group RL needs. 2026 work on exactly this kind of reward: "Read It
+      Back" (arXiv 2607.11886, the prompt's likelihood under a reader as reward), TDM-R1 (2603.07700, RL for few-step
+      models with non-differentiable rewards, text rendering among them: fits the 8-step student), "RL post-training
+      in DiTs is activation steering" (2611.26627: most of the gain is a constant shift, so a pilot can be small).
+      None does handwriting. First step needs no training: draw a few hundred pages, score them with the reader and
+      check the score orders them as the eye does. Risks: the generator learns writing the reader likes rather than
+      the archive's; the reader and generator drift together (judge on real test pages only); each rollout is a whole
+      drawing plus a reading. The HTR side's RL on the reader is CURATION E71, E72.
 
 ## Distillation
 
