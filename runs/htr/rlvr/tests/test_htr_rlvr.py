@@ -628,3 +628,14 @@ def test_eval_view_of_the_pilot1_checkpoint(tmp_path):
     assert eval_view.build(checkpoint, view)["checkpoint"] == record["checkpoint"]  # an existing view is reused
     with pytest.raises(FileExistsError):
         eval_view.build(eval_view.SFT, view)
+
+
+def test_order_free_edits_forgive_blocks_read_in_another_order():
+    from eval_score import unordered_edits
+
+    first = "<x_0.1><y_0.1>Anno 1642 den 3 Martii\nhölts laga ting<x_0.9><y_0.2><class_Text>"
+    second = "<x_0.1><y_0.3>Per Olsson i Backa<x_0.9><y_0.4><class_Text>"
+    truth, swapped = first + "\n\n" + second, second + "\n\n" + first.replace("ting<", "tingh<")
+    assert unordered_edits(truth, truth) == 0
+    assert unordered_edits(truth, swapped) == 1  # the added letter only
+    assert unordered_edits(truth, second) == len("Anno 1642 den 3 Martii") + len("hölts laga ting")  # left out

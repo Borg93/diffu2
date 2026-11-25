@@ -7,6 +7,11 @@ Two error rates, both edits over the truth's characters:
 
 * ``cer``: the text our test and dev reads are scored by (``checkpoint_cer.page_text``: boxes, classes and table
   markup out, white space as one space; NFC, ends trimmed, as ``compare_reads.py``); exact Levenshtein.
+* ``edits_unordered``: the order-free distance: the truth's lines matched one to one to the reading's lines at the
+  least total cost (Hungarian; a line left unmatched costs its length), each line's text as ``cer``'s. A block or a
+  margin column read in another order than the truth's then costs little (CURATION E72: about three pages in each of
+  dev and test differ from the truth mostly in order). Pooled over the truth's characters it is the order-free CER;
+  a line split or joined otherwise than the truth's costs more here than in ``cer``.
 * ``reward_cer``: the reward's text part (``htr_reward.components``: NVIDIA's ``text_quality`` normalisation), the
   number pilot 1's before/after reported (``cer_pooled``).
 
@@ -34,7 +39,7 @@ from nemotron.recipes.parse.document_rewards.baselines import _distance
 DATA = Path("/mnt/scratch/gabriel/htr/rlvr/data_v2")
 LAYOUT = re.compile(r"<(?:x|y)_[0-9.]+>|<class_[A-Za-z-]+>")
 TABLE = re.compile(r"\\begin\{tabular\}\{[^}]*\}|\\end\{tabular\}|\\linebreak\{\}|\\\\| & ")
-COLUMNS = ("id", "split", "volume", "kinds", "chars", "edits", "cer", "reward_cer", "looped", "capped", "ended", "gate",
+COLUMNS = ("id", "split", "volume", "kinds", "chars", "edits", "cer", "edits_unordered", "reward_cer", "looped", "capped", "ended", "gate",
            "boxes", "reward", "tokens", "finish", "seconds", "raw_sha1")
 
 
@@ -42,6 +47,31 @@ def page_text(answer: str) -> str:
     """``checkpoint_cer.page_text``, then NFC and the ends trimmed (``compare_reads.py``)."""
     text = " ".join(TABLE.sub(" ", LAYOUT.sub("\n", answer)).replace("#", " ").split())
     return unicodedata.normalize("NFC", text).strip()
+
+
+def lines_of(answer: str) -> list[str]:
+    """The answer's lines (blocks and line breaks), each as ``page_text`` makes a text."""
+    return [line for line in (page_text(part) for part in TABLE.sub("\n", LAYOUT.sub("\n", answer)).split("\n")) if line]
+
+
+def unordered_edits(truth: str, reading: str) -> int:
+    """Edits when the truth's lines are matched to the reading's lines in the order that costs least."""
+    import numpy as np
+    from scipy.optimize import linear_sum_assignment
+
+    ours, theirs = lines_of(truth), lines_of(reading)
+    n, m = len(ours), len(theirs)
+    if not n or not m:
+        return sum(map(len, ours)) + sum(map(len, theirs))
+    big = 10**9
+    cost = np.zeros((n + m, n + m), dtype=np.int64)
+    cost[:n, :m] = [[_distance(a, b) for b in theirs] for a in ours]
+    cost[:n, m:] = big
+    cost[n:, :m] = big
+    cost[np.arange(n), m + np.arange(n)] = [len(a) for a in ours]  # a truth line left out
+    cost[n + np.arange(m), np.arange(m)] = [len(b) for b in theirs]  # a reading line with no truth
+    rows, columns = linear_sum_assignment(cost)
+    return int(cost[rows, columns].sum())
 
 
 def score(read: dict, row: dict, weights: dict, loop: dict) -> dict:
@@ -58,6 +88,7 @@ def score(read: dict, row: dict, weights: dict, loop: dict) -> dict:
         "chars": len(truth),
         "edits": edits,
         "cer": edits / max(1, len(truth)),
+        "edits_unordered": unordered_edits(row["target"], read["raw"]),
         "reward_cer": parts["cer"],
         "reward_chars": parts["chars"],
         "looped": int(parts["looped"]),

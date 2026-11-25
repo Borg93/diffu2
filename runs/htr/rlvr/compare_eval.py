@@ -28,8 +28,9 @@ def load(path: Path) -> dict[str, dict]:
     with path.open(encoding="utf-8", newline="") as stream:
         rows = list(csv.DictReader(stream, delimiter="\t"))
     for row in rows:
-        for key in ("chars", "edits", "looped", "capped"):
-            row[key] = int(row[key])
+        for key in ("chars", "edits", "looped", "capped", "edits_unordered"):
+            if key in row:
+                row[key] = int(row[key])
     return {row["id"]: row for row in rows}
 
 
@@ -37,12 +38,18 @@ def rate(rows: list[dict], key: str = "edits") -> float:
     return 100 * sum(r[key] for r in rows) / max(1, sum(r["chars"] for r in rows))
 
 
-def paired(base: dict[str, dict], new: dict[str, dict], ids: list[str], draws: int = 10000) -> dict:
+# Test pages whose ground truth holds only part of the page's text (CURATION E72, label check of 25 Nov).
+PARTIAL = frozenset({"e6e45ddcae8c_right", "4c7c6e97ab16_left"})
+
+
+def paired(
+    base: dict[str, dict], new: dict[str, dict], ids: list[str], draws: int = 10000, key: str = "edits"
+) -> dict:
     """BASE against NEW on ``ids``: rates, gain with its interval, page counts, the most moved pages."""
     if not ids:
         return {"pages": 0}
-    old_edits = np.array([base[i]["edits"] for i in ids])
-    new_edits = np.array([new[i]["edits"] for i in ids])
+    old_edits = np.array([base[i][key] for i in ids])
+    new_edits = np.array([new[i][key] for i in ids])
     chars = np.array([new[i]["chars"] for i in ids])
     picks = np.random.default_rng(0).integers(0, len(ids), (draws, len(ids)))
     gain = 100 * (old_edits[picks].sum(1) - new_edits[picks].sum(1)) / np.maximum(1, chars[picks].sum(1))
@@ -75,6 +82,7 @@ def compare(base_path: Path, new_path: Path) -> dict:
         "base": str(base_path),
         "new": str(new_path),
         "all": paired(base, new, ids),
+        "without_partial_truth": paired(base, new, [i for i in ids if i not in PARTIAL]),
         "neither_capped_nor_looped": paired(base, new, [i for i in ids if not failing(base, i) and not failing(new, i)]),
         "capped_or_looped": {
             "base": sorted(i for i in ids if failing(base, i)),
@@ -82,6 +90,10 @@ def compare(base_path: Path, new_path: Path) -> dict:
         },
         "by_kind": {},
     }
+    if all("edits_unordered" in rows[i] for rows in (base, new) for i in ids):
+        result["order_free_without_partial_truth"] = paired(
+            base, new, [i for i in ids if i not in PARTIAL], key="edits_unordered"
+        )
     for kind in ("table", "list", "dark"):
         part = [i for i in ids if kind in new[i]["kinds"].split(",")]
         if part:
@@ -102,6 +114,9 @@ def show(name: str, result: dict) -> None:
 
     print(f"== {name}")
     print(line("all", result["all"]))
+    print(line("without the partial-truth pages", result["without_partial_truth"]))
+    if "order_free_without_partial_truth" in result:
+        print(line("order-free, without them", result["order_free_without_partial_truth"]))
     print(line("neither capped nor looped", result["neither_capped_nor_looped"]))
     for kind, part in result["by_kind"].items():
         print(line(kind, part))
