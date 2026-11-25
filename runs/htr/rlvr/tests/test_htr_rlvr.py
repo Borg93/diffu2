@@ -16,7 +16,7 @@ from pathlib import Path
 import htr_evaluate
 import htr_select
 import pytest
-from htr_reward import boxes, components, transcription
+from htr_reward import boxes, components, loop_rule, transcription
 from htr_settings import settings
 
 REPO = Path(__file__).resolve().parents[4]
@@ -86,6 +86,28 @@ def test_gate_zeroes_loops_caps_and_missing_ends():
     assert components(TRUTH, TRUTH)["ended"] == -1.0 and components(TRUTH, TRUTH)["reward"] == 1.0  # end not known
 
 
+RATIO = {"ngram_size": 6, "min_repeats": 4, "token_run_limit": 32, "min_length_ratio": 1.15}
+
+
+def test_length_rule_keeps_runaway_loops_and_frees_a_dot_leader_a_few_repeats_long():
+    ledger = TRUTH + "\n\n<x_0.10><y_0.62>Summa {} 13<x_0.90><y_0.70><class_Text>"
+    truth, answer = ledger.format(". " * 30), ledger.format(". " * 38)
+    assert components(answer, truth)["looped"] == 1.0  # the detector alone: the dots ran past the truth's
+    free = components(answer, truth, loop=RATIO)
+    assert free["loop_detected"] == 1.0 and free["looped"] == 0.0 and free["gate"] == 1.0 and free["reward"] > 0.9
+    runaway = components(TRUTH + "\n\n<x_0.1><y_0.7>" + "Moni " * 40, TRUTH, loop=RATIO)
+    assert runaway["looped"] == 1.0 and runaway["reward"] == 0.0
+    assert components(TRUTH, TRUTH, loop=RATIO, capped=True)["reward"] == 0.0  # the cap gates whatever the length
+
+
+def test_loop_rule_keeps_the_ratio_and_refuses_unknown_settings():
+    assert loop_rule({"ngram_size": 6.0, "min_repeats": 4, "token_run_limit": 32, "min_length_ratio": 1.15}) == {
+        "ngram_size": 6, "min_repeats": 4, "token_run_limit": 32, "min_length_ratio": 1.15
+    }
+    with pytest.raises(ValueError, match="unknown loop settings"):
+        loop_rule({"ngram": 6})
+
+
 def test_repeats_the_truth_has_are_not_a_loop():
     dots = "<x_0.1><y_0.1>Summa " + ". " * 40 + "13<x_0.9><y_0.2><class_Text>"
     assert components(dots, dots)["looped"] == 0.0
@@ -111,6 +133,9 @@ def test_known_loop_is_gated():
     assert reading.endswith("Moni Moni Moni")
     parts = components(reading, rows("monitor")["483ab0a6287c"]["target"])
     assert parts["looped"] == 1.0 and parts["gate"] == 0.0 and parts["reward"] == 0.0 and parts["text"] > 0
+    # broken off early, the reading is shorter than the truth: the length rule frees it, its missing text keeps it low
+    broken = components(reading, rows("monitor")["483ab0a6287c"]["target"], loop=RATIO)
+    assert broken["loop_detected"] == 1.0 and broken["looped"] == 0.0 and broken["reward"] < 0.4
 
 
 # ---- selection ------------------------------------------------------------------------------------------------------
@@ -486,6 +511,10 @@ def test_yaml_files_set_the_hooks(monkeypatch):
         monkeypatch.setenv("HTR_RLVR_CONFIG", str(HERE / "grpo_htr_v2.yaml"))
         settings.cache_clear()
         assert settings()["candidates"]["quota"] == {"table": 1.0, "dark": 0.125, "list": 0.375, "long": 0.1875}
+        assert settings()["loop"] == RATIO
+        monkeypatch.setenv("HTR_RLVR_CONFIG", str(HERE / "grpo_htr.yaml"))
+        settings.cache_clear()
+        assert "min_length_ratio" not in settings()["loop"]  # pilot 1's rule as it ran
     finally:
         monkeypatch.delenv("HTR_RLVR_CONFIG")
         settings.cache_clear()
@@ -502,8 +531,13 @@ def test_pilot2_configuration_resolves(tmp_path):
     assert v2["grpo"]["max_num_steps"] == 256 and v2["grpo"]["val_period"] == 64
     assert v2["checkpointing"]["save_period"] == 64 and v2["checkpointing"]["keep_top_k"] is None
     assert v2["grpo"]["max_num_epochs"] == 8 and v2["grpo"]["num_prompts_per_step"] == 16
-    for key in ("policy", "loss_fn", "env"):  # everything else is pilot 1's
+    for key in ("policy", "loss_fn"):  # everything else is pilot 1's, but for the loop rule's length condition
         assert v2[key] == pilot1[key]
+    for name in ("parse-page", "parse-page-validation"):
+        assert v2["env"][name]["loop"] == {**pilot1["env"][name]["loop"], "min_length_ratio": 1.15}
+        assert {k: v for k, v in v2["env"][name].items() if k != "loop"} == {
+            k: v for k, v in pilot1["env"][name].items() if k != "loop"
+        }
     assert {k: v for k, v in v2["grpo"].items() if k not in ("max_num_steps", "val_period")} == {
         k: v for k, v in pilot1["grpo"].items() if k not in ("max_num_steps", "val_period")
     }

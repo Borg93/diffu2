@@ -8,6 +8,11 @@ htr:
   # Pilot 1: 25 %. It found 13 failing pages among 1,024 random candidates, so the quota was never full. Up to half
   # now (fewer if fewer fail: the spread rule takes the places left); informed_share stays 0.75.
   failing_share: 0.5
+  loop:
+    # 25 Nov: pilot 2's first run (stopped at update 49) gated 129 of its 404 "looping" answers that were under 10 % CER
+    # (dot leaders and ditto entries a few repeats past the truth's). A loop must now also make the answer's text longer
+    # than 1.15 times the truth's: 84 of the 404 stay loops (mean CER 0.81), 3 of the 129 (htr_reward.py).
+    min_length_ratio: 1.15
   candidates:           # htr_candidates.py; unset (grpo_htr.yaml) = pilot 1's random draw
     rule: targeted
     order: [table, dark, list, long]   # each kind drawn at random from its pages not yet taken, up to its quota

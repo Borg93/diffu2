@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from htr_candidates import rules
+from htr_reward import loop_rule
 
 HERE = Path(__file__).resolve().parent
 DATA = Path("/mnt/scratch/gabriel/htr/rlvr/data")
@@ -62,7 +63,7 @@ def settings() -> dict[str, Any]:
         "config": str(config_path()),
         "candidates": rules(OmegaConf.to_container(candidates, resolve=True) if candidates is not None else None),
         "weights": {name: float(weight) for name, weight in get("htr.weights").items()},
-        "loop": {name: int(value) for name, value in get("htr.loop").items()},
+        "loop": loop_rule(get("htr.loop")),
         "greedy_repetition_penalties": [float(value) for value in get("htr.greedy_repetition_penalties")],
         "failing_share": float(get("htr.failing_share")),
         "informed_share": float(get("htr.informed_share")),

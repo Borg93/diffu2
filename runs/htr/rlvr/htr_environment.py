@@ -14,7 +14,7 @@ from pathlib import Path
 
 import ray
 import torch
-from htr_reward import LOOP, WEIGHTS, components
+from htr_reward import LOOP, WEIGHTS, components, loop_rule
 from nemo_rl.environments.interfaces import EnvironmentInterface, EnvironmentReturn
 
 LOGGED = ("reward", "text", "cer", "wer", "boxes", "box_f1", "predicted_boxes", "looped", "gate")
@@ -29,7 +29,7 @@ class HtrEnvironment(EnvironmentInterface):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.phase = cfg["phase"]
         self.weights = {name: float(weight) for name, weight in (cfg.get("weights") or WEIGHTS).items()}
-        self.loop = {name: int(value) for name, value in (cfg.get("loop") or LOOP).items()}
+        self.loop = loop_rule(cfg.get("loop") or LOOP)
 
     def shutdown(self):
         pass
