@@ -703,3 +703,27 @@ def test_a_run_begins_at_another_runs_student_and_refuses_a_lora_of_another_rank
     wider = one.model_copy(update={"rank": 8, "alpha": 8})
     with pytest.raises(ValueError, match="not its LoRA's"):
         distill(tiny_moss_dit, tiny_pair_cache, file, tmp_path / "wider", wider, start=earlier)
+
+
+def test_a_page_drawn_with_gradients_through_its_last_step_alone_takes_that_steps_gradient(
+    tiny_moss_dit: Path, sample: CachedSample
+) -> None:
+    student = _with_fake_score(tiny_moss_dit)
+    generator = torch.Generator().manual_seed(5)
+    for name, parameter in student.named_parameters():
+        if ".lora_B" in name:
+            parameter.data = 0.05 * torch.randn(parameter.shape, generator=generator)
+    levels, noise, text, references = student_levels(SETTINGS), _noise(sample), sample.prompt_embeds, [_page(sample)]
+    weights = [parameter for name, parameter in student.named_parameters() if ".lora_B" in name]
+
+    page = drawn(student, noise, levels, text, references, grad_steps=1)
+
+    assert torch.allclose(page, drawn(student, noise, levels, text, references), atol=1e-5)
+    state = rolled_out(student, noise, levels, len(levels) - 2, text, references)
+    last = drawn(student, state, levels[-2:], text, references)
+    ours = torch.autograd.grad(page.square().mean(), weights, allow_unused=True)
+    theirs = torch.autograd.grad(last.square().mean(), weights, allow_unused=True)
+    for a, b in zip(ours, theirs, strict=True):
+        assert (a is None) == (b is None)
+        assert a is None or b is None or torch.allclose(a, b, rtol=1e-4, atol=1e-8)
+    assert json.loads(MatchingSettings(grad_steps=2).model_dump_json())["grad_steps"] == 2

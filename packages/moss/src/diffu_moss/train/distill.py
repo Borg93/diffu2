@@ -138,8 +138,8 @@ class MatchingSettings(BaseModel):
     0.98) uniformly, or with ``level_beta`` above 1 nearer to the higher (a Beta(``level_beta``, 1) share of the way;
     the fake score's own updates stay uniform); and the fake score: its LoRA's rank (alpha the same, on the student's
     modules), its learning rate, and its optimizer steps for each of the student's (DMD2's two time-scale rule: 5).
-    ``whole`` matches the page the student draws through all its steps, in place of the regression; ``pull`` is the
-    pull's size. The three later ones are left out of a run's record at their defaults: older checkpoints resume."""
+    ``whole`` matches the page the student draws through all its steps, in place of the regression, its gradients
+    through the last ``grad_steps`` of them (None: all); ``pull`` is the pull's size. The three later ones are left out of a run's record at their defaults: older checkpoints resume."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -152,6 +152,7 @@ class MatchingSettings(BaseModel):
     whole: bool = Field(default=False, exclude_if=lambda whole: not whole)
     pull: MatchingPull = Field(default=MatchingPull.DISTANCE, exclude_if=lambda pull: pull is MatchingPull.DISTANCE)
     level_beta: float = Field(default=1.0, gt=0, exclude_if=lambda beta: beta == 1.0)
+    grad_steps: int | None = Field(default=None, ge=1, exclude_if=lambda steps: steps is None)
 
     def level(self, share: float) -> float:
         """The level a student's page is noised to for its matching term, from ``share``, uniform in [0, 1)."""
@@ -196,12 +197,17 @@ def drawn(
     levels: Sequence[float],
     text: Tensor,
     references: Sequence[Tensor] | None = None,
+    grad_steps: int | None = None,
 ) -> Tensor:
     """The state the student reaches at ``levels[-1]`` drawing from ``noise`` (the state at ``levels[0]``) in Euler
-    steps without guidance: its page, over all of :func:`student_levels`. Gradients run through every step."""
+    steps without guidance: its page, over all of :func:`student_levels`. Gradients run through every step, or with
+    ``grad_steps`` through the last that many alone (the steps before drawn without them: less memory)."""
     latents = noise.float()
-    for now, after in pairwise(levels):
-        latents = latents + (after - now) * _velocity(student, latents, now, text, references)
+    steps = list(pairwise(levels))
+    kept = len(steps) if grad_steps is None else min(grad_steps, len(steps))
+    for place, (now, after) in enumerate(steps):
+        with nullcontext() if place >= len(steps) - kept else torch.no_grad():
+            latents = latents + (after - now) * _velocity(student, latents, now, text, references)
     return latents
 
 
@@ -625,7 +631,14 @@ def distill(
             reference = sample.reference if donor is None else load_sample(cache, donor, device).reference
             references = None if reference is None else [reference]
             if matching is not None and matching.whole:  # the page it draws, matched alone: no step regressed
-                page = drawn(training.transformer, noise.to(device), levels, sample.prompt_embeds, references)
+                page = drawn(
+                    training.transformer,
+                    noise.to(device),
+                    levels,
+                    sample.prompt_embeds,
+                    references,
+                    matching.grad_steps,
+                )
                 loss = page.new_zeros(())
             else:
                 with nullcontext() if fake is None else teacher_alone(frozen):
@@ -844,6 +857,13 @@ def main(
             "(a Beta(this, 1) share of the way; 1: uniform)"
         ),
     ] = None,
+    matching_grad_steps: Annotated[
+        int | None,
+        typer.Option(
+            min=1,
+            help="with --matching-whole: gradients through the student's last this many steps alone (default: all)",
+        ),
+    ] = None,
     beta1: Annotated[
         float, typer.Option(min=0.0, max=0.999, help="AdamW's first beta, the student's and the fake score's")
     ] = DEFAULT_BETAS[0],
@@ -872,7 +892,15 @@ def main(
     device: Annotated[str, typer.Option(help="where the student and the teacher run")] = "cuda",
 ) -> None:
     """Distil a few-step, unguided LoRA student of a MOSS-Image DiT by on-policy distillation."""
-    fake_options = (matching_guidance, fake_rank, fake_learning_rate, fake_updates, matching_pull, matching_level_beta)
+    fake_options = (
+        matching_guidance,
+        fake_rank,
+        fake_learning_rate,
+        fake_updates,
+        matching_pull,
+        matching_level_beta,
+        matching_grad_steps,
+    )
     if matching == 0 and (matching_whole or any(option is not None for option in fake_options)):
         raise typer.BadParameter("the --matching-* and --fake-* options set the matching term: give --matching")
     matched = None
@@ -886,6 +914,7 @@ def main(
             **({} if fake_updates is None else {"updates": fake_updates}),
             **({} if matching_pull is None else {"pull": matching_pull}),
             **({} if matching_level_beta is None else {"level_beta": matching_level_beta}),
+            **({} if matching_grad_steps is None else {"grad_steps": matching_grad_steps}),
         }
         try:  # a ValidationError (a learning rate not above 0) is a ValueError too
             matched = MatchingSettings.model_validate(given)
