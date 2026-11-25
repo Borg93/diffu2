@@ -16,6 +16,8 @@ _SFM_DECODE = str.maketrans({"\uf028": " ", "\uf029": "."})
 # The GT collection folder (minus "GT-" and the export date) -> the name its captions use: the style handle
 # that picks a collection's hand, paper and ink at generation time.
 COLLECTION_TITLES = {
+    "fornsvensk_books": "medieval Old Swedish manuscript books",
+    "fornsvensk_charters": "medieval Old Swedish charters on parchment",
     "FNA_1500": "the 16th-century records of the National Archives of Finland",
     "FNA_finnish_court_records": "Finnish court records in the National Archives of Finland",
     "FNA_finnish_letter_recipes": "a Finnish book of letters and recipes",

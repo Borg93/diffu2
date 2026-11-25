@@ -5,7 +5,8 @@ Every PAGE file of the GT (``<root>/<collection>/<volume>/<volume>/page/<file>.x
 is read with its scan (``find_scan``) and split into its single pages (``scan_pages``: an opening's two, else the scan
 whole). A scan wider than tall that its lines cannot split (``is_unsplit_spread``: an opening whose pages' lines
 overlap side to side, or a single wide sheet, which the lines cannot tell apart) gives no page: it is skipped and
-counted, as no spread is ever trained on. Each page is cut from its scan at about ``--megapixels`` on the latent grid,
+counted, as no spread is ever trained on, unless the GT is of single wide sheets (``--single-sheets``: charters), whose
+every such scan is taken whole as its one page. Each page is cut from its scan at about ``--megapixels`` on the latent grid,
 exactly as ``diffu-generate --whole-page`` plans a page (``plan_whole_page``), and prompted as drawing prompts it: the
 caption of its whole-page plan compiled as MOSS's Layout prompt (``diffu_moss.sample_caption.sample_layout_prompt``,
 as ``MossLayoutPromptStep`` compiles it), every line's exact text in its box. The page is captioned in its own style:
@@ -89,7 +90,7 @@ from typing import Annotated, NamedTuple
 
 import typer
 from PIL import Image
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from transformers import PreTrainedTokenizerBase
 
 from diffu_moss.modular_pipelines.moss import MossModularPipeline
@@ -142,6 +143,7 @@ class ScanSettings(BaseModel):
     model: str  # the MOSS model directory whose tokenizer counts the prompts
     pixels: int  # a page's or a window's size, about
     windows_per_page: int  # at most; required, so a build recorded before windows (and spreads skipped) is not resumed
+    single_sheets: bool = Field(default=False, exclude_if=lambda single: not single)  # a wide unsplit scan taken whole
 
 
 class Planned(BaseModel):
@@ -465,7 +467,7 @@ def scanned(task: ScanTask) -> ScanResult:
     pages = [page for page in scan_pages(layout) if regions_of(page.layout)]  # a page holding a line of text
     if not pages:
         return ScanResult(xml=xml.as_posix(), problem=ScanProblem.NO_TEXT)
-    if is_unsplit_spread(layout):
+    if is_unsplit_spread(layout) and not task.settings.single_sheets:
         return ScanResult(xml=xml.as_posix(), problem=ScanProblem.SPREAD)
     scan = load_scan(scan_path, layout)
     collection, volume = xml.parts[:2]
@@ -862,6 +864,13 @@ def main(
         1, (os.cpu_count() or 2) // 2
     ),
     seed: Annotated[int, typer.Option(help="picks the scans read, the held-out volumes and each page's sample")] = 0,
+    single_sheets: Annotated[
+        bool,
+        typer.Option(
+            help="take a scan wider than tall that its lines cannot split as one page (a GT of single wide sheets, "
+            "such as charters) where it is otherwise skipped as a spread"
+        ),
+    ] = False,
     sample_pick: Annotated[
         SamplePick,
         typer.Option(
@@ -875,7 +884,11 @@ def main(
     root = gt_root.expanduser()
     settings = BuildSettings(
         scan=ScanSettings(
-            gt_root=str(root), model=str(model), pixels=round(megapixels * 1_000_000), windows_per_page=windows_per_page
+            gt_root=str(root),
+            model=str(model),
+            pixels=round(megapixels * 1_000_000),
+            windows_per_page=windows_per_page,
+            single_sheets=single_sheets,
         ),
         collections=collections or [],
         max_scans=max_scans,

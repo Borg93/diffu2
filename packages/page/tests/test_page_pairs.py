@@ -350,6 +350,20 @@ def test_page_pairs_record_what_became_of_every_scan_and_page(built: Path) -> No
     assert list(record.failed) == [f"{ARJEPLOG}/{EARLY}/{EARLY}/page/0004.xml"]
 
 
+def test_page_pairs_of_single_sheets_take_a_wide_scan_its_lines_cannot_split_whole_as_its_one_page(
+    tiny_gt: Path, tiny_moss: Path, tmp_path: Path
+) -> None:
+    settings = _settings(tiny_gt, tiny_moss)
+    sheets = settings.model_copy(update={"scan": settings.scan.model_copy(update={"single_sheets": True})})
+
+    record = build(tmp_path, sheets, workers=1)
+
+    assert (record.counts.spread, record.counts.pages) == (0, 10)
+    wide = [path for path in (tmp_path / "pages").glob("*.jpg") if Image.open(path).width > Image.open(path).height]
+    assert len(wide) == 1
+    assert "single_sheets" not in settings.scan.model_dump()
+
+
 class _Stopped(BaseException):
     """A build stopped as a kill stops it: past the handler that records a scan's failure."""
 
