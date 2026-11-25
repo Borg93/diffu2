@@ -88,8 +88,9 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
       (215 against 205 of 219 lines, no struck line) but its seeds of a template are nearly one page; (2) a 4-step student of our own (owner, 24 Nov: our LoRA, not theirs): student i shortened to 4 steps against our teacher with the matching-only recipe
       (the whole rollout corrected, learning rate 5e-6, beta1 0, one fake update a step), checked for pages that vary;
       the code is in (`--matching-whole --matching-pull velocity --matching-level-beta 2.5 --beta1 0 --start`, 24 Nov), and a
-      Spark trial ran 3 steps (about 3.5 min a page); student j runs on Leonardo from 25 Nov 07:40 (about 70 s a
-      step, fits in memory, 20 steps a job: about 30 jobs); left: its pages beside student i and
+      Spark trial ran 3 steps (about 3.5 min a page); student j runs on Leonardo from 25 Nov 08:39 with gradients
+      through its last 2 steps (all 4 ran out of memory on a large page; about 50 s a step, 20 a job, about 30 jobs);
+      left: if it works, whether gradients through all 4 (fewer tokens a page, or 80 GB cards) do better; its pages beside student i and
       the published LoRA; (3) the better of
       the two in the Space as the fast mode, or as a third choice beside the 8-step student if the Space's 1 GB of
       storage holds both.
