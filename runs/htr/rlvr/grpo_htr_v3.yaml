@@ -1,0 +1,8 @@
+# Pilot 3 (CURATION E72): pilot 2b's settings (grpo_htr_v2.yaml: targeted pages, the mended loop rule, 256 updates) with
+# one change: the rewards are not divided by their spread within a page's group. Pilot 1's diagnostics: 34 % of the
+# prompts had a reward spread under 0.01, and divided by it they took a third of the advantage mass, so much of each
+# update fitted noise. Without the division a page whose answers barely differ moves the model barely.
+defaults: grpo_htr_v2.yaml
+
+grpo:
+  normalize_rewards: false
