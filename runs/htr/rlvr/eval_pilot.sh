@@ -27,6 +27,7 @@ HF=$REPO/packages/htr_train/envs/nemotron_parse/.venv/bin/python
 PORT=${PORT:-8021}
 FRACTION=${FRACTION:-0.25}
 SKIP=${SKIP:-}
+SPLITS=${SPLITS:-test monitor}   # the splits read (e.g. "monitor" for a dev-only bundle)
 
 export CUDA_VISIBLE_DEVICES=2              # the only GPU that is ours
 export PYTHONPATH=/mnt/scratch/gabriel/src/Nemotron/src:$HERE
@@ -41,14 +42,14 @@ echo "== view of $CHECKPOINT"
 VIEW=$OUT/view
 
 if [[ $SKIP != *vllm* ]]; then
-  for split in test monitor; do
+  for split in $SPLITS; do
     echo "== vLLM offline, greedy, penalties 1.0 and 1.1: $split"
     "$RL" "$HERE/eval_read.py" vllm "$VIEW" "$split" "$OUT/reads" --data "$DATA"
   done
 fi
 
 if [[ $SKIP != *transformers* ]]; then
-  for split in test monitor; do
+  for split in $SPLITS; do
     echo "== Transformers, no_repeat_ngram_size 10: $split"
     "$HF" "$HERE/eval_read.py" transformers "$VIEW" "$split" "$OUT/reads" --data "$DATA"
   done
@@ -69,7 +70,7 @@ if [[ $SKIP != *served* ]]; then
     sleep 5
   done
   curl -sf "http://127.0.0.1:$PORT/v1/models" > /dev/null || { echo "No server after 20 minutes" >&2; exit 1; }
-  for split in test monitor; do
+  for split in $SPLITS; do
     echo "== served, repetition stop: $split"
     URL=http://127.0.0.1:$PORT/v1 "$RL" "$HERE/eval_read.py" served "$VIEW" "$split" "$OUT/reads" --data "$DATA"
   done
