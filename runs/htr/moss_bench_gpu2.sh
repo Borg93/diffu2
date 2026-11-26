@@ -37,20 +37,24 @@ done
 # The target is SGLang Diffusion inside Ray Data (INFERENCE.md section 13), so: the same pages (test A's prompts and
 # samples, captured as it drew) drawn by SGLang with our plugin, its attention kernels and quality tiers; compare with
 # test H (guided every step, as SGLang guides). The demo Space is not measured.
-# SGLang's MOSS-Image refuses torch.compile ("support has not been validated") and autocast, and is not on the
-# breakable-CUDA-graph list (sglang 0.5.23), so on one GPU its levers are the attention kernel and the quality tier
-# (lossless, the default, adds its fused kernels over exact).
-for kind in fa_lossless fa_exact torch_sdpa cudnn_sdpa; do
-  extra='{}'
+# SGLang's MOSS-Image (sglang 0.5.23) has validated recipes for the attention kernel, the quality tier and batching;
+# compiling and breakable CUDA graphs are "not validated", which is a reason to try them and compare the pages with
+# the exact run's, not to leave them out. Multi-GPU levers (CFG and sequence parallelism) need more than GPU 2.
+for kind in fa_lossless fa_exact torch_sdpa cudnn_sdpa fa_high batch2 cuda_graph compiled; do
+  extra='{}'; ext=diffu_sglang_moss
   case $kind in
     fa_lossless) server='{"disable_autocast": true}';;
     fa_exact) server='{"disable_autocast": true}'; extra='{"quality": "exact"}';;
     torch_sdpa) server='{"disable_autocast": true, "attention_backend": "torch_sdpa"}';;
     cudnn_sdpa) server='{"disable_autocast": true, "attention_backend": "torch_cudnn_sdpa"}';;
+    fa_high) server='{"disable_autocast": true}'; extra='{"quality": "high"}';;                      # Q, K, V as one GEMM
+    batch2) server='{"disable_autocast": true}'; extra='{"num_outputs_per_prompt": 2}';;             # two pages a call
+    cuda_graph) server='{"disable_autocast": true, "enable_breakable_cuda_graph": true}';;           # not validated for MOSS-Image: tried
+    compiled) server='{"disable_autocast": true, "enable_torch_compile": true}'; ext=moss_bench_ext;; # refused by SGLang: its check lifted (runs/htr/moss_bench/moss_bench_ext)
   esac
   log "sglang $kind"
   ( while sleep 1; do nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -i 2; done > $B/sglang_$kind.mem ) & watch=$!
-  SGLANG_EXTERNAL_MODEL_PACKAGE=diffu_sglang_moss /mnt/scratch/gabriel/envs/sglang_moss/bin/python $B/sglang_bench.py \
+  PYTHONPATH=$PWD/runs/htr/moss_bench SGLANG_EXTERNAL_MODEL_PACKAGE=$ext /mnt/scratch/gabriel/envs/sglang_moss/bin/python $B/sglang_bench.py \
       /mnt/scratch/gabriel/models/moss/hf-diffu-moss-above $B/captured $B/sglang_$kind "$server" "$extra" > $B/sglang_$kind.log 2>&1 \
     && log "sglang $kind done; peak $(sort -n $B/sglang_$kind.mem | tail -n 1) MiB: $(grep '^{' $B/sglang_$kind.log | tr '\n' ' ' | cut -c1-500)" || log "sglang $kind FAILED: $(tail -n 4 $B/sglang_$kind.log | cut -c1-400)"
   kill $watch 2>/dev/null; sleep 10
