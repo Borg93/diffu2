@@ -59,4 +59,11 @@ for kind in fa_lossless fa_exact torch_sdpa cudnn_sdpa fa_high batch2 cuda_graph
     && log "sglang $kind done; peak $(sort -n $B/sglang_$kind.mem | tail -n 1) MiB: $(grep '^{' $B/sglang_$kind.log | tr '\n' ' ' | cut -c1-500)" || log "sglang $kind FAILED: $(tail -n 4 $B/sglang_$kind.log | cut -c1-400)"
   kill $watch 2>/dev/null; sleep 10
 done
+# SGLang's own profiler trace (PyTorch profiler, 3 denoising steps after a warm-up step a page), apart from the timed
+# runs: a trace slows a page. Read with the pytorch profile-model skill, beside our pipeline's two traces.
+log "sglang trace"
+PYTHONPATH=$PWD/runs/htr/moss_bench SGLANG_EXTERNAL_MODEL_PACKAGE=diffu_sglang_moss SGLANG_DIFFUSION_TORCH_PROFILER_DIR=$B/trace_sglang \
+  /mnt/scratch/gabriel/envs/sglang_moss/bin/python $B/sglang_bench.py /mnt/scratch/gabriel/models/moss/hf-diffu-moss-above $B/captured $B/sglang_trace \
+  '{"disable_autocast": true}' '{"profile": true, "num_profiled_timesteps": 3}' > $B/sglang_trace.log 2>&1 \
+  && log "sglang trace done: $(ls $B/trace_sglang 2>/dev/null | wc -l) files" || log "sglang trace FAILED: $(tail -n 4 $B/sglang_trace.log | cut -c1-400)"
 log "finished; GPU 2: $(nvidia-smi --query-gpu=memory.used --format=csv,noheader -i 2)"
