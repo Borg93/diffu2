@@ -43,6 +43,7 @@ jobs/spark_guard.sh:
 from __future__ import annotations
 
 import gc
+import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
@@ -64,6 +65,7 @@ from diffu_page.cli.options import (
     DEFAULTS,
     CompileBlocks,
     Device,
+    DrawSettingsFile,
     Format,
     FuseLoras,
     Guidance,
@@ -79,6 +81,7 @@ from diffu_page.cli.options import (
     lora_dirs,
     required_model,
     settings_from_options,
+    with_settings_file,
 )
 from diffu_page.draw.blocks import DrawnCrop
 from diffu_page.draw.jobs import CropJob, PageJob, PageRequest, ResolvedPage, crop_jobs, read_page_jobs, single_pages
@@ -126,7 +129,8 @@ type LabelFiles = Mapping[str, Callable[[PageElements], str]]  # label files wri
 
 class CropSummary(BaseModel):
     """A drawn crop as ``summary.json`` lists it: its name, its template (None for a page given as a layout), how well
-    its lines read back, and how many of them its repair passes took from unclear to clear (net)."""
+    its lines read back, how many of them its repair passes took from unclear to clear (net), and the seconds it took
+    from the start of its drawing to its last read-back."""
 
     name: str
     template: str | None
@@ -134,6 +138,7 @@ class CropSummary(BaseModel):
     unclear_lines: int
     cer: float
     repaired: int = 0
+    seconds: float = 0.0
 
 
 class PageGroup(BaseModel):
@@ -159,7 +164,9 @@ class Summary(BaseModel):
     failed: dict[str, str]
 
 
-def _save(crop: DrawnCrop, template: Path | None, out: Path, *, repaired: int, label_files: LabelFiles) -> CropSummary:
+def _save(
+    crop: DrawnCrop, template: Path | None, out: Path, *, repaired: int, seconds: float, label_files: LabelFiles
+) -> CropSummary:
     crop.image.save(out / f"{crop.name}.jpg", quality=JPEG_QUALITY)
     (out / f"{crop.name}.xml").write_text(crop.labels_xml, encoding="utf-8")
     elements = page_elements(crop.labels)
@@ -172,6 +179,7 @@ def _save(crop: DrawnCrop, template: Path | None, out: Path, *, repaired: int, l
         unclear_lines=crop.unclear_lines,
         cer=fmean(crop.line_cers),
         repaired=repaired,
+        seconds=round(seconds, 2),
     )
 
 
@@ -185,6 +193,7 @@ def _draw(
     label_files: LabelFiles,
 ) -> CropSummary:
     reference, lines = job.reference_image(), job.reference_lines
+    started = time.perf_counter()
     crop = draw_crop(
         pipe,
         job.plan,
@@ -201,8 +210,12 @@ def _draw(
         crop = repair_lines(
             pipe, crop, seed=seed, reference=reference, settings=settings, judge=judge, reference_lines=lines
         )
-    result = _save(crop, job.template, out, repaired=drawn_unclear - crop.unclear_lines, label_files=label_files)
-    console.print(f"{crop.name}: CER {result.cer:.3f}, {crop.unclear_lines} unclear lines ({result.repaired} repaired)")
+    seconds = time.perf_counter() - started
+    repaired = drawn_unclear - crop.unclear_lines
+    result = _save(crop, job.template, out, repaired=repaired, seconds=seconds, label_files=label_files)
+    console.print(
+        f"{crop.name}: {seconds:.1f} s, CER {result.cer:.3f}, {crop.unclear_lines} unclear lines ({repaired} repaired)"
+    )
     return result
 
 
@@ -472,6 +485,7 @@ def generate(
     sampling_shift: SamplingShift = DEFAULTS.sampling_shift,
     fuse_loras: FuseLoras = DEFAULTS.fuse_loras,
     compile_blocks: CompileBlocks = DEFAULTS.compile_blocks,
+    draw_settings_file: DrawSettingsFile = None,
     repair: RepairPasses = DEFAULTS.repair_passes,
     whole_page: Annotated[
         bool, typer.Option("--whole-page/--windows", help="draw each page whole instead of as training-scale windows")
@@ -495,7 +509,7 @@ def generate(
     """Draw every crop of the templates (or each template whole), refilled with the text, in the given or named style;
     or every page of a job file, each in its own."""
     model_dir = required_model(model)
-    draw_settings = settings_from_options(
+    flags = settings_from_options(
         steps=steps,
         guidance=guidance,
         reference_guidance=reference_guidance,
@@ -509,6 +523,7 @@ def generate(
         label_format=label_format,
         repair_passes=repair,
     )
+    draw_settings = with_settings_file(flags, draw_settings_file)
     presets = style_presets(styles)
     loras = lora_dirs(lora)
     print_hand = print_hand_classifier(print_hand_model) if mark_from_scan else None

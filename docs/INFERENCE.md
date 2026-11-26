@@ -471,7 +471,8 @@ on photos (LPIPS 0.07-0.16), which thin handwritten strokes stand less well.
 
 The options are fields of `DrawSettings` (`diffu_moss.inference`, applied by `load_pipeline`). Each is off by default,
 and with all of them off a page is drawn byte for byte as before. A run's `draw.json` (section 6) and a drawing script
-reach every one of them; `diffu-generate` has flags for `--compile-blocks`, `--guidance-stop` and `--fuse-loras` only.
+reach every one of them: `diffu-generate` through `--draw-settings <draw.json>` (the file's fields replace the flags'),
+a cluster run through its own `--draw-settings`.
 
 | Setting | What it changes | Needs |
 |---|---|---|
@@ -508,6 +509,51 @@ The eager and compiled configurations are the ones measured above; the bf16 pack
 path (above). An MXFP8 package fails at run time (PyTorch's `isIntList()` assert, open in [TODO.md](../TODO.md)). Inside an AOTInductor package,
 `scaled_mm` (torch's `_scaled_mm_v2`) has no C shim and runs through AOTInductor's proxy executor; `torch._scaled_mm`
 (v1, which has one) takes the same operands.
+
+### Trying every option on one workstation
+
+Every option tried so far, as one list to run on one RTX PRO 6000 (or any cluster card) with real pages: a template,
+its text and a sample, drawn whole at 2 MP by `diffu-generate`, which writes each page's seconds (`seconds` in
+`summary.json`, and on its line as it draws) and the page itself to look at. The demo Space's test (section 11) is the
+quicker first figure; this one covers everything.
+
+**Setup** (Linux, `uv`, a driver whose `nvidia-smi` shows CUDA 13.0 or later: the workspace's torch is built for 13.0):
+
+    git clone https://github.com/Borg93/diffu2 && cd diffu2 && uv sync
+    hf download OpenMOSS-Team/MOSS-Image-Base --revision 85975793d8b3d432f1b6e27f352abaa4c2a4c0d3 \
+        --include "text_encoder/*" "tokenizer/*" "vae/*" --local-dir ~/models/MOSS-Image-Base
+    hf download Gabriel/diffu-moss-above --revision 3d5d3d966a0d32d4b9573c3d6a6d2324d19bb5a8 \
+        --local-dir ~/models/dit/diffu-moss-above
+    uv run diffu-moss-init --base ~/models/MOSS-Image-Base --transformer ~/models/dit/diffu-moss-above \
+        --out ~/models/moss-above                                    # says "takes a reference image"
+    uv run python -m diffu_moss.aoti --model ~/models/moss-above --out ~/models/aoti/moss_bf16.pt2   # for C
+
+**Pages:** a PAGE XML template with its text (the demo Space's "PAGE XML" download of a drawn page is one; a real page
+of your own is better) and a sample scan (the Space's `samples/`). The same two pages for every test, two seeds each:
+
+    uv run diffu-generate --model ~/models/moss-above --templates page.xml --text-from page.xml \
+        --title "the archive" --reference sample.jpg --reference-caption sample --whole-page --page-megapixels 2 \
+        --seed 7 --draw-settings A.json --out runs/speed/A
+
+**The tests**, each a `draw.json` holding its line's fields over the base (A). Keep the second page's seconds (the
+first pays for loading and compiling) and look at the pages beside A's and the sample: the ink, the letter forms, the
+paper, every line written.
+
+| Test | `draw.json` | Measured so far (Spark, section 12) | Look for |
+|---|---|---|---|
+| A. base, eager | `{"steps": 28, "guidance_scale": 2.0, "guidance_stop": 0.5}` | the reference | - |
+| B. compiled at load | A + `"compile_blocks": true` | 1.74x a step | the same page; the first page slower (compiling) |
+| C. compiled package | A + `"aoti_package": "<home>/models/aoti/moss_bf16.pt2"` | 1.5x a pass, nothing compiled at load | the same page |
+| D. UniPC, 16 steps | B + `"sampler": "unipc", "steps": 16` | 44-47 % less time | a word garbled, mottled paper (seen on the Spark) |
+| E. step cache | A + `"cache": {"kind": "first_block", "threshold": 0.05}` (not with compiling) | 44-47 % less time | faults where steps were skipped |
+| F. MXFP8 DiT, compiled | B + `"precision": "mxfp8"` | 2.41x a step | **known fault:** lighter ink, changed letters |
+| G. MXFP8 text encoder too | F + `"text_encoder_precision": "mxfp8"` | 2.34x, less memory | further off than F |
+| H. guided all the way | A with `"guidance_stop": 1.0` | 26-27 % slower than A | whether A loses anything |
+
+Not testable yet: NVFP4 (no code), an MXFP8 package (fails at run time), the attention kernel (`--attention` of
+`diffu-run` only) and the fast mode's student (the Space's fast mode, section 11). Report each test's seconds a page,
+the peak memory (`nvidia-smi`), and the card, driver, CUDA and torch versions, into [MOSS_RUNS.md](MOSS_RUNS.md) and
+the table of section 11.
 
 ## 13. The SGLang Diffusion route, and SGLang inside Ray Data
 

@@ -67,3 +67,34 @@ def test_generate_sets_each_draw_setting_from_its_option(
         compile_blocks=True,
         repair_passes=2,
     )
+
+
+def test_generate_takes_the_speed_options_from_a_draw_settings_file_over_its_flags(
+    one_line_page: Path, body_and_notes_page: Path, tmp_path: Path
+) -> None:
+    draw = tmp_path / "draw.json"
+    draw.write_text('{"sampler": "unipc", "steps": 16, "cache": {"kind": "first_block", "threshold": 0.05}}')
+    args = ["--templates", str(one_line_page), "--text-from", str(body_and_notes_page), "--title", "the archive"]
+    args += ["--model", str(tmp_path / "no_model"), "--out", str(tmp_path), "--device", "cpu"]
+    args += ["--steps", "28", "--guidance", "2.5", "--draw-settings", str(draw)]
+
+    CliRunner().invoke(generate_app, args)  # the page plans to no crop, so no model loads
+
+    settings = Summary.model_validate_json((tmp_path / "summary.json").read_text()).settings
+    assert (settings.sampler, settings.steps, settings.guidance_scale) == ("unipc", 16, 2.5)
+    assert settings.cache is not None and settings.cache.model_dump()["threshold"] == 0.05
+
+
+def test_generate_refuses_a_draw_settings_file_naming_a_setting_that_does_not_exist(
+    one_line_page: Path, body_and_notes_page: Path, tmp_path: Path
+) -> None:
+    draw = tmp_path / "draw.json"
+    draw.write_text('{"precison": "mxfp8"}')
+    args = ["--templates", str(one_line_page), "--text-from", str(body_and_notes_page), "--title", "the archive"]
+    args += ["--model", str(tmp_path / "no_model"), "--out", str(tmp_path / "out"), "--draw-settings", str(draw)]
+
+    result = CliRunner().invoke(generate_app, args)
+
+    assert result.exit_code == 2
+    assert "precison" in result.output
+    assert not (tmp_path / "out").exists()

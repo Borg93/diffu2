@@ -3,14 +3,16 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Annotated
 
 import typer
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from diffu_page.draw.lora import lora_model_dir
 from diffu_page.draw.pipeline import DrawSettings
+from diffu_page.output import validation_problems
 from diffu_page.page.labels import LabelFormat
 
 DEFAULTS = DrawSettings()  # every draw option's default comes from here
@@ -128,6 +130,41 @@ def settings_from_options(
         compile_blocks=compile_blocks,
         repair_passes=repair_passes,
     )
+
+
+DrawSettingsFile = Annotated[
+    Path | None,
+    typer.Option(
+        "--draw-settings",
+        help="a JSON object of draw settings (DrawSettings fields by name, the speed options among them: sampler, "
+        "cache, precision, text_encoder_precision, aoti_package) whose values replace the flags'",
+    ),
+]
+
+
+def with_settings_file(flags: DrawSettings, path: Path | None) -> DrawSettings:
+    """The settings the flags gave, with each field the JSON object at ``path`` names set to its value there; the
+    flags' alone without a file.
+
+    Raises:
+        typer.BadParameter: If the file is not a JSON object of draw settings, or names a key that is not one.
+    """
+    if path is None:
+        return flags
+    hint = "--draw-settings"
+    try:
+        given = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise typer.BadParameter(f"{path} is not a JSON object of draw settings: {error}", param_hint=hint) from error
+    if not isinstance(given, dict):
+        raise typer.BadParameter(f"{path} is not a JSON object of draw settings", param_hint=hint)
+    unknown = sorted(set(given) - set(DrawSettings.model_fields))
+    if unknown:
+        raise typer.BadParameter(f"{path} names draw settings that do not exist: {', '.join(unknown)}", param_hint=hint)
+    try:
+        return DrawSettings.model_validate(flags.model_dump() | given)
+    except ValidationError as error:
+        raise typer.BadParameter(f"{path}: {validation_problems(error, 'the settings')}", param_hint=hint) from error
 
 
 def lora_dirs(loras: list[Lora] | None) -> dict[str, Path]:

@@ -241,6 +241,7 @@ def test_draw_pages_records_a_crop_it_cannot_draw_by_name_and_saves_the_other_cr
 
     assert unplanned == {}
     assert [crop.name for crop in crops] == ["001_wide_and_narrow_0"]
+    assert crops[0].seconds > 0  # its drawing time, for comparing draw settings
     assert {name: error.split(":")[0] for name, error in failed.items()} == {
         "000_two_columns_0": "FileNotFoundError",
         "000_two_columns_1": "FileNotFoundError",
