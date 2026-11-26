@@ -109,8 +109,9 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
       the code is in (`--matching-whole --matching-pull velocity --matching-level-beta 2.5 --beta1 0 --start`, 24 Nov), and a
       Spark trial ran 3 steps (about 3.5 min a page); student j runs on Leonardo from 25 Nov 08:39 with gradients
       through its last 2 steps (all 4 ran out of memory on a large page; about 50 s a step, 20 a job, about 30 jobs);
-      left: if it works, whether gradients through all 4 (fewer tokens a page, or 80 GB cards) do better; its pages beside student i and
-      the published LoRA; (3) the better of
+      left: if it works, whether gradients through all 4 (fewer tokens a page, or 80 GB cards) do better; done 26 Nov: student j
+      (step 600) is the cleanest of the three (218 of 219 lines, no struck line), keeps our ink's strength and varies
+      between seeds as student i does (MOSS_RUNS, "Student j"); (3) the better of
       the two in the Space as the fast mode, or as a third choice beside the 8-step student if the Space's 1 GB of
       storage holds both.
 - [ ] Students g and h (`--swap 0.5`, teachers at guidance 2.0 and 1.5; queued 20 Nov 22:55): draw them on the held-out
