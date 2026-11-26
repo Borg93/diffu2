@@ -17,4 +17,9 @@ for name in sft_dev974 pilot2b_s256_dev974; do
     $PY runs/htr/rlvr/headroom.py $E/$name/view $E/headroom_${name%_dev974} --temperatures 0.3,0.6,1.0 --samples 8 > $E/headroom_${name%_dev974}.log 2>&1 \
     && log "headroom $name done: $(grep -c '^temperature' $E/headroom_${name%_dev974}.log) temperatures" || log "headroom $name FAILED: $(tail -n 3 $E/headroom_${name%_dev974}.log | cut -c1-300)"
 done
-sleep 30; tmux new-session -d -s poolread "SERVE=/mnt/scratch/gabriel/htr/serve/parse-selftrain2-draftv1 SEQS=128 DRAFT=16 bash runs/htr/pool_rest_read.sh 2>&1 | tee -a runs/htr/pool_rest_read.log"; log "pool read started again"
+# RESUME=0: GPU 2 is left free afterwards (26 Nov evening: the user measures the generator's throughput on it).
+if [ "${RESUME:-1}" = 1 ]; then
+  sleep 30; tmux new-session -d -s poolread "SERVE=/mnt/scratch/gabriel/htr/serve/parse-selftrain2-draftv1 SEQS=128 DRAFT=16 bash runs/htr/pool_rest_read.sh 2>&1 | tee -a runs/htr/pool_rest_read.log"; log "pool read started again"
+else
+  log "GPU 2 left free: $(nvidia-smi --query-gpu=memory.used --format=csv,noheader -i 2)"
+fi
