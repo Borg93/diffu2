@@ -514,6 +514,9 @@ SAMPLE_TITLES = {  # an example sample's caption: its years
     "gota-hovratt-1701": "1701",
     "standernas-deputation-1765": "1765",
     "jonkopings-radhusratt-1584-1595": "1590s",
+    "sdhk-11622-1380": "1380, Old Swedish",
+    "sdhk-17225-1409": "1409, Old Swedish",
+    "nikodemusevangeliet-1400s": "1400s, Old Swedish",
 }
 SAMPLES = sorted(str(path) for path in (HERE / "samples").glob("*.jpg"))
 FIRST = next(iter(TEMPLATES))
