@@ -355,7 +355,50 @@ must not write into one `--out` at the same time.
 ## 11. Measuring throughput
 
 Throughput on Blackwell has **not been measured yet**: all numbers so far are from a DGX Spark (GB10, unified memory),
-which do not carry over. To measure it on your cluster:
+which do not carry over, and from the demo Space's ZeroGPU (half an RTX PRO 6000).
+
+### What is known so far (26 Nov 2026)
+
+A normal page (2 MP with its sample: about 14,000 tokens a pass) drawn guided at the defaults (Euler 28 steps,
+guidance over the first half) is 42 passes of the DiT, which take nearly all of its time.
+
+| Where | Not compiled | Compiled (bf16) | Measured or estimated |
+|---|---|---|---|
+| ZeroGPU, half an RTX PRO 6000 | 0.16 s a pass and thousand tokens: about 100 s a page | 1.5 times faster a pass: about 70 s a page | the rate measured on fast pages (20-21 Nov); a guided page worked out from it |
+| A whole RTX PRO 6000 | not measured | likely 35-50 s a page, 70-100 pages an hour a GPU | a guess until measured below |
+
+Compiling is always worth it (1.5-1.74 times a pass, the same memory and page; section 12). MXFP8 (2.4 times on the
+Spark) changes the ink and letters and is not ready; NVFP4 is not implemented (section 12, TODO.md).
+
+### On one workstation with RTX PRO 6000 cards: the quickest real figure
+
+The demo Space runs on any GPU with 48 GB or more, builds its compiled blocks for that GPU at start-up and prints each
+page's drawing time, so it gives a cluster card's seconds a page without a cluster. It needs Linux, `uv`, a driver
+whose `nvidia-smi` shows CUDA 13.0 or later (else torch from the cu128 index), and a Hugging Face token that reads the
+Space (it is private; the model is public).
+
+    nvidia-smi                       # note the card, driver and CUDA version
+    hf auth login
+    hf download Gabriel/diffu-archive-pages --repo-type space --local-dir pagedemo
+    cd pagedemo
+    uv venv -p 3.12 && source .venv/bin/activate
+    uv pip install -r requirements.txt gradio==6.30.0 spaces
+
+1. **One card, compiled:** `CUDA_VISIBLE_DEVICES=0 python app.py` (the first start downloads about 30 GB, then
+   compiles; the log says if that fails). Open `http://127.0.0.1:7860`: the first template and sample, guided, 2 MP,
+   28 steps, seed 7. Draw the same page twice and keep the second "drawn in N s" from the status line (the first pays
+   for warming up). The same in fast mode. Note the peak memory in `nvidia-smi` while it draws.
+2. **One card, not compiled:** the same with `PAGEDEMO_COMPILE=0`.
+3. **Every card at once:** one copy a GPU, each on its own port (`CUDA_VISIBLE_DEVICES=1 GRADIO_SERVER_PORT=7861
+   python app.py`, and so on), three guided pages drawn on each at the same time. If each is about as fast as one card
+   alone, the machine draws the number of cards times as many pages.
+
+Keep a table of mode, compiled or not, one card or all, and seconds a page (pages an hour a GPU is 3600 divided by
+it), with the card, driver, CUDA and torch versions, and put it in [MOSS_RUNS.md](MOSS_RUNS.md) and the table above.
+
+### On the cluster
+
+To measure it on your cluster:
 
 1. Draw a short run of real pages, about 8 pages per actor, with the settings you mean to use.
 2. Read its summary line, or `<out>/runs/<run>.json`: `drawn`, `started` and `finished` give pages an hour including
