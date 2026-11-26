@@ -34,7 +34,7 @@ WANTED = {  # column of scans.lance: (what it says, what makes it)
     "cluster": ("the cluster on the first map of 14,985 scans (50 clusters on Qwen's vectors)", "scalar_hirank.py; marks_to_lance.py"),
     "pool_cluster_name": ("the scan's cluster of 64 (k-means on pca) and its name (with pool_cluster)", "scan_clusters.py (E65)"),
     "covered": ("writing layer: the share of the writing that lies under a label (with written, labelled, filled)", "diffu-curate writing (E61)"),
-    "jev_page": ("Jev's score of the page's lines", "to do: first on the calibration scans"),
+    "jev_page": ("Jev's mean score of the scan's lines (with jev_low, jev_worst, jev_lines); the scans scored so far", "diffu-htr-train jev, jev_to_lance.py (E62)"),
     "read_disagreement": ("our reader against the old label, the scan's pages together (with pages_read, read_looped); scans read so far", "parse_vllm_pool_read.py, page_checks_to_lance.py (E59)"),
     "dinov3": ("DINOv3's vector of the scan (2,048 numbers, 16-bit)", "embed_pool.py, joined by vectors_to_lance.py (E40)"),
     "tipsv2": ("TIPSv2's vector of the scan (2,048 numbers, 16-bit)", "embed_pool.py, joined by vectors_to_lance.py (E40)"),

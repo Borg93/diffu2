@@ -16,7 +16,9 @@ def one(line):
     return r["id"], r["subset"], len(t), len(p), Levenshtein.distance(t, p), r.get("finish"), r["tokens"]
 
 if __name__ == "__main__":
-    lines = open(sys.argv[1], encoding="utf-8").read().splitlines()
+    lines = [line for line in open(sys.argv[1], encoding="utf-8").read().split("\n") if line]  # not splitlines: it also splits at U+0085 inside a label
+    try: json.loads(lines[-1])
+    except json.JSONDecodeError: lines.pop()  # a last line still being written
     with ProcessPoolExecutor(16) as pool: rows = list(pool.map(one, lines, chunksize=2000))
     d = pd.DataFrame(rows, columns=["id", "volume", "label_chars", "read_chars", "edits", "finish", "tokens"]).drop_duplicates("id")
     d["disagreement"] = d.edits / d.label_chars.clip(lower=1); d["pool"] = np.where(d.volume.str.match(r"^[A-Z]\d{7}$"), "svea", "andraarkiv")
