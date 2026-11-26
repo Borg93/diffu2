@@ -97,11 +97,14 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
       settings (matching alone or beside the regression, learning rate 5e-6, beta1 0, one fake update a step), at 4
       steps; and several seeds a page for it as it is.
       Student i's own checkpoints (24 Nov) are level from step 200 to 400, the same lines struck: not longer, another recipe.
-- [ ] **An Old Swedish LoRA as an option in the Space (owner, 25 Nov).** A LoRA trained on all of the owner's Old Swedish
+- [x] **An Old Swedish LoRA as an option in the Space (owner, 25 Nov).** A LoRA trained on all of the owner's Old Swedish
       HTR set (charters and five books) on the above DiT, kept apart from it (MOSS_RUNS, "An Old Swedish LoRA"). Steps:
       (1) done 26 Nov: trained to step 750 on the Spark; (2) done 26 Nov: drawn beside the real pages; it learns the
-      medieval hand, not yet the parchment look; step 750 picked; (3) the Space loads it as its own switch (as it loads the student), off by default, the page
-      drawn as today without it; (4) tests, published, checked on ZeroGPU.
+      medieval hand, not yet the parchment look; step 750 picked; (3) done 26 Nov: the Space's "Old Swedish hand" switch, off by default, guided only: the LoRA
+      beside the DiT's own weights (shared; a third DiT copy would not fit ZeroGPU's 48 GB), its blocks eager, staged in
+      bfloat16 (156 MB); (4) done 26 Nov: tested (the LoRA beside draws as the LoRA, shares every weight, leaves the DiT
+      as it was), published (`5a5f6f5`), drawn on ZeroGPU (a 1 MP page of 12 steps in 25 s). Left: more training for the
+      parchment look.
 - [ ] **A 4-step fast mode in the Space (owner, 24 Nov: keep it in the backlog).** Not uploaded yet: the published 4-step
       LoRA on our DiT draws flat paper. Steps: (1) done 24 Nov: at three more seeds it stays cleaner than student i
       (215 against 205 of 219 lines, no struck line) but its seeds of a template are nearly one page; (2) a 4-step student of our own (owner, 24 Nov: our LoRA, not theirs): student i shortened to 4 steps against our teacher with the matching-only recipe
