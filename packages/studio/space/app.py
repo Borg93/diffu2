@@ -72,9 +72,9 @@ FAST, GUIDED = "fast", "guided"  # a page's mode: the distilled student's few un
 # 10 s: asked for with a margin, as a call that outruns its seconds is cut off.
 SETUP_SECONDS, LONGEST_SECONDS = 20, 300
 SECONDS_PER_PASS_KILOTOKEN = {FAST: 0.21, GUIDED: 0.18}
-# The Old Swedish DiT runs eagerly with its LoRA beside its weights: on a DGX Spark (26 Nov 2026, the letter from the
-# 1701 sample, 28 guided steps) 255 s against the compiled DiT's 138, so the guided rate times 1.85, with a margin
-OLD_SWEDISH_SECONDS_PER_PASS_KILOTOKEN = 0.36
+# The Old Swedish DiT runs eagerly with its LoRA beside its weights: on ZeroGPU (26 Nov 2026, the letter at 1 MP from
+# the 1701 sample, 12 guided steps: 18 passes of about 6,500 tokens in 25 s) 0.21 s a pass and thousand tokens
+OLD_SWEDISH_SECONDS_PER_PASS_KILOTOKEN = 0.25
 
 MODELS: Models | None = (
     None if STUB else load_models(DEVICE, student=HERE / "student", old_swedish=HERE / "old_swedish")
