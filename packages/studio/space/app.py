@@ -510,13 +510,13 @@ HEADER = f"""
 EDITOR_HTML = (HERE / "pagedemo" / "editor.html").read_text(encoding="utf-8")
 EDITOR_CSS = (HERE / "pagedemo" / "editor.css").read_text(encoding="utf-8")
 EDITOR_JS = (HERE / "pagedemo" / "editor.js").read_text(encoding="utf-8")
-SAMPLE_TITLES = {  # an example sample's caption: its years
+SAMPLE_TITLES = {  # an example sample's caption: its years (fsv: fornsvenska, Old Swedish)
     "gota-hovratt-1701": "1701",
     "standernas-deputation-1765": "1765",
     "jonkopings-radhusratt-1584-1595": "1590s",
-    "sdhk-11622-1380": "1380, Old Swedish",
-    "sdhk-17225-1409": "1409, Old Swedish",
-    "nikodemusevangeliet-1400s": "1400s, Old Swedish",
+    "sdhk-11622-1380": "1380 fsv",
+    "sdhk-17225-1409": "1409 fsv",
+    "nikodemusevangeliet-1400s": "1400s fsv",
 }
 SAMPLES = sorted(str(path) for path in (HERE / "samples").glob("*.jpg"))
 FIRST = next(iter(TEMPLATES))
