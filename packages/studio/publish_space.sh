@@ -2,7 +2,9 @@
 # The demo Space (Gabriel/diffu-archive-pages, ZeroGPU), staged in $STAGE/<space name> and uploaded: space/'s files
 # without its tests; the sample pages of $SAMPLES (scans, kept outside the repo); the distilled student's checkpoint
 # of $STUDENT, if there is one (diffu-moss-distill's adapter.safetensors, adapter.json and distill.json: the Space's
-# fast mode; without it the Space draws guided only); and requirements.txt with the diffu packages pinned to this
+# fast mode; without it the Space draws guided only); the Old Swedish LoRA's checkpoint of $OLD_SWEDISH, if there is
+# one (diffu-moss-train-ref's adapter.safetensors and adapter.json, best in bfloat16: the Space's Old Swedish switch);
+# and requirements.txt with the diffu packages pinned to this
 # checkout's commit, which the Space installs from GitHub, so the commit must be on origin/main. Refused if it is
 # not, if a staged file names a local path, or if there is no sample page.
 # DRY_RUN=1 stages and lists, without uploading.
@@ -14,6 +16,7 @@ here=packages/studio
 SPACE=${SPACE:-Gabriel/diffu-archive-pages}
 SAMPLES=${SAMPLES:-$HOME/diffu_queue/space/samples}
 STUDENT=${STUDENT:-$HOME/diffu_queue/space/student}
+OLD_SWEDISH=${OLD_SWEDISH:-$HOME/diffu_queue/space/old_swedish}
 HF=${HF:-hf}
 stage=${STAGE:-runs/space}/${SPACE##*/}
 commit=$(git rev-parse HEAD)
@@ -28,6 +31,10 @@ if [ -f "$STUDENT/adapter.safetensors" ]; then
   cp "$STUDENT/adapter.safetensors" "$STUDENT/adapter.json" "$STUDENT/distill.json" "$stage/student/"
   # the record names the teacher's folder where the student was trained: the Space needs only how it is drawn
   sed -i -E 's#"teacher": *"[^"]*"#"teacher": "Gabriel/diffu-moss-above"#' "$stage/student/distill.json"
+fi
+if [ -f "$OLD_SWEDISH/adapter.safetensors" ]; then
+  mkdir -p "$stage/old_swedish"
+  cp "$OLD_SWEDISH/adapter.safetensors" "$OLD_SWEDISH/adapter.json" "$stage/old_swedish/"
 fi
 sed -i "s/DIFFU_COMMIT/$commit/" "$stage/requirements.txt"
 if leaks=$(grep -rlE "/home/|/mnt/|/leonardo" "$stage" --include='*.py' --include='*.md' --include='*.js' --include='*.txt' --include='*.json'); then

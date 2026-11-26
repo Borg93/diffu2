@@ -60,6 +60,11 @@ Measured on the templates, drawn fast at 2 megapixels from the sample pages (20 
   A pass takes as long as the tokens it reads: the page's, the sample's and the prompt's, so a smaller page (1 or
   1.5 megapixels) or a sample that fills less of the page draws faster. The status line under the button says how
   much GPU time the page in the editor will ask for.
+- **Old Swedish hand** draws a guided page with a LoRA trained on medieval Old Swedish charters and books (1300s to
+  1500s): Gothic letter forms and their abbreviations, the text still yours. It is kept apart from the model and off
+  by default. It does not yet draw parchment: the paper still follows the sample. Its pages are drawn about twice as
+  slowly as a guided page (the LoRA runs beside the model's weights, uncompiled), so they ask for more GPU time, and
+  the read-back, by a reader of later Swedish hands, tags more of their lines `unclear`.
 
 ## How it is built
 

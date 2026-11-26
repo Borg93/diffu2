@@ -72,8 +72,13 @@ FAST, GUIDED = "fast", "guided"  # a page's mode: the distilled student's few un
 # 10 s: asked for with a margin, as a call that outruns its seconds is cut off.
 SETUP_SECONDS, LONGEST_SECONDS = 20, 300
 SECONDS_PER_PASS_KILOTOKEN = {FAST: 0.21, GUIDED: 0.18}
+# The Old Swedish DiT runs eagerly with its LoRA beside its weights: on a DGX Spark (26 Nov 2026, the letter from the
+# 1701 sample, 28 guided steps) 255 s against the compiled DiT's 138, so the guided rate times 1.85, with a margin
+OLD_SWEDISH_SECONDS_PER_PASS_KILOTOKEN = 0.36
 
-MODELS: Models | None = None if STUB else load_models(DEVICE, student=HERE / "student")
+MODELS: Models | None = (
+    None if STUB else load_models(DEVICE, student=HERE / "student", old_swedish=HERE / "old_swedish")
+)
 
 
 @spaces.GPU(duration=1500)  # the longest a start-up call may take; the build itself took 12 s on a DGX Spark
@@ -94,6 +99,7 @@ if MODELS is not None and os.environ.get("PAGEDEMO_COMPILE", "1") == "1":
 INSTALLED: set[int] = set()  # the processes whose DiTs run the package (a GPU call may run in a fresh process)
 STUDENT_STEPS = 8 if MODELS is None or MODELS.student is None else MODELS.student.student_steps
 HAS_STUDENT = STUB or (MODELS is not None and MODELS.student is not None)
+HAS_OLD_SWEDISH = STUB or (MODELS is not None and MODELS.old_swedish_transformer is not None)
 
 
 def passes(mode: str, steps: int, guidance: float) -> int:
@@ -110,9 +116,11 @@ def dit_tokens(plan: CropPlan, sample: Image.Image, sample_lines: list[LayoutBox
     return (plan.width * plan.height + seen.width * seen.height) // LATENT_GRID**2 + prompt_tokens
 
 
-def gpu_seconds(tokens: int, mode: str, steps: int, guidance: float) -> int:
-    """The GPU seconds asked for a page whose DiT reads ``tokens`` tokens a pass, drawn in ``mode``."""
-    drawing = passes(mode, steps, guidance) * tokens / 1000 * SECONDS_PER_PASS_KILOTOKEN[mode]
+def gpu_seconds(tokens: int, mode: str, steps: int, guidance: float, old_swedish: bool = False) -> int:
+    """The GPU seconds asked for a page whose DiT reads ``tokens`` tokens a pass, drawn in ``mode`` (or with the Old
+    Swedish LoRA: guided, eagerly)."""
+    rate = OLD_SWEDISH_SECONDS_PER_PASS_KILOTOKEN if old_swedish else SECONDS_PER_PASS_KILOTOKEN[mode]
+    drawing = passes(GUIDED if old_swedish else mode, steps, guidance) * tokens / 1000 * rate
     return min(LONGEST_SECONDS, math.ceil(SETUP_SECONDS + drawing))
 
 
@@ -124,12 +132,13 @@ def _duration(
     guidance: float,
     seed: int,
     mode: str,
+    old_swedish: bool,
     progress: gr.Progress = gr.Progress(track_tqdm=True),  # noqa: B008  # as draw_on_gpu's own
 ) -> int:
     """The GPU seconds ZeroGPU is asked for a page: it calls this with the arguments :func:`draw_on_gpu` is called
     with, so the two share one signature."""
     tokens = dit_tokens(plan, sample, sample_lines, token_count(layout_prompt_of(plan)))
-    return gpu_seconds(tokens, mode, steps, guidance)
+    return gpu_seconds(tokens, mode, steps, guidance, old_swedish)
 
 
 @spaces.GPU(duration=_duration)
@@ -141,6 +150,7 @@ def draw_on_gpu(
     guidance: float,
     seed: int,
     mode: str,
+    old_swedish: bool,
     progress: gr.Progress = gr.Progress(track_tqdm=True),  # noqa: B008  # Gradio's own idiom
 ) -> Drawn:
     """A planned page drawn and read back on the GPU."""
@@ -150,7 +160,17 @@ def draw_on_gpu(
     if PACKAGE is not None and os.getpid() not in INSTALLED:
         install_blocks(MODELS, Path(PACKAGE))
         INSTALLED.add(os.getpid())
-    return draw(MODELS, plan, sample, sample_lines, steps=steps, guidance=guidance, seed=seed, fast=mode == FAST)
+    return draw(
+        MODELS,
+        plan,
+        sample,
+        sample_lines,
+        steps=steps,
+        guidance=guidance,
+        seed=seed,
+        fast=mode == FAST,
+        old_swedish=old_swedish,
+    )
 
 
 def data_uri(image: Image.Image, side: int) -> str:
@@ -197,7 +217,14 @@ def sample_image(path: str) -> Image.Image:
 
 
 def page_status(
-    value: str, sample: str | None, megapixels: float, steps: int, guidance: float, mode: str, sample_zoom: float
+    value: str,
+    sample: str | None,
+    megapixels: float,
+    steps: int,
+    guidance: float,
+    mode: str,
+    sample_zoom: float,
+    old_swedish: bool = False,
 ) -> tuple[str, str]:
     """What the page in the editor comes to before it is drawn: its lines, its prompt's length and the GPU time it
     will ask for as a status line, and the prompt itself."""
@@ -217,7 +244,7 @@ def page_status(
         asked = "add a sample page to draw"
     else:
         read = dit_tokens(plan, image, ready.sample_lines, tokens)
-        asked = f"asks for {gpu_seconds(read, mode, int(steps), guidance)} s of GPU time"
+        asked = f"asks for {gpu_seconds(read, mode, int(steps), guidance, old_swedish)} s of GPU time"
     parts = [
         f"{len(plan.lines)} line{'s' if len(plan.lines) != 1 else ''}",
         f"{plan.width} x {plan.height} px",
@@ -230,12 +257,23 @@ def page_status(
 
 
 def status(
-    value: str, sample: str | None, megapixels: float, steps: int, guidance: float, mode: str, sample_zoom: float
-) -> tuple[str, str, gr.Slider, gr.Slider]:
-    """The page's status line and prompt (:func:`page_status`), and the guided mode's two sliders live or greyed:
-    one round trip for whatever changed."""
-    line, prompt = page_status(value, sample, megapixels, steps, guidance, mode, sample_zoom)
-    return line, prompt, gr.Slider(interactive=mode == GUIDED), gr.Slider(interactive=mode == GUIDED)
+    value: str,
+    sample: str | None,
+    megapixels: float,
+    steps: int,
+    guidance: float,
+    mode: str,
+    sample_zoom: float,
+    old_swedish: bool,
+) -> tuple[str, str, gr.Slider, gr.Slider, gr.Radio]:
+    """The page's status line and prompt (:func:`page_status`), the guided mode's two sliders live or greyed, and the
+    mode, held at guided while the Old Swedish LoRA is on: one round trip for whatever changed."""
+    if old_swedish:
+        mode = GUIDED
+    line, prompt = page_status(value, sample, megapixels, steps, guidance, mode, sample_zoom, old_swedish)
+    guided = mode == GUIDED
+    held = gr.Radio(value=GUIDED, interactive=False) if old_swedish else gr.Radio(interactive=True)
+    return line, prompt, gr.Slider(interactive=guided), gr.Slider(interactive=guided), held
 
 
 def pick_sample(chosen: gr.SelectData) -> str:
@@ -271,6 +309,7 @@ def draw_page(
     seed: int = 0,
     randomize_seed: bool = True,
     sample_zoom: float = 1.0,
+    old_swedish: bool = False,
     progress: gr.Progress = gr.Progress(track_tqdm=True),  # noqa: B008
 ) -> tuple[object, ...]:
     """Draw a synthetic archive page from a layout of boxes, in the paper, ink and hand of a sample page.
@@ -288,6 +327,8 @@ def draw_page(
         seed: The noise seed, used unless ``randomize_seed``.
         randomize_seed: Draw from a fresh seed.
         sample_zoom: Show the model the sample's writing this many times larger than the page's own.
+        old_swedish: Draw with the Old Swedish LoRA, in the hand of medieval Old Swedish charters and books
+            (guided only).
 
     Returns:
         The editor's value with the drawn page, the page, its image, ALTO and PAGE files and its record (the prompt
@@ -310,10 +351,16 @@ def draw_page(
         )
     if mode not in (FAST, GUIDED) or (mode == FAST and not HAS_STUDENT):
         raise gr.Error(f"No such mode: {mode!r}.")
+    if old_swedish and not HAS_OLD_SWEDISH:
+        raise gr.Error("The Old Swedish LoRA is not loaded here.")
+    if old_swedish and mode == FAST:
+        raise gr.Error("An Old Swedish page is drawn guided: choose the guided mode.")
     plan = ready.plan
     seed = random.randint(0, MAX_SEED) if randomize_seed else int(seed)
     steps = int(steps)
-    drawn = draw_on_gpu(plan, image, ready.sample_lines, steps, float(guidance), seed, mode, progress=progress)
+    drawn = draw_on_gpu(
+        plan, image, ready.sample_lines, steps, float(guidance), seed, mode, bool(old_swedish), progress=progress
+    )
 
     name = f"diffu-page-{seed}"
     folder = Path(tempfile.mkdtemp(prefix="pagedemo-"))
@@ -336,6 +383,7 @@ def draw_page(
         width=plan.width,
         height=plan.height,
         sample_zoom=sample_zoom,
+        old_swedish=bool(old_swedish),
         prompt=ready.prompt,
         page=document,
     )
@@ -351,6 +399,7 @@ def draw_page(
         f"seed {seed}",
         f"{plan.width} x {plan.height} px",
         f"{STUDENT_STEPS} steps, distilled" if mode == FAST else f"{steps} steps, guidance {guidance:g}",
+        "Old Swedish" if old_swedish else "",
         f"drawn in {drawn.draw_seconds:.0f} s",
         read,
         *ready.notes,
@@ -479,7 +528,7 @@ def build() -> gr.Blocks:
     start_mode = GUIDED  # the student's pages smear and misspell words (docs/MOSS_RUNS.md, 21 Nov 2026)
     start_sample = next((path for path in SAMPLES if "1701" in Path(path).name), SAMPLES[0] if SAMPLES else None)
     start_note, start_prompt = page_status(
-        editor_value(TEMPLATES[FIRST], None), start_sample, MEGAPIXELS, STEPS, GUIDANCE, start_mode, 1.0
+        editor_value(TEMPLATES[FIRST], None), start_sample, MEGAPIXELS, STEPS, GUIDANCE, start_mode, 1.0, False
     )
     with gr.Blocks(title="diffu · archive pages", fill_width=True) as demo:
         gr.HTML(HEADER, elem_id="pd-header")
@@ -522,6 +571,13 @@ def build() -> gr.Blocks:
                     value=start_mode,
                     visible=HAS_STUDENT,
                     elem_id="pd-mode",
+                )
+                old_swedish = gr.Checkbox(
+                    label="Old Swedish hand",
+                    info="A LoRA trained on medieval Old Swedish charters and books: their letter forms. Guided only.",
+                    value=False,
+                    visible=HAS_OLD_SWEDISH,
+                    elem_id="pd-old-swedish",
                 )
                 guidance = gr.Slider(
                     label="Guidance (guided only)",
@@ -612,16 +668,17 @@ def build() -> gr.Blocks:
                 guidance.release,
                 mode.change,
                 sample_zoom.release,
+                old_swedish.change,
             ],
             fn=status,
-            inputs=[editor, sample, megapixels, steps, guidance, mode, sample_zoom],
-            outputs=[note, prompt, steps, guidance],
+            inputs=[editor, sample, megapixels, steps, guidance, mode, sample_zoom, old_swedish],
+            outputs=[note, prompt, steps, guidance, mode],
             api_visibility="private",
             show_progress="hidden",
         )
         run.click(
             fn=draw_page,
-            inputs=[editor, sample, mode, megapixels, steps, guidance, seed, randomize_seed, sample_zoom],
+            inputs=[editor, sample, mode, megapixels, steps, guidance, seed, randomize_seed, sample_zoom, old_swedish],
             outputs=[
                 editor,
                 result,

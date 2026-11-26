@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from pagedemo.document import Document
 
@@ -20,5 +20,6 @@ class DrawRecord(BaseModel):
     width: int
     height: int
     sample_zoom: float
+    old_swedish: bool = Field(default=False, exclude_if=lambda used: not used)  # drawn with the Old Swedish LoRA
     prompt: str
     page: Document

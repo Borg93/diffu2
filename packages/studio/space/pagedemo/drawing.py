@@ -6,7 +6,10 @@ at pinned revisions, and the pipeline's line judge, a Swedish HTR model that rea
 student, when one is given (a ``diffu-moss-distill`` checkpoint: a LoRA of the DiT that draws in a few steps without
 guidance), is merged into a copy of the DiT: a fast page is drawn by the copy, a guided one by the DiT itself. Both
 can run their joint blocks from one AOTInductor package (:func:`build_blocks_package`), built where they draw: a
-package holds no weights, each block hands it its own.
+package holds no weights, each block hands it its own. The Old Swedish LoRA, when one is given (a
+``diffu-moss-train-ref`` checkpoint trained on medieval Old Swedish charters and books), draws guided pages in their
+hand: it runs beside the DiT's own weights, shared with it (a third copy of the DiT would not fit the GPU), its blocks
+eager.
 :func:`draw` runs the crop pipeline as ``diffu_page.draw.pipeline.draw_crop`` does, the guidance scale set per page,
 and keeps the drawn page when the read-back fails: a page costs its author GPU time, its labels little of it.
 """
@@ -48,6 +51,8 @@ DIT_FILES = ["config.json", "export.json", "*.safetensors"]
 BASE_ENV, DIT_ENV = "PAGEDEMO_BASE", "PAGEDEMO_DIT"  # local folders in place of the downloads, for a run off the Hub
 STUDENT_ENV = "PAGEDEMO_STUDENT"  # a student's checkpoint folder in place of the Space's own
 STUDENT_FILES = (ADAPTER_WEIGHTS, ADAPTER_RECORD, DISTILL_RECORD)
+OLD_SWEDISH_ENV = "PAGEDEMO_OLD_SWEDISH"  # the Old Swedish LoRA's checkpoint folder in place of the Space's own
+OLD_SWEDISH_FILES = (ADAPTER_WEIGHTS, ADAPTER_RECORD)
 
 
 # The token count a package is tuned for: a 2 MP page with its sample and prompt
@@ -56,7 +61,8 @@ PACKAGE_TOKENS = 14_000
 
 class Models:
     """What a page is drawn and read with: the crop pipeline (its DiT draws guided pages) and the line judge, on their
-    device, and the student: the DiT with it merged, and how it draws (None, None: no student is loaded)."""
+    device, the student: the DiT with it merged, and how it draws (None, None: no student is loaded), and the DiT with
+    the Old Swedish LoRA beside its weights (None: none is loaded)."""
 
     def __init__(
         self,
@@ -64,12 +70,14 @@ class Models:
         judge: Judge,
         student: DistillRecord | None = None,
         student_transformer: MossTransformer | None = None,
+        old_swedish_transformer: MossTransformer | None = None,
     ) -> None:
         self.pipe = pipe
         self.judge = judge
         self.student = student
         self.transformer: MossTransformer = pipe.transformer
         self.student_transformer = student_transformer
+        self.old_swedish_transformer = old_swedish_transformer
 
 
 class Drawn(BaseModel):
@@ -95,12 +103,39 @@ def model_directory() -> Path:
     return out
 
 
-def student_folder(own: Path) -> Path | None:
-    """The student's checkpoint folder: the one ``PAGEDEMO_STUDENT`` names, else ``own`` (the Space's, staged with
-    it) when it holds a checkpoint's files; None when there is neither: the pages are then drawn guided only."""
-    named = os.environ.get(STUDENT_ENV)
+def checkpoint_folder(own: Path, env: str, files: tuple[str, ...]) -> Path | None:
+    """A checkpoint's folder: the one the variable ``env`` names, else ``own`` (the Space's, staged with it), when it
+    holds ``files``; None when there is neither: the pages are then drawn without it."""
+    named = os.environ.get(env)
     folder = Path(named) if named else own
-    return folder if all((folder / name).is_file() for name in STUDENT_FILES) else None
+    return folder if all((folder / name).is_file() for name in files) else None
+
+
+def _load_lora(transformer: MossTransformer, checkpoint: Path) -> None:
+    """The LoRA saved in ``checkpoint`` added to ``transformer`` with its weights, in the DiT's dtype.
+
+    Raises:
+        ValueError: If the checkpoint's weights are not its LoRA's.
+    """
+    add_lora(transformer, AdapterRecord.read(checkpoint / ADAPTER_RECORD).lora)
+    loaded = set_peft_model_state_dict(transformer, load_file(str(checkpoint / ADAPTER_WEIGHTS)))
+    if loaded.unexpected_keys:
+        raise ValueError(f"{checkpoint}: weights that are not its LoRA's")
+    cast_lora(transformer)
+
+
+def lora_beside(transformer: MossTransformer, checkpoint: Path) -> MossTransformer:
+    """``transformer`` again, its modules its own but every weight and buffer shared with it (so moving or changing one
+    moves or changes the other), with the LoRA saved in ``checkpoint`` beside its layers: the LoRA's weights are all
+    it adds. ``transformer`` itself is left as it was.
+
+    Raises:
+        ValueError: If the checkpoint's weights are not its LoRA's.
+    """
+    shared: dict[int, object] = {id(tensor): tensor for tensor in (*transformer.parameters(), *transformer.buffers())}
+    adapted = copy.deepcopy(transformer, memo=shared)
+    _load_lora(adapted, checkpoint)
+    return adapted
 
 
 def merged_student(transformer: MossTransformer, checkpoint: Path) -> tuple[MossTransformer, DistillRecord]:
@@ -112,27 +147,33 @@ def merged_student(transformer: MossTransformer, checkpoint: Path) -> tuple[Moss
         ValueError: If the checkpoint's weights are not its LoRA's.
     """
     student = copy.deepcopy(transformer)
-    add_lora(student, AdapterRecord.read(checkpoint / ADAPTER_RECORD).lora)
-    loaded = set_peft_model_state_dict(student, load_file(str(checkpoint / ADAPTER_WEIGHTS)))
-    if loaded.unexpected_keys:
-        raise ValueError(f"{checkpoint}: weights that are not its LoRA's")
-    cast_lora(student)
+    _load_lora(student, checkpoint)
     student.fuse_lora(lora_scale=1.0)
     student.unload_lora()
     return student, DistillRecord.read(checkpoint / DISTILL_RECORD)
 
 
-def load_models(device: str, *, student: Path) -> Models:
-    """The crop pipeline of the fine-tuned model, the student merged into a copy of its DiT if there is one
-    (:func:`student_folder`, the Space's own in ``student``), and the line judge, on ``device``. Both DiTs are built
-    on the CPU and moved."""
+def load_models(device: str, *, student: Path, old_swedish: Path) -> Models:
+    """The crop pipeline of the fine-tuned model, the student merged into a copy of its DiT if there is one (the
+    Space's own in ``student``, or ``PAGEDEMO_STUDENT``'s), the Old Swedish LoRA beside the DiT's weights if there is
+    one (``old_swedish``, or ``PAGEDEMO_OLD_SWEDISH``'s), and the line judge, on ``device``. The DiTs are built on the
+    CPU and moved."""
     pipe = load_pipeline(model_directory(), crop_blocks, loras={}, settings=DrawSettings(device="cpu"))
-    folder = student_folder(student)
+    folder = checkpoint_folder(student, STUDENT_ENV, STUDENT_FILES)
     merged, record = (None, None) if folder is None else merged_student(pipe.transformer, folder)
+    styled = checkpoint_folder(old_swedish, OLD_SWEDISH_ENV, OLD_SWEDISH_FILES)
+    beside = None if styled is None else lora_beside(pipe.transformer, styled)
     pipe.to(device)
-    if merged is not None:
-        merged.to(device)
-    return Models(pipe=pipe, judge=TrOCRJudge(device=device), student=record, student_transformer=merged)
+    for transformer in (merged, beside):
+        if transformer is not None:
+            transformer.to(device)
+    return Models(
+        pipe=pipe,
+        judge=TrOCRJudge(device=device),
+        student=record,
+        student_transformer=merged,
+        old_swedish_transformer=beside,
+    )
 
 
 def build_blocks_package(models: Models, out: Path) -> Path:
@@ -161,6 +202,7 @@ def install_blocks(models: Models, package: Path) -> None:
     install_package(models.transformer, package)
     if models.student_transformer is not None:
         install_package(models.student_transformer, package)
+    # the Old Swedish DiT's blocks hold its LoRA's layers, which the package does not take: they run eagerly
 
 
 # The share of a guided page's steps that are guided: the ink and the words are settled in the first half, and the
@@ -179,20 +221,31 @@ def draw(
     guidance: float,
     seed: int,
     fast: bool = False,
+    old_swedish: bool = False,
 ) -> Drawn:
     """``plan`` drawn from noise seed ``seed`` in ``steps`` steps at guidance scale ``guidance`` (exactly 1: one pass
-    a step), or ``fast``: by the student, in its own steps without guidance; from ``sample`` (cut by ``sample_lines``
-    when the plan is not a whole page's), then every line read back by the judge.
+    a step), or ``fast``: by the student, in its own steps without guidance, or ``old_swedish``: guided, by the DiT
+    with the Old Swedish LoRA; from ``sample`` (cut by ``sample_lines`` when the plan is not a whole page's), then
+    every line read back by the judge.
 
     Raises:
-        ValueError: If a fast page is asked of models without a student.
+        ValueError: If a fast page is asked of models without a student, an Old Swedish page of models without the
+            LoRA, or a page both fast and Old Swedish (the student is distilled from the DiT alone).
     """
     pipe = models.pipe
+    transformer = models.transformer
+    if fast and old_swedish:
+        raise ValueError("an Old Swedish page is drawn guided: the student was distilled from the DiT without it")
     if fast:
         if models.student is None or models.student_transformer is None:
             raise ValueError("a fast page needs the distilled student, and none is loaded")
         steps, guidance = models.student.student_steps, models.student.guidance_scale
-    pipe.update_components(transformer=models.student_transformer if fast else models.transformer)
+        transformer = models.student_transformer
+    if old_swedish:
+        if models.old_swedish_transformer is None:
+            raise ValueError("an Old Swedish page needs its LoRA, and none is loaded")
+        transformer = models.old_swedish_transformer
+    pipe.update_components(transformer=transformer)
     pipe.update_components(guider=ReferenceGuidance(guidance_scale=guidance, stop=GUIDED_SHARE))
     # the text encoder encodes the negative prompt only if the guider guides at its current step: the first, here
     pipe.guider.set_state(step=0, num_inference_steps=steps, timestep=None)
