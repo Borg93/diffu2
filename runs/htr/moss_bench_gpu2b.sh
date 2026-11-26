@@ -8,7 +8,7 @@ log() { echo "[$(date '+%F %T')] $*"; }
 B=/mnt/scratch/gabriel/moss_bench; M=/mnt/scratch/gabriel/models/moss/moss-diffu-moss-above
 T=/mnt/scratch/gabriel/htr/pool_v3/C0074421/alto; HOME_PATH=$PATH
 export CUDA_VISIBLE_DEVICES=2 HF_HUB_OFFLINE=1 OMP_NUM_THREADS=8
-toolkit() { export CUDA_HOME=$1/site-packages/nvidia/cu13; export PATH=$CUDA_HOME/bin:$HOME_PATH; }
+toolkit() { export CUDA_HOME=$1/site-packages/nvidia/cu13; export PATH=$CUDA_HOME/bin:${1%/lib/python*}/bin:$HOME_PATH; }  # nvcc, and the environment's own ninja
 watch_memory() { ( while sleep 1; do nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -i 2; done > $1 ) & watch=$!; }
 
 toolkit $PWD/packages/htr_train/envs/vllm/.venv/lib/python3.12   # the workspace's environment has no nvcc of its own
@@ -24,6 +24,15 @@ if [ -f $B/moss_bf16_sm120.pt2 ] && [ ! -f $B/speed/C/summary.json ]; then
   kill $watch 2>/dev/null
 fi
 
+for t in ${OURS:-}; do
+  log "test $t: $(cat $B/settings/$t.json)"; watch_memory $B/speed_$t.mem
+  uv run diffu-generate --model $M --templates $T/C0074421_00154.xml --templates $T/C0074421_00156.xml \
+      --text-from $T/C0074421_00154.xml --text-from $T/C0074421_00156.xml --title "the court records of a häradsrätt" --years 1829 \
+      --reference $B/pagedemo/samples/gota-hovratt-1701.jpg --reference-caption sample --whole-page --page-megapixels 2 \
+      --seed 7 --draw-settings $B/settings/$t.json --out $B/speed/$t > $B/speed_$t.log 2>&1 \
+    && log "test $t done; peak $(sort -n $B/speed_$t.mem | tail -n 1) MiB" || log "test $t FAILED: $(tail -n 4 $B/speed_$t.log | cut -c1-400)"
+  kill $watch 2>/dev/null
+done
 toolkit /mnt/scratch/gabriel/envs/sglang_moss/lib/python3.12
 # 22:10: every SGLang run goes through moss_bench_ext, which lays the sample above the page as the model was trained
 # (the plugin lays it over the page: SGLang then drew a copy of the sample, PSNR 16.6 dB to ours; with it 31.9 dB).
@@ -39,6 +48,7 @@ for kind in ${KINDS:-fa_lossless fa_exact torch_sdpa cudnn_sdpa fa_high batch2 c
     batch2) server='{"disable_autocast": true}'; extra='{"num_outputs_per_prompt": 2}';;
     cuda_graph) server='{"disable_autocast": true, "enable_breakable_cuda_graph": true}';;
     compiled) server='{"disable_autocast": true, "enable_torch_compile": true}'; ext=moss_bench_ext;;
+    cudnn_dit) server='{"disable_autocast": true, "attention_backend": "torch_cudnn_sdpa", "component_attention_backends": {"text_encoder": "torch_sdpa"}}';;  # cuDNN has no kernel for the text encoder's attention
     trace) server='{"disable_autocast": true}'; extra='{"profile": true, "num_profiled_timesteps": 3}'; export SGLANG_DIFFUSION_TORCH_PROFILER_DIR=$B/trace_sglang;;
   esac
   log "sglang $kind"; watch_memory $B/sglang_$kind.mem
@@ -49,7 +59,7 @@ for kind in ${KINDS:-fa_lossless fa_exact torch_sdpa cudnn_sdpa fa_high batch2 c
 done
 
 toolkit $PWD/packages/htr_train/envs/vllm/.venv/lib/python3.12
-for name in eager compiled; do
+for name in ${TRACES-eager compiled}; do
   [ $name = compiled ] && flag=--compile-blocks || flag=
   log "trace $name"
   uv run diffu-generate --jobs $B/run.jsonl --model $M --out $B/$name --steps 28 --guidance 2 --guidance-stop 0.5 \
@@ -60,7 +70,7 @@ toolkit /mnt/scratch/gabriel/envs/parse_rlvr/venv/lib/python3.13
 E=/mnt/scratch/gabriel/htr/rlvr/eval; PY=/mnt/scratch/gabriel/envs/parse_rlvr/venv/bin/python
 for name in sft_dev974 pilot2b_s256_dev974; do
   log "headroom $name"
-  HTR_RLVR_CONFIG=$PWD/runs/htr/rlvr/grpo_htr_v2.yaml PYTHONPATH=/mnt/scratch/gabriel/src/Nemotron/src:runs/htr/rlvr \
+  OMP_NUM_THREADS=1 VLLM_USE_FLASHINFER_SAMPLER=0 HTR_RLVR_CONFIG=$PWD/runs/htr/rlvr/grpo_htr_v2.yaml PYTHONPATH=/mnt/scratch/gabriel/src/Nemotron/src:runs/htr/rlvr \
     $PY runs/htr/rlvr/headroom.py $E/$name/view $E/headroom_${name%_dev974} --temperatures 0.3,0.6,1.0 --samples 8 > $E/headroom_${name%_dev974}.log 2>&1 \
     && log "headroom $name done: $(grep -c '^temperature' $E/headroom_${name%_dev974}.log) temperatures" || log "headroom $name FAILED: $(grep -n 'Error' $E/headroom_${name%_dev974}.log | tail -n 3 | cut -c1-300)"
 done

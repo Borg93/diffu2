@@ -43,7 +43,8 @@ def main() -> None:
             if result is None:
                 print(json.dumps({"page": k, "error": "SGLang drew nothing"}), flush=True)
                 continue
-            samples = torch.as_tensor(result.samples).float().cpu()
+            first = result[0] if isinstance(result, list) else result  # several images a call come back as a list
+            samples = torch.as_tensor(first.samples).float().cpu()
             pixels = (samples[0] if samples.ndim == 4 else samples).numpy().transpose(1, 2, 0)
             Image.fromarray((pixels * 255).round().astype(np.uint8)).save(out / f"page_{k}.jpg", quality=95)
             print(json.dumps({"page": k, "seconds": seconds, "images": int(params.get("num_outputs_per_prompt", 1)), **size}), flush=True)
