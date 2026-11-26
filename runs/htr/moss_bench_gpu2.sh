@@ -35,14 +35,23 @@ for name in eager compiled; do
       --profile $B/trace_$name $flag > $B/$name.log 2>&1 && log "trace $name done" || log "trace $name FAILED: $(tail -n 3 $B/$name.log | cut -c1-300)"
 done
 # The target is SGLang Diffusion inside Ray Data (INFERENCE.md section 13), so: the same pages (test A's prompts and
-# samples, captured as it drew) drawn by SGLang with our plugin, its own attention backend and PyTorch's; compare with
+# samples, captured as it drew) drawn by SGLang with our plugin, its attention kernels and quality tiers; compare with
 # test H (guided every step, as SGLang guides). The demo Space is not measured.
-for kind in default torch_sdpa compiled; do
-  case $kind in default) server='{}';; torch_sdpa) server='{"attention_backend": "torch_sdpa"}';; compiled) server='{"enable_torch_compile": true}';; esac
+# SGLang's MOSS-Image refuses torch.compile ("support has not been validated") and autocast, and is not on the
+# breakable-CUDA-graph list (sglang 0.5.23), so on one GPU its levers are the attention kernel and the quality tier
+# (lossless, the default, adds its fused kernels over exact).
+for kind in fa_lossless fa_exact torch_sdpa cudnn_sdpa; do
+  extra='{}'
+  case $kind in
+    fa_lossless) server='{"disable_autocast": true}';;
+    fa_exact) server='{"disable_autocast": true}'; extra='{"quality": "exact"}';;
+    torch_sdpa) server='{"disable_autocast": true, "attention_backend": "torch_sdpa"}';;
+    cudnn_sdpa) server='{"disable_autocast": true, "attention_backend": "torch_cudnn_sdpa"}';;
+  esac
   log "sglang $kind"
   ( while sleep 1; do nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -i 2; done > $B/sglang_$kind.mem ) & watch=$!
   SGLANG_EXTERNAL_MODEL_PACKAGE=diffu_sglang_moss /mnt/scratch/gabriel/envs/sglang_moss/bin/python $B/sglang_bench.py \
-      /mnt/scratch/gabriel/models/moss/hf-diffu-moss-above $B/captured $B/sglang_$kind "$server" > $B/sglang_$kind.log 2>&1 \
+      /mnt/scratch/gabriel/models/moss/hf-diffu-moss-above $B/captured $B/sglang_$kind "$server" "$extra" > $B/sglang_$kind.log 2>&1 \
     && log "sglang $kind done; peak $(sort -n $B/sglang_$kind.mem | tail -n 1) MiB: $(grep '^{' $B/sglang_$kind.log | tr '\n' ' ' | cut -c1-500)" || log "sglang $kind FAILED: $(tail -n 4 $B/sglang_$kind.log | cut -c1-400)"
   kill $watch 2>/dev/null; sleep 10
 done
