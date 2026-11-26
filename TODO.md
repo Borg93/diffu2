@@ -99,8 +99,8 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
       Student i's own checkpoints (24 Nov) are level from step 200 to 400, the same lines struck: not longer, another recipe.
 - [ ] **An Old Swedish LoRA as an option in the Space (owner, 25 Nov).** A LoRA trained on all of the owner's Old Swedish
       HTR set (charters and five books) on the above DiT, kept apart from it (MOSS_RUNS, "An Old Swedish LoRA"). Steps:
-      (1) done 26 Nov: trained to step 750 on the Spark; (2) its checkpoints drawn and looked at beside the real pages,
-      the best picked; (3) the Space loads it as its own switch (as it loads the student), off by default, the page
+      (1) done 26 Nov: trained to step 750 on the Spark; (2) done 26 Nov: drawn beside the real pages; it learns the
+      medieval hand, not yet the parchment look; step 750 picked; (3) the Space loads it as its own switch (as it loads the student), off by default, the page
       drawn as today without it; (4) tests, published, checked on ZeroGPU.
 - [ ] **A 4-step fast mode in the Space (owner, 24 Nov: keep it in the backlog).** Not uploaded yet: the published 4-step
       LoRA on our DiT draws flat paper. Steps: (1) done 24 Nov: at three more seeds it stays cleaner than student i
