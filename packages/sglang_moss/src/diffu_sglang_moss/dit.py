@@ -35,7 +35,10 @@ from sglang.multimodal_gen.runtime.models.dits.moss_image import (
     _Block,
     _norm_rope,
     _prepare_rope,
+    _RMSNorm,
+    _rotate_native,
     _situ,
+    _situ_native,
     validate_skip_layers,
 )
 from torch import Tensor, nn
@@ -73,8 +76,20 @@ def placed_positions(
     return placed
 
 
+def _traced_norm_rope(norm: _RMSNorm, x: Tensor, rope: tuple[Tensor, Tensor], heads: int) -> Tensor:
+    """``_norm_rope``'s plain path (``_rotate_native`` of ``forward_native``), for torch.compile to trace."""
+    return _rotate_native(norm.forward_native(x.unflatten(-1, (heads, -1))), rope).flatten(2)
+
+
 def joint_block(layer: _Block, x: Tensor, rope: tuple[Tensor, Tensor], modulation: Tensor) -> Tensor:
-    """SGLang's joint block (``_Block``) with a modulation per token ``[B, tokens, 6, dim]``."""
+    """SGLang's joint block (``_Block``) with a modulation per token ``[B, tokens, 6, dim]``.
+
+    Under torch.compile it runs the plain paths of SGLang's fused kernels: their bit-exact gates compare shapes
+    symbolically, which PyTorch's shape solver fails on ("BooleanAtom not allowed in this context"), and Inductor
+    fuses the plain paths itself.
+    """
+    if torch.compiler.is_compiling():
+        return _traced_joint_block(layer, x, rope, modulation)
     shift_a, scale_a, gate_a, shift_f, scale_f, gate_f = modulation.unbind(2)
     dtype = layer.proj["q"].weight.dtype
     y = (layer.norm1(x) * (1 + scale_a) + shift_a).to(dtype)
@@ -84,6 +99,19 @@ def joint_block(layer: _Block, x: Tensor, rope: tuple[Tensor, Tensor], modulatio
     y = layer.norm2(x) * (1 + scale_f) + shift_f
     hidden, gate = layer.proj["ffn_up_gate"](y.to(dtype)).chunk(2, -1)
     return x + layer.proj["ffn_down"](_situ(hidden, gate)) * gate_f
+
+
+def _traced_joint_block(layer: _Block, x: Tensor, rope: tuple[Tensor, Tensor], modulation: Tensor) -> Tensor:
+    """:func:`joint_block` by the plain paths alone."""
+    shift_a, scale_a, gate_a, shift_f, scale_f, gate_f = modulation.unbind(2)
+    dtype = layer.proj["q"].weight.dtype
+    y = (layer.norm1.forward_native(x) * (1 + scale_a) + shift_a).to(dtype)
+    q = _traced_norm_rope(layer.q_norm, layer.proj["q"](y), rope, layer.heads)
+    k = _traced_norm_rope(layer.k_norm, layer.proj["k"](y), rope, layer.heads)
+    x = x + layer.proj["o"](_attention(q, k, layer.proj["v"](y), None, layer.heads, layer.attention)) * gate_a
+    y = layer.norm2.forward_native(x) * (1 + scale_f) + shift_f
+    hidden, gate = layer.proj["ffn_up_gate"](y.to(dtype)).chunk(2, -1)
+    return x + layer.proj["ffn_down"](_situ_native(hidden, gate)) * gate_f
 
 
 class JointLayer(nn.Module):

@@ -39,18 +39,22 @@ for t in ${OURS-R F K12 K06 K24 K12F D}; do
   kill $watch 2>/dev/null
 done
 
-toolkit /mnt/scratch/gabriel/envs/sglang_moss/lib/python3.12
+# SGLang builds kernels against a toolkit laid out as /usr/local/cuda is (lib64/libcudart.so): cuda13 is the
+# environment's pip toolkit in that shape (the CUDA graph run failed without it: "cannot find -lcudart").
+export CUDA_HOME=/mnt/scratch/gabriel/envs/sglang_moss/cuda13; export PATH=$CUDA_HOME/bin:/mnt/scratch/gabriel/envs/sglang_moss/bin:$HOME_PATH
 mkdir -p $O/captured12; for k in $(seq 0 11); do cp $O/captured/page_$k.* $O/captured12/ 2>/dev/null; done
-for kind in ${SGLANG-exact cache_default cache_012 fp8_attention}; do
-  server='{"disable_autocast": true}'
+for kind in ${SGLANG-exact cache_default cache_012 fp8_attention compiled cuda_graph}; do
+  server='{"disable_autocast": true}'; ext=diffu_sglang_moss
   case $kind in
     exact) extra='{"quality": "exact"}';;
     cache_default) extra='{"enable_cache_dit": true}';;
     cache_012) extra='{"enable_cache_dit": true, "cache_dit_params": {"residual_diff_threshold": 0.12}}';;
+    compiled) extra='{}'; server='{"disable_autocast": true, "enable_torch_compile": true}'; ext=moss_bench_ext;;  # SGLang's refusal lifted
+    cuda_graph) extra='{}'; server='{"disable_autocast": true, "enable_breakable_cuda_graph": true}';;
     fp8_attention) extra='{}'; server='{"disable_autocast": true, "attention_backend": "fp8_fa_sm120", "component_attention_backends": {"text_encoder": "torch_sdpa"}}';;
   esac
   log "sglang $kind"; watch_memory $O/sglang_$kind.mem
-  SGLANG_EXTERNAL_MODEL_PACKAGE=diffu_sglang_moss timeout 5400 /mnt/scratch/gabriel/envs/sglang_moss/bin/python $B/sglang_bench.py \
+  PYTHONPATH=$PWD/runs/htr/moss_bench SGLANG_EXTERNAL_MODEL_PACKAGE=$ext timeout 5400 /mnt/scratch/gabriel/envs/sglang_moss/bin/python $B/sglang_bench.py \
       /mnt/scratch/gabriel/models/moss/hf-diffu-moss-above $O/captured12 $O/sglang_$kind "$server" "$extra" > $O/sglang_$kind.log 2>&1 \
     && log "sglang $kind done; peak $(sort -n $O/sglang_$kind.mem | tail -n 1) MiB; seconds $(grep '^{"page' $O/sglang_$kind.log | python3 -c "import sys,json;print([json.loads(l).get('seconds') for l in sys.stdin])")" \
     || log "sglang $kind FAILED: $(grep -v '^ *$' $O/sglang_$kind.log | tail -n 5 | cut -c1-400)"
