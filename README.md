@@ -1,3 +1,5 @@
+⚠️ Papers are incoming! ⚠️
+
 # Diffu
 
 Synthetic archive pages with ground truth, to train page-reading vision-language models end to end (Unlimited-OCR 2,
