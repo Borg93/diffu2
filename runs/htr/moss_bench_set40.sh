@@ -42,7 +42,10 @@ done
 
 # SGLang builds kernels against a toolkit laid out as /usr/local/cuda is (lib64/libcudart.so): cuda13 is the
 # environment's pip toolkit in that shape (the CUDA graph run failed without it: "cannot find -lcudart").
-export CUDA_HOME=/mnt/scratch/gabriel/envs/sglang_moss/cuda13; export PATH=$CUDA_HOME/bin:/mnt/scratch/gabriel/envs/sglang_moss/bin:$HOME_PATH
+# 27 Nov 12:40: the CUDA 13.0 toolkit is installed system-wide (/usr/local/cuda-13.0, matching the driver and torch
+# cu130), so SGLang builds its kernels with it; cuda13 above stays as the fallback.
+export CUDA_HOME=/usr/local/cuda-13.0; [ -x $CUDA_HOME/bin/nvcc ] || export CUDA_HOME=/mnt/scratch/gabriel/envs/sglang_moss/cuda13
+export PATH=$CUDA_HOME/bin:/mnt/scratch/gabriel/envs/sglang_moss/bin:$HOME_PATH
 mkdir -p $O/captured12; for k in $(seq 0 11); do cp $O/captured/page_$k.* $O/captured12/ 2>/dev/null; done
 # 27 Nov 12:30: the audit of every SGLang Diffusion option (E75) adds CFG gating (SGLang's stand-in for our guidance
 # stop), Cache-DiT's calibrators and step mask, attention autotune and cuBLASLt; cuDNN attention under all of them.
