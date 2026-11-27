@@ -20,6 +20,9 @@ from sglang.multimodal_gen import DiffGenerator
 def main() -> None:
     model, captured, out, server = sys.argv[1], Path(sys.argv[2]), Path(sys.argv[3]), json.loads(sys.argv[4])
     extra = json.loads(sys.argv[5]) if len(sys.argv) > 5 else {}
+    # {"page_seeds": true} (27 Nov): each page from its own crop's noise seed on a CPU generator, as diffu-generate
+    # draws it (captured/seeds.json), so the pages compare with our pipeline's; without it every page has seed 7
+    seeds = json.loads((captured / "seeds.json").read_text()) if extra.pop("page_seeds", False) else None
     out.mkdir(parents=True, exist_ok=True)
     if server.get("enable_breakable_cuda_graph") and "warmup_resolutions" not in server:  # a graph is captured per size
         sizes = [json.loads(path.read_text()) for path in sorted(captured.glob("page_*.json"))]
@@ -37,6 +40,8 @@ def main() -> None:
                 "num_inference_steps": 28, "guidance_scale": 2.0, "seed": 7, "save_output": False,
                 **extra,
             }
+            if seeds is not None:
+                params |= {"seed": seeds[str(k)], "generator_device": "cpu"}
             began = time.time()
             result = generator.generate(sampling_params_kwargs=params)
             seconds = round(time.time() - began, 2)

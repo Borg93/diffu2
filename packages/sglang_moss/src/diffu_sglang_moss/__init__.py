@@ -24,6 +24,12 @@ def _is_moss_image(probe: str) -> bool:
     return "mossimage" in probe.lower().replace("-", "").replace("_", "")
 
 
+try:  # imported here, before any model is built: SGLang 0.5.23 imports it first while building the DiT on the meta
+    # device, where its module-level `(torch.ones(()) / 448.0).item()` fails and the worker exits (fp8_fa_sm120)
+    import sglang.kernels.ops.attention.fp8_fa_sm120  # noqa: F401
+except Exception:  # noqa: BLE001  not every build or GPU has the kernel; only that backend needs it
+    pass
+
 ModelRegistry.register_model(TRANSFORMER, f"diffu_sglang_moss.dit:{TRANSFORMER}")
 register_pipeline(
     DiffuMOSSImagePipeline,
