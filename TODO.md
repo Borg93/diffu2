@@ -45,6 +45,11 @@ done before, with its measurements, is in git history (`git log -p -- TODO.md`).
 - [ ] Letter forms follow the sample on short-entry pages (the 16th-century accounts) and not on running text, and not
       at all on the demo Space's new pages (the same letter from four samples in one hand). Not tried: writer-ID
       supervision in training, training weighted toward low noise (`--sigma-shift`) on a full run, more scribes.
+- [ ] **The hand-following run (owner's pick, 27 Nov; Leonardo):** the finished model trained on for 2,000 steps on the
+      sibling windows alone (the sample certainly the same scribe's), two arms: MOSS-Image's noise levels, and
+      `--sigma-shift 1/3` toward the clean end (MOSS_RUNS). Left: draw each arm's steps 1,000 and 2,000 on held-out
+      pages with a sample of the same scribe and of another, and on the Space's templates, beside step 10,257;
+      then decide the next, larger run (the project's hours end 30 Dec 2026, about 125,000 left).
 - [ ] A faint sample's ink is beyond the model's range: from the 1687 sample (ink L 48.7) the model itself draws L 17-21
       at every guidance that writes, and at guidance 1 no line is readable. No student of this model can follow it:
       the model itself has to learn it.
