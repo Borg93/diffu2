@@ -49,8 +49,8 @@ export PATH=$CUDA_HOME/bin:/mnt/scratch/gabriel/envs/sglang_moss/bin:$HOME_PATH
 mkdir -p $O/captured12; for k in $(seq 0 11); do cp $O/captured/page_$k.* $O/captured12/ 2>/dev/null; done
 # 27 Nov 12:30: the audit of every SGLang Diffusion option (E75) adds CFG gating (SGLang's stand-in for our guidance
 # stop), Cache-DiT's calibrators and step mask, attention autotune and cuBLASLt; cuDNN attention under all of them.
-for kind in ${SGLANG-exact cfg_gate05 cfg_gate075 cache_default cache_012 cache_012_taylorseer cache_012_dmd cache_scm_slow fp8_attention autotune cublaslt compiled cuda_graph}; do
-  server='{"disable_autocast": true, "attention_backend": "torch_cudnn_sdpa", "component_attention_backends": {"text_encoder": "torch_sdpa"}}'; ext=diffu_sglang_moss; blas=
+for kind in ${SGLANG-exact cfg_gate05 cfg_gate075 cache_default cache_012 cache_012_taylorseer cache_012_dmd cache_scm_slow fp8_attention autotune cublaslt compiled cuda_graph guidance_stop05 fused_qkv regional_compile fa4_sm120}; do
+  server='{"disable_autocast": true, "attention_backend": "torch_cudnn_sdpa", "component_attention_backends": {"text_encoder": "torch_sdpa"}}'; ext=diffu_sglang_moss; blas=; fa4=
   case $kind in
     exact) extra='{"quality": "exact"}';;
     cfg_gate05) extra='{"cfg_gate_step": 0.5}';;
@@ -60,6 +60,10 @@ for kind in ${SGLANG-exact cfg_gate05 cfg_gate075 cache_default cache_012 cache_
     cache_scm_slow) extra='{"enable_cache_dit": true, "cache_dit_params": {"scm_preset": "slow"}}';;
     autotune) extra='{}'; server='{"disable_autocast": true, "enable_attention_backend_autotune": true}';;
     cublaslt) extra='{}'; blas=1;;
+    guidance_stop05) extra='{"guidance_stop": 0.5}';;   # our guidance stop, in the plugin since 27 Nov
+    fused_qkv) extra='{"fused_qkv": true}';;
+    regional_compile) extra='{}'; server='{"disable_autocast": true, "attention_backend": "torch_cudnn_sdpa", "component_attention_backends": {"text_encoder": "torch_sdpa"}, "enable_torch_compile": true, "regional_compile": true}'; ext=moss_bench_ext;;
+    fa4_sm120) extra='{}'; server='{"disable_autocast": true, "attention_backend": "fa", "component_attention_backends": {"text_encoder": "torch_sdpa"}}'; ext=moss_bench_ext; fa4=1;;
     cache_default) extra='{"enable_cache_dit": true}';;
     cache_012) extra='{"enable_cache_dit": true, "cache_dit_params": {"residual_diff_threshold": 0.12}}';;
     compiled) extra='{}'; server='{"disable_autocast": true, "attention_backend": "torch_cudnn_sdpa", "component_attention_backends": {"text_encoder": "torch_sdpa"}, "enable_torch_compile": true}'; ext=moss_bench_ext;;  # SGLang's refusal lifted
@@ -67,11 +71,17 @@ for kind in ${SGLANG-exact cfg_gate05 cfg_gate075 cache_default cache_012 cache_
     fp8_attention) extra='{}'; server='{"disable_autocast": true, "attention_backend": "fp8_fa_sm120", "component_attention_backends": {"text_encoder": "torch_sdpa"}}';;
   esac
   log "sglang $kind"; watch_memory $O/sglang_$kind.mem
-  ${blas:+env TORCH_BLAS_PREFER_CUBLASLT=1} env PYTHONPATH=$PWD/runs/htr/moss_bench SGLANG_EXTERNAL_MODEL_PACKAGE=$ext timeout 5400 /mnt/scratch/gabriel/envs/sglang_moss/bin/python $B/sglang_bench.py \
+  ${blas:+env TORCH_BLAS_PREFER_CUBLASLT=1} ${fa4:+env MOSS_BENCH_FA4_SM120=1} env PYTHONPATH=$PWD/runs/htr/moss_bench SGLANG_EXTERNAL_MODEL_PACKAGE=$ext timeout 5400 /mnt/scratch/gabriel/envs/sglang_moss/bin/python $B/sglang_bench.py \
       /mnt/scratch/gabriel/models/moss/hf-diffu-moss-above $O/captured12 $O/sglang_$kind "$server" "$extra" > $O/sglang_$kind.log 2>&1 \
     && log "sglang $kind done; peak $(sort -n $O/sglang_$kind.mem | tail -n 1) MiB; seconds $(grep '^{"page' $O/sglang_$kind.log | python3 -c "import sys,json;print([json.loads(l).get('seconds') for l in sys.stdin])")" \
     || log "sglang $kind FAILED: $(grep -v '^ *$' $O/sglang_$kind.log | tail -n 5 | cut -c1-400)"
   kill $watch 2>/dev/null; sleep 10
+done
+# The plugin's GPU checks (27 Nov, A, E, D, G): each times its piece against the old path on one block or one page.
+for check in check_a_fused_block check_e_fused_qkv check_d_regional_compile check_g_fa4_sm120; do
+  log "check $check"
+  MOSS_BENCH_FA4_SM120=1 PYTHONPATH=$PWD/packages/sglang_moss/src:$PWD/runs/htr/moss_bench timeout 3600 /mnt/scratch/gabriel/envs/sglang_moss/bin/python runs/htr/moss_bench/$check.py > $O/$check.log 2>&1 \
+    && log "check $check done: $(tail -n 4 $O/$check.log | tr '\n' ' ' | cut -c1-500)" || log "check $check FAILED: $(tail -n 4 $O/$check.log | cut -c1-400)"
 done
 log "finished (set40); GPU 2: $(nvidia-smi --query-gpu=memory.used --format=csv,noheader -i 2)"
 if [ "${WAIT:-1}" = 1 ]; then

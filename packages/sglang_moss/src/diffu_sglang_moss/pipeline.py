@@ -10,7 +10,8 @@ Its sampling parameters default to ``diffu_moss``'s guidance, so a request drawn
 pipeline draws it.
 
 The pipeline runs SGLang's MOSS-Image stages with the reference encoder (:mod:`diffu_sglang_moss.reference`) after the
-text encoder: input validation, the prompts and the noise, the reference, the denoising loop, the decoder.
+text encoder: input validation, the prompts and the noise, the reference, the denoising loop (with our guidance stop,
+:mod:`diffu_sglang_moss.denoising`), the decoder.
 """
 
 from __future__ import annotations
@@ -30,10 +31,10 @@ from sglang.multimodal_gen.runtime.pipelines_core.schedule_batch import Req
 from sglang.multimodal_gen.runtime.pipelines_core.stages.input_validation import InputValidationStage
 from sglang.multimodal_gen.runtime.pipelines_core.stages.model_specific_stages.moss_image import (
     MOSSImageBeforeDenoisingStage,
-    MOSSImageDenoisingStage,
 )
 from sglang.multimodal_gen.runtime.server_args import ServerArgs
 
+from diffu_sglang_moss.denoising import DiffuMOSSImageDenoisingStage
 from diffu_sglang_moss.reference import (
     REFERENCE_LATENTS,
     REFERENCE_PLACE,
@@ -46,21 +47,35 @@ TRANSFORMER = "DiffuMOSSImageTransformer"  # the registered name of diffu_sglang
 NEGATIVE_PROMPT = "nsfw, worst quality, bad anatomy, watermark, jpeg artifact"  # the official demo's, ours
 
 
-def _references(batch: Req) -> dict[str, Any]:
-    """The DiT's keyword arguments for ``batch``'s reference latents and their place, if it has any."""
+def _dit_kwargs(batch: Req) -> dict[str, Any]:
+    """The DiT's keyword arguments of the plugin for ``batch``: its reference latents and their place, if it has any,
+    and ``fused_qkv`` if it asks for it."""
+    kwargs: dict[str, Any] = {"fused_qkv": True} if getattr(batch.sampling_params, "fused_qkv", False) else {}
     latents = batch.extra.get(REFERENCE_LATENTS)
-    if not latents:
-        return {}
-    return {"reference_latents": latents, "reference_place": batch.extra.get(REFERENCE_PLACE, "over")}
+    if latents:
+        kwargs |= {"reference_latents": latents, "reference_place": batch.extra.get(REFERENCE_PLACE, "over")}
+    return kwargs
 
 
 @dataclass
 class DiffuMOSSImageSamplingParams(MOSSImageSamplingParams):
     """SGLang's MOSS-Image sampling parameters with diffu_moss's defaults: the official demo's negative prompt (not an
-    empty one), and the unconditional pass skipping its blocks from the first step (SGLang's from 1% of the steps)."""
+    empty one), and the unconditional pass skipping its blocks from the first step (SGLang's from 1% of the steps).
+
+    ``guidance_stop`` is our guider's ``stop`` (:mod:`diffu_sglang_moss.denoising`): the fraction of the steps after
+    which only the conditional pass runs and its prediction is taken as it is; 1, every step guided, by default.
+    ``fused_qkv`` computes each joint block's queries, keys and values by one GEMM (:mod:`diffu_sglang_moss.dit`),
+    equal to the three GEMMs' within rounding; off by default.
+    """
 
     negative_prompt: str = NEGATIVE_PROMPT
     slg_start: float = 0.0
+    guidance_stop: float = 1.0
+    fused_qkv: bool = False
+
+    @classmethod
+    def image_request_extra_fields(cls) -> frozenset[str]:
+        return super().image_request_extra_fields() | {"guidance_stop", "fused_qkv"}
 
 
 @dataclass
@@ -81,12 +96,12 @@ class DiffuMOSSImagePipelineConfig(MOSSImagePipelineConfig):
     def prepare_pos_cond_kwargs(
         self, batch: Req, device: torch.device, rotary_emb: object, dtype: torch.dtype
     ) -> dict[str, Any]:
-        return {**super().prepare_pos_cond_kwargs(batch, device, rotary_emb, dtype), **_references(batch)}
+        return {**super().prepare_pos_cond_kwargs(batch, device, rotary_emb, dtype), **_dit_kwargs(batch)}
 
     def prepare_neg_cond_kwargs(
         self, batch: Req, device: torch.device, rotary_emb: object, dtype: torch.dtype
     ) -> dict[str, Any]:
-        return {**super().prepare_neg_cond_kwargs(batch, device, rotary_emb, dtype), **_references(batch)}
+        return {**super().prepare_neg_cond_kwargs(batch, device, rotary_emb, dtype), **_dit_kwargs(batch)}
 
 
 class DiffuMOSSImagePipeline(MOSSImagePipeline):
@@ -113,7 +128,7 @@ class DiffuMOSSImagePipeline(MOSSImagePipeline):
         )
         self.add_stage_factory(
             RoleType.DENOISER,
-            lambda: MOSSImageDenoisingStage(
+            lambda: DiffuMOSSImageDenoisingStage(
                 transformer=self.get_module("transformer"),
                 scheduler=self.get_module("scheduler"),
                 pipeline=self,
