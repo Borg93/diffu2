@@ -1,6 +1,7 @@
 """SGLang Diffusion with diffu_sglang_moss draws, on CPU, bit for bit the image our own pipeline draws from the same
 model, prompt and noise, with a sample page (over the page, or above it for a DiT trained so) and without one, at
-both pipelines' default guidance; and a model whose DiT takes no reference is refused one.
+both pipelines' default guidance; under Cache-DiT, the same image when no step is skipped and another when steps are;
+and a model whose DiT takes no reference is refused one.
 
 SGLang runs in its own environment (packages/sglang_moss/README.md): ``DIFFU_SGLANG_PYTHON`` names its interpreter,
 which runs ``sglang_draw.py`` with this checkout's plugin first on its path. Without it these tests skip.
@@ -57,12 +58,17 @@ def _ours(model: Path, sample: Path | None) -> np.ndarray:
     return images[0].float().numpy()
 
 
-def _sglang(model: Path, sample: Path | None, work: Path) -> subprocess.CompletedProcess[str]:
-    """SGLang drawing from ``model`` on CPU, its image saved to ``work / "sglang.npy"``."""
+def _sglang(
+    model: Path, sample: Path | None, work: Path, cache: dict[str, object] | None = None
+) -> subprocess.CompletedProcess[str]:
+    """SGLang drawing from ``model`` on CPU, its image saved to ``work / "sglang.npy"``; with ``cache``, under
+    Cache-DiT with those settings (a request's ``cache_dit_params``)."""
     params: dict[str, object] = {"prompt": PROMPT, "height": SIZE, "width": SIZE, "num_inference_steps": STEPS}
     params |= {"seed": SEED, "generator_device": "cpu", "uncond_skip_layers": UNCOND_SKIP_LAYERS}
     if sample is not None:
         params["image_path"] = str(sample)
+    if cache is not None:
+        params |= {"enable_cache_dit": True, "cache_dit_params": cache}
     server = {"num_gpus": 1, "attention_backend": "torch_sdpa", "disable_autocast": True}
     request = work / "request.json"
     request.write_text(json.dumps({"model": str(model), "params": params, "server": server}), encoding="utf-8")
@@ -103,6 +109,39 @@ def test_sglang_lays_the_sample_above_the_page_for_a_dit_trained_so(
 
     assert drawn.returncode == 0, drawn.stdout[-4000:] + drawn.stderr[-4000:]
     np.testing.assert_array_equal(np.load(tmp_path / "sglang.npy"), ours)
+
+
+NEVER_SKIPS = {"residual_diff_threshold": 0.0, "max_warmup_steps": 0}
+SKIPS_WHEN_IT_MAY = {"residual_diff_threshold": 1e6, "max_warmup_steps": 0, "max_continuous_cached_steps": STEPS}
+
+
+@pytest.mark.parametrize("with_sample", [False, True], ids=["text-only", "sample-page"])
+def test_cache_dit_that_skips_no_step_draws_what_our_pipeline_draws(
+    tiny_moss_reference_above: Path, tmp_path: Path, with_sample: bool
+) -> None:
+    export_hf(tiny_moss_reference_above, tmp_path / "hf")
+    sample = _sample(tmp_path / "sample.png") if with_sample else None
+    ours = _ours(tiny_moss_reference_above, sample)
+
+    drawn = _sglang(tmp_path / "hf", sample, tmp_path, cache=NEVER_SKIPS)
+
+    assert drawn.returncode == 0, drawn.stdout[-4000:] + drawn.stderr[-4000:]
+    assert "Enabling cache-dit" in drawn.stdout + drawn.stderr
+    np.testing.assert_array_equal(np.load(tmp_path / "sglang.npy"), ours)
+
+
+def test_cache_dit_skips_steps_of_a_page_drawn_from_a_sample(tiny_moss_reference_above: Path, tmp_path: Path) -> None:
+    export_hf(tiny_moss_reference_above, tmp_path / "hf")
+    sample = _sample(tmp_path / "sample.png")
+    ours = _ours(tiny_moss_reference_above, sample)
+
+    drawn = _sglang(tmp_path / "hf", sample, tmp_path, cache=SKIPS_WHEN_IT_MAY)
+
+    assert drawn.returncode == 0, drawn.stdout[-4000:] + drawn.stderr[-4000:]
+    cached = np.load(tmp_path / "sglang.npy")
+    assert cached.shape == ours.shape
+    assert np.isfinite(cached).all()
+    assert not np.array_equal(cached, ours)  # steps were skipped: the image is another
 
 
 def test_sglang_refuses_a_sample_to_a_model_whose_dit_takes_none(tiny_moss: Path, tmp_path: Path) -> None:

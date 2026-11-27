@@ -10,6 +10,12 @@ trained with references (``diffu-moss-train-ref``) reads them with the released 
 Without references the forward is SGLang's own. With them it computes the blocks with SGLang's own pieces
 (``_norm_rope``, ``_attention``, ``_situ``), but the modulation per token in plain torch, as SGLang's fused kernels
 compute it bit for bit; sequence parallelism is not taken, as its shards assume the image and prompt alone.
+
+Cache-DiT (SGLang's step cache, a request's ``enable_cache_dit``) reads a model's blocks as one list of modules that
+each take the hidden states and return them. :class:`JointLayer` is a joint block in that shape (it also skips itself
+in a pass that leaves its index out, which the forward's own loop did by index), ``joint_layers`` the list, registered
+with SGLang's Cache-DiT integration below; once the cache is mounted every request, with a reference or without, runs
+through them.
 """
 
 from __future__ import annotations
@@ -17,6 +23,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import torch
+from sglang.multimodal_gen.runtime.cache.cache_dit_integration import (
+    _CUSTOM_BLOCK_ADAPTER_SPECS,
+    CustomBlockAdapterSpec,
+    ForwardPattern,
+)
 from sglang.multimodal_gen.runtime.models.dits.moss_image import (
     MOSSImageConditioning,
     MOSSImageTransformer,
@@ -27,7 +38,7 @@ from sglang.multimodal_gen.runtime.models.dits.moss_image import (
     _situ,
     validate_skip_layers,
 )
-from torch import Tensor
+from torch import Tensor, nn
 
 from diffu_sglang_moss.reference import ReferencePlace
 
@@ -62,6 +73,40 @@ def placed_positions(
     return placed
 
 
+def joint_block(layer: _Block, x: Tensor, rope: tuple[Tensor, Tensor], modulation: Tensor) -> Tensor:
+    """SGLang's joint block (``_Block``) with a modulation per token ``[B, tokens, 6, dim]``."""
+    shift_a, scale_a, gate_a, shift_f, scale_f, gate_f = modulation.unbind(2)
+    dtype = layer.proj["q"].weight.dtype
+    y = (layer.norm1(x) * (1 + scale_a) + shift_a).to(dtype)
+    q = _norm_rope(layer.q_norm, layer.proj["q"](y), rope, layer.heads)
+    k = _norm_rope(layer.k_norm, layer.proj["k"](y), rope, layer.heads)
+    x = x + layer.proj["o"](_attention(q, k, layer.proj["v"](y), None, layer.heads, layer.attention)) * gate_a
+    y = layer.norm2(x) * (1 + scale_f) + shift_f
+    hidden, gate = layer.proj["ffn_up_gate"](y.to(dtype)).chunk(2, -1)
+    return x + layer.proj["ffn_down"](_situ(hidden, gate)) * gate_f
+
+
+class JointLayer(nn.Module):
+    """Joint block ``index`` as a module from hidden states to hidden states (Cache-DiT's ``Pattern_3``): it returns
+    them untouched in a pass whose ``skip`` holds its index. It holds its block without owning it, so the DiT's
+    weights keep their names under ``layers``."""
+
+    def __init__(self, block: _Block, index: int) -> None:
+        super().__init__()
+        self._held = (block,)  # a tuple is not registered as a submodule
+        self.index = index
+
+    def forward(
+        self, hidden_states: Tensor, rope: tuple[Tensor, Tensor], modulation: Tensor, skip: frozenset[int]
+    ) -> Tensor:
+        if self.index in skip:
+            return hidden_states
+        return joint_block(self._held[0], hidden_states, rope, modulation)
+
+
+JOINT_LAYERS = "joint_layers"  # the attribute Cache-DiT finds the DiT's blocks under
+
+
 class DiffuMOSSImageTransformer(MOSSImageTransformer):
     """:class:`MOSSImageTransformer` whose forward also takes ``reference_latents``: reference images' clean latents,
     each ``[1 or B, latent_channels, h, w]`` on its own grid of any size (one row is shared by every sample).
@@ -71,6 +116,10 @@ class DiffuMOSSImageTransformer(MOSSImageTransformer):
             or as many as the batch).
         NotImplementedError: From ``forward``, if references are given under sequence parallelism.
     """
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self.joint_layers = nn.ModuleList(JointLayer(block, index) for index, block in enumerate(self.layers))
 
     def forward(
         self,
@@ -83,7 +132,8 @@ class DiffuMOSSImageTransformer(MOSSImageTransformer):
         reference_latents: Sequence[Tensor] | None = None,
         reference_place: ReferencePlace = "over",
     ) -> Tensor:
-        if not reference_latents:
+        cached = bool(getattr(self, "_is_cached", False))  # Cache-DiT's mark: its blocks are joint_layers
+        if not reference_latents and not cached:
             return super().forward(
                 hidden_states,
                 timestep,
@@ -96,7 +146,7 @@ class DiffuMOSSImageTransformer(MOSSImageTransformer):
             raise NotImplementedError("reference images under sequence parallelism are not supported")
         skip = frozenset(validate_skip_layers(skip_layers, self.config.num_layers))
         batch, channels, height, width = hidden_states.shape
-        references = [self._batched(reference, batch, channels) for reference in reference_latents]
+        references = [self._batched(reference, batch, channels) for reference in reference_latents or ()]
         times = torch.as_tensor(timestep, device=hidden_states.device, dtype=torch.float32).reshape(-1).expand(batch)
         modulation, head = self._modulation(times)
         clean, _ = self._modulation(torch.zeros_like(times))
@@ -176,28 +226,21 @@ class DiffuMOSSImageTransformer(MOSSImageTransformer):
         drawn = image_tokens + text.shape[1]
         x = torch.cat((self._embedded(latents), text, *(self._embedded(reference) for reference in references)), 1)
         grids = [(reference.shape[2], reference.shape[3]) for reference in references]
-        extra = self._reference_rope(grids, text.shape[1], rope[0], height, place)
-        rope = (torch.cat((rope[0], extra[0]), 1), torch.cat((rope[1], extra[1]), 1))
+        if references:
+            extra = self._reference_rope(grids, text.shape[1], rope[0], height, place)
+            rope = (torch.cat((rope[0], extra[0]), 1), torch.cat((rope[1], extra[1]), 1))
         by_token = torch.cat(
             (modulation[:, None].expand(-1, drawn, -1, -1), clean[:, None].expand(-1, x.shape[1] - drawn, -1, -1)), 1
         )
-        for index, layer in enumerate(self.layers):
-            if index not in skip:
-                x = self._block(layer, x, rope, by_token)
+        for layer in self.joint_layers:
+            x = layer(x, rope, by_token, skip)
         x = self.final_norm_video(x[:, :image_tokens].to(self.final_norm_video.weight.dtype))
         x = x * (1 + head[:, 1, None]) + head[:, 0, None]
         x = self.final_linear_video(x.to(self.final_linear_video.weight.dtype))
         return x.transpose(1, 2).reshape(batch, -1, height, width).float()
 
-    @staticmethod
-    def _block(layer: _Block, x: Tensor, rope: tuple[Tensor, Tensor], modulation: Tensor) -> Tensor:
-        """SGLang's joint block (``_Block``) with a modulation per token ``[B, tokens, 6, dim]``."""
-        shift_a, scale_a, gate_a, shift_f, scale_f, gate_f = modulation.unbind(2)
-        dtype = layer.proj["q"].weight.dtype
-        y = (layer.norm1(x) * (1 + scale_a) + shift_a).to(dtype)
-        q = _norm_rope(layer.q_norm, layer.proj["q"](y), rope, layer.heads)
-        k = _norm_rope(layer.k_norm, layer.proj["k"](y), rope, layer.heads)
-        x = x + layer.proj["o"](_attention(q, k, layer.proj["v"](y), None, layer.heads, layer.attention)) * gate_a
-        y = layer.norm2(x) * (1 + scale_f) + shift_f
-        hidden, gate = layer.proj["ffn_up_gate"](y.to(dtype)).chunk(2, -1)
-        return x + layer.proj["ffn_down"](_situ(hidden, gate)) * gate_f
+
+# SGLang's Cache-DiT integration keeps its own table of models cache-dit does not know: ours joins it by name.
+_CUSTOM_BLOCK_ADAPTER_SPECS[DiffuMOSSImageTransformer.__name__] = CustomBlockAdapterSpec(
+    blocks_attr=JOINT_LAYERS, forward_pattern=ForwardPattern.Pattern_3
+)
