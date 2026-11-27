@@ -4,7 +4,9 @@ stands in. ``DrawSettings.cache`` names one (:data:`StepCache`); :func:`enable_s
 
 - :class:`FirstBlockCache`: every step runs the first joint block; when its residual (output minus input) moved less
   than ``threshold`` from the previous step's (their mean absolute difference over its mean absolute value), the other
-  blocks are skipped and the residual they added when they last ran is added again.
+  blocks are skipped and the residual they added when they last ran is added again. As Cache-DiT bounds it, it may
+  also skip none of a pass's first ``warmup_steps`` steps and compute the step after ``max_skipped_in_a_row`` skipped
+  ones (:class:`_BoundedHeadBlockHook`); both off, it is diffusers' own.
 - :class:`TaylorSeerCache`: the DiT runs whole at its first ``disable_cache_before_step`` steps, then every
   ``cache_interval`` steps, and at every step from ``disable_cache_after_step`` on; at the other steps its joint blocks
   are skipped and its output projection's output is extrapolated from its last whole runs (a Taylor series of order
@@ -17,7 +19,9 @@ stands in. ``DrawSettings.cache`` names one (:data:`StepCache`); :func:`enable_s
 Each pass of guidance keeps its own state (the denoising loop runs each in the DiT's ``cache_context``, named as the
 guider names the pass), cleared as each page starts (:func:`reset_step_cache`), and a call draws one sample. The hooks
 decide eagerly (``torch.compiler.disable``; FirstBlockCache reads its measure back from the GPU), around each joint
-block's forward: the blocks run eagerly or from an AOTInductor package, not compiled whole (``compile_blocks``).
+block's forward: the blocks run eagerly, from an AOTInductor package, or with their own forward compiled beneath the
+hooks (:func:`compile_beneath_step_cache`), never with their whole call compiled, which would trace the hooks and break
+its graph where they decide.
 """
 
 from __future__ import annotations
@@ -30,6 +34,7 @@ from typing import Annotated, Any, Literal, override
 import torch
 from diffusers.hooks import FirstBlockCacheConfig, HookRegistry, MagCacheConfig, ModelHook, TaylorSeerCacheConfig
 from diffusers.hooks._helpers import TransformerBlockMetadata, TransformerBlockRegistry
+from diffusers.hooks.first_block_cache import FBCHeadBlockHook
 from diffusers.hooks.hooks import BaseState, StateManager
 from pydantic import BaseModel, ConfigDict, Field
 from torch import Tensor, nn
@@ -43,6 +48,7 @@ EXTRAPOLATED = r"final_linear_video"  # TaylorSeer: the output projection, whose
 MAG_EPSILON = 1e-8  # MagCache's: what a residual of no magnitude is divided by
 FIRST_BLOCK_INPUT = "moss_mag_calibration_input"  # the calibration's hooks, by name in their blocks' registries
 LAST_BLOCK_RATIO = "moss_mag_calibration_ratio"
+FBC_HEAD_BLOCK = "fbc_leader_block_hook"  # diffusers' FirstBlockCache hook on the first block, by name in its registry
 
 
 class FirstBlockCache(BaseModel):
@@ -53,12 +59,24 @@ class FirstBlockCache(BaseModel):
         threshold: How little the first block's residual must move from the previous step's (their mean absolute
             difference over its mean absolute value) for the other blocks to be skipped: higher skips more. diffusers'
             default, 0.05.
+        warmup_steps: How many first steps of each pass of guidance are computed whole, whatever the measure says
+            (Cache-DiT's ``max_warmup_steps``, 4 by its default); 0, diffusers' own, skips from the second step on.
+        max_skipped_in_a_row: After this many skipped steps in a row a pass's next step is computed whole, whatever
+            the measure says (Cache-DiT's ``max_continuous_cached_steps``, 3 by its default); ``None``, diffusers'
+            own, sets no bound.
     """
 
     model_config = ConfigDict(frozen=True)
 
     kind: Literal["first_block"] = "first_block"
     threshold: float = Field(default=0.05, gt=0.0)
+    warmup_steps: int = Field(default=0, ge=0)
+    max_skipped_in_a_row: int | None = Field(default=None, ge=1)
+
+    @property
+    def bounded(self) -> bool:
+        """Whether warm-up steps or a bound on skips in a row are asked: diffusers' own cache has neither."""
+        return self.warmup_steps > 0 or self.max_skipped_in_a_row is not None
 
 
 class TaylorSeerCache(BaseModel):
@@ -144,6 +162,8 @@ def enable_step_cache(
         case FirstBlockCache():
             TransformerBlockRegistry.register(model_class=JointBlock, metadata=JOINT_BLOCK)
             transformer.enable_cache(FirstBlockCacheConfig(threshold=cache.threshold))
+            if cache.bounded:
+                _bound_first_block_cache(transformer, cache)
         case TaylorSeerCache():
             config = TaylorSeerCacheConfig(
                 cache_interval=cache.cache_interval,
@@ -167,6 +187,16 @@ def enable_step_cache(
             transformer.enable_cache(config)
         case MagCacheCalibration():
             _record_mag_ratios(transformer, steps=steps, ratios_file=cache.ratios_file)
+
+
+def compile_beneath_step_cache(transformer: MossTransformer) -> None:
+    """Each of ``transformer``'s joint blocks with its own forward compiled (``torch.compile``, whole graph, dynamic
+    shapes: page sizes and prompt lengths vary), for a step cache whose hooks are set after: they wrap the compiled
+    forward and run eagerly around it. ``compile_repeated_blocks`` compiles each block's whole call instead, which
+    would trace the hooks too and break at their eager decision (``torch.compiler.disable``). The blocks share one
+    compiled graph, their weights its inputs."""
+    for block in transformer.layers:
+        block.forward = torch.compile(block.forward, fullgraph=True, dynamic=True)
 
 
 def reset_step_cache(transformer: MossTransformer) -> None:
@@ -277,3 +307,66 @@ def _record_mag_ratios(transformer: MossTransformer, *, steps: int, ratios_file:
     HookRegistry.check_if_exists_or_initialize(
         transformer
     ).invalidate_child_registries_cache()  # cache_context finds them
+
+
+class _PassSkips(BaseState):
+    """One pass's count, on the page being drawn, of the steps its first joint block has run and of the steps skipped
+    in a row since the last computed one."""
+
+    def __init__(self) -> None:
+        self.steps = 0
+        self.skipped_in_a_row = 0
+
+    @override
+    def reset(self) -> None:
+        self.steps = self.skipped_in_a_row = 0
+
+
+class _BoundedHeadBlockHook(FBCHeadBlockHook):
+    """diffusers' FirstBlockCache hook on the first joint block, its decision bounded as Cache-DiT bounds it: a pass's
+    first ``warmup_steps`` steps are computed, and so is the step after ``max_skipped_in_a_row`` skipped ones, without
+    measuring; otherwise the measure decides as in diffusers. Each pass counts its own steps (:class:`_PassSkips`, in a
+    state manager of its own that ``cache_context`` names as it names the shared one), cleared as a page starts."""
+
+    def __init__(
+        self, state_manager: StateManager, threshold: float, *, warmup_steps: int, max_skipped_in_a_row: int | None
+    ) -> None:
+        super().__init__(state_manager, threshold)
+        self.passes = StateManager(_PassSkips)
+        self.warmup_steps = warmup_steps
+        self.max_skipped_in_a_row = max_skipped_in_a_row
+
+    @torch.compiler.disable
+    @override
+    def _should_compute_remaining_blocks(self, hidden_states_residual: Tensor) -> bool:
+        counts: _PassSkips = self.passes.get_state()
+        warming_up = counts.steps < self.warmup_steps
+        capped = self.max_skipped_in_a_row is not None and counts.skipped_in_a_row >= self.max_skipped_in_a_row
+        compute = warming_up or capped or super()._should_compute_remaining_blocks(hidden_states_residual)
+        counts.steps += 1
+        counts.skipped_in_a_row = 0 if compute else counts.skipped_in_a_row + 1
+        return compute
+
+    @override
+    def reset_state(self, module: nn.Module) -> nn.Module:
+        self.passes.reset()
+        return super().reset_state(module)
+
+
+def _bound_first_block_cache(transformer: MossTransformer, cache: FirstBlockCache) -> None:
+    """diffusers' FirstBlockCache hook on ``transformer``'s first joint block replaced by :class:`_BoundedHeadBlockHook`,
+    which shares its state with the other blocks' hooks; the other blocks' hooks, and ``disable_cache``, are left as
+    diffusers set them."""
+    registry = HookRegistry.check_if_exists_or_initialize(transformer.layers[0])
+    head = registry.get_hook(FBC_HEAD_BLOCK)
+    if head is None:
+        raise RuntimeError("diffusers' FirstBlockCache set no hook on the first joint block")
+    registry.remove_hook(FBC_HEAD_BLOCK, recurse=False)
+    bounded = _BoundedHeadBlockHook(
+        head.state_manager,
+        cache.threshold,
+        warmup_steps=cache.warmup_steps,
+        max_skipped_in_a_row=cache.max_skipped_in_a_row,
+    )
+    registry.register_hook(bounded, FBC_HEAD_BLOCK)
+    HookRegistry.check_if_exists_or_initialize(transformer).invalidate_child_registries_cache()

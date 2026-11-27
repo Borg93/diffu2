@@ -179,8 +179,8 @@ class DrawSettings(BaseModel):
         fuse_loras: Fuse the LoRAs into the transformer's weights at load and drop their adapter layers: no LoRA
             matmuls per step, and the transformer can be compiled, quantized or run from a package; the LoRAs can't be switched or rescaled after.
         compile_blocks: Compile the DiT's joint blocks (torch.compile) at load; the first crop pays for the
-            compilation. A run with LoRAs must fuse them first. The blocks are compiled after any MXFP8 swap, so the quantization of their inputs fuses into them; not with a
-            step cache (``cache``), whose hooks decide eagerly around each block.
+            compilation. A run with LoRAs must fuse them first. The blocks are compiled after any MXFP8 swap, so the quantization of their inputs fuses into them. With a
+            step cache (``cache``) each block's own forward is compiled and the cache's hooks decide eagerly around it.
         precision: The DiT's joint-block projections in their own bfloat16, or in MXFP8: weights and
             inputs in blocks of 32 FP8 values sharing a power-of-two scale, multiplied by a Blackwell GPU's tensor cores
             (:mod:`diffu_moss.mxfp8`; emulated on the CPU). It pays off with ``compile_blocks`` or ``aoti_package``,
@@ -198,7 +198,8 @@ class DrawSettings(BaseModel):
             (:mod:`diffu_moss.step_cache`), by ``kind``: ``{"kind": "first_block", "threshold": 0.05}``,
             ``{"kind": "taylorseer", "cache_interval": 5, "disable_cache_before_step": 3}``, ``{"kind": "magcache",
             "mag_ratios": [...]}``, or ``{"kind": "magcache_calibration", "ratios_file": ...}``, which skips nothing
-            and measures MagCache's ratios for this sampler and these ``steps``. Not with ``compile_blocks``.
+            and measures MagCache's ratios for this sampler and these ``steps``. The first-block cache also takes
+            ``warmup_steps`` (a pass's first steps always computed) and ``max_skipped_in_a_row``.
         repair_passes: How many times a drawn crop's rejected lines are drawn again in place (:func:`repair_lines`),
             each pass from its own noise (:func:`repair_seed`); 0 keeps every crop as drawn.
     """
@@ -225,7 +226,7 @@ class DrawSettings(BaseModel):
 
     @model_validator(mode="after")
     def _moss_inference_fits(self) -> Self:
-        _ = self.moss_inference  # MossInference validates itself: a package or a step cache refuses compile_blocks
+        _ = self.moss_inference  # MossInference validates itself: a package refuses compile_blocks
         return self
 
     @property

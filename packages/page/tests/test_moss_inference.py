@@ -353,20 +353,18 @@ def _model_loaded(*args: object, **kwargs: object) -> None:
     raise AssertionError("the model loaded before MXFP8 was refused")
 
 
-@pytest.mark.parametrize(
-    ("option", "error"),
-    [
-        pytest.param({"aoti_package": "block.pt2"}, "an AOTInductor package's blocks are compiled already", id="aoti"),
-        pytest.param(  # as a run's draw.json gives it
-            {"cache": {"kind": "taylorseer"}}, "a step cache decides around each joint block, eagerly", id="cache"
-        ),
-    ],
-)
-def test_draw_settings_refuse_beside_compile_blocks_a_package_or_a_step_cache(
-    option: dict[str, object], error: str
-) -> None:
-    with pytest.raises(ValidationError, match=error):
-        DrawSettings.model_validate({"compile_blocks": True, **option})
+def test_draw_settings_refuse_a_package_beside_compile_blocks() -> None:
+    with pytest.raises(ValidationError, match="an AOTInductor package's blocks are compiled already"):
+        DrawSettings.model_validate({"compile_blocks": True, "aoti_package": "block.pt2"})
+
+
+def test_draw_settings_take_a_step_cache_beside_compile_blocks() -> None:
+    settings = DrawSettings.model_validate(  # as a run's draw.json gives it
+        {"compile_blocks": True, "cache": {"kind": "first_block", "threshold": 0.12, "warmup_steps": 4}}
+    )
+
+    assert settings.moss_inference.compile_blocks
+    assert settings.moss_inference.cache is not None
 
 
 def test_load_pipeline_refuses_a_block_cache_for_a_model_whose_unconditional_pass_skips_its_first_block(

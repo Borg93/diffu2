@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, model_validator
 from diffu_moss.aoti import check_package, install_package, read_package
 from diffu_moss.modular_pipelines.moss.before_denoise import Sampler, sampling_sigmas, unipc_sampler
 from diffu_moss.mxfp8 import DIT_LINEARS, TEXT_ENCODER_LINEARS, Precision, quantize_linears, supports_mxfp8
-from diffu_moss.step_cache import StepCache, enable_step_cache
+from diffu_moss.step_cache import StepCache, compile_beneath_step_cache, enable_step_cache
 
 if TYPE_CHECKING:
     from diffu_moss.modular_pipelines.moss import MossModularPipeline
@@ -31,14 +31,15 @@ class MossInference(BaseModel):
         precision: The DiT's joint-block projections: their bfloat16 weights, or MXFP8.
         text_encoder_precision: The text encoder's decoder layers (:data:`diffu_moss.mxfp8.TEXT_ENCODER_LINEARS`).
         compile_blocks: Compile the joint blocks at load (regional ``torch.compile``, dynamic shapes); the first page
-            pays for the compiling.
+            pays for the compiling. With a step cache each block's own forward is compiled, beneath the cache's hooks
+            (:func:`~diffu_moss.step_cache.compile_beneath_step_cache`).
         aoti_package: Run the joint blocks from this AOTInductor package (``diffu-moss-aoti``), built for the
             ``precision`` asked, this GPU's architecture and this torch version; it replaces ``compile_blocks``.
         sampler: What steps the sampling grid: MOSS-Image's own Euler sampler, or UniPC.
         cache: A step cache over the joint blocks (:data:`diffu_moss.step_cache.StepCache`), or none.
 
     Raises:
-        ValueError: From validation, if both a package and compiling are asked, or a step cache and compiling.
+        ValueError: From validation, if both a package and compiling are asked.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -54,11 +55,6 @@ class MossInference(BaseModel):
     def _compiled_one_way(self) -> Self:
         if self.compile_blocks and self.aoti_package is not None:
             raise ValueError("an AOTInductor package's blocks are compiled already: leave compile_blocks off")
-        if self.compile_blocks and self.cache is not None:
-            raise ValueError(
-                "a step cache decides around each joint block, eagerly (torch.compiler.disable), which a block compiled "
-                "whole cannot hold: draw with a step cache from an AOTInductor package (aoti_package) or eager blocks"
-            )
         return self
 
     @property
@@ -83,8 +79,8 @@ def check_inference(options: MossInference, device: torch.device) -> None:
 def prepare_inference(pipe: MossModularPipeline, options: MossInference, *, steps: int) -> None:
     """``pipe``'s DiT and text encoder (loaded, on their device) set to compute as ``options`` ask, in place, for pages
     of ``steps`` denoising steps (which a step cache may count): the chosen layers quantized to MXFP8 first, the
-    scheduler swapped for UniPC, the joint blocks run from the package or compiled, then the step cache's hooks set
-    around them.
+    scheduler swapped for UniPC, the joint blocks run from the package or compiled (each block's own forward, beneath
+    a step cache's hooks), then the step cache's hooks set around them.
 
     Raises:
         ValueError: If the package does not fit the DiT (another precision, width or dtype), or the step cache does
@@ -100,6 +96,8 @@ def prepare_inference(pipe: MossModularPipeline, options: MossInference, *, step
         pipe.update_components(scheduler=unipc_sampler(pipe.scheduler))
     if options.aoti_package is not None:
         install_package(pipe.transformer, options.aoti_package)
+    elif options.compile_blocks and options.cache is not None:  # the hooks, set next, wrap the compiled forwards
+        compile_beneath_step_cache(pipe.transformer)
     elif options.compile_blocks:  # dynamic: page sizes and prompt lengths vary, and each new shape would recompile
         pipe.transformer.compile_repeated_blocks(fullgraph=True, dynamic=True)
     if options.cache is not None:  # the grid's levels: fewer than the steps asked when shifted levels share one
