@@ -2,7 +2,8 @@
 
 Each reference's clean latents become tokens after the prompt's, embedded as the drawn image's are, placed on the
 reference axis of the rotary table at ``k + 1`` for the ``k``-th (the drawn image and the prompt at 0) with its own
-grid centred, and modulated as at timestep 0 while the drawn image and the prompt are modulated at the flow timestep;
+grid centred (``over``) or its rows lifted above the drawn image's (``above``, as
+``diffu_moss.transformer.token_positions`` lays a sample page), and modulated as at timestep 0 while the drawn image and the prompt are modulated at the flow timestep;
 they join every joint block's attention and only the drawn image's tokens are predicted. No weight is added: a DiT
 trained with references (``diffu-moss-train-ref``) reads them with the released model's weights' names.
 
@@ -28,6 +29,8 @@ from sglang.multimodal_gen.runtime.models.dits.moss_image import (
 )
 from torch import Tensor
 
+from diffu_sglang_moss.reference import ReferencePlace
+
 MODULATIONS = 6  # shift, scale and gate of the attention half, then of the feed-forward half
 
 
@@ -40,6 +43,23 @@ def reference_positions(height: int, width: int, text_length: int, reference: in
     grid[:, 2] -= (height - 1) / 2
     grid[:, 3] -= (width - 1) / 2
     return grid
+
+
+def placed_positions(
+    grids: Sequence[tuple[int, int]], text_length: int, height: int, place: ReferencePlace, device: torch.device
+) -> list[Tensor]:
+    """Each reference's positions (:func:`reference_positions`, the ``k``-th on the reference axis at ``k + 1``) by
+    ``place`` against a drawn image of ``height`` latent rows: ``over``, centre on centre; ``above``, its rows moved
+    up so its last lies one above the drawn image's first, several stacked upwards in order, as
+    ``diffu_moss.transformer.token_positions`` lays them."""
+    placed, lifted = [], 0
+    for k, (rows, cols) in enumerate(grids):
+        positions = reference_positions(rows, cols, text_length, k + 1, device)
+        if place == "above":
+            positions[:, 2] -= (height + rows) / 2 + lifted
+            lifted += rows
+        placed.append(positions)
+    return placed
 
 
 class DiffuMOSSImageTransformer(MOSSImageTransformer):
@@ -61,6 +81,7 @@ class DiffuMOSSImageTransformer(MOSSImageTransformer):
         prepared_conditioning: MOSSImageConditioning | None = None,
         skip_layers: Sequence[int] = (),
         reference_latents: Sequence[Tensor] | None = None,
+        reference_place: ReferencePlace = "over",
     ) -> Tensor:
         if not reference_latents:
             return super().forward(
@@ -92,7 +113,7 @@ class DiffuMOSSImageTransformer(MOSSImageTransformer):
                 tensor.index_select(0, indices) for tensor in (hidden_states, modulation, head, clean)
             )
             refs = [reference.index_select(0, indices) for reference in references]
-            sample = self._sample(latents, drawn, last, still, group.text, group.rope, refs, skip)
+            sample = self._sample(latents, drawn, last, still, group.text, group.rope, refs, skip, reference_place)
             outputs.index_copy_(0, indices, sample)
         return outputs
 
@@ -123,14 +144,14 @@ class DiffuMOSSImageTransformer(MOSSImageTransformer):
         """Latents ``[B, latent_channels, h, w]`` as tokens ``[B, h * w, dim]``, row by row."""
         return self.video_embedder(latents.flatten(2).transpose(1, 2).to(self.video_embedder.weight.dtype).contiguous())
 
-    def _reference_rope(self, grids: list[tuple[int, int]], text_length: int, like: Tensor) -> tuple[Tensor, Tensor]:
+    def _reference_rope(
+        self, grids: list[tuple[int, int]], text_length: int, like: Tensor, height: int, place: ReferencePlace
+    ) -> tuple[Tensor, Tensor]:
         """The rotary coefficients of the references' tokens, laid out as ``prepare_conditioning``'s (``like``'s
-        batch and dtype)."""
+        batch and dtype), each reference by ``place`` against a drawn image of ``height`` latent rows."""
         if self.rope.bands.dtype != torch.float32:
             self.rope.reset_bands()
-        positions = torch.cat(
-            [reference_positions(h, w, text_length, k + 1, like.device) for k, (h, w) in enumerate(grids)]
-        )
+        positions = torch.cat(placed_positions(grids, text_length, height, place, like.device))
         phase = positions.unsqueeze(-1) * self.rope.bands
         table = torch.cat((phase.sin(), phase.cos()), -2).flatten(-2).unsqueeze(0).to(like.dtype)
         sin, cos = _prepare_rope(table)
@@ -146,6 +167,7 @@ class DiffuMOSSImageTransformer(MOSSImageTransformer):
         rope: tuple[Tensor, Tensor],
         references: list[Tensor],
         skip: frozenset[int],
+        place: ReferencePlace,
     ) -> Tensor:
         """One group's velocity: the drawn image's tokens, the prompt's and the references' through the joint blocks,
         the references modulated by ``clean`` and the rest by ``modulation``."""
@@ -154,7 +176,7 @@ class DiffuMOSSImageTransformer(MOSSImageTransformer):
         drawn = image_tokens + text.shape[1]
         x = torch.cat((self._embedded(latents), text, *(self._embedded(reference) for reference in references)), 1)
         grids = [(reference.shape[2], reference.shape[3]) for reference in references]
-        extra = self._reference_rope(grids, text.shape[1], rope[0])
+        extra = self._reference_rope(grids, text.shape[1], rope[0], height, place)
         rope = (torch.cat((rope[0], extra[0]), 1), torch.cat((rope[1], extra[1]), 1))
         by_token = torch.cat(
             (modulation[:, None].expand(-1, drawn, -1, -1), clean[:, None].expand(-1, x.shape[1] - drawn, -1, -1)), 1

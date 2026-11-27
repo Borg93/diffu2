@@ -3,13 +3,15 @@
 As ``diffu_moss`` reads it (``diffu_moss.latents.image_pixels`` and ``encode_latents``): on its own 16-px grid, never
 resized, in [-1, 1]; the VAE's mode, patched 2x2 and normalized by the VAE's batch-norm statistics. A request names it
 as any SGLang image request does (``image_path``: a path, a URL, or several); its latents go into ``batch.extra`` and
-from there into both passes of guidance (:mod:`diffu_sglang_moss.config`).
+from there into both passes of guidance (:mod:`diffu_sglang_moss.config`), with where the DiT was trained to read
+them: over the drawn image or above it (its config's ``reference_place``).
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Literal, get_args
 
 import torch
 from diffusers.image_processor import VaeImageProcessor
@@ -23,13 +25,31 @@ from torch import Tensor
 
 PIXELS_PER_LATENT = 16  # 8x VAE downsampling, then 2x2 patches
 REFERENCE_LATENTS = "diffu_reference_latents"  # the key of batch.extra the latents are kept under
+REFERENCE_PLACE = "diffu_reference_place"  # the key of batch.extra for where the references lie (ReferencePlace)
 EXPORT_RECORD = "export.json"  # beside the DiT's weights: diffu_moss's record of whether it takes a reference
+ReferencePlace = Literal["over", "above"]  # diffu_moss.transformer's: centre on centre, or its rows above the image's
 
 
 def takes_reference(transformer: Path) -> bool:
     """Whether the DiT folder ``transformer`` was trained to take a reference image, by its export's record."""
     record = transformer / EXPORT_RECORD
     return record.is_file() and bool(json.loads(record.read_text(encoding="utf-8")).get("takes_reference"))
+
+
+def reference_place(transformer: Path) -> ReferencePlace:
+    """Where the DiT folder ``transformer`` was trained to read a reference, by its ``config.json``'s
+    ``reference_place`` (``over``, MOSS-Image's own, without the key).
+
+    Raises:
+        ValueError: If the config names a place this plugin does not lay a reference at.
+    """
+    config = transformer / "config.json"
+    place = (
+        json.loads(config.read_text(encoding="utf-8")).get("reference_place", "over") if config.is_file() else "over"
+    )
+    if place not in get_args(ReferencePlace):
+        raise ValueError(f"the DiT reads its references {place!r}: this plugin lays them {get_args(ReferencePlace)}")
+    return place
 
 
 def image_pixels(image: Image.Image) -> Tensor:
@@ -59,17 +79,19 @@ def encode_latents(vae: AutoencoderKLFlux2, pixels: Tensor) -> Tensor:
 
 class MOSSImageReferenceStage(PipelineStage):
     """The request's reference images (``batch.condition_image``, which SGLang loads from ``image_path``), each
-    encoded into ``batch.extra[REFERENCE_LATENTS]``; without one it does nothing.
+    encoded into ``batch.extra[REFERENCE_LATENTS]``, their place into ``batch.extra[REFERENCE_PLACE]``; without one it
+    does nothing.
 
     Raises:
         ValueError: From the call, if a reference is given to a model that takes none (``takes_reference``), or is
             off the 16-px grid.
     """
 
-    def __init__(self, vae: AutoencoderKLFlux2, *, takes_reference: bool) -> None:
+    def __init__(self, vae: AutoencoderKLFlux2, *, takes_reference: bool, place: ReferencePlace = "over") -> None:
         super().__init__()
         self.vae = vae
         self.takes_reference = takes_reference
+        self.place = place
 
     def component_uses(self, server_args: ServerArgs, stage_name: str | None = None) -> list[ComponentUse]:
         return [ComponentUse(self._component_stage_name(stage_name), "vae")]
@@ -88,4 +110,5 @@ class MOSSImageReferenceStage(PipelineStage):
         with self.use_declared_component(component_name="vae", module=self.vae) as vae:
             latents = [encode_latents(vae, image_pixels(image)) for image in references]
         batch.extra[REFERENCE_LATENTS] = latents
+        batch.extra[REFERENCE_PLACE] = self.place
         return batch

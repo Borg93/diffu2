@@ -1,6 +1,6 @@
 """SGLang Diffusion with diffu_sglang_moss draws, on CPU, bit for bit the image our own pipeline draws from the same
-model, prompt and noise, with a sample page and without one, at both pipelines' default guidance; and a model whose
-DiT takes no reference is refused one.
+model, prompt and noise, with a sample page (over the page, or above it for a DiT trained so) and without one, at
+both pipelines' default guidance; and a model whose DiT takes no reference is refused one.
 
 SGLang runs in its own environment (packages/sglang_moss/README.md): ``DIFFU_SGLANG_PYTHON`` names its interpreter,
 which runs ``sglang_draw.py`` with this checkout's plugin first on its path. Without it these tests skip.
@@ -85,6 +85,19 @@ def test_sglang_draws_bit_for_bit_what_our_pipeline_draws(
     export_hf(tiny_moss_reference, tmp_path / "hf")
     sample = _sample(tmp_path / "sample.png") if with_sample else None
     ours = _ours(tiny_moss_reference, sample)
+
+    drawn = _sglang(tmp_path / "hf", sample, tmp_path)
+
+    assert drawn.returncode == 0, drawn.stdout[-4000:] + drawn.stderr[-4000:]
+    np.testing.assert_array_equal(np.load(tmp_path / "sglang.npy"), ours)
+
+
+def test_sglang_lays_the_sample_above_the_page_for_a_dit_trained_so(
+    tiny_moss_reference_above: Path, tmp_path: Path
+) -> None:
+    export_hf(tiny_moss_reference_above, tmp_path / "hf")
+    sample = _sample(tmp_path / "sample.png")
+    ours = _ours(tiny_moss_reference_above, sample)
 
     drawn = _sglang(tmp_path / "hf", sample, tmp_path)
 

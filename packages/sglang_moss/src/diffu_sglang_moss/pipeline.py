@@ -3,7 +3,8 @@
 The config is SGLang's MOSS-Image config with a second task, text and image to image (TI2I, chosen when a request
 names an ``image_path``), the reference never resized and the drawn image's size the request's own, the DiT
 :class:`~diffu_sglang_moss.dit.DiffuMOSSImageTransformer` in place of SGLang's, and the reference latents handed to
-the DiT in both passes of guidance, the conditional and the unconditional, as ``diffu_moss``'s denoiser does.
+the DiT in both passes of guidance, the conditional and the unconditional, as ``diffu_moss``'s denoiser does, with
+the place the DiT was trained to read them at (``reference_place``: over the drawn image, or above it).
 
 Its sampling parameters default to ``diffu_moss``'s guidance, so a request drawn with the defaults is drawn as our
 pipeline draws it.
@@ -33,16 +34,24 @@ from sglang.multimodal_gen.runtime.pipelines_core.stages.model_specific_stages.m
 )
 from sglang.multimodal_gen.runtime.server_args import ServerArgs
 
-from diffu_sglang_moss.reference import REFERENCE_LATENTS, MOSSImageReferenceStage, takes_reference
+from diffu_sglang_moss.reference import (
+    REFERENCE_LATENTS,
+    REFERENCE_PLACE,
+    MOSSImageReferenceStage,
+    reference_place,
+    takes_reference,
+)
 
 TRANSFORMER = "DiffuMOSSImageTransformer"  # the registered name of diffu_sglang_moss.dit's DiT
 NEGATIVE_PROMPT = "nsfw, worst quality, bad anatomy, watermark, jpeg artifact"  # the official demo's, ours
 
 
 def _references(batch: Req) -> dict[str, Any]:
-    """The DiT's keyword argument for ``batch``'s reference latents, if it has any."""
+    """The DiT's keyword arguments for ``batch``'s reference latents and their place, if it has any."""
     latents = batch.extra.get(REFERENCE_LATENTS)
-    return {"reference_latents": latents} if latents else {}
+    if not latents:
+        return {}
+    return {"reference_latents": latents, "reference_place": batch.extra.get(REFERENCE_PLACE, "over")}
 
 
 @dataclass
@@ -87,7 +96,8 @@ class DiffuMOSSImagePipeline(MOSSImagePipeline):
     pipeline_config_cls = DiffuMOSSImagePipelineConfig
 
     def create_pipeline_stages(self, server_args: ServerArgs) -> None:
-        reference = takes_reference(Path(self.model_path) / "transformer")
+        transformer = Path(self.model_path) / "transformer"
+        reference = takes_reference(transformer)
         self.add_stage(InputValidationStage())
         self.add_stage(
             MOSSImageBeforeDenoisingStage(
@@ -96,7 +106,11 @@ class DiffuMOSSImagePipeline(MOSSImagePipeline):
                 scheduler=self.get_module("scheduler"),
             )
         )
-        self.add_stage(MOSSImageReferenceStage(self.get_module("vae"), takes_reference=reference))
+        self.add_stage(
+            MOSSImageReferenceStage(
+                self.get_module("vae"), takes_reference=reference, place=reference_place(transformer)
+            )
+        )
         self.add_stage_factory(
             RoleType.DENOISER,
             lambda: MOSSImageDenoisingStage(

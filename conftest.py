@@ -482,6 +482,21 @@ def tiny_moss_reference(tiny_moss_base: Path, tmp_path_factory: pytest.TempPathF
     return repo
 
 
+@pytest.fixture(scope="session")
+def tiny_moss_reference_above(tiny_moss_base: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """:func:`tiny_moss_reference`'s repo with a DiT that reads its reference above the drawn image
+    (``reference_place``), as the sample-above models do."""
+    dit = tmp_path_factory.mktemp("moss_reference_above_dit")
+    torch.manual_seed(1)
+    MossTransformer(**TINY_MOSS_DIT, reference_place="above").save_pretrained(dit)
+    ExportRecord(takes_reference=True, base=str(tiny_moss_base / "transformer"), checkpoint=str(dit)).write(
+        dit / EXPORT_RECORD
+    )
+    repo = tmp_path_factory.mktemp("moss_reference_above")
+    write_moss_repo(repo, base=tiny_moss_base, transformer=dit, uncond_skip_layers=(1,))
+    return repo
+
+
 TINY_PAIRS = 11  # a style-pair set of 11 targets, each pair's reference the next target's crop
 LEAKING_PAIR = 3  # its reference (pair 4's crop) also holds its first line: left out, so 10 pairs are kept
 PAIR_TARGET_SIZE = (64, 32)  # px: a 4 x 2 latent grid
