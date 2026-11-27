@@ -11,9 +11,11 @@
 cd /home/gabriel/Desktop/diffu2 || exit 1
 log() { echo "[$(date '+%F %T')] $*"; }
 B=/mnt/scratch/gabriel/moss_bench; O=$B/set40/out
-until grep -q "pool read started" runs/htr/rl_eval_after_moss.log 2>/dev/null; do sleep 60; done
-sleep 120; log "pausing the pool read: pool_v4 $(wc -l < runs/htr/curate/pool_read/pool_v4_vllm.jsonl) pages"
-tmux kill-session -t =poolread 2>/dev/null; tmux kill-window -t htr:parse2 2>/dev/null; sleep 45
+if [ "${NOWAIT:-0}" != 1 ]; then  # NOWAIT=1 (after_reboot.sh): GPU 2 is free, start at once and leave the pool read to the caller
+  until grep -q "pool read started" runs/htr/rl_eval_after_moss.log 2>/dev/null; do sleep 60; done
+  sleep 120; log "pausing the pool read: pool_v4 $(wc -l < runs/htr/curate/pool_read/pool_v4_vllm.jsonl) pages"
+  tmux kill-session -t =poolread 2>/dev/null; tmux kill-window -t htr:parse2 2>/dev/null; sleep 45
+fi
 export CUDA_VISIBLE_DEVICES=2 HF_HUB_OFFLINE=1 OMP_NUM_THREADS=8 CUDA_HOME=/usr/local/cuda-13.0
 export PATH=$CUDA_HOME/bin:/mnt/scratch/gabriel/envs/sglang_moss/bin:$PATH
 log "check_b_quantized_dit"
@@ -45,4 +47,5 @@ done
 log "read-back of every SGLang run"
 timeout 3600 uv run python runs/htr/moss_bench/score_sglang.py cuda > $O/scores.log 2>&1 && log "scores: $(grep CER $O/scores.log | tr '\n' ';')" || log "scores FAILED: $(tail -n 4 $O/scores.log | cut -c1-400)"
 log "finished (quant2)"
+[ "${NOWAIT:-0}" = 1 ] && exit 0
 sleep 30; tmux new-session -d -s poolread "SERVE=/mnt/scratch/gabriel/htr/serve/parse-selftrain2-draftv1 SEQS=128 DRAFT=16 bash runs/htr/pool_rest_read.sh 2>&1 | tee -a runs/htr/pool_rest_read.log"; log "pool read started again"
