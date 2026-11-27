@@ -27,7 +27,9 @@ log "GPU 2: $(nvidia-smi --query-gpu=memory.used --format=csv,noheader -i 2)"
 
 toolkit /mnt/scratch/gabriel/envs/sglang_moss/lib/python3.12
 log "attention kernels"
-/mnt/scratch/gabriel/envs/sglang_moss/bin/python -I $B/bench_attn_sm120.py 15700 > $O/attention.log 2>&1 && log "attention done: $(grep -c ms $O/attention.log) lines" || log "attention FAILED: $(tail -n 3 $O/attention.log | cut -c1-300)"
+for env in sglang_moss attn_sm120; do  # attn_sm120 also has SageAttention
+  /mnt/scratch/gabriel/envs/$env/bin/python -I $B/bench_attn_sm120.py 15700 > $O/attention_$env.log 2>&1 && log "attention ($env) done: $(grep -c ms $O/attention_$env.log) lines" || log "attention ($env) FAILED: $(tail -n 3 $O/attention_$env.log | cut -c1-300)"
+done
 
 toolkit $PWD/packages/htr_train/envs/vllm/.venv/lib/python3.12
 for t in ${OURS-R F K12 K06 K24 K12F D}; do
@@ -49,8 +51,8 @@ export PATH=$CUDA_HOME/bin:/mnt/scratch/gabriel/envs/sglang_moss/bin:$HOME_PATH
 mkdir -p $O/captured12; for k in $(seq 0 11); do cp $O/captured/page_$k.* $O/captured12/ 2>/dev/null; done
 # 27 Nov 12:30: the audit of every SGLang Diffusion option (E75) adds CFG gating (SGLang's stand-in for our guidance
 # stop), Cache-DiT's calibrators and step mask, attention autotune and cuBLASLt; cuDNN attention under all of them.
-for kind in ${SGLANG-exact cfg_gate05 cfg_gate075 cache_default cache_012 cache_012_taylorseer cache_012_dmd cache_scm_slow fp8_attention autotune cublaslt compiled cuda_graph guidance_stop05 fused_qkv regional_compile fa4_sm120}; do
-  server='{"disable_autocast": true, "attention_backend": "torch_cudnn_sdpa", "component_attention_backends": {"text_encoder": "torch_sdpa"}}'; ext=diffu_sglang_moss; blas=; fa4=
+for kind in ${SGLANG-exact cfg_gate05 cfg_gate075 cache_default cache_012 cache_012_taylorseer cache_012_dmd cache_scm_slow fp8_attention autotune cublaslt compiled cuda_graph guidance_stop05 fused_qkv regional_compile fa4_sm120 sage_attn}; do
+  server='{"disable_autocast": true, "attention_backend": "torch_cudnn_sdpa", "component_attention_backends": {"text_encoder": "torch_sdpa"}}'; ext=diffu_sglang_moss; blas=; fa4=; py=/mnt/scratch/gabriel/envs/sglang_moss/bin/python
   case $kind in
     exact) extra='{"quality": "exact"}';;
     cfg_gate05) extra='{"cfg_gate_step": 0.5}';;
@@ -63,6 +65,7 @@ for kind in ${SGLANG-exact cfg_gate05 cfg_gate075 cache_default cache_012 cache_
     guidance_stop05) extra='{"guidance_stop": 0.5}';;   # our guidance stop, in the plugin since 27 Nov
     fused_qkv) extra='{"fused_qkv": true}';;
     regional_compile) extra='{}'; server='{"disable_autocast": true, "attention_backend": "torch_cudnn_sdpa", "component_attention_backends": {"text_encoder": "torch_sdpa"}, "enable_torch_compile": true, "regional_compile": true}'; ext=moss_bench_ext;;
+    sage_attn) extra='{}'; server='{"disable_autocast": true, "attention_backend": "sage_attn", "component_attention_backends": {"text_encoder": "torch_sdpa"}}'; py=/mnt/scratch/gabriel/envs/attn_sm120/bin/python;;  # SageAttention 2, built 27 Nov
     fa4_sm120) extra='{}'; server='{"disable_autocast": true, "attention_backend": "fa", "component_attention_backends": {"text_encoder": "torch_sdpa"}}'; ext=moss_bench_ext; fa4=1;;
     cache_default) extra='{"enable_cache_dit": true}';;
     cache_012) extra='{"enable_cache_dit": true, "cache_dit_params": {"residual_diff_threshold": 0.12}}';;
@@ -71,7 +74,7 @@ for kind in ${SGLANG-exact cfg_gate05 cfg_gate075 cache_default cache_012 cache_
     fp8_attention) extra='{}'; server='{"disable_autocast": true, "attention_backend": "fp8_fa_sm120", "component_attention_backends": {"text_encoder": "torch_sdpa"}}';;
   esac
   log "sglang $kind"; watch_memory $O/sglang_$kind.mem
-  ${blas:+env TORCH_BLAS_PREFER_CUBLASLT=1} ${fa4:+env MOSS_BENCH_FA4_SM120=1} env PYTHONPATH=$PWD/runs/htr/moss_bench SGLANG_EXTERNAL_MODEL_PACKAGE=$ext timeout 5400 /mnt/scratch/gabriel/envs/sglang_moss/bin/python $B/sglang_bench.py \
+  ${blas:+env TORCH_BLAS_PREFER_CUBLASLT=1} ${fa4:+env MOSS_BENCH_FA4_SM120=1} env PYTHONPATH=$PWD/runs/htr/moss_bench SGLANG_EXTERNAL_MODEL_PACKAGE=$ext timeout 5400 $py $B/sglang_bench.py \
       /mnt/scratch/gabriel/models/moss/hf-diffu-moss-above $O/captured12 $O/sglang_$kind "$server" "$extra" > $O/sglang_$kind.log 2>&1 \
     && log "sglang $kind done; peak $(sort -n $O/sglang_$kind.mem | tail -n 1) MiB; seconds $(grep '^{"page' $O/sglang_$kind.log | python3 -c "import sys,json;print([json.loads(l).get('seconds') for l in sys.stdin])")" \
     || log "sglang $kind FAILED: $(grep -v '^ *$' $O/sglang_$kind.log | tail -n 5 | cut -c1-400)"
