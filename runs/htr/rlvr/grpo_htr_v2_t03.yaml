@@ -1,0 +1,12 @@
+# Pilot 4 (27 Nov): pilot 2b's settings (grpo_htr_v2.yaml) with the rollout temperature at 0.3 instead of 1.0, and
+# nothing else changed. Why: on the 115 monitor pages (headroom.py, 26 Nov) the best of 8 sampled readings is worse
+# than the greedy one at temperature 1.0 (4.82 % against 4.64 %) and better at 0.3 (4.05 %; a sample beats greedy on
+# 91 pages of 115), so at 1.0 GRPO had little to move the greedy reading towards.
+# The trainer divides its logits by the same temperature, and the task's hooks (mining, sampled answers) read it from
+# this file through HTR_RLVR_CONFIG; val_temperature follows it (grpo_htr.yaml).
+#   PROFILE=pilot2 CONFIG=runs/htr/rlvr/grpo_htr_v2_t03.yaml runs/htr/rlvr/run_rlvr.sh NAME
+defaults: grpo_htr_v2.yaml
+
+policy:
+  generation:
+    temperature: 0.3
