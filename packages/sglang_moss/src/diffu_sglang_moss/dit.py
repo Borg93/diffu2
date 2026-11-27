@@ -45,9 +45,13 @@ from sglang.multimodal_gen.runtime.models.dits.moss_image import (
     residual_gate_add,
     validate_skip_layers,
 )
+from sglang.multimodal_gen.runtime.utils.logging_utils import init_logger
 from torch import Tensor, nn
 
+from diffu_sglang_moss.precision import DitPrecision, QuantizedLinear, dit_precision, quantize_projections
 from diffu_sglang_moss.reference import ReferencePlace
+
+logger = init_logger(__name__)
 
 MODULATIONS = 6  # shift, scale and gate of the attention half, then of the feed-forward half
 
@@ -129,6 +133,12 @@ def _gated_added(x: Tensor, update: Tensor, modulation: TokenModulation, half: i
     )
 
 
+def projection_dtype(layer: _Block) -> torch.dtype:
+    """The dtype the block's projections take and return: their weights', or a quantized projection's output's."""
+    query = layer.proj["q"]
+    return query.out_dtype if isinstance(query, QuantizedLinear) else query.weight.dtype
+
+
 QKV = "_diffu_qkv"  # the attribute of a block that holds its Q, K and V weights as one [3 * dim, dim]
 
 
@@ -173,7 +183,7 @@ def joint_block(
     """
     if torch.compiler.is_compiling():
         return _traced_joint_block(layer, x, rope, modulation)
-    dtype = layer.proj["q"].weight.dtype
+    dtype = projection_dtype(layer)
     y = _norm_modulated(layer.norm1, x, modulation, 0).to(dtype)
     q, k, v = _qkv(layer, y, fused_qkv)
     q = _norm_rope(layer.q_norm, q, rope, layer.heads)
@@ -196,7 +206,7 @@ def _by_token(modulation: TokenModulation, tokens: int) -> Tensor:
 def _traced_joint_block(layer: _Block, x: Tensor, rope: tuple[Tensor, Tensor], modulation: TokenModulation) -> Tensor:
     """:func:`joint_block` by the plain paths alone, the modulation laid out per token."""
     shift_a, scale_a, gate_a, shift_f, scale_f, gate_f = _by_token(modulation, x.shape[1]).unbind(2)
-    dtype = layer.proj["q"].weight.dtype
+    dtype = projection_dtype(layer)
     y = (layer.norm1.forward_native(x) * (1 + scale_a) + shift_a).to(dtype)
     q = _traced_norm_rope(layer.q_norm, layer.proj["q"](y), rope, layer.heads)
     k = _traced_norm_rope(layer.k_norm, layer.proj["k"](y), rope, layer.heads)
@@ -253,6 +263,11 @@ class DiffuMOSSImageTransformer(MOSSImageTransformer):
 
     With ``fused_qkv`` each block's queries, keys and values come from one GEMM (:func:`joint_block`).
 
+    After its weights are loaded (``post_load_weights``) its joint-block projections compute in the precision
+    ``DIFFU_SGLANG_DIT_PRECISION`` names (:mod:`diffu_sglang_moss.precision`): bfloat16 by default, MXFP8 or row-wise
+    FP8. A quantized DiT runs every request through the plugin's joint blocks (SGLang's ``_Block.forward`` reads its
+    projections' ``weight``, which a quantized one does not have), whose ops are SGLang's.
+
     Regional compile (``regional_compile``) compiles the joint blocks only: the plugin's (:class:`JointLayer`) and
     SGLang's (``_Block``). Under torch.compile, regional or whole, every request runs the plugin's blocks, whose
     traced path takes the plain ops SGLang's fused kernels stand for, and SGLang's blocks are never called.
@@ -260,7 +275,11 @@ class DiffuMOSSImageTransformer(MOSSImageTransformer):
     Raises:
         ValueError: From ``forward``, if a reference is not latents like the drawn image's (as many channels, one row
             or as many as the batch).
-        NotImplementedError: From ``forward``, if references are given under sequence parallelism.
+        NotImplementedError: From ``forward``, if references are given (or the DiT is quantized, or a request takes
+            another of the plugin's paths) under sequence parallelism.
+        ValueError: From ``post_load_weights``, if ``DIFFU_SGLANG_DIT_PRECISION`` names no precision or the
+            projections or the GPU do not fit it; from ``forward``, if ``fused_qkv`` is asked of a quantized DiT
+            (its joint Q/K/V weight is the bfloat16 one).
     """
 
     _compile_conditions = [is_joint_layer, is_sglang_block]
@@ -268,6 +287,19 @@ class DiffuMOSSImageTransformer(MOSSImageTransformer):
     def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)
         self.joint_layers = nn.ModuleList(JointLayer(block, index) for index, block in enumerate(self.layers))
+        self.projection_precision = DitPrecision.BF16
+
+    def post_load_weights(self) -> None:
+        """SGLang's fix-ups after loading, then the joint-block projections swapped for the precision
+        ``DIFFU_SGLANG_DIT_PRECISION`` names (none for bfloat16)."""
+        super().post_load_weights()
+        precision = dit_precision()
+        swapped = quantize_projections(self, precision)
+        self.projection_precision = precision
+        if swapped:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()  # the bfloat16 weights the quantized layers replaced
+            logger.info("DiT projections in %s: %d layers swapped", precision, len(swapped))
 
     def forward(
         self,
@@ -283,7 +315,13 @@ class DiffuMOSSImageTransformer(MOSSImageTransformer):
     ) -> Tensor:
         cached = bool(getattr(self, "_is_cached", False))  # Cache-DiT's mark: its blocks are joint_layers
         compiled = torch.compiler.is_compiling() or _compiled(self.joint_layers[0])
-        if not (reference_latents or cached or compiled or fused_qkv):
+        quantized = self.projection_precision is not DitPrecision.BF16
+        if fused_qkv and quantized:
+            raise ValueError(
+                f"fused_qkv joins the bfloat16 Q, K and V weights; this DiT's projections are {self.projection_precision}"
+                " (DIFFU_SGLANG_DIT_PRECISION): ask for one or the other"
+            )
+        if not (reference_latents or cached or compiled or fused_qkv or quantized):
             return super().forward(
                 hidden_states,
                 timestep,
@@ -293,7 +331,10 @@ class DiffuMOSSImageTransformer(MOSSImageTransformer):
                 skip_layers,
             )
         if self._sequence_parallel:
-            raise NotImplementedError("reference images under sequence parallelism are not supported")
+            raise NotImplementedError(
+                "the plugin's joint blocks (reference images, Cache-DiT, torch.compile, fused_qkv, a quantized DiT) "
+                "do not support sequence parallelism"
+            )
         skip = frozenset(validate_skip_layers(skip_layers, self.config.num_layers))
         batch, channels, height, width = hidden_states.shape
         references = [self._batched(reference, batch, channels) for reference in reference_latents or ()]

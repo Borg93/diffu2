@@ -7,7 +7,8 @@ names this module, which imports the plugin, and the plugin registers itself), b
   run in Inductor's order: not bit for bit).
 - ``DIFFU_TEST_RECORD=<file>``: one JSON line a call appended to the file for each of SGLang's fused helpers the
   plugin's joint block calls (``_norm_modulate``, ``residual_gate_add``) and for the joint Q/K/V weight
-  (``qkv_weight``): its name, its tensors' shapes and its result's.
+  (``qkv_weight``): its name, its tensors' shapes and its result's; and one a call of a quantized projection
+  (:mod:`diffu_sglang_moss.precision`): its class and which layer (``id``) it is.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ import torch
 from sglang.multimodal_gen.runtime.server_args import ServerArgs
 
 import diffu_sglang_moss  # noqa: F401  registers the pipeline
-from diffu_sglang_moss import dit
+from diffu_sglang_moss import dit, precision
 from diffu_sglang_moss.pipeline import DiffuMOSSImagePipelineConfig
 
 
@@ -45,6 +46,17 @@ def _recorded(name: str, helper: Callable[..., Any], record: Path) -> Callable[.
     return call
 
 
+def _recorded_forward(layer_class: type[precision.QuantizedLinear], record: Path) -> None:
+    forward = layer_class.forward
+
+    def call(self: precision.QuantizedLinear, x: torch.Tensor) -> torch.Tensor:
+        with record.open("a", encoding="utf-8") as lines:
+            lines.write(json.dumps({"helper": layer_class.__name__, "layer": id(self)}) + "\n")
+        return forward(self, x)
+
+    layer_class.forward = call
+
+
 if os.environ.get("DIFFU_TEST_ALLOW_COMPILE") == "1":
     import torch._inductor.config as inductor_config
 
@@ -55,3 +67,5 @@ if record := os.environ.get("DIFFU_TEST_RECORD"):
     dit._norm_modulate = _recorded("_norm_modulate", dit._norm_modulate, Path(record))
     dit.residual_gate_add = _recorded("residual_gate_add", dit.residual_gate_add, Path(record))
     dit.qkv_weight = _recorded("qkv_weight", dit.qkv_weight, Path(record))
+    for quantized in (precision.MXFP8Linear, precision.RowwiseFP8Linear):
+        _recorded_forward(quantized, Path(record))

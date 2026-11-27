@@ -10,6 +10,15 @@ when `SGLANG_EXTERNAL_MODEL_PACKAGE=diffu_sglang_moss` is set, and nothing of SG
   and gated residual on the two parts of the tokens that share a modulation; a request's `fused_qkv` computes Q, K
   and V by one GEMM (equal within rounding); `_compile_conditions` lets `regional_compile` compile the joint blocks
   alone (SGLang's MOSS-Image config still refuses torch.compile: lift it as `runs/htr/moss_bench/moss_bench_ext` does).
+- `precision.py`: the precision of the DiT's joint-block projections for the whole server,
+  `DIFFU_SGLANG_DIT_PRECISION`: `bf16` (default, the DiT as loaded), `mxfp8` (`diffu_moss.mxfp8`'s OCP MXFP8,
+  copied here; cuBLAS's block-scaled GEMM, Blackwell) or `fp8_rowwise` (E4M3 with a scale a row and a token,
+  `torch._scaled_mm`). SGLang refuses its own quantization for MOSS-Image, so `DiffuMOSSImageTransformer` swaps the
+  six projections of every joint block after loading (`post_load_weights`); embedders, text refiner, time embedding,
+  modulations, norms and the head stay bf16. A quantized DiT runs every request through the plugin's joint blocks;
+  `fused_qkv` is refused on one. The input is quantized by plain ops, fused by Inductor under compile and run as a
+  small compiled function outside it on a GPU; on CPU MXFP8 is emulated as `diffu_moss.mxfp8` does (SGLang draws
+  bit for bit what our pipeline draws with `quantize_linears(transformer, DIT_LINEARS)`).
 - `denoising.py`: the denoising stage with our guidance stop: a request's `guidance_stop` (1 by default) runs the
   conditional pass alone after that fraction of the steps and takes its prediction as it is, as our pipeline's guider
   (`stop`) does; not SGLang's `cfg_gate_step`, which reuses the last guidance difference.
